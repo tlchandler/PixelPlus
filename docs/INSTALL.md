@@ -241,7 +241,8 @@ docker compose --profile tts up -d         # + on-device DJ voices (Kokoro TTS)
 | Wi-Fi network not listed on the setup page | 5 GHz networks are invisible to Pi Zero 2 W / Pi 3 (older ones). Use *Other network* for hidden networks. |
 | Settings in `pixelplus.txt` ignored | Look for `pixelplus-errors.txt` on the card, and `/var/log/pixelplus-firstboot.log` on the Pi. |
 | Pixels don't light | Check the board was detected (Controllers page). Run *Test* on a prop. See the board's README. |
+| End of a long string stays dark | The pixel output's string length is set when the controller starts. The Dashboard / Controllers page shows **Apply & reboot** when a string got longer than that. |
 
 Advanced: log in with SSH (`ssh pi@pixelplus.local`, after setting `ssh=on` and
-`ssh_password=`), then `pixelplus doctor`, `journalctl -u pixelplusd -f`,
+`ssh_password=`, or turning SSH on in **Settings → Security**), then `pixelplus doctor`, `journalctl -u pixelplusd -f`,
 `journalctl -u pixelplus-netwatch`.

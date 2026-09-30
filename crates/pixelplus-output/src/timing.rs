@@ -91,11 +91,12 @@ pub struct BitTiming {
 }
 
 impl BitTiming {
-    /// 48 / 12 / 28 pixels at 38.4 MHz: 1250 ns bit, 312.5 ns T0H, 729.2 ns T1H.
+    /// 48 / 12 / 27 pixels at 38.4 MHz: 1250 ns bit, 312.5 ns T0H, 703.1 ns T1H
+    /// (T1H centred in the 650–750 ns common window: ~50 ns margin each side).
     pub const STANDARD: BitTiming = BitTiming {
         px_per_bit: 48,
         t0h_px: 12,
-        t1h_px: 28,
+        t1h_px: 27,
     };
 
     /// Derive the closest bit timing for an arbitrary pixel clock.
@@ -117,7 +118,7 @@ impl BitTiming {
         let timing = BitTiming {
             px_per_bit: round(1_250.0),
             t0h_px: round(312.5),
-            t1h_px: round(729.2),
+            t1h_px: round(703.1),
         };
         timing.validate(pixel_clock_hz, 0)?;
         Ok(timing)

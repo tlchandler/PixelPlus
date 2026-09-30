@@ -107,7 +107,7 @@ impl FaultFinder {
     /// The current question, or `None` once the search is complete.
     pub fn current_step(&self) -> Option<Step> {
         let lit = self.lit_count()?;
-        let remaining = self.hi - self.lo + 1;
+        let remaining = (self.hi - self.lo).saturating_add(1);
         let question = if lit == 1 {
             "Only pixel 1 is lit. Does it light correctly (steady, warm white, \
              the last lit pixel shows blue)?"

@@ -75,10 +75,12 @@ pub fn publish_board(state: &AppState) {
     }
 }
 
-/// The pixelplus polkit rules are installed (so the service user may reboot,
-/// set the hostname/time zone and start the helper).
+/// The pixelplus polkit rules are installed (so the service user may reboot, set
+/// the hostname/time zone and start the helper). The rules directories are often
+/// unreadable for other users (Debian: 0700 polkitd), so the package's helper
+/// script - installed by the same package - counts as proof too.
 pub fn polkit_rules_installed() -> bool {
-    POLKIT_RULES.iter().any(|p| Path::new(p).is_file())
+    Path::new(HELPER_BIN).is_file() || POLKIT_RULES.iter().any(|p| Path::new(p).is_file())
 }
 
 /// `pixelplus-helper@.service` can be started from here.
@@ -88,7 +90,6 @@ pub fn helper_installed() -> bool {
         && has_systemd()
         && have("systemctl")
         && Path::new(HELPER_BIN).is_file()
-        && (is_root() || polkit_rules_installed())
 }
 
 /// systemd/logind can reboot, power off and restart us from here.
@@ -401,6 +402,8 @@ pub async fn run_helper(
         }
         let unit = verb.unit()?;
         let since = chrono::Utc::now().timestamp() - 1;
+        // The result of an earlier run (possibly within the same second) isn't ours.
+        let baseline = read_status(&run_dir(), name);
         let out = run(
             "systemctl",
             &["--no-ask-password", "start", "--no-block", &unit],
@@ -423,7 +426,16 @@ pub async fn run_helper(
         let dir = run_dir();
         let v = verb.clone();
         tokio::spawn(async move {
-            let last = follow(&st, &dir, &v, &unit, since, Duration::from_secs(1)).await;
+            let last = follow(
+                &st,
+                &dir,
+                &v,
+                &unit,
+                since,
+                baseline,
+                Duration::from_secs(1),
+            )
+            .await;
             finish(&st, &last, opts);
             let _ = tx.send(last);
         });
@@ -477,6 +489,7 @@ pub(crate) async fn follow(
     verb: &HelperVerb,
     unit: &str,
     since: i64,
+    baseline: Option<HelperStatus>,
     every: Duration,
 ) -> HelperStatus {
     let name = verb.name();
@@ -485,30 +498,44 @@ pub(crate) async fn follow(
     let mut last_seen: Option<HelperStatus> = None;
     let mut next_unit_check = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(s) = read_status(dir, name).filter(|s| s.updated_at >= since) {
+        let current = read_status(dir, name).filter(|s| s.updated_at >= since);
+        if let Some(s) = current.clone().filter(|s| Some(s) != baseline.as_ref()) {
+            if s.done() {
+                return s;
+            }
             if last_seen.as_ref() != Some(&s) {
-                if s.done() {
-                    return s;
-                }
                 publish(state, &s);
                 last_seen = Some(s);
             }
-        } else if Instant::now() >= next_unit_check && !unit.is_empty() {
-            // No fresh status yet: did the unit die before writing one?
+        }
+        if Instant::now() >= next_unit_check && !unit.is_empty() {
+            // No result yet: did the unit die without writing one, or finish with a
+            // result identical to the previous run's (same message, same second)?
             next_unit_check = Instant::now() + Duration::from_secs(5);
-            if let Ok(o) = run(
+            let failed = run(
                 "systemctl",
                 &["is-failed", "--quiet", unit],
                 Duration::from_secs(5),
             )
             .await
-            {
-                if o.success {
-                    return HelperStatus::new(
-                        name,
-                        HelperState::Failed,
-                        format!("{} failed. Details: journalctl -u {unit}", verb.describe()),
-                    );
+            .is_ok_and(|o| o.success);
+            if failed {
+                return HelperStatus::new(
+                    name,
+                    HelperState::Failed,
+                    format!("{} failed. Details: journalctl -u {unit}", verb.describe()),
+                );
+            }
+            let active = run(
+                "systemctl",
+                &["is-active", "--quiet", unit],
+                Duration::from_secs(5),
+            )
+            .await
+            .is_ok_and(|o| o.success);
+            if !active {
+                if let Some(s) = current.filter(|s| s.done()) {
+                    return s;
                 }
             }
         }
@@ -964,6 +991,7 @@ mod tests {
             &HelperVerb::SshOn,
             "",
             now - 1,
+            read_status(&dir, "ssh-on"),
             Duration::from_millis(10),
         )
         .await;

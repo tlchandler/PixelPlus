@@ -576,16 +576,17 @@ mod tests {
         let frame = OutputFrameRef::new(vec![&p1]);
         let fb = enc.encode_to_vec(&frame).unwrap();
         let line0 = &fb[..1152];
-        // Bit 0 (MSB of 0x80) is a 1: high for 28 px.
+        // Bit 0 (MSB of 0x80) is a 1: high for 27 px.
         assert!(line0[..12].iter().all(|&w| w == 0b10));
-        assert!(line0[12..28].iter().all(|&w| w == 0b10));
-        assert!(line0[28..48].iter().all(|&w| w == 0));
+        assert!(line0[12..27].iter().all(|&w| w == 0b10));
+        assert!(line0[27..48].iter().all(|&w| w == 0));
         // Bit 1 is a 0: high for 12 px only.
         assert!(line0[48..60].iter().all(|&w| w == 0b10));
         assert!(line0[60..96].iter().all(|&w| w == 0));
         // Bit 23 (LSB of 0x01) is a 1.
         let last = &line0[23 * 48..24 * 48];
-        assert!(last[..28].iter().all(|&w| w == 0b10));
+        assert!(last[..27].iter().all(|&w| w == 0b10));
+        assert!(last[27..].iter().all(|&w| w == 0));
         // Line 1: no data at all.
         assert!(fb[1152..2304].iter().all(|&w| w == 0));
     }
@@ -608,8 +609,8 @@ mod tests {
         assert_eq!(&bit0[4..8], &[0b10, 0b10 | le1, 0b10 | le1, 0b10]);
         // Its T0H slot at px 16..20 carries the data bit.
         assert_eq!(&bit0[16..20], &[0b10, 0b10 | le1, 0b10 | le1, 0b10]);
-        // Its T1H slot at 32..36 releases (zero data, LE pulses).
-        assert_eq!(&bit0[32..36], &[0, le1, le1, 0]);
+        // Its T1H slot at 31..35 releases (zero data, LE pulses).
+        assert_eq!(&bit0[31..35], &[0, le1, le1, 0]);
         // Bank 0 and 2 slots carry zero data but still latch.
         assert_eq!(&bit0[0..4], &[0, 1 << 23, 1 << 23, 0]);
         assert_eq!(&bit0[8..12], &[0, 1 << 21, 1 << 21, 0]);

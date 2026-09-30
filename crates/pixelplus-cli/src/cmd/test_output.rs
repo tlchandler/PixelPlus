@@ -34,7 +34,7 @@ pub enum PatternArg {
 pub enum ScopeArg {
     /// 0x00 bytes: only 312 ns pulses.
     Zeros,
-    /// 0xFF bytes: only 729 ns pulses.
+    /// 0xFF bytes: only 703 ns pulses.
     Ones,
     /// 0xAA bytes: long and short pulses alternating.
     Alternating,

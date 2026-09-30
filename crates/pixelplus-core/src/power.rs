@@ -246,7 +246,7 @@ fn build_plan(show: &Show) -> (Plan, Vec<String>) {
                 outputs.len() - 1
             });
             let s = &mut outputs[slot];
-            s.pixels += count;
+            s.pixels = s.pixels.saturating_add(count);
             let full: f64 = s.lut[255] as f64 * 3.0 / 256.0 / 765.0 * ma as f64 * count as f64;
             s.max_ma += full;
             if prop_slot[pi].is_none() {
@@ -374,12 +374,15 @@ pub fn estimate_power<R: Read + Seek>(
 
 /// Worst case: every prop at full white (useful before any sequence is uploaded).
 pub fn estimate_full_white(show: &Show) -> PowerEstimate {
+    // Bounded like a real fseq frame: a prop with a corrupt channel range must not
+    // make us allocate gigabytes of "white".
     let len = show
         .props
         .iter()
         .map(|p| p.channel_start as usize + p.channel_len() as usize)
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(crate::fseq::MAX_FRAME_BYTES as usize);
     let frame = vec![255u8; len];
     estimate_from_frames(show, 1, |f| {
         f(&frame);

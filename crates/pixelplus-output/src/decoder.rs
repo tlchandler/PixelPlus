@@ -459,7 +459,7 @@ mod tests {
         let t0 = dec.outputs[0].t0h_ns.unwrap();
         let t1 = dec.outputs[0].t1h_ns.unwrap();
         assert!((t0.min - 312.5).abs() < 0.1 && (t0.max - 312.5).abs() < 0.1);
-        assert!((t1.min - 729.2).abs() < 0.1);
+        assert!((t1.min - 703.1).abs() < 0.1);
         let period = dec.outputs[0].bit_period_ns.unwrap();
         assert!((period.min - 1250.0).abs() < 0.1);
         // The 24th bit of every LED is stretched by the 24-pixel h-blank.

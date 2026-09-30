@@ -79,7 +79,7 @@ source-clock cycles, and the fraction is realised by mixing two lengths.
 | 5 (RP1) | RP1 video PLL, integer divider | – | ≈ 38.4 MHz | 26.04 ns (expected) |
 
 The Pi 4 case is benign for the strings — a 12-pixel T0H is 16 or 17 crystal
-cycles = 296–315 ns, a 28-pixel T1H 39 or 40 cycles = 722–741 ns, both inside
+cycles = 296–315 ns, a 27-pixel T1H 37 or 38 cycles = 685–704 ns, both inside
 the common window of §4 — but it shortens the latch hold pixel of §7 to as
 little as 18.5 ns (still ≫ the 573's hold requirement). The pixel counts
 never drift: the error of the fractional divider does not accumulate.
@@ -92,17 +92,20 @@ Every bit starts high; a `0` falls after T0H, a `1` after T1H.
 |---|---|---|---|---|---|---|
 | bit period | 48 | 1250 ns | 1250 ± 600 | 1250 ± 600 | ≥ 1200 | |
 | T0H | 12 | 312.5 ns | 100–400 | 250–550 | 220–380 | **250–380** |
-| T1H | 28 | 729.2 ns | 450–750 | 650–950 | 580–1000 | **650–750** |
-| T1L | 20 | 520.8 ns | ≥ 450 | ≥ 450 | ≥ 300 | |
+| T1H | 27 | 703.1 ns | 450–750 | 650–950 | 580–1000 | **650–750** |
+| T1L | 21 | 546.9 ns | ≥ 450 | ≥ 450 | ≥ 300 | |
 | reset | | ≥ 300 µs | > 50 µs | > 50 µs (V5: > 280) | > 280 µs | **> 280 µs** |
 
 `Ws281xSpec::COMMON` encodes the common window; `BitTiming::validate` and the
-decoder check against it. 312.5 / 729.2 ns sits inside all of them, so one
-setting drives mixed strings without a per-output "pixel type" switch. The
-margin that matters most is T1H to the 750 ns WS2811 ceiling (21 ns nominal,
-~9 ns with the Pi 4 clock dither of §3); buffer/driver/receiver pulse-width
-distortion (tPLH − tPHL of the '541, '573, AM26C31 and the receiver) eats into
-it, so it is item 3 of the bring-up checklist.
+decoder check against it. 312.5 / 703.1 ns sits inside all of them (T1H centred: ~50 ns margin each side), so one
+setting drives mixed strings without a per-output "pixel type" switch. T1H was
+deliberately moved from 28 px (729 ns, only 21 ns under the 750 ns WS2811
+ceiling) to 27 px (703 ns) so it sits in the middle of the 650–750 ns window:
+~47 ns of margin to the WS2811 ceiling and ~53 ns to the WS2812B floor, even
+with the Pi 4 clock dither of §3. Buffer/driver/receiver pulse-width distortion
+(tPLH − tPHL of the '541, '573, AM26C31 and the receiver) still eats into it, so
+it remains item 3 of the bring-up checklist; `BitTiming::t1h_px` is the single
+knob to adjust if a scope shows a systematic skew.
 
 Low times are deliberately *not* held to the datasheets' nominal ±150 ns low
 windows: T0L is 937.5 ns, T1L 520.8 ns, and the 24th bit of every LED is
@@ -211,10 +214,10 @@ px:  0   4   8  12  16  20  24  28  32  36  40      48
 ```
 
 Q changes when LE rises (slot pixel 1). Both edges of a pulse move by the same
-`4b + 1` pixels, so each bank's high times are exactly 312.5 / 729.2 ns; the
+`4b + 1` pixels, so each bank's high times are exactly 312.5 / 703.1 ns; the
 banks are merely skewed by 104 ns from each other, which is irrelevant to the
 strings. Each edge needs a window of `banks × 4` pixels before the next edge:
-`T0H ≥ 12`, `T1H − T0H ≥ 12`, `48 − T1H ≥ 12`. With 12/28 this allows **three
+`T0H ≥ 12`, `T1H − T0H ≥ 12`, `48 − T1H ≥ 12`. With 12/27 this allows **three
 banks (60 outputs)**; `BitTiming::validate(clock, banks)` enforces it. A
 fourth bank would need a 16-pixel window and T0H/T1H of 417/833 ns — outside
 the WS2815/WS2811 windows — so 60 outputs is the right maximum for 38.4 MHz.
@@ -346,7 +349,7 @@ length (so the string goes dark rather than freezing on its last frame).
 | pattern | expect on every data pin |
 |---|---|
 | `zeros` | 312 ns pulses every 1.25 µs (1.875 µs after each 24th bit) |
-| `ones` | 729 ns pulses every 1.25 µs |
+| `ones` | 703 ns pulses every 1.25 µs |
 | `alternating` | 0xAA: long, short, long, short … |
 | `checker` | 24 short then 24 long pulses per LED |
 | `identify` | the first byte on output *k* is *k* in binary — verifies the pin map and latch banks |

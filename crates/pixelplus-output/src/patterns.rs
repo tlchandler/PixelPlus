@@ -56,8 +56,8 @@ impl ScopePattern {
     pub fn describe(self) -> &'static str {
         match self {
             ScopePattern::Zeros => "0x00 bytes: 312 ns pulses every 1.25 µs",
-            ScopePattern::Ones => "0xFF bytes: 729 ns pulses every 1.25 µs",
-            ScopePattern::Alternating => "0xAA bytes: alternating 729 ns / 312 ns pulses",
+            ScopePattern::Ones => "0xFF bytes: 703 ns pulses every 1.25 µs",
+            ScopePattern::Alternating => "0xAA bytes: alternating 703 ns / 312 ns pulses",
             ScopePattern::Checker => "LEDs alternate all-0 / all-1 (24 short, 24 long pulses)",
             ScopePattern::Identify => "first byte on each pin = its output number, MSB first",
         }

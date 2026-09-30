@@ -726,8 +726,13 @@ impl EffectRenderer {
                 };
                 let r = *size;
                 let travel = 1.0 + 2.0 * f64::from(r);
-                let flakes: Vec<[f32; 2]> = (0..count as u64)
-                    .map(|k| {
+                // At most 50 flakes (density ≤ 1): a stack array keeps the per-frame
+                // render allocation-free.
+                const MAX_FLAKES: usize = 50;
+                let count = count.min(MAX_FLAKES);
+                let mut flake_buf = [[0f32; 2]; MAX_FLAKES];
+                for (slot, k) in flake_buf.iter_mut().zip(0..count as u64) {
+                    *slot = {
                         let sk = speed * (0.7 + 0.6 * f64::from(unit(hash3(p.key, k, 1))));
                         let phase = t * sk / travel + f64::from(unit(hash3(p.key, k, 2)));
                         let cycle = phase.floor();
@@ -737,8 +742,9 @@ impl EffectRenderer {
                         let wobble = 0.02 * ((t * 1.3 + k as f64).sin() as f32);
                         let x = (lane + wind * 0.3 * (1.0 - y) + wobble).rem_euclid(1.0);
                         [x, y]
-                    })
-                    .collect();
+                    };
+                }
+                let flakes = &flake_buf[..count];
                 for i in 0..n {
                     let (u, v) = if p.flat {
                         (0.5, p.along(i))
