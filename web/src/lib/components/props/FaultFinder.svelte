@@ -2,7 +2,8 @@
 	import type { FaultStep, Prop } from '$lib/api/types';
 	import { api } from '$lib/api/client';
 	import Modal from '$lib/components/ui/Modal.svelte';
-	import { Search, CircleCheck, ThumbsUp, ThumbsDown, Wrench, NotebookPen } from '@lucide/svelte';
+	import PixelCount from './PixelCount.svelte';
+	import { Search, CircleCheck, ThumbsUp, ThumbsDown, Wrench, NotebookPen, Ruler } from '@lucide/svelte';
 
 	let {
 		open = $bindable(false),
@@ -14,6 +15,7 @@
 	const estimate = $derived(Math.max(1, Math.ceil(Math.log2((prop?.pixelCount ?? 1) + 1))));
 
 	let step = $state<FaultStep | null>(null);
+	let countOpen = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 
@@ -63,6 +65,15 @@
 				questions. Stand where you can see <strong>{prop?.name}</strong>.
 			</p>
 			{#if error}<p class="err small">{error}</p>{/if}
+			{#if prop?.segments.length}
+				<button
+					class="btn ghost sm"
+					onclick={() => {
+						close();
+						countOpen = true;
+					}}><Ruler size={14} /> Only the end stays dark? Check the pixel count instead</button
+				>
+			{/if}
 		</div>
 	{:else if step.done}
 		<div class="intro">
@@ -120,6 +131,8 @@
 		{/if}
 	{/snippet}
 </Modal>
+
+<PixelCount bind:open={countOpen} {prop} />
 
 <style>
 	.intro {

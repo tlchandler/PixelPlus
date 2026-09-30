@@ -39,6 +39,8 @@ pub struct PlaylistCursor {
     /// Finish after the current item: skip to the outro (schedule window end).
     ending: bool,
     rng: rand::rngs::StdRng,
+    /// Smart playlists (F18): the items of the next repeat pass.
+    next_items: Option<Vec<PlaylistItem>>,
 }
 
 impl PlaylistCursor {
@@ -59,6 +61,7 @@ impl PlaylistCursor {
             history: Vec::new(),
             ending: false,
             rng: rand::rngs::StdRng::seed_from_u64(seed),
+            next_items: None,
         };
         c.order = c.make_order(None);
         c.normalize();
@@ -106,6 +109,9 @@ impl PlaylistCursor {
     /// The item that follows the current one (None if the playlist ends).
     pub fn peek_next(&self) -> Option<&PlaylistItem> {
         let (pos, next_order) = self.successor();
+        if let (Some(order), Some(items)) = (&next_order, &self.next_items) {
+            return order.get(pos.index).and_then(|&i| items.get(i));
+        }
         let order = next_order.as_ref().unwrap_or(&self.order);
         self.item_at(pos, order)
     }
@@ -121,8 +127,15 @@ impl PlaylistCursor {
         }
         let (pos, new_cycle) = self.successor();
         if new_cycle.is_some() {
+            let last = match self.next_items.take() {
+                Some(items) => {
+                    // A re-expanded smart pass: the old indices mean nothing.
+                    self.playlist.items = items;
+                    None
+                }
+                None => self.order.last().copied(),
+            };
             // Same RNG state as the preview in `successor`, so the same order.
-            let last = self.order.last().copied();
             self.order = make_order(&self.playlist, last, &mut self.rng);
         }
         self.pos = pos;
@@ -137,6 +150,18 @@ impl PlaylistCursor {
             self.order = order;
         }
         self.current()
+    }
+
+    /// Smart playlists (F18): play `items` in the next repeat pass (the
+    /// engine re-expands the rules for every pass).
+    pub fn set_next_cycle_items(&mut self, items: Vec<PlaylistItem>) {
+        self.next_items = Some(items);
+    }
+
+    /// The playlist being walked (its items may have been re-expanded).
+    #[allow(dead_code)]
+    pub fn playlist(&self) -> &Playlist {
+        &self.playlist
     }
 
     /// Finish after the current item: continue with the outro (once), then end.
@@ -163,6 +188,7 @@ impl PlaylistCursor {
         match pos.phase {
             Phase::Intro => pos.index += 1,
             Phase::Main => {
+                let next_len = self.next_items.as_ref().map(Vec::len);
                 if self.ending {
                     pos = Pos {
                         phase: Phase::Outro,
@@ -170,11 +196,21 @@ impl PlaylistCursor {
                     };
                 } else {
                     pos.index += 1;
-                    if pos.index >= self.order.len() && p.repeat && !p.items.is_empty() {
+                    let has_items = next_len.map_or(!p.items.is_empty(), |n| n > 0);
+                    if pos.index >= self.order.len() && p.repeat && has_items {
                         // Deterministic preview of the next cycle: generated from a
                         // clone of the RNG; `advance` regenerates the same order.
                         let mut rng = self.rng.clone();
-                        let order = make_order(p, self.order.last().copied(), &mut rng);
+                        let order = match &self.next_items {
+                            Some(items) => {
+                                let next = Playlist {
+                                    items: items.clone(),
+                                    ..p.clone()
+                                };
+                                make_order(&next, None, &mut rng)
+                            }
+                            None => make_order(p, self.order.last().copied(), &mut rng),
+                        };
                         return (
                             Pos {
                                 phase: Phase::Main,
@@ -368,5 +404,24 @@ mod tests {
         assert!(c.advance().is_none());
         let mut c = PlaylistCursor::with_seed(pl(&[], &["i"], &["o"], false, true), 1);
         assert_eq!(ids(&mut c, 5), ["i", "o"]);
+    }
+
+    #[test]
+    fn smart_passes_use_the_new_items() {
+        let id = |i: Option<&PlaylistItem>| i.map(|i| i.id().to_string()).unwrap_or_default();
+        let mut c = PlaylistCursor::with_seed(pl(&["a", "b"], &[], &[], false, true), 7);
+        assert_eq!(id(c.current()), "a");
+        c.set_next_cycle_items(vec![seq("x"), seq("y"), seq("z")]);
+        c.advance();
+        assert_eq!(id(c.current()), "b");
+        assert_eq!(id(c.peek_next()), "x", "the preview shows the next pass");
+        assert_eq!(id(c.advance()), "x");
+        assert_eq!(id(c.advance()), "y");
+        assert_eq!(id(c.advance()), "z");
+        assert_eq!(c.playlist().items.len(), 3);
+        // An empty re-expansion ends the playlist instead of looping forever.
+        c.set_next_cycle_items(vec![]);
+        assert!(c.advance().is_none());
+        assert!(c.is_done());
     }
 }

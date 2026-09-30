@@ -157,7 +157,8 @@ pub(crate) fn report(state: &AppState, sh: &Shared) -> FollowerReport {
     let clock = sh.clock.lock();
     let now = sh.now_ms();
     FollowerReport {
-        limiter: Default::default(),
+        // F12 power limiter (engine, WS3).
+        limiter: crate::player::limiter::follower_report(&identity.id),
         state: sync_state,
         sync_offset_ms: clock.uncertainty_ms().map(round2),
         clock_offset_ms: clock.offset_at(now).map(round2),
@@ -166,6 +167,7 @@ pub(crate) fn report(state: &AppState, sh: &Shared) -> FollowerReport {
         problem,
         quality,
         wifi_power_save: crate::services::network::wifi_power_save(),
+        update: Some(crate::services::updates_orch::local_report(state)),
     }
 }
 
@@ -255,31 +257,33 @@ fn leader_boot(sh: &Shared, boot: &str) {
     }
 }
 
-/// A protocol mismatch message for the UI, if the versions differ.
-pub(crate) fn protocol_mismatch(
-    peer_proto: u32,
-    peer_ver: &str,
-    peer_is_leader: bool,
-) -> Option<String> {
-    (peer_proto != proto::PROTOCOL_VERSION).then(|| {
-        let (who, other) = if peer_is_leader {
-            ("The show leader", "this controller")
-        } else {
-            ("This controller", "the show leader")
-        };
-        format!(
-            "{who} runs PixelPlus {peer_ver} (cluster protocol {peer_proto}) but {other} runs {} \
-             (protocol {}); update both to the same version. Until then lights may drift apart.",
-            super::VERSION,
-            proto::PROTOCOL_VERSION
-        )
-    })
+/// A protocol mismatch message for the UI, if the two can't talk: their
+/// protocol ranges (`protoMin..=protoMax`, F15) don't overlap. Different
+/// releases whose ranges overlap interoperate (during a cluster update).
+pub(crate) fn protocol_mismatch(peer: &proto::Beacon, peer_is_leader: bool) -> Option<String> {
+    let peer_range = proto::proto_range(peer);
+    if proto::negotiate(peer_range, (proto::PROTOCOL_MIN, proto::PROTOCOL_MAX)).is_some() {
+        return None;
+    }
+    let (who, other) = if peer_is_leader {
+        ("The show leader", "this controller")
+    } else {
+        ("This controller", "the show leader")
+    };
+    Some(format!(
+        "{who} runs PixelPlus {} (cluster protocol {}) but {other} runs {} \
+         (protocol {}); update both to the same version. Until then lights may drift apart.",
+        peer.ver,
+        peer.proto,
+        super::VERSION,
+        proto::PROTOCOL_VERSION
+    ))
 }
 
 pub(crate) fn on_leader_beacon(state: &AppState, sh: &Shared, b: &proto::Beacon, src: SocketAddr) {
     leader_boot(sh, &b.boot);
     {
-        let problem = protocol_mismatch(b.proto, &b.ver, true);
+        let problem = protocol_mismatch(b, true);
         let mut f = sh.follower.lock();
         if problem != f.protocol_problem {
             if let Some(p) = &problem {
@@ -687,6 +691,19 @@ fn validate_call(call: &AdoptCall) -> ApiResult<()> {
     if let Some(n) = &call.name {
         super::leader::validate_node_name(n)?;
     }
+    if let Some(id) = &call.assume_id {
+        if !super::slices::safe_id(id) {
+            return Err(ApiError::bad_request("Invalid controller id to take over."));
+        }
+    }
+    if let Some(h) = &call.hostname {
+        crate::services::network::validate_hostname(h)?;
+    }
+    if let Some(rev) = &call.board_rev {
+        if !crate::services::setup::valid_rev(rev) {
+            return Err(ApiError::bad_request("Invalid board revision."));
+        }
+    }
     Ok(())
 }
 
@@ -781,6 +798,14 @@ pub async fn handle_adopt(
         return Err(ApiError::bad_request("A controller cannot adopt itself."));
     }
     let why = adoption_allowed(state, sh, &call, auth)?;
+    // F10: taking over another controller's id only as a fresh controller
+    // (trust on first use), or when the same leader repeats that adoption.
+    let assume = call.assume_id.clone().filter(|id| *id != identity.id);
+    if assume.is_some() && !why.is_empty() {
+        return Err(ApiError::conflict(
+            "This controller is already set up; only a new (or released) controller can replace another one.",
+        ));
+    }
     if identity.role == LocalRole::Leader {
         // Keep the old show, just in case.
         let backup = sh.cluster_dir.join(format!(
@@ -792,21 +817,28 @@ pub async fn handle_adopt(
             tracing::warn!("could not back up the show before adoption: {e:#}");
         }
     }
+    // The id this controller answers with (and derives its key for).
+    let my_id = assume.clone().unwrap_or_else(|| identity.id.clone());
     let offer = sig::dh_offer().map_err(ApiError::internal)?;
     let my_dh = offer.public_hex.clone();
-    let key = sig::derive_key(
-        offer,
-        &call.dh,
-        &call.leader_id,
-        &identity.id,
-        &call.dh,
-        &my_dh,
-    )
-    .ok_or_else(|| ApiError::bad_request("Invalid key exchange."))?;
+    let key = sig::derive_key(offer, &call.dh, &call.leader_id, &my_id, &call.dh, &my_dh)
+        .ok_or_else(|| ApiError::bad_request("Invalid key exchange."))?;
+    // F10: a replacement board with a blank EEPROM becomes the old board type.
+    let eeprom_written = match (&assume, call.board) {
+        (Some(_), Some(board)) => write_replacement_eeprom(board, call.board_rev.clone()).await,
+        _ => false,
+    };
     let changed_leader = identity.leader_id.as_deref() != Some(call.leader_id.as_str());
     let _guard = sh.install_lock.lock().await;
+    let old_id = identity.id.clone();
     let identity = state
         .set_identity(|i| {
+            if let Some(id) = &assume {
+                i.id = id.clone();
+                // The board is what this hardware reports (or was just written).
+                i.board = None;
+                i.board_rev = None;
+            }
             i.role = LocalRole::Follower;
             i.leader_id = Some(call.leader_id.clone());
             i.leader_url = Some(call.leader_url.clone());
@@ -837,7 +869,28 @@ pub async fn handle_adopt(
     }
     sh.replay.lock().forget(&call.leader_id);
     sh.manifest_trigger.notify_one();
-    let hostname = net::hostname();
+    if let Some(id) = &assume {
+        tracing::warn!("This controller now replaces controller {id} (was {old_id}).");
+    }
+    let mut hostname = net::hostname();
+    if let Some(h) = call
+        .hostname
+        .clone()
+        .filter(|h| assume.is_some() && *h != hostname)
+    {
+        // Take over the old controller's name (hostnamed, like Settings → Network).
+        if crate::services::network::managed() {
+            crate::api::security::remember_previous_hostname(&hostname);
+            let st = state.clone();
+            let name = h.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::services::platform::set_hostname(&st, &name).await {
+                    tracing::warn!("couldn't take over the host name {name}: {e}");
+                }
+            });
+            hostname = h;
+        }
+    }
     let (board, board_rev) = net::local_board(state);
     let from = auth
         .peer
@@ -869,7 +922,45 @@ pub async fn handle_adopt(
         pi_model: net::pi_model(),
         dh: my_dh,
         proof,
+        serial: net::hardware_serial(),
+        eeprom_written,
     })
+}
+
+/// F10: write the PPX1 record for `board` when this Pi sits on a PixelPlus
+/// board whose EEPROM is blank (a new replacement board), so it boots as the
+/// board it replaces. Never overwrites a programmed EEPROM. Best effort.
+async fn write_replacement_eeprom(
+    board: pixelplus_core::model::BoardKind,
+    rev: Option<String>,
+) -> bool {
+    use pixelplus_core::model::BoardKind;
+    if !matches!(
+        board,
+        BoardKind::Difftx | BoardKind::Difftxlarge | BoardKind::Diffsmart
+    ) || crate::services::system::board_override().is_some()
+    {
+        return false;
+    }
+    let (det, pi) = crate::services::system::detection();
+    // Only a real Pi with a readable, blank EEPROM whose I²C devices fit the board.
+    let blank = pi.is_some()
+        && det.board.is_none()
+        && det.eeprom.is_some()
+        && det.suggested.map_or(true, |s| s == board);
+    if !blank {
+        return false;
+    }
+    match crate::services::setup::write_eeprom(board, rev.unwrap_or_else(|| "A".into())).await {
+        Ok(()) => {
+            tracing::info!("wrote the board EEPROM ({board:?}) for the replaced controller");
+            true
+        }
+        Err(e) => {
+            tracing::warn!("couldn't write the board EEPROM of the replacement: {e}");
+            false
+        }
+    }
 }
 
 /// A signed request from our leader arrived: its key is confirmed.
@@ -908,8 +999,10 @@ fn own_node(state: &AppState) -> Node {
     }
 }
 
-/// `POST /cluster/release`: forget the leader and go dark.
-pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
+/// `POST /cluster/release`: forget the leader and go dark. With `retire`
+/// (F10: this controller was replaced and its id belongs to the
+/// replacement) it also starts over as a new, unconfigured controller.
+pub async fn handle_release(state: &AppState, sh: &Shared, retire: bool) -> ApiResult<()> {
     let identity = state.identity();
     if identity.role != LocalRole::Follower {
         return Err(ApiError::conflict("This controller is not a follower."));
@@ -921,8 +1014,19 @@ pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
             i.leader_id = None;
             i.leader_url = None;
             i.cluster_key = None;
+            if retire {
+                i.id = pixelplus_core::model::new_id();
+                i.role = LocalRole::Unconfigured;
+                i.name = None;
+            }
         })
         .map_err(ApiError::internal)?;
+    if retire {
+        tracing::warn!(
+            "This controller was replaced by another one; it starts over as a new controller ({}).",
+            state.identity().id
+        );
+    }
     sh.update_keys(|k| k.pending = false);
     if let Some(old) = old_leader {
         sh.replay.lock().forget(&old);
@@ -962,9 +1066,17 @@ pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
 
 /// `POST /cluster/command`.
 pub async fn handle_command(state: &AppState, sh: &Shared, cmd: ClusterCommand) -> ApiResult<()> {
-    if let ClusterCommand::Refresh = cmd {
-        sh.manifest_trigger.notify_one();
-        return Ok(());
+    match cmd {
+        ClusterCommand::Refresh => {
+            sh.manifest_trigger.notify_one();
+            return Ok(());
+        }
+        ClusterCommand::UpdateStage { .. }
+        | ClusterCommand::UpdateCommit { .. }
+        | ClusterCommand::UpdateRollback => {
+            return crate::services::updates_orch::follower_command(state, cmd).await;
+        }
+        _ => {}
     }
     let player = state
         .services
@@ -1033,7 +1145,10 @@ pub async fn handle_command(state: &AppState, sh: &Shared, cmd: ClusterCommand) 
                 }))
                 .await
         }
-        ClusterCommand::Refresh => Ok(()),
+        ClusterCommand::Refresh
+        | ClusterCommand::UpdateStage { .. }
+        | ClusterCommand::UpdateCommit { .. }
+        | ClusterCommand::UpdateRollback => Ok(()),
     }
 }
 
@@ -1643,9 +1758,20 @@ mod tests {
 
     #[test]
     fn protocol_mismatch_is_explained() {
-        assert!(protocol_mismatch(proto::PROTOCOL_VERSION, "x", true).is_none());
-        let m = protocol_mismatch(1, "0.1.0", true).unwrap();
+        let mut b: proto::Beacon = serde_json::from_value(serde_json::json!({
+            "id": "a", "name": "A", "role": "leader", "board": "difftx", "ver": "0.1.0", "http": 80,
+            "proto": proto::PROTOCOL_VERSION
+        }))
+        .unwrap();
+        assert!(protocol_mismatch(&b, true).is_none());
+        b.proto = 1;
+        let m = protocol_mismatch(&b, true).unwrap();
         assert!(m.contains("protocol 1") && m.contains("update both"), "{m}");
+        // A newer release that still speaks our protocol is fine (F15).
+        b.proto = proto::PROTOCOL_VERSION + 1;
+        b.proto_min = Some(proto::PROTOCOL_VERSION);
+        b.proto_max = Some(proto::PROTOCOL_VERSION + 1);
+        assert!(protocol_mismatch(&b, true).is_none());
     }
 
     #[test]
@@ -1656,8 +1782,29 @@ mod tests {
             dh: "ab".repeat(32),
             force: false,
             name: None,
+            assume_id: None,
+            hostname: None,
+            board: None,
+            board_rev: None,
         };
         assert!(validate_call(&ok).is_ok());
+        // F10 takeover fields are validated too.
+        let mut t = ok.clone();
+        t.assume_id = Some("abcDEF1234".into());
+        t.hostname = Some("pixelplus-garage".into());
+        t.board_rev = Some("E".into());
+        assert!(validate_call(&t).is_ok());
+        for (id, host, rev) in [
+            ("../etc", "ok", "E"),
+            ("abc", "bad host!", "E"),
+            ("abc", "ok", "E; rm"),
+        ] {
+            let mut b = ok.clone();
+            b.assume_id = Some(id.into());
+            b.hostname = Some(host.into());
+            b.board_rev = Some(rev.into());
+            assert!(validate_call(&b).is_err(), "{id} {host} {rev}");
+        }
         for url in [
             "file:///etc/passwd",
             "http://attacker.example.com",

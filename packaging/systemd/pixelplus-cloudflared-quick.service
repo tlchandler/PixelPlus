@@ -1,0 +1,29 @@
+[Unit]
+Description=PixelPlus temporary public link (Cloudflare quick tunnel, no account)
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/INSTALL.md
+# Started by the root helper (`pixelplus-helper cloudflared-quick:on`); never enabled:
+# the random *.trycloudflare.com name changes whenever it restarts. It publishes ONLY
+# PixelPlus's public-only port (song requests, games), never the admin UI. pixelplusd
+# reads the name from the metrics server (127.0.0.1:20241/quicktunnel).
+After=network-online.target pixelplusd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PIXELPLUS_PUBLIC_PORT=8081
+EnvironmentFile=-/etc/default/pixelplus
+ExecStart=/bin/sh -c 'exec /usr/bin/cloudflared --no-autoupdate tunnel --metrics 127.0.0.1:20241 --url "http://127.0.0.1:$${PIXELPLUS_PUBLIC_PORT}"'
+Restart=on-failure
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=

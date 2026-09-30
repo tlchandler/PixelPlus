@@ -11,6 +11,14 @@
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Waveform from '$lib/components/viz/Waveform.svelte';
+	import SequencePreview from '$lib/components/viz/SequencePreview.svelte';
+	import TagChips from '$lib/components/library/TagChips.svelte';
+	import TagInput from '$lib/components/library/TagInput.svelte';
+	import AnalysisView from '$lib/components/library/AnalysisView.svelte';
+	import AutoShowDialog from '$lib/components/library/AutoShowDialog.svelte';
+	import { library, type HistoryRow } from '$lib/library/api';
+	import { activeJob, waitJob } from '$lib/library/jobs.svelte';
+	import { allTags, energyGlyph, energyWord, parseTags } from '$lib/library/tags';
 	import {
 		UploadCloud,
 		Music,
@@ -26,7 +34,13 @@
 		CircleAlert,
 		Volume2,
 		Mic,
-		AudioLines
+		AudioLines,
+		Eye,
+		Sparkles,
+		Tags,
+		X,
+		RefreshCw,
+		ListChecks
 	} from '@lucide/svelte';
 	import { slide } from 'svelte/transition';
 
@@ -54,12 +68,86 @@
 	let upSeq = 0;
 
 	const target = $derived(show?.settings.audio.targetLufs ?? -14);
-	const seqs = $derived(
-		show?.sequences.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase())) ?? []
-	);
-	const media = $derived(
-		show?.media.filter((m) => !q || m.name.toLowerCase().includes(q.toLowerCase())) ?? []
-	);
+	/** Tags the list is filtered by (all must match). */
+	let tagFilter = $state<string[]>([]);
+	let selecting = $state(false);
+	let picked = $state<string[]>([]);
+	let bulkText = $state('');
+	let previewSeq = $state<Sequence | null>(null);
+	let autoFor = $state<Media | null>(null);
+	let history = $state<Record<string, HistoryRow>>({});
+
+	const tags = $derived(allTags(show));
+	const defs = $derived(show?.tagDefs ?? []);
+	function matches(x: { name: string; tags?: string[] }) {
+		const t = x.tags ?? [];
+		const needle = q.trim().toLowerCase();
+		return (
+			(!needle || x.name.toLowerCase().includes(needle) || t.some((tag) => tag.includes(needle))) &&
+			tagFilter.every((f) => t.includes(f))
+		);
+	}
+	const seqs = $derived(show?.sequences.filter(matches) ?? []);
+	const media = $derived(show?.media.filter(matches) ?? []);
+	const visibleIds = $derived((tab === 'sequences' ? seqs : media).map((x) => x.id));
+
+	$effect(() => {
+		// Play counts for the last two weeks (from the show journal).
+		library
+			.history(14)
+			.then((rows) => (history = Object.fromEntries(rows.map((r) => [r.sequenceId, r]))))
+			.catch(() => {});
+	});
+
+	function toggleTag(t: string) {
+		tagFilter = tagFilter.includes(t) ? tagFilter.filter((x) => x !== t) : [...tagFilter, t];
+	}
+	function togglePick(id: string) {
+		picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
+	}
+	function endSelect() {
+		selecting = false;
+		picked = [];
+		bulkText = '';
+	}
+	async function bulk(mode: 'add' | 'remove') {
+		const t = parseTags(bulkText);
+		if (!t.length || !picked.length) return;
+		const n = picked.length;
+		await app.mutate(() => library.bulkTags(picked, mode === 'add' ? t : [], mode === 'remove' ? t : []), {
+			success: mode === 'add' ? `Tagged ${plural(n, 'item')}` : `Removed the tag from ${plural(n, 'item')}`
+		});
+		bulkText = '';
+	}
+	async function setSeqTags(s: Sequence, t: string[]) {
+		await app.mutate(() => api.sequences.update(s.id, { tags: t }));
+	}
+	async function setMediaTags(m: Media, t: string[]) {
+		await app.mutate(() => api.media.update(m.id, { tags: t }));
+	}
+	async function regenerate(s: Sequence, fresh: boolean) {
+		try {
+			const { jobId } = await library.regenerate(
+				s.id,
+				fresh ? { seed: Math.floor(Math.random() * 1e6) } : {}
+			);
+			toasts.info(fresh ? `Making new moves for “${s.name}”…` : `Updating “${s.name}”…`);
+			await waitJob(jobId);
+			await app.reloadShow();
+			toasts.success(`“${s.name}” is updated`, { label: 'Preview', run: () => openPreview(s.id) });
+		} catch (e) {
+			toasts.error('Couldn’t update the light show', (e as Error).message);
+		}
+	}
+	function openPreview(id: string) {
+		const s = app.show?.sequences.find((x) => x.id === id);
+		if (s) previewSeq = s;
+	}
+	function playsText(id: string) {
+		const h = history[id];
+		if (!h?.plays) return '';
+		return `Played ${plural(h.plays, 'time')} in 2 weeks`;
+	}
 
 	function mediaOf(s: Sequence): Media | undefined {
 		return show?.media.find((m) => m.id === s.mediaId);
@@ -359,7 +447,34 @@
 				aria-label="Search"
 			/>
 		</div>
+		{#if show && (show.sequences.length || show.media.length)}
+			<button
+				class="btn sm"
+				class:primary={selecting}
+				onclick={() => (selecting ? endSelect() : (selecting = true))}
+				aria-pressed={selecting}
+				aria-label={selecting ? 'Done selecting' : 'Select songs to tag'}
+				><ListChecks size={15} /><span class="hide-sm">{selecting ? 'Done' : 'Select'}</span></button
+			>
+		{/if}
 	</div>
+
+	{#if tags.length}
+		<div class="tagbar" role="group" aria-label="Filter by tag">
+			<Tags size={14} />
+			{#each tags as t (t.name)}
+				<button
+					class="tf"
+					class:on={tagFilter.includes(t.name)}
+					aria-pressed={tagFilter.includes(t.name)}
+					onclick={() => toggleTag(t.name)}>{t.name}<span class="faint num">{t.count}</span></button
+				>
+			{/each}
+			{#if tagFilter.length}<button class="tf clear" onclick={() => (tagFilter = [])}
+					><X size={12} /> Clear</button
+				>{/if}
+		</div>
+	{/if}
 
 	{#if !show}
 		<div class="card card-pad"><Skeleton count={6} h={40} /></div>
@@ -382,8 +497,23 @@
 					{@const m = mediaOf(s)}
 					{@const ld = loudness(m)}
 					{@const am = audioMatch(s)}
-					<div class="srow" id="row-{s.id}" class:fresh={fresh.has(s.id)}>
+					{@const busy = activeJob(s.id, 'autoshow')}
+					<div
+						class="srow"
+						id="row-{s.id}"
+						class:fresh={fresh.has(s.id)}
+						class:picked={picked.includes(s.id)}
+					>
 						<div class="list-row">
+							{#if selecting}
+								<input
+									type="checkbox"
+									class="pick"
+									checked={picked.includes(s.id)}
+									onchange={() => togglePick(s.id)}
+									aria-label="Select {s.name}"
+								/>
+							{/if}
 							<button
 								class="thumb"
 								style:background={strip(s)}
@@ -398,14 +528,33 @@
 									/>{/if}
 							</button>
 							<div class="grow sinfo">
-								<button class="sname ellipsis" onclick={() => toggleExpand(s.id, m?.id)}>{s.name}</button>
+								<button class="sname ellipsis" onclick={() => toggleExpand(s.id, m?.id)}
+									>{s.name}{#if s.generated}<span class="auto" title="Made by PixelPlus"
+											><Sparkles size={11} /> Auto</span
+										>{/if}</button
+								>
 								<div class="faint small row wrap" style="gap:6px 10px">
 									<span class="num">{fmtDuration(s.durationMs)}</span>
+									{#if m?.analysis && m.analysis.bpm > 0}<span
+											class="bpm num"
+											title="{energyWord(m.analysis.energy)} · {m.analysis.sections} parts"
+											>{Math.round(m.analysis.bpm)} BPM · {energyGlyph(m.analysis.energy)}</span
+										>{/if}
 									{#if m}<span class="linked"><Link2 size={12} /> {m.name}</span>{:else if am}
 										<button class="suggest" onclick={() => linkAudio(s, am.id)}
 											><Link2 size={12} /> Link “{am.name}”?</button
 										>
 									{:else}<span class="nolink"><Link2Off size={12} /> Light-only (no song)</span>{/if}
+									{#if busy}<span class="updating">Updating… {busy.pct}%</span>{/if}
+									<span class="hide-sm"
+										><TagChips
+											tags={s.tags ?? []}
+											{defs}
+											active={tagFilter}
+											onpick={toggleTag}
+											max={3}
+										/></span
+									>
 								</div>
 							</div>
 							{#if ld}<span
@@ -413,6 +562,12 @@
 									title="Turn on volume leveling (Settings → Audio) to even this out"
 									><Volume2 size={12} /> {ld.label}</span
 								>{/if}
+							<button
+								class="btn sm ghost icon"
+								onclick={() => (previewSeq = s)}
+								aria-label="Preview {s.name} on this device"
+								title="Preview here (lights stay as they are)"><Eye size={15} /></button
+							>
 							<button
 								class="btn sm ghost icon"
 								onclick={() => playerAct(() => api.play({ sequenceId: s.id }))}
@@ -430,6 +585,18 @@
 						</div>
 						{#if expanded === s.id}
 							<div class="detail" transition:slide={{ duration: 180 }}>
+								{#if s.generated}
+									<div class="gen">
+										<Sparkles size={15} />
+										<span class="grow small"
+											>Made by PixelPlus from “{show.media.find((x) => x.id === s.generated?.mediaId)?.name ??
+												'a song'}”. It updates itself when you change your props.</span
+										>
+										<button class="btn sm" onclick={() => regenerate(s, true)} disabled={!!busy}
+											><RefreshCw size={13} /> New moves</button
+										>
+									</div>
+								{/if}
 								{#if m}
 									<div class="wave">
 										<button
@@ -447,6 +614,17 @@
 										</div>
 									</div>
 								{/if}
+								{#if m}<AnalysisView media={m} />{/if}
+								<div class="field">
+									<span class="label">Tags</span>
+									<TagInput
+										tags={s.tags ?? []}
+										suggestions={tags.map((t) => t.name)}
+										{defs}
+										label="Add a tag to {s.name}"
+										onchange={(t) => setSeqTags(s, t)}
+									/>
+								</div>
 								<div class="form-grid">
 									<label class="field"
 										><span class="label">Audio</span>
@@ -469,15 +647,22 @@
 										<summary class="small muted">Advanced</summary>
 										<div class="faint small" style="margin-top:6px">
 											Smoothness: <strong>{smoothness(s.frameMs)}</strong> ({Math.round(1000 / s.frameMs)} updates
-											a second, set in xLights when the sequence was made)
+											a second, {s.generated
+												? 'as PixelPlus made it'
+												: 'set in xLights when the sequence was made'})
 										</div>
+										{#if playsText(s.id)}<div class="faint small">{playsText(s.id)}</div>{/if}
 									</details>
 								</div>
 							</div>
 						{/if}
 					</div>
 				{:else}
-					<div class="card-body faint small">No sequences match “{q}”.</div>
+					<div class="card-body faint small">
+						No sequences match{q ? ` “${q}”` : ''}{tagFilter.length ? ` with ${tagFilter.join(' + ')}` : ''}.
+						{#if tagFilter.length}<button class="linkbtn" onclick={() => (tagFilter = [])}>Clear tags</button
+							>{/if}
+					</div>
 				{/each}
 			</div>
 		{/if}
@@ -494,8 +679,22 @@
 			<div class="card list">
 				{#each media as m (m.id)}
 					{@const ld = loudness(m)}
-					<div class="srow" id="row-{m.id}" class:fresh={fresh.has(m.id)}>
+					<div
+						class="srow"
+						id="row-{m.id}"
+						class:fresh={fresh.has(m.id)}
+						class:picked={picked.includes(m.id)}
+					>
 						<div class="list-row">
+							{#if selecting}
+								<input
+									type="checkbox"
+									class="pick"
+									checked={picked.includes(m.id)}
+									onchange={() => togglePick(m.id)}
+									aria-label="Select {m.name}"
+								/>
+							{/if}
 							<button
 								class="play-dot"
 								class:on={playingMedia === m.id}
@@ -507,10 +706,26 @@
 									/>{:else if m.kind === 'sfx'}<AudioLines size={16} />{:else}<Music size={16} />{/if}
 							</button>
 							<div class="grow sinfo">
-								<span class="sname ellipsis">{m.name}</span>
-								<div class="faint small row" style="gap:10px">
+								<button class="sname ellipsis" onclick={() => (expanded = expanded === m.id ? null : m.id)}
+									>{m.name}</button
+								>
+								<div class="faint small row wrap" style="gap:6px 10px">
 									<span class="num">{fmtDuration(m.durationMs)}</span><span
 										>{m.kind === 'song' ? 'Song' : m.kind === 'dj' ? 'DJ clip' : 'Sound effect'}</span
+									>
+									{#if m.analysis && m.analysis.bpm > 0}<span class="bpm num"
+											>{Math.round(m.analysis.bpm)} BPM · {energyGlyph(m.analysis.energy)}</span
+										>{:else if activeJob(m.id, 'analysis')}<span class="updating"
+											>Listening for the beat…</span
+										>{/if}
+									<span class="hide-sm"
+										><TagChips
+											tags={m.tags ?? []}
+											{defs}
+											active={tagFilter}
+											onpick={toggleTag}
+											max={3}
+										/></span
 									>
 									{#if show.sequences.some((s) => s.mediaId === m.id)}<span class="linked"
 											><Link2 size={12} /> {show.sequences.find((s) => s.mediaId === m.id)?.name}</span
@@ -521,6 +736,15 @@
 									<Waveform peaks={peaks[m.id] ?? []} progress={audioPos} height={28} />
 								</div>{/if}
 							{#if ld}<span class="badge {ld.cls} hide-sm"><Volume2 size={12} /> {ld.label}</span>{/if}
+							{#if m.kind !== 'sfx'}
+								<button
+									class="btn sm ghost make"
+									onclick={() => (autoFor = m)}
+									aria-label="Make a light show for {m.name}"
+									title="Make a light show for this song"
+									><Sparkles size={14} /><span class="hide-sm">Light show</span></button
+								>
+							{/if}
 							<button
 								class="btn sm ghost icon hide-sm"
 								onclick={() => (renaming = { kind: 'media', id: m.id, name: m.name })}
@@ -530,7 +754,31 @@
 								><Trash2 size={14} /></button
 							>
 						</div>
+						{#if expanded === m.id}
+							<div class="detail media-detail" transition:slide={{ duration: 180 }}>
+								<AnalysisView media={m} />
+								<div class="field">
+									<span class="label">Tags</span>
+									<TagInput
+										tags={m.tags ?? []}
+										suggestions={tags.map((t) => t.name)}
+										{defs}
+										label="Add a tag to {m.name}"
+										onchange={(t) => setMediaTags(m, t)}
+									/>
+								</div>
+								{#if m.kind !== 'sfx' && !show.sequences.some((x) => x.mediaId === m.id)}
+									<div class="gen">
+										<Sparkles size={15} />
+										<span class="grow small">No light sequence for this song yet.</span>
+										<button class="btn sm primary" onclick={() => (autoFor = m)}>Make a light show</button>
+									</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
+				{:else}
+					<div class="card-body faint small">No audio matches your search.</div>
 				{/each}
 			</div>
 			<p class="faint tiny" style="margin-top:10px">
@@ -541,6 +789,73 @@
 		{/if}
 	{/if}
 </div>
+
+{#if selecting}
+	<div class="bulkbar" transition:slide={{ duration: 160 }} role="region" aria-label="Tag selected items">
+		<span class="small"
+			><strong class="num">{picked.length}</strong> selected
+			{#if visibleIds.length && picked.length < visibleIds.length}<button
+					class="linkbtn"
+					onclick={() => (picked = [...new Set([...picked, ...visibleIds])])}>Select all</button
+				>{/if}</span
+		>
+		<input
+			class="input sm"
+			bind:value={bulkText}
+			placeholder="Tag, e.g. kids"
+			aria-label="Tag to add or remove"
+			list="bulk-tags"
+			onkeydown={(e) => e.key === 'Enter' && bulk('add')}
+		/>
+		<datalist id="bulk-tags"
+			>{#each tags as t (t.name)}<option value={t.name}></option>{/each}</datalist
+		>
+		<button class="btn sm primary" onclick={() => bulk('add')} disabled={!picked.length || !bulkText.trim()}
+			>Add tag</button
+		>
+		<button class="btn sm" onclick={() => bulk('remove')} disabled={!picked.length || !bulkText.trim()}
+			>Remove</button
+		>
+		<button class="btn sm ghost icon" onclick={endSelect} aria-label="Stop selecting"><X size={15} /></button>
+	</div>
+{/if}
+
+<Modal
+	open={!!previewSeq}
+	title={previewSeq ? previewSeq.name : 'Preview'}
+	subtitle="Plays on this device only"
+	size="lg"
+	onclose={() => (previewSeq = null)}
+>
+	{#if previewSeq}
+		<SequencePreview sequenceId={previewSeq.id} mediaId={previewSeq.mediaId} autoplay />
+	{/if}
+	{#snippet footer()}
+		{#if previewSeq}
+			<a class="btn ghost" href="/layout?preview={previewSeq.id}">Open on the Layout page</a>
+			<button
+				class="btn"
+				onclick={() => {
+					const s = previewSeq;
+					previewSeq = null;
+					if (s) playerAct(() => api.play({ sequenceId: s.id }));
+				}}><Play size={15} /> Play on the lights</button
+			>
+		{/if}
+	{/snippet}
+</Modal>
+
+<AutoShowDialog
+	bind:media={autoFor}
+	oncreated={(id) => {
+		tab = 'sequences';
+		fresh = new Set([id]);
+		setTimeout(() => (fresh = new Set()), 4000);
+		requestAnimationFrame(() =>
+			document.getElementById(`row-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+		);
+	}}
+/>
 
 <Modal open={!!renaming} title="Rename" size="sm" onclose={() => (renaming = null)}>
 	{#if renaming}<form id="ren" onsubmit={doRename}>
@@ -704,6 +1019,117 @@
 	.adv summary {
 		cursor: pointer;
 	}
+	.tagbar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		margin: -6px 0 14px;
+		color: var(--text-3);
+	}
+	.tf {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		height: 30px;
+		padding: 0 12px;
+		border-radius: 99px;
+		font-size: 12.5px;
+		font-weight: 550;
+		color: var(--text-2);
+		background: var(--surface);
+		border: 1px solid var(--border);
+	}
+	.tf:hover {
+		color: var(--text);
+		border-color: var(--border-3);
+	}
+	.tf.on {
+		background: var(--accent-soft);
+		border-color: var(--accent);
+		color: var(--accent-text);
+	}
+	.tf.clear {
+		border-style: dashed;
+	}
+	.pick {
+		width: 20px;
+		height: 20px;
+		flex: 0 0 auto;
+		accent-color: var(--accent);
+	}
+	.srow.picked {
+		background: var(--accent-soft);
+	}
+	.auto {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		margin-left: 8px;
+		padding: 1px 7px;
+		border-radius: 99px;
+		font-size: 11px;
+		font-weight: 600;
+		vertical-align: 2px;
+		color: var(--accent-text);
+		background: var(--accent-soft);
+	}
+	.bpm {
+		color: var(--text-2);
+		white-space: nowrap;
+	}
+	.updating {
+		color: var(--accent-text);
+		font-size: 12px;
+	}
+	.gen {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+		padding: 10px 12px;
+		border-radius: 12px;
+		background: var(--accent-soft);
+		color: var(--accent-text);
+	}
+	.gen .small {
+		color: var(--text-2);
+	}
+	.make {
+		gap: 6px;
+		color: var(--accent-text);
+	}
+	.linkbtn {
+		color: var(--accent-text);
+		font-weight: 600;
+		margin-left: 6px;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	.bulkbar {
+		position: fixed;
+		left: 50%;
+		transform: translateX(-50%);
+		bottom: calc(var(--transport-h, 72px) + 12px);
+		z-index: 40;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		width: min(720px, calc(100% - 24px));
+		padding: 10px 12px;
+		border-radius: 16px;
+		background: var(--surface);
+		border: 1px solid var(--border-2);
+		box-shadow: var(--shadow-3, 0 10px 30px rgba(0, 0, 0, 0.35));
+	}
+	.bulkbar .input {
+		flex: 1 1 140px;
+		min-width: 120px;
+	}
+	.media-detail {
+		padding-left: 72px;
+	}
 	.detail {
 		padding: 0 20px 18px 104px;
 		display: flex;
@@ -741,8 +1167,12 @@
 		.hide-sm {
 			display: none;
 		}
-		.detail {
+		.detail,
+		.media-detail {
 			padding: 0 16px 16px;
+		}
+		.bulkbar {
+			bottom: calc(var(--tabbar-h, 64px) + 84px + env(safe-area-inset-bottom));
 		}
 		.thumb {
 			width: 52px;

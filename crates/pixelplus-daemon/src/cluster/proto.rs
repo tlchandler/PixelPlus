@@ -41,6 +41,27 @@ use std::net::IpAddr;
 /// integer-ms positions; 2 = 4-timestamp pong (`t2`), timeline anchors in sync
 /// packets (`anchor`), sync-quality reports.
 pub const PROTOCOL_VERSION: u32 = 2;
+/// Oldest protocol this release still interoperates with (beacon
+/// `protoMin`, F15 version tolerance). A future release that changes the
+/// wire format keeps speaking the previous version while its peers are older,
+/// so a cluster update never leaves controllers unable to talk.
+pub const PROTOCOL_MIN: u32 = 2;
+/// Newest protocol this release speaks (beacon `protoMax`).
+pub const PROTOCOL_MAX: u32 = PROTOCOL_VERSION;
+
+/// The protocol range a beacon announces (`protoMin..=protoMax`, else just `proto`).
+pub fn proto_range(b: &Beacon) -> (u32, u32) {
+    let min = b.proto_min.unwrap_or(b.proto);
+    let max = b.proto_max.unwrap_or(b.proto).max(min);
+    (min, max)
+}
+
+/// The protocol two nodes speak: the newest both support (the leader speaks
+/// `min(leader.max, follower.max)`), `None` when their ranges don't overlap.
+pub fn negotiate(a: (u32, u32), b: (u32, u32)) -> Option<u32> {
+    let v = a.1.min(b.1);
+    (v >= a.0.max(b.0)).then_some(v)
+}
 
 fn proto_v1() -> u32 {
     1
@@ -88,6 +109,30 @@ pub struct FollowerReport {
     /// Power limiter activity (F12).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limiter: Option<LimiterReport>,
+    /// Software update state (F15 cluster updates).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<UpdateReport>,
+}
+
+/// A follower's software-update state, in its beacon report (F15).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateReport {
+    /// Debian architecture (`arm64`, `amd64`).
+    pub arch: String,
+    /// It can install packages (packaged helper present, not Docker).
+    #[serde(default)]
+    pub can_apply: bool,
+    /// Free space in the data directory (MB).
+    #[serde(default)]
+    pub disk_free_mb: u64,
+    /// `idle` | `staging` | `staged` | `committing` | `rollingBack` | `failed`.
+    pub phase: String,
+    /// Version being staged / staged / installed by the last job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// What a follower's power limiter did (F12), in its beacon report.
@@ -202,6 +247,10 @@ pub struct Beacon {
     pub proto_min: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proto_max: Option<u32>,
+    /// Hardware serial (board EEPROM, else the Pi's), F10: tells a retired
+    /// controller from its replacement, which took over its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hw: Option<String>,
 }
 
 /// Follower → leader clock probe.
@@ -730,6 +779,7 @@ mod tests {
             report: None,
             joining: false,
             proto: PROTOCOL_VERSION,
+            hw: None,
         });
         let v: serde_json::Value = serde_json::from_slice(&encode(&b, None)).unwrap();
         assert_eq!(v["proto"], PROTOCOL_VERSION);
@@ -844,5 +894,22 @@ mod tests {
         assert_eq!(g.boot("l"), Some("b2"));
         g.forget("l");
         assert_eq!(g.boot("l"), None);
+    }
+
+    #[test]
+    fn protocol_ranges_negotiate() {
+        assert_eq!(negotiate((2, 2), (2, 2)), Some(2));
+        // A newer release that still speaks 2 talks 2 with an older node.
+        assert_eq!(negotiate((2, 3), (2, 2)), Some(2));
+        assert_eq!(negotiate((2, 3), (1, 3)), Some(3));
+        assert_eq!(negotiate((3, 4), (1, 2)), None);
+        let mut b: Beacon = serde_json::from_value(serde_json::json!({
+            "id": "a", "name": "A", "role": "follower", "board": "difftx", "ver": "1", "http": 80
+        }))
+        .unwrap();
+        assert_eq!(proto_range(&b), (1, 1), "absent = protocol 1");
+        b.proto = 2;
+        b.proto_max = Some(3);
+        assert_eq!(proto_range(&b), (2, 3));
     }
 }

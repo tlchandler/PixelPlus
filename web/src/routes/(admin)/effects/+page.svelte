@@ -10,10 +10,14 @@
 	import Drawer from '$lib/components/ui/Drawer.svelte';
 	import EffectPreview from '$lib/components/viz/EffectPreview.svelte';
 	import ParamEditor from '$lib/components/effects/ParamEditor.svelte';
+	import BeatPulse from '$lib/components/effects/BeatPulse.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import { Radio, Square, Trash2, WandSparkles, Plus, Check } from '@lucide/svelte';
 
 	const show = $derived(app.show);
+	// Beat-reactive params (F2) get their own "Pulse to a beat" editor.
+	const BEAT_KEYS = ['beatBpm', 'beatPhaseMs', 'beatDepth', 'beatDecayMs', 'beatFollowSong'];
+	const editable = (kind: EffectKind) => (schema[kind] ?? []).filter((s) => !BEAT_KEYS.includes(s.key));
 	let schema = $state<EffectSchema>(DEFAULT_EFFECT_SCHEMA);
 	let draft = $state<EffectPreset | null>(null);
 	let open = $state(false);
@@ -240,7 +244,8 @@
 			</select>
 		</label>
 
-		<ParamEditor schema={schema[draft.effect] ?? []} bind:params={draft.params} onchange={paramsChanged} />
+		<ParamEditor schema={editable(draft.effect)} bind:params={draft.params} onchange={paramsChanged} />
+		<BeatPulse bind:params={draft.params} onchange={paramsChanged} />
 
 		<div class="field" style="margin-top:22px">
 			<span class="label">Show it on</span>

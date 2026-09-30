@@ -34,6 +34,9 @@ pub fn screen(state: &AppState) -> StatusScreen {
         .map(|r| r.sensor.value)
         .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |a| a.max(v))))
         .or_else(|| super::system::soc_temp().map(f64::from));
+    // While a phone compares the secure-connection fingerprint (F1: /trust
+    // page or Settings → Secure connection), show it instead of the song.
+    let song = super::tls::oled_line(state).or(song);
     StatusScreen {
         name,
         state: st,

@@ -937,16 +937,172 @@ inside its own section below.
 | 12.16 | F20 surprises + ESP32 sensor nodes | WS3 (engine), WS6 | `services/sensornodes.rs`, `api/sensornodes.rs` | `/settings/sensors` |
 
 ### 12.1 A/V auto-calibration and HTTPS (F1, WS1)
-_To be written by WS1._ Ports: HTTPS `PIXELPLUS_HTTPS_PORT` (443; Docker 8443; 0 = off).
+
+**Secure connection (HTTPS).** Browsers only give pages the camera and microphone in a secure
+context, so the leader runs its own small certificate authority (`services/tls.rs`):
+
+- **Local CA**: "PixelPlus Local CA – <show> – <id>", EC P-256, 10 years, `CA:true pathlen:0`,
+  **critical name constraints**: DNS `local`, `lan`, `home.arpa`, `internal`, `localhost` and the
+  single-label host name at creation; IP 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10
+  (Tailscale), 127/8, fc00::/7, fe80::/10, ::1. A stolen key can't impersonate public sites (tested:
+  rustls rejects a CA-signed `www.example.com` leaf with `NameConstraintViolation`). Dates never go
+  before 2026-01-01 (a Pi without RTC may boot in 1970).
+- **Leaf**: 397 days, SANs = `<host>.local`, `<host>.lan`, `<host>`, `localhost`,
+  `settings.https.extraNames`, every interface address (no fe80) — filtered to what the CA may sign
+  (`/tls/status.rejectedNames` lists the rest). Checked every 60 s and on every show change;
+  re-issued when a wanted name/IP is missing, 30 days before expiry, or when the CA changed. rustls
+  reads it through a `ResolvesServerCert`, so re-issue is hot (no restart, no phone action).
+- **Files** `<data>/tls/`: `ca.key` (0600), `ca.crt`, `ca.json` (CN + DNS constraints; rcgen rebuilds
+  the issuer from them), `leaf.key` (0600), `leaf.crt`, `leaf.json`. Not in normal snapshots; the F10
+  transfer bundle carries the CA via `tls::export_ca(data_dir)` / `tls::import_ca(...)` (WS5).
+- **Followers** don't serve HTTPS (`tls::active()`: port ≠ 0, `settings.https.enabled`, role ≠ follower).
+- **OLED**: while `/trust`, `/public/tls` or `/tls/status` was used in the last 10 minutes, the song
+  line shows `CA 1A:2B:3C:4D:5E:6F` (first 6 fingerprint bytes; `tls::oled_line`).
+
+**Listeners** (`src/listeners.rs`, called from `main.rs`; bind lazily, retry every 30 s, never stop
+the daemon):
+
+| Listener | Address | Router | Notes |
+|---|---|---|---|
+| HTTP | `PIXELPLUS_HTTP_BIND:PIXELPLUS_HTTP_PORT` (:80) | `api::router` | never redirected |
+| HTTPS | same bind, `PIXELPLUS_HTTPS_PORT` (443; Docker 8443; 0 = off) | `api::router` + `https_layer` | TLS 1.2/1.3 (ring), handshakes in parallel (≤ 64, 10 s timeout), connections dropped while `!tls::active()`; `https_layer` inserts the `ViaHttps` extension and adds `; Secure` to every `Set-Cookie` |
+| Public | `127.0.0.1:PIXELPLUS_PUBLIC_PORT` (8081; 0 = off) | `listeners::public_router` = `api::router` behind WS5's `security::public_only` allow-list | 503 while `settings.remote.publicListener` is off; every response `Connection: close`; `/play` → 308 `/play/`, `/play/<rest>` bridged at TCP level to the games controller `127.0.0.1:<settings.games.port>/<rest>` (HTTP and WebSocket), appending the peer to `X-Forwarded-For` |
+
+The games bridge peeks each connection's first request head (≤ 16 KiB); the games sidecar answers
+one request per connection, and axum closes every public connection, so every request is routed
+afresh even through a tunnel's connection pool. `secureNow` in `/tls/status` is true for `ViaHttps`
+or a loopback peer sending `X-Forwarded-Proto: https` (tailscale serve / cloudflared).
+
+**API** (`api/tls.rs`, `api/calibration.rs`):
+
+| Endpoint | Auth | Result |
+|---|---|---|
+| `GET /tls/status` | admin | `{enabled, port, active, listening, error, role, caFingerprint, caSubject, caCreatedAt, caNotAfter, leafNames[], leafNotAfter, leafIssuedAt, rejectedNames[], urls:{lan[], tailscale?, tunnel?}, secureNow}` |
+| `POST /tls/rotate {ca}` | admin | new leaf; `ca:true` = new CA (every phone must trust again; toast) |
+| `GET /public/tls` | none | `{available, role, port, caFingerprint, caSubject, leafNames[], urls[], secureNow}`; names/URLs only for LAN peers without proxy headers |
+| `GET /public/ca.crt` | none | CA certificate, DER, `application/x-x509-ca-cert`, `PixelPlus-CA.crt` |
+| `GET /public/ca.mobileconfig` | none | iOS profile (`com.apple.security.root`, UUIDs derived from the fingerprint) |
+| `POST /player/calibration {on, pattern:"v2", seed?}` | admin | (WS3, player API) restarts the pattern from position 0 with a new seed: `{seed, v, eventsMs, flashMs, windowMs, leadInMs, chirp:{ms,f0Hz,f1Hz,rampMs}, startsInMs}` |
+| `POST /calibration/result {residualMs, spreadMs, matches, device?, apply}` | admin | `{outputDelayMs, previousDelayMs, previousCalibration, calibration, clamped}`; with `apply`, `outputDelayMs += round(residualMs)` clamped to −500…2000 and `audio.lastCalibration` set, via the show store (followers follow) |
+| `POST /calibration/undo {outputDelayMs, lastCalibration?}` | admin | restores what the page saw before applying |
+
+**Pattern v2** (`core/calpattern.rs`, mirrored in `web/src/lib/sensing/schedule.ts`; shared test
+vector `events_ms(1)[..8] = 2000, 2570, 3200, 4010, 4760, 5630, 6500, 6950`): cycle `RUN_MS` 60 s
+(the engine loops it), 2 s dark lead-in, events from a 32-bit Galois LFSR (taps `0x80200003`,
+clocked 8× per event, seed 0 → `0x5EEDCA11`): `gap = 450 + (state mod 8)·60 ms`, none in the last
+1 s. Light: everything full white for `max(80 ms, 2 slots)` from each event
+(`CalSchedule::flash_on`, O(log n); `flash_on_v2(pos, seed, slot)`). Sound: an 8 ms linear chirp
+2→4 kHz with 0.5 ms raised-cosine ramps, level 0.85, starting exactly at each event; mono 16-bit
+24 kHz WAV (`calpattern::wav`, cached as `cache/cal-<seed>.wav`).
+
+**Measurement (phone, `web/src/lib/sensing/`)** — no phone↔controller clock sync is needed:
+both streams are timed on the phone clock (`performance.now()`) and each is correlated with the
+schedule separately.
+
+1. *Microphone* (`mic.ts`, `audio-onset.ts`): raw getUserMedia audio (echo cancellation, noise
+   suppression, AGC off) through an AudioWorklet (ScriptProcessor fallback), chunks tagged with the
+   context frame. Band-pass 1.5–5 kHz (2+2 biquads) → FFT overlap-save matched filter with the chirp
+   passed through the same band-pass (zero net phase) and its Hilbert quadrature (envelope ignores
+   polarity/phase smear) → onset = first envelope sample above `median + 8·MAD` of the last 2 s,
+   refined to the peak within one template length, parabolic interpolation; 250 ms refractory.
+   Frame → phone time: least-squares fit of `getOutputTimestamp()` pairs, minus `outputLatency`,
+   minus input latency (`track.stats` latency when present, else `baseLatency`).
+2. *Camera* (`camera.ts`, `frames.ts`, `frames.worker.ts`, `video-onset.ts`): back camera
+   640×480@30, `requestVideoFrameCallback` time = `captureTime` (else `expectedDisplayTime − 1
+   frame`); exposure locked to ≈ 0.95 frame time when the phone allows it. Each frame → 160×120
+   luma in a worker (OffscreenCanvas; page fallback), linearised (γ 2.2); signal = mean of the top
+   5 % positive differences from the per-pixel minimum of the previous 8 frames. Flash onset =
+   `t_j + Δt·(1 − f)` for the first partly lit frame j (`f` = its level relative to the flash's
+   plateau), plus a rolling-shutter correction `0.75·Δt·(centroid_y − 0.5)`.
+3. *Association* (`associate.ts`): pairwise differences detection − schedule (periodic by
+   `windowMs`) in 2 ms bins, ±25 ms box filter → offset; unique matches within ±25 ms, two median
+   refinements, then the inlier mean; spread = 1.4826·MAD. Video offset searched ±1.5 s around
+   `pos0 + currentDelay` (`pos0` = reply midpoint + `startsInMs`); audio relative to video within
+   the plausible residual range (−150…900 ms of delay, or …2300 ms with "radio").
+4. *Result* (`calibrate.ts`): `residual = (o_audio − o_video) − phoneBias`; needs
+   ≥ min(20, 60 % of expected) matches per stream (≥ 8), spreads ≤ 15 ms and a clear histogram
+   peak (≥ 1.5× runner-up), else a specific hint ("Too noisy — move closer to the radio…").
+   Badge: spread < 5 ms Excellent, < 12 ms Good, else Measure again. Shown ± = 95 % of the mean's
+   error plus 5 ms (2 ms after the clap test) for the phone. Verify run passes at |residual| < 8 ms.
+   A reply without a seed (old controller) falls back to the classic 1 s pattern, ±500 ms range.
+5. *Phone bias* (`clap.ts`, `device.ts`): 14 s clap test at ~1 m; claps heard (1–10 kHz attack)
+   vs hands stopping on camera (motion drop, sub-frame); `bias = median(heard − 2.9 ms − seen)`,
+   kept in `localStorage["pp.avBias.<model>"]` if ≥ 5 pairs, spread < 20 ms, |bias| < 150 ms.
+
+Accuracy target (spec): ±10 ms without, ±5 ms with the clap test. Synthetic tests (vitest:
+chirps in noise/hum/echo/inversion; frames with flashes mid-exposure, 15–60 fps, drift, jitter,
+rolling shutter; association with 30 % drop-outs + false positives; end-to-end sessions) recover
+the delay within 2 ms. **Needs real phones**: bypassed-certificate getUserMedia on Android Chrome,
+Pixel/Samsung CA install paths, `captureTime`/`track.stats` behaviour per OEM, the rolling-shutter
+readout fraction, and accuracy against a scope on the SYNC header (3+ phones, FM and Bluetooth).
+
+**Web**: `/calibrate` (admin; SecureGate → where are you + "radio" → allow camera & microphone →
+aim with live "Seeing flashes / Hearing clicks" meters → ~25 s measuring ring (screen kept awake) →
+result: Apply (toast with Undo) / Measure again / Adjust by hand, optional "Check it" verify run;
+"Fine-tune for this phone" clap test); `/trust` (public: fingerprint, Android / iPhone steps,
+download, "Open secure page", Proceed-anyway fallback); `/settings/https` (on/off, status, QR code
+to `/trust`, fingerprint, addresses, other names, renew / reset); SyncWizard's
+"Measure with my phone" entry. `components/ui/SecureGate.svelte` (used by the mapping pages too)
+offers, when a page isn't secure: Tailscale URL → `https://<same host or first LAN IP>[:port]<path>`
+(+ "Make this phone trusted" / "Advanced → Proceed") → Cloudflare admin host.
 
 ### 12.2 Audio analysis and auto light show (F2, WS2)
-_To be written by WS2._
+
+**Files:** `core/audio_analysis.rs` (DSP), `core/autoshow.rs` (generator), `services/analysis.rs` (job queue), `services/media.rs` (`decode_mono`), `api/autoshow.rs`. Web: `lib/library/*`, `components/library/{AnalysisView,AutoShowDialog}.svelte`, Sequences page.
+
+**Analysis pipeline.** Every audio import (`api/content.rs` → `import_media_file`) queues a background `analysis` job. The worker decodes with symphonia (ffmpeg fallback), downmixes to mono and streams into `audio_analysis::Analyzer` (input ≥ 32 kHz is halved first). DSP: Hann STFT 1024/256, log-magnitude flux in 8 log bands (30 Hz–11 kHz) → onset strength (1 s mean removed, σ-normalised); tempo by autocorrelation × log-Gaussian prior (µ 120, σ 1 octave) with the 80–160 BPM octave rule plus an "equal off-beats → faster tempo" check; local tempo per 20 s (`tempoCurve`); Ellis DP beat tracker (tightness 100); BPM refined by the least-squares slope of the beats; downbeats = bar phase with most bass onset + chroma change; energy at 10 Hz (RMS, low/mid/high, each 0–255 between the song's 5th–95th percentile); sections from a Gaussian checkerboard novelty (±4 s) over the energy vectors, ≥ 8 s apart, labelled low/mid/high. Memory is per-frame scalars only; audio beyond 20 min is ignored.
+
+**Output.** `media/<id>.analysis.json` (`v`=1; `{v, sr, hopMs, durationMs, bpm, bpmConfidence 0..1, tempoCurve[], beats[ms], downbeats[ms], downbeatConfidence, onsets[{ms,strength 0..1,band 0|1|2}], energy10Hz{rms,low,mid,high: u8[]}, sections[{startMs,endMs,level}]}`, ≈ 50 KB for 4 min) and the summary `Media.analysis`. A maintenance sweep (start-up, show changes, every 5 min) queues missing / outdated analyses; failures are not retried until "Analyze again".
+
+**Jobs.** One worker thread `pp-analysis` at `nice 10`; interactive jobs (auto show, preview, re-analyse) before background ones; on a Pi Zero background work waits while a scheduled show runs. WS `job` `{id, kind:"analysis"|"autoshow"|"preview", pct, state:"queued"|"running"|"done"|"failed", result?:{sequenceId?,message?}, subject?}`; `GET /jobs`, `GET /jobs/:id` for polling.
+
+**Auto light show.** `autoshow::render` is a pure function (props, analysis, style, seed) → FSEQ v2 zstd at 25 ms in the show's full channel space (unused props dark), written through `FseqWriter` with a deterministic header id, so the same inputs give byte-identical files (and followers keep cached slices). Per section an effect family by level (low: wash/twinkle/breathe; mid: chase/wave/candy; high: meteor/fast chase/sparkle) rendered with `EffectRenderer`, each look scaled to its level's mean brightness; palettes rotate on downbeats; section changes cross-fade 400 ms; beats pulse the "beat group" (trees, matrices, arches, the biggest props) with `exp(−Δt/120 ms)`, beats < 330 ms apart skipped; top-5 % bass hits in loud sections flash warm white for 60 ms, ≥ 340 ms apart (≤ 3/s, never saturated red); high-band hits sparkle small props. Styles: classic, candy, rock, calm, party, voice ("speak with lights", an energy follower for DJ clips). The result is a normal `Sequence` (`generated: GeneratedInfo`, tag `auto`); `props_hash` changes (layout edits) re-render it in the background with the same id, name and tags.
+
+**API.** `GET /autoshow/styles`; `POST /autoshow {mediaId, style?, propIds?, seed?, name?}` → `{jobId, seed}`; `POST /autoshow/preview` (same) → `{jobId, seed, sequenceId:"tmp-…"}` (temporary, deleted after 1 h, previewable via §12.3); `POST /sequences/:id/regenerate {style?, seed?, propIds?}`; `GET /media/:id/analysis` (404 `not_ready`); `POST /media/:id/analyze`.
+
+**For the engine / effects (WS3).** Fixed-tempo beat params live in `effects::BeatPulse`. Song-following code uses `Analysis::beat_envelope(t, τ)`, `downbeat_envelope`, `section_at`, `energy_at` and `audio_analysis::envelope(beats, t, τ)`, all pure functions of timeline position; `services::analysis::load_analysis(state, mediaId)` loads a song's analysis.
+
+**Performance** (release build, one core of a 2.1 GHz Xeon; `cargo test --release -p pixelplus-core perf_budget -- --ignored --nocapture`): 4-minute song analysis DSP 0.30 s; auto show for 2,000 px × 4 min (9,600 frames) 1.05 s; its preview 0.44 s (3.9 MB). A Cortex-A53 at 1 GHz (Pi Zero 2 W) is roughly 8–12× slower per core, so expect ≈ 3 s DSP + 5–10 s MP3 decode per song, ≈ 10 s per auto show and ≈ 5 s per preview, all at `nice 10`. **Needs hardware validation** on a Zero 2 W (timings, playback unaffected while a job runs) and a subjective review of the styles on real props.
 
 ### 12.3 Browser sequence preview (F3, WS2)
-_To be written by WS2._
+
+**Files:** `core/preview.rs` (format), `services/analysis.rs` (cache + build jobs), `api/preview.rs`; web `lib/preview/{pppv.ts,source.ts,player.svelte.ts}`, `components/viz/{LayoutCanvas,PreviewTransport,SequencePreview}.svelte`, Layout page (Live · Preview · Arrange; `/layout?preview=<id>`), Sequences page (row action Preview), auto-show dialog.
+
+**Format `PPPV` v1:** `"PPPV" | u32 LE header length | header JSON (space padded) | gzip blocks`. Header `{v, seqId, frameMs (≥ 50), frameCount, frameBytes, props:[{id, n, idx?}], blockFrames: 64, blocks:[{offset, len}], mappingHash}`; offsets are absolute. A frame is, per prop in header order, `n` RGB triplets of the prop pixels listed in `idx` (absent = all, in order) — channel data before colour order/gamma/brightness, identical to the live WebSocket preview for full-resolution props. Props over 300 px keep a uniform subsample (matrices a grid), ≤ 8,192 samples in all. Each 64-frame block is gzip on its own so browsers inflate it with `DecompressionStream('gzip')`.
+
+**Cache.** `cache/preview/<seqId>-<mappingHash>.pppv`; `mappingHash` covers the fseq sha256, frame rate and every prop's id, size, channel runs and sampling, so re-uploads and layout changes make a new file (older ones for the sequence are deleted; deleting a sequence deletes its previews). 500 MB quota, least recently served first. Built once by a `preview` job, served to any number of phones.
+
+**API.** `GET /sequences/:id/preview` → header (`ETag`) or **202** `{jobId, pct, state}`; `GET /sequences/:id/preview/data` → the file with `Range` support; `GET /sequences/:id/preview/block/:n` → one gzip block (what the web client uses). Responses carry `Content-Encoding: identity` so the compression layer leaves them alone. Leader only; never touches outputs.
+
+**Player.** `PreviewPlayer` fetches the header (following the job via WS `job` + polling), keeps an LRU of 8 inflated blocks, prefetches the next block and on seek, and draws `frame = floor(t / frameMs)` through the `FrameSource` interface that `LayoutCanvas` now takes (`source` prop; default `liveSource` = the real lights). The song's `<audio>` is the master clock (speed ½×/1×, scrubbable waveform); light-only sequences and demo mode use a local clock. The transport always says "Preview only — your lights are not affected."
 
 ### 12.4 Countdown and exact show start (F4, WS3)
-_To be written by WS3._ Until then a `countdown` item is a dark pause of its length.
+**Item.** `PlaylistItem {type:"countdown", durationMs, matrixPropId?, text="{s}", color?, others:"fill"|"pulse"|"dark",
+finale:"flash"|"none", djClipId?, djOffsetMs, tick}` (usually the last intro item; the playlist editor embeds
+`components/playlist/CountdownItemEditor.svelte`). It plays as an `EffectKind::Countdown` preset built by
+`effects::countdown::countdown_preset` (id `countdown:<itemId>`, target all props; length clamped to 1 s…10 min):
+* the matrix (`matrixPropId`, else the largest matrix prop; resolved on the leader so every node draws on
+  the same one) shows the text (`{s}` seconds left rounded up, `{mm}`/`{ss}`, `{m}`) with the `core::text`
+  5×7 font (3×5 on small matrices) at the largest scale that fits, centred, through `MatrixInfo.pixelMap`;
+  the digits get a short accent at each change;
+* other props: `fill` = a progress bar along each prop (`pos/duration`), `pulse` = a flash decaying over
+  260 ms at every digit change, `dark`;
+* `finale: flash` = every prop white for the last 200 ms before zero.
+
+Rendering is a pure function of the item position, so followers draw it from the preset the leader sends as
+the sync `effect` (item type `countdown`), on the song's timeline anchor. **Audio:** the DJ clip starts at item
+position `durationMs − clipMs + djOffsetMs` (its beginning is skipped when it is longer than the countdown) and
+keeps playing past zero when the offset is positive; without a clip, `tick` plays
+`cache/countdown-<ms>.wav` (a soft 1 kHz tick at every digit change). No crossfade ever leaves a countdown:
+the next item starts at zero (±1 frame). Status: `item.type = "countdown"`; seconds left =
+`ceil((durationMs − posMs)/1000)`.
+
+**Exact start.** `ScheduleEntry.startExact`: `scheduler::facts_for` makes the entry active its intro's length
+early (`intro_lead_ms`: countdowns, pauses, looks (0 = 30 s), sequences, audio and DJ clips of known length;
+commands 0), only when no other window is active. The early window has the same key (`entryId@start`) as the
+real one, so nothing restarts at the start time. Facts are evaluated once a second: `ActiveWindow.lateMs`
+says how late the intro starts, and the engine starts the first intro item that far in, so the first song
+begins at the entry's start within a frame.
 
 ### 12.5 Camera prop mapping (F6, WS4)
 _To be written by WS4._ `MapPlan`/`MapTarget` live in `pixelplus-core::mapcode`.
@@ -981,7 +1137,55 @@ stops at 16 MiB. `GET /journal?date=&types=` serves a day (admin).
 **Nightly report**: _to be written by WS6._
 
 ### 12.11 Power limiter and late-night dimming (F12, WS3)
-_To be written by WS3._
+The INA226 on the difftxlarge measures only the TX board's own input, so the limiter works from **estimated
+current**: `I = Σbytes/765 × mApp` over each output's wire bytes (after colour order, output brightness,
+gamma and master brightness: what the pixels really draw for).
+
+**Budgets** (`pixelplus_core::power::node_budget(show, nodeId) -> Option<NodePowerBudget>`, `None` when
+`settings.power.mode` is `off` or the node is unknown; `show_budgets(show)` for all nodes). Groups, all ×
+`safety` (0.9):
+
+| group id | kind | budget | τ |
+|---|---|---|---|
+| `port:<receiverId>:<port>` | port | PPTC hold (`fuseAmps`, diffrx 6 A) × 0.8 (temperature unknown; `pptc_derate(°C)`) | 8 s |
+| `bus:<receiverId>` | bus | `mainFuseAmps` | 1 s |
+| `supply:<supplyId>` | supply | `amps` (split pro rata by possible current when a supply feeds several nodes) | 0 (per frame) |
+| `global` | global | `min(globalAmps, globalWatts × 0.85 / V)` (V = first supply's volts, else 12), split pro rata | 1 s |
+
+`mApp[output]` = the output's mean mA/pixel at full white (`Prop.maxMilliampsPerPixel`, default 60).
+**WS5 populates `NodeManifest.power` with `node_budget(show, nodeId)`**; followers read it from their
+`cluster/manifest.json` (`player::limiter::budget_for`), the leader computes its own.
+
+**Limiter** (`power::Limiter`, run by `player/limiter.rs` in the output thread, per frame):
+supplies: `s = min(1, B/I)`; averaged groups (EMA of the current actually drawn, `k = Δt/τ`): the allowed
+current tapers from `4·B` while cold to `B` at the limit, `s = min(1, (4B − 3·EMA)/I)` — the fuse's thermal
+headroom is used first, dimming then starts gradually and the average converges to `B` without overshoot.
+An output's target is its groups' lowest need; scales drop at once and recover by `Δt/1.5 s` (no pumping on
+strobes: every flash gets the same scale). Scaling multiplies the wire bytes (hue kept; current is linear in
+duty). Modes: `off`, `warn` (default: computed and reported, never applied), `limit`. Tests: linearity,
+attack/release, thermal convergence without overshoot, strobe, warn mode, budgets, splits.
+
+**Reporting.** `PlayerStatus.power {limiting, minScale}` while the mode is not off; followers put
+`report.limiter {activeGroups, minScale (lowest since the last report), secondsLimited}` in their beacon
+(`player::limiter::follower_report`; WS5: please also copy it into `NodeStatus.limiter` so the leader's
+`/power/live` and the dashboard see it). `GET /power/live` → `{nodes:[{nodeId, mode, limiting, minScale,
+groups:[{id, amps, budget, scale}]}]}` (followers: budget groups with `amps: null` and the reported scale);
+the WS `power` message carries the same every second while the display is lit. Limiting episodes of ≥ 1 s
+are journaled when they end (`limiter {nodeId, port, sec}`, port = the output of a port group, else 0).
+`GET /power/budget[?nodeId]` shows the computed budgets. CRUD `/power-supplies` (validated: plausible
+volts/amps, existing receivers/outputs, one supply per output).
+
+**Planning.** `GET /power/estimate` (tools) now also returns `perSupply [{supplyId, name, volts, ratedAmps,
+peakAmps, avgAmps, peakWatts, status}]` and `limited [{groupId, nodeId, label, seconds, minScale}]`: the same
+limiter simulated over the sampled frames (as if in `limit` mode), with a warning "would dim … for N s".
+
+**Late-night dimming.** `settings.power.dim [{from, to, brightness, days}]` (a window runs from `from` on one
+of its `days` — empty = every day — to the next `to`) and `settings.power.maxBrightness` cap the master
+brightness (`scheduler::brightness_cap`, in `ScheduleFacts.brightnessCap`). The owner's brightness setting is
+unchanged; the leader's lights and its sync packets (`brightness`, via the engine-internal
+`PlayerStatus.lightBrightness`) use the capped value. Season profiles carry their own `power {dim,
+maxBrightness}` (§12.7). UI: Settings → Power (supplies, mode, safety, caps, dim windows, live view,
+estimate), the props drawer (mA/pixel, estimated draw) and a dashboard badge while limiting.
 
 ### 12.12 Remote access (F14, WS5)
 _To be written by WS5._ Public-only listener: `127.0.0.1:${PIXELPLUS_PUBLIC_PORT:-8081}`.
@@ -996,8 +1200,46 @@ and CSRF; the upload password is `settings.xlights.passwordHash` (write-only; st
 `PUT /show/settings`, returned as `""` when set).
 
 ### 12.15 Library tags and smart playlists (F18, WS2)
-_To be written by WS2._
+
+**Files:** `core/smartlist.rs`, `api/library.rs`; web `lib/library/tags.ts`, `components/library/{TagChips,TagInput,SmartRulesEditor,SmartTonight}.svelte`, Sequences and Playlists pages.
+
+**Tags.** `Sequence.tags`, `Media.tags` (normalised: trimmed, lower case, no commas, ≤ 32 chars, ≤ 24 per item) and optional colours in `Show.tagDefs`. `PATCH /sequences/:id` and `/media/:id` accept `tags`; `POST /sequences/tags {ids[], add[], remove[]}` bulk-edits sequences and media; `GET /library/tags` → `[{name, color?, sequences, media}]`; `PUT /library/tags/:name {name?, color?}` renames (also inside smart rules) / recolours; `DELETE /library/tags/:name`. UI: tag filter bar, per-item tag editor, multi-select bulk tagging.
+
+**Smart playlists.** `Playlist.smart: SmartRules` replaces `items` at play time (intro/outro unchanged). `smartlist::expand(show, rules, history, now, seed)` is pure and deterministic: candidates by include (any/all) / exclude tags and `maxItemMs`, minus songs played in the last `noRepeatNights` show nights (noon to noon; relaxed a night at a time below 3 candidates, with a note); order `leastRecent` (never played first, seeded ≤ 30 min jitter), `shuffle` (seeded), `rotation` (library by name, continuing after the song this playlist played last — the journal is the persistent pointer, so no extra state file), `fixed`; greedy fill simulating start times so that before each time rule only songs with its tags are placed; with a target length the last slot picks the closest fit (rotation never skips); then pinned first/last and one interleave item every N songs. Items get deterministic ids `sm<n>-<seqId>`.
+
+**History** comes from journal `itemStart` events (`sequence`, `request`, `media`) via `journal::read_range`; `GET /library/history?days=14` → `[{sequenceId, plays, lastPlayed?}]`.
+
+**Previews.** `GET /playlists/:id/preview?date=&start=&seed=` and `POST /library/smart-preview {rules, playlistId?, date?, start?, seed?}` (unsaved rules) → `{items, totalMs, notes[], startsAt[], start, seed}`; without `start`, the playlist's scheduled start that day (else 18:00). The seed defaults to `night_seed(night, playlistId)` so the preview equals what plays.
+
+**Engine hook (WS3).** At playlist start and each repeat pass: `if let Some(items) = api::library::smart_items(&state, &playlist.id) { … }` (reads a few journal files; call from `spawn_blocking` in hot async code). `api::library::smart_expansion(state, id, now, seed)` returns notes too.
 
 ### 12.16 Surprises and ESP32 sensor nodes (F20, WS3 + WS6)
-_To be written by WS3 (surprise layer) and WS6 (sensor nodes, firmware)._ Sensor UDP port
-`PIXELPLUS_SENSOR_PORT` (32422); protocol and MAC canonicalization: §7.5.
+Sensor UDP port `PIXELPLUS_SENSOR_PORT` (32422); protocol and MAC canonicalization: §7.5.
+
+**Surprise layer (WS3).** A `surprise` trigger action (`{type:"surprise", ref, source?:"sequence"|"effect",
+target?, durationMs?}`) draws a sequence or look **on top of** whatever plays (the song goes on) on the
+target's props (none = all), for `durationMs` (default: the sequence's length / 5 s; 0.5…120 s) with 150 ms
+fades in and out (`player/surprise.rs`). Order: content → surprise → season mask → tests → overlays. One at a
+time: a new one replaces the running one. Refused (409) on followers, during blackout, calibration or a test
+pattern. Leader API: `PlayerHandle::surprise(SurpriseRequest)`; `POST /player/surprise {ref, source?,
+target?, durationMs?}` (try it, no gates) and `POST /player/surprise/stop`.
+
+*Sync.* While it runs, the leader's sync packets carry `surprise {id, kind, ref, targets, startPos,
+durationMs, epoch}` where **`startPos` is the surprise's start on the leader clock relative to the packet's
+`anchor.atMs`** (≤ 0; the engine always sends an anchor then, `rate 0` when idle). A follower places it on its
+own clock exactly like the timeline (`start = anchor.atMs(local) + startPos`) and renders the same frames:
+effects from the manifest preset (the leader stamps world bounds with the whole show; built-in looks on a
+follower use its own bounds), sequences from its slice (`(id, epoch)` identifies an instance).
+
+*Gates* (`services/triggers.rs`, for every trigger kind): `when` — `showOnly` while a playlist/song plays,
+`idleOnly` while a look shows and no song plays, `offOnly` outside show windows with no song; `activeWindow
+{from, to}` (show time zone, wraps midnight); `cooldownS`; `maxPerHour` (0 = unlimited). Blocked firings of
+`POST /triggers/:id/fire` answer 409 with the reason; successful ones are journaled (`trigger {id}`).
+
+*Entry points for WS6.* `services::triggers::sensor_input(&state, sensorNodeId, input, active) ->
+Vec<Fired{triggerId, ok, message}>` — call it for every authenticated input change of an adopted sensor node
+(`active` after `activeLow`); it fires the matching `kind:"sensor"` triggers (`sensor {sensorNodeId, input}`)
+on the rising edge through their gates. `services::triggers::run_action(&state, &TriggerAction)` carries out
+an action without gates (for `POST /surprises/test {action}`); `surprise_request(show, id, action)` validates
+one.
+

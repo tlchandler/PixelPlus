@@ -11,7 +11,12 @@ fn now() -> DateTime<Utc> {
 }
 
 fn test_ca() -> Ca {
-    create_ca(&ca_common_name("Maple Street Lights", "ab12cd34ef"), "pixelplus", now()).unwrap()
+    create_ca(
+        &ca_common_name("Maple Street Lights", "ab12cd34ef"),
+        "pixelplus",
+        now(),
+    )
+    .unwrap()
 }
 
 /// Find `needle` in `hay`.
@@ -24,16 +29,26 @@ fn ca_has_critical_name_constraints_and_pathlen_0() {
     let ca = test_ca();
     // id-ce-nameConstraints (2.5.29.30), then BOOLEAN TRUE (critical).
     let at = find(&ca.cert_der, &[0x06, 0x03, 0x55, 0x1D, 0x1E]).expect("name constraints");
-    assert_eq!(&ca.cert_der[at + 5..at + 8], &[0x01, 0x01, 0xFF], "critical");
+    assert_eq!(
+        &ca.cert_der[at + 5..at + 8],
+        &[0x01, 0x01, 0xFF],
+        "critical"
+    );
     // basicConstraints (2.5.29.19) with cA TRUE and pathLen 0.
     let bc = find(&ca.cert_der, &[0x06, 0x03, 0x55, 0x1D, 0x13]).expect("basic constraints");
     let rest = &ca.cert_der[bc..bc + 20];
-    assert!(find(rest, &[0x01, 0x01, 0xFF, 0x02, 0x01, 0x00]).is_some(), "{rest:02X?}");
+    assert!(
+        find(rest, &[0x01, 0x01, 0xFF, 0x02, 0x01, 0x00]).is_some(),
+        "{rest:02X?}"
+    );
     // The permitted DNS names are in there as IA5 strings.
     for d in ["local", "home.arpa", "pixelplus"] {
         assert!(find(&ca.cert_der, d.as_bytes()).is_some(), "{d}");
     }
-    assert!(ca.meta.common_name.starts_with("PixelPlus Local CA – Maple Street Lights – ab12"));
+    assert!(ca
+        .meta
+        .common_name
+        .starts_with("PixelPlus Local CA – Maple Street Lights – ab12"));
     assert_eq!(fingerprint(&ca.cert_der).len(), 32 * 3 - 1);
 }
 
@@ -113,7 +128,11 @@ fn certificates_are_dated_sanely_without_a_clock() {
     let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
     let ca = create_ca("PixelPlus Local CA – t", "pixelplus", epoch).unwrap();
     assert!(ca.meta.created_at.starts_with("2026-01-01"));
-    assert!(ca.meta.not_after.starts_with("2035-12-30"), "{}", ca.meta.not_after);
+    assert!(
+        ca.meta.not_after.starts_with("2035-12-30"),
+        "{}",
+        ca.meta.not_after
+    );
     let leaf = issue_leaf(&ca, &["pixelplus.local".into()], epoch).unwrap();
     assert!(leaf.meta.not_after.starts_with("2027-"));
 }
@@ -148,7 +167,10 @@ fn files_roundtrip_with_private_keys_0600() {
     let other = std::env::temp_dir().join(format!("pp-tls-{}", rand::random::<u64>()));
     assert!(export_ca(&other).unwrap().is_none());
     import_ca(&other, &k, &c, &j).unwrap();
-    assert_eq!(load_ca(&tls_dir(&other)).unwrap().unwrap().cert_der, ca.cert_der);
+    assert_eq!(
+        load_ca(&tls_dir(&other)).unwrap().unwrap().cert_der,
+        ca.cert_der
+    );
     // Damaged input is refused.
     assert!(import_ca(&other, "garbage", &c, &j).is_err());
     assert!(import_ca(&other, &k, &c, "{}").is_err());
@@ -170,12 +192,14 @@ fn server_config(ca: &Ca, leaf: &Leaf) -> Arc<rustls::ServerConfig> {
     let key = rustls::pki_types::PrivateKeyDer::Pkcs8(leaf.key_der.clone().into());
     let chain = vec![leaf.cert_der.clone().into(), ca.cert_der.clone().into()];
     Arc::new(
-        rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(chain, key)
-            .unwrap(),
+        rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(chain, key)
+        .unwrap(),
     )
 }
 
@@ -195,16 +219,21 @@ async fn handshake(ca: &Ca, leaf: &Leaf, server_name: &str) -> Result<(), String
     });
     let mut roots = rustls::RootCertStore::empty();
     roots.add(ca.cert_der.clone().into()).unwrap();
-    let client = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let client = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
     let connector = tokio_rustls::TlsConnector::from(Arc::new(client));
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let name = rustls::pki_types::ServerName::try_from(server_name.to_string()).unwrap();
     let res = async {
-        let mut s = connector.connect(name, tcp).await.map_err(|e| e.to_string())?;
+        let mut s = connector
+            .connect(name, tcp)
+            .await
+            .map_err(|e| e.to_string())?;
         s.write_all(b"ping").await.map_err(|e| e.to_string())?;
         let mut b = [0u8; 4];
         s.read_exact(&mut b).await.map_err(|e| e.to_string())?;
@@ -227,7 +256,9 @@ async fn leaf_verifies_against_the_ca_by_name_and_address() {
     );
     let leaf = issue_leaf(&ca, &names, Utc::now()).unwrap();
     for n in ["pixelplus.local", "pixelplus", "192.168.1.20", "localhost"] {
-        handshake(&ca, &leaf, n).await.unwrap_or_else(|e| panic!("{n}: {e}"));
+        handshake(&ca, &leaf, n)
+            .await
+            .unwrap_or_else(|e| panic!("{n}: {e}"));
     }
     // A name the leaf doesn't carry fails.
     assert!(handshake(&ca, &leaf, "192.168.1.21").await.is_err());
@@ -241,10 +272,7 @@ async fn name_constraints_block_public_names() {
     for evil in ["www.example.com", "8.8.8.8"] {
         let leaf = issue_leaf(&ca, &[evil.to_string()], Utc::now()).unwrap();
         let err = handshake(&ca, &leaf, evil).await.expect_err(evil);
-        assert!(
-            err.to_lowercase().contains("name") || err.contains("Constraint") || err.contains("certificate"),
-            "{evil}: {err}"
-        );
+        assert!(err.contains("NameConstraintViolation"), "{evil}: {err}");
     }
 }
 
@@ -254,10 +282,14 @@ async fn resolver_swaps_leaf_without_restart() {
     let tls = TlsState::default();
     assert!(tls.material().is_none());
     let mk = |names: &[&str]| {
-        let leaf = issue_leaf(&ca, &names.iter().map(|s| s.to_string()).collect::<Vec<_>>(), Utc::now()).unwrap();
+        let leaf = issue_leaf(
+            &ca,
+            &names.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            Utc::now(),
+        )
+        .unwrap();
         Material {
             ca_der: ca.cert_der.clone(),
-            ca_pem: ca.cert_pem.clone(),
             ca_meta: ca.meta.clone(),
             ca_fingerprint: fingerprint(&ca.cert_der),
             leaf,

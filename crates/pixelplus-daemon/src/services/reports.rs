@@ -398,7 +398,13 @@ pub fn aggregate(ctx: &ReportContext, records: &[Record]) -> NightReport {
                 open.insert(entry_id, (t, name));
             }
             Event::ShowEnd { entry_id, name } => match open.remove(entry_id.as_str()) {
-                Some((a, n)) => close(&mut shows, entry_id, if n.is_empty() { name } else { n }, a, t),
+                Some((a, n)) => close(
+                    &mut shows,
+                    entry_id,
+                    if n.is_empty() { name } else { n },
+                    a,
+                    t,
+                ),
                 // Started before noon (unusual): count from the window start.
                 None => close(&mut shows, entry_id, name, ctx.from, t),
             },
@@ -613,9 +619,10 @@ pub fn aggregate(ctx: &ReportContext, records: &[Record]) -> NightReport {
     let hot = nodes
         .iter()
         .any(|n| n.temp_max_c.is_some_and(|t| t > f64::from(rules.temp_c)));
-    let low_volts = nodes
-        .iter()
-        .any(|n| n.volts_min.is_some_and(|v| v < f64::from(rules.voltage_min)));
+    let low_volts = nodes.iter().any(|n| {
+        n.volts_min
+            .is_some_and(|v| v < f64::from(rules.voltage_min))
+    });
     let status: Status = if errors || offline {
         "fail"
     } else if !problems.is_empty()
@@ -793,14 +800,28 @@ pub fn render_text(r: &NightReport, show_name: &str, link: Option<&str>) -> Stri
         t.push('\n');
     }
     for s in &r.suspect_pixels {
-        let px: Vec<String> = s.pixels.iter().take(10).map(|p| (p + 1).to_string()).collect();
-        t.push_str(&format!("Suspect pixels on {}: {}\n", s.name, px.join(", ")));
+        let px: Vec<String> = s
+            .pixels
+            .iter()
+            .take(10)
+            .map(|p| (p + 1).to_string())
+            .collect();
+        t.push_str(&format!(
+            "Suspect pixels on {}: {}\n",
+            s.name,
+            px.join(", ")
+        ));
     }
     if let Some(d) = r.disk_free_pct {
         t.push_str(&format!("Disk: {d:.0} % free\n"));
     }
-    if let Some(b) = r.backup_age_days {
-        t.push_str(&format!("Newest backup: {b} days old\n"));
+    match r.backup_age_days {
+        Some(0) => t.push_str("Newest backup: today\n"),
+        Some(b) => t.push_str(&format!(
+            "Newest backup: {} old\n",
+            plural(b, "day", "days")
+        )),
+        None => t.push_str("No backups yet\n"),
     }
     for u in &r.updates {
         t.push_str(&format!("Updated: {u}\n"));
@@ -870,7 +891,11 @@ pub fn render_html(r: &NightReport, show_name: &str, link: Option<&str>) -> Stri
         section(&mut h, "Problems");
         h.push_str("<table role=\"presentation\" style=\"width:100%;border-collapse:collapse;\">");
         for p in &r.problems {
-            let c = if p.level == "error" { "#c62828" } else { "#b26a00" };
+            let c = if p.level == "error" {
+                "#c62828"
+            } else {
+                "#b26a00"
+            };
             h.push_str(&format!(
                 "<tr><td style=\"{cell}width:18px;color:{c};\">●</td><td style=\"{cell}\">{}</td><td style=\"{cell}text-align:right;color:#666;\">×{}</td></tr>",
                 esc(&p.message),
@@ -938,7 +963,12 @@ pub fn render_html(r: &NightReport, show_name: &str, link: Option<&str>) -> Stri
         section(&mut h, "Lights");
         h.push_str("<ul style=\"padding-left:20px;font-size:14px;\">");
         for s in &r.suspect_pixels {
-            let px: Vec<String> = s.pixels.iter().take(10).map(|p| (p + 1).to_string()).collect();
+            let px: Vec<String> = s
+                .pixels
+                .iter()
+                .take(10)
+                .map(|p| (p + 1).to_string())
+                .collect();
             h.push_str(&format!(
                 "<li>{}: suspect pixel{} {}</li>",
                 esc(&s.name),
@@ -949,7 +979,12 @@ pub fn render_html(r: &NightReport, show_name: &str, link: Option<&str>) -> Stri
         for l in &r.limiter {
             h.push_str(&format!(
                 "<li>Power limiter on {} port {}: {:.0} s</li>",
-                esc(&r.nodes.iter().find(|n| n.node_id == l.node_id).map(|n| n.name.clone()).unwrap_or_else(|| l.node_id.clone())),
+                esc(&r
+                    .nodes
+                    .iter()
+                    .find(|n| n.node_id == l.node_id)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_else(|| l.node_id.clone())),
                 l.port + 1,
                 l.seconds
             ));
@@ -963,7 +998,10 @@ pub fn render_html(r: &NightReport, show_name: &str, link: Option<&str>) -> Stri
     }
     match r.backup_age_days {
         Some(0) => h.push_str("<li>Newest backup: today</li>"),
-        Some(b) => h.push_str(&format!("<li>Newest backup: {b} days old</li>")),
+        Some(b) => h.push_str(&format!(
+            "<li>Newest backup: {} old</li>",
+            plural(b, "day", "days")
+        )),
         None => h.push_str("<li>No backups yet</li>"),
     }
     if r.games > 0 {
@@ -975,13 +1013,20 @@ pub fn render_html(r: &NightReport, show_name: &str, link: Option<&str>) -> Stri
         ));
     }
     if r.triggers > 0 {
-        h.push_str(&format!("<li>Triggers and sensors fired {} times</li>", r.triggers));
+        h.push_str(&format!(
+            "<li>Triggers and sensors fired {}</li>",
+            plural(r.triggers, "time", "times")
+        ));
     }
     for u in &r.updates {
         h.push_str(&format!("<li>Updated {}</li>", esc(u)));
     }
     if r.restarts > 0 {
-        h.push_str(&format!("<li>PixelPlus restarted {} time{}</li>", r.restarts, if r.restarts == 1 { "" } else { "s" }));
+        h.push_str(&format!(
+            "<li>PixelPlus restarted {} time{}</li>",
+            r.restarts,
+            if r.restarts == 1 { "" } else { "s" }
+        ));
     }
     if let Some(s) = &r.season {
         h.push_str(&format!("<li>Season: {}</li>", esc(s)));
@@ -1015,7 +1060,10 @@ pub fn save(dir: &Path, r: &NightReport) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let path = file(dir, date);
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(r).map_err(std::io::Error::other)?)?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_vec_pretty(r).map_err(std::io::Error::other)?,
+    )?;
     std::fs::rename(tmp, path)
 }
 
@@ -1105,7 +1153,11 @@ pub fn report_link(show: &Show, date: &str) -> String {
 async fn backup_age_days(state: &AppState) -> Option<u32> {
     let newest = super::snapshots::list(state).await.into_iter().next()?;
     let t = DateTime::parse_from_rfc3339(&newest.created_at).ok()?;
-    Some((chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_days().max(0) as u32)
+    Some(
+        (chrono::Utc::now() - t.with_timezone(&chrono::Utc))
+            .num_days()
+            .max(0) as u32,
+    )
 }
 
 fn disk_pct(state: &AppState) -> Option<f64> {
@@ -1121,9 +1173,10 @@ pub async fn generate(state: &AppState, date: NaiveDate) -> NightReport {
     let tz = show_tz(&show);
     let (from, to) = night_window(&tz, date);
     let jdir = super::journal::dir(&state.config.data_dir);
-    let recs = tokio::task::spawn_blocking(move || super::journal::read_range(&jdir, from, to, None))
-        .await
-        .unwrap_or_default();
+    let recs =
+        tokio::task::spawn_blocking(move || super::journal::read_range(&jdir, from, to, None))
+            .await
+            .unwrap_or_default();
     let self_id = state.identity().id;
     let ctx = ReportContext {
         date,
@@ -1188,7 +1241,8 @@ pub async fn send(state: &AppState, report: &NightReport, force: bool) -> Vec<St
                     "fail" => super::alerts::Severity::Warning,
                     _ => super::alerts::Severity::Info,
                 };
-                match super::alerts::send_ntfy_with(ntfy, &title, &push_body, sev, Some(&link)).await
+                match super::alerts::send_ntfy_with(ntfy, &title, &push_body, sev, Some(&link))
+                    .await
                 {
                     Ok(()) => out.push(format!("Push sent to \"{}\".", ntfy.topic)),
                     Err(e) => out.push(format!("Push failed: {e}")),
@@ -1372,39 +1426,204 @@ mod tests {
     fn journal() -> Vec<Record> {
         let mut v = vec![
             // Before the window (morning): not part of the night.
-            rec("2026-12-01T09:00:00-06:00", Event::Error { code: "x".into(), msg: "morning".into() }),
-            rec("2026-12-01T16:59:00-06:00", Event::Restart { reason: "start".into() }),
-            rec("2026-12-01T17:00:00-06:00", Event::ShowStart { entry_id: "scweeknt01".into(), name: "Weeknights".into() }),
-            rec("2026-12-01T17:00:01-06:00", Event::ItemStart { item: "sequence".into(), id: "s1".into(), name: "Wizards in Winter".into(), playlist_id: Some("p".into()) }),
-            rec("2026-12-01T17:03:05-06:00", Event::ItemEnd { item: "sequence".into(), id: "s1".into(), name: "Wizards in Winter".into(), dur_ms: 184_000, ended_by: "finished".into() }),
-            rec("2026-12-01T17:03:06-06:00", Event::ItemStart { item: "dj".into(), id: "d1".into(), name: "Welcome".into(), playlist_id: None }),
-            rec("2026-12-01T17:04:00-06:00", Event::ItemStart { item: "sequence".into(), id: "s2".into(), name: "All I Want".into(), playlist_id: Some("p".into()) }),
-            rec("2026-12-01T17:10:00-06:00", Event::Request { sequence_id: "s2".into(), name: "All I Want".into() }),
-            rec("2026-12-01T17:12:00-06:00", Event::Request { sequence_id: "s2".into(), name: "All I Want".into() }),
-            rec("2026-12-01T17:13:00-06:00", Event::Request { sequence_id: "s1".into(), name: "Wizards in Winter".into() }),
+            rec(
+                "2026-12-01T09:00:00-06:00",
+                Event::Error {
+                    code: "x".into(),
+                    msg: "morning".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T16:59:00-06:00",
+                Event::Restart {
+                    reason: "start".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T17:00:00-06:00",
+                Event::ShowStart {
+                    entry_id: "scweeknt01".into(),
+                    name: "Weeknights".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T17:00:01-06:00",
+                Event::ItemStart {
+                    item: "sequence".into(),
+                    id: "s1".into(),
+                    name: "Wizards in Winter".into(),
+                    playlist_id: Some("p".into()),
+                },
+            ),
+            rec(
+                "2026-12-01T17:03:05-06:00",
+                Event::ItemEnd {
+                    item: "sequence".into(),
+                    id: "s1".into(),
+                    name: "Wizards in Winter".into(),
+                    dur_ms: 184_000,
+                    ended_by: "finished".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T17:03:06-06:00",
+                Event::ItemStart {
+                    item: "dj".into(),
+                    id: "d1".into(),
+                    name: "Welcome".into(),
+                    playlist_id: None,
+                },
+            ),
+            rec(
+                "2026-12-01T17:04:00-06:00",
+                Event::ItemStart {
+                    item: "sequence".into(),
+                    id: "s2".into(),
+                    name: "All I Want".into(),
+                    playlist_id: Some("p".into()),
+                },
+            ),
+            rec(
+                "2026-12-01T17:10:00-06:00",
+                Event::Request {
+                    sequence_id: "s2".into(),
+                    name: "All I Want".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T17:12:00-06:00",
+                Event::Request {
+                    sequence_id: "s2".into(),
+                    name: "All I Want".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T17:13:00-06:00",
+                Event::Request {
+                    sequence_id: "s1".into(),
+                    name: "Wizards in Winter".into(),
+                },
+            ),
             rec("2026-12-01T17:20:00-06:00", Event::Game { s: 90 }),
-            rec("2026-12-01T17:30:00-06:00", Event::Warn { code: "temp".into(), msg: "Garage reached 58 °C".into() }),
-            rec("2026-12-01T18:00:00-06:00", Event::NodeOffline { id: "ngarage001".into() }),
-            rec("2026-12-01T18:04:30-06:00", Event::NodeOnline { id: "ngarage001".into() }),
-            rec("2026-12-01T18:30:00-06:00", Event::Limiter { node_id: "ngarage001".into(), port: 2, sec: 12.5 }),
-            rec("2026-12-01T18:31:00-06:00", Event::Limiter { node_id: "ngarage001".into(), port: 2, sec: 2.5 }),
-            rec("2026-12-01T19:00:00-06:00", Event::Trigger { id: "t1".into() }),
-            rec("2026-12-01T22:00:00-06:00", Event::ShowEnd { entry_id: "scweeknt01".into(), name: "Weeknights".into() }),
-            rec("2026-12-01T23:30:00-06:00", Event::ShowStart { entry_id: "late".into(), name: "Late show".into() }),
-            rec("2026-12-02T00:30:00-06:00", Event::ShowEnd { entry_id: "late".into(), name: "Late show".into() }),
-            rec("2026-12-02T03:00:00-06:00", Event::Update { from: "1.4.0".into(), to: "1.4.1".into(), ok: true }),
-            rec("2026-12-02T03:01:00-06:00", Event::Restart { reason: "update".into() }),
+            rec(
+                "2026-12-01T17:30:00-06:00",
+                Event::Warn {
+                    code: "temp".into(),
+                    msg: "Garage reached 58 °C".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T18:00:00-06:00",
+                Event::NodeOffline {
+                    id: "ngarage001".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T18:04:30-06:00",
+                Event::NodeOnline {
+                    id: "ngarage001".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T18:30:00-06:00",
+                Event::Limiter {
+                    node_id: "ngarage001".into(),
+                    port: 2,
+                    sec: 12.5,
+                },
+            ),
+            rec(
+                "2026-12-01T18:31:00-06:00",
+                Event::Limiter {
+                    node_id: "ngarage001".into(),
+                    port: 2,
+                    sec: 2.5,
+                },
+            ),
+            rec(
+                "2026-12-01T19:00:00-06:00",
+                Event::Trigger { id: "t1".into() },
+            ),
+            rec(
+                "2026-12-01T22:00:00-06:00",
+                Event::ShowEnd {
+                    entry_id: "scweeknt01".into(),
+                    name: "Weeknights".into(),
+                },
+            ),
+            rec(
+                "2026-12-01T23:30:00-06:00",
+                Event::ShowStart {
+                    entry_id: "late".into(),
+                    name: "Late show".into(),
+                },
+            ),
+            rec(
+                "2026-12-02T00:30:00-06:00",
+                Event::ShowEnd {
+                    entry_id: "late".into(),
+                    name: "Late show".into(),
+                },
+            ),
+            rec(
+                "2026-12-02T03:00:00-06:00",
+                Event::Update {
+                    from: "1.4.0".into(),
+                    to: "1.4.1".into(),
+                    ok: true,
+                },
+            ),
+            rec(
+                "2026-12-02T03:01:00-06:00",
+                Event::Restart {
+                    reason: "update".into(),
+                },
+            ),
             // After the window: next night.
-            rec("2026-12-02T12:00:00-06:00", Event::Error { code: "y".into(), msg: "next day".into() }),
+            rec(
+                "2026-12-02T12:00:00-06:00",
+                Event::Error {
+                    code: "y".into(),
+                    msg: "next day".into(),
+                },
+            ),
         ];
         for i in 0..20 {
             let m = 17 * 60 + i * 10;
             let ts = format!("2026-12-01T{:02}:{:02}:00-06:00", m / 60, m % 60);
-            v.push(rec(&ts, Event::Metric { node_id: Some("nmain00001".into()), name: metric::TEMP_C.into(), value: 40.0 + f64::from(i % 5) }));
-            v.push(rec(&ts, Event::SyncSample { node_id: "ngarage001".into(), offset_error_ms: 0.2 + f64::from(i) * 0.05, timeline_error_ms: Some(0.1) }));
+            v.push(rec(
+                &ts,
+                Event::Metric {
+                    node_id: Some("nmain00001".into()),
+                    name: metric::TEMP_C.into(),
+                    value: 40.0 + f64::from(i % 5),
+                },
+            ));
+            v.push(rec(
+                &ts,
+                Event::SyncSample {
+                    node_id: "ngarage001".into(),
+                    offset_error_ms: 0.2 + f64::from(i) * 0.05,
+                    timeline_error_ms: Some(0.1),
+                },
+            ));
         }
-        v.push(rec("2026-12-01T20:00:00-06:00", Event::Metric { node_id: Some("nmain00001".into()), name: metric::VOLTS.into(), value: 11.8 }));
-        v.push(rec("2026-12-01T20:00:00-06:00", Event::Metric { node_id: Some("nmain00001".into()), name: metric::DISK_FREE_PCT.into(), value: 71.04 }));
+        v.push(rec(
+            "2026-12-01T20:00:00-06:00",
+            Event::Metric {
+                node_id: Some("nmain00001".into()),
+                name: metric::VOLTS.into(),
+                value: 11.8,
+            },
+        ));
+        v.push(rec(
+            "2026-12-01T20:00:00-06:00",
+            Event::Metric {
+                node_id: Some("nmain00001".into()),
+                name: metric::DISK_FREE_PCT.into(),
+                value: 71.04,
+            },
+        ));
         v
     }
 
@@ -1438,7 +1657,8 @@ mod tests {
         }
         let expected = std::fs::read_to_string(&p).unwrap();
         assert_eq!(
-            expected, actual,
+            expected,
+            actual,
             "{} differs (UPDATE_GOLDEN=1 to accept)",
             p.display()
         );
@@ -1461,7 +1681,10 @@ mod tests {
         assert_eq!(r.top_requests[0].name, "All I Want");
         assert_eq!(r.top_requests[0].count, 2);
         assert_eq!(r.problems.len(), 1);
-        assert!(!r.problems.iter().any(|p| p.message == "morning" || p.message == "next day"));
+        assert!(!r
+            .problems
+            .iter()
+            .any(|p| p.message == "morning" || p.message == "next day"));
         let garage = r.nodes.iter().find(|n| n.node_id == "ngarage001").unwrap();
         assert_eq!(garage.offline_min, 4.5);
         assert_eq!(garage.sync_p50_ms, Some(0.7));
@@ -1469,14 +1692,31 @@ mod tests {
         let main = r.nodes.iter().find(|n| n.node_id == "nmain00001").unwrap();
         assert_eq!((main.temp_min_c, main.temp_max_c), (Some(40.0), Some(44.0)));
         assert_eq!(main.volts_min, Some(11.8));
-        assert_eq!(r.limiter, vec![LimiterUse { node_id: "ngarage001".into(), port: 2, seconds: 15.0 }]);
+        assert_eq!(
+            r.limiter,
+            vec![LimiterUse {
+                node_id: "ngarage001".into(),
+                port: 2,
+                seconds: 15.0
+            }]
+        );
         assert_eq!(r.suspect_pixels[0].pixels, vec![36]);
-        assert_eq!(r.disk_free_pct, Some(71.0), "journal sample wins over live value");
+        assert_eq!(
+            r.disk_free_pct,
+            Some(71.0),
+            "journal sample wins over live value"
+        );
         assert_eq!(r.updates, vec!["1.4.0 → 1.4.1".to_string()]);
-        assert_eq!((r.games, r.game_minutes, r.triggers, r.restarts), (1, 1.5, 1, 2));
+        assert_eq!(
+            (r.games, r.game_minutes, r.triggers, r.restarts),
+            (1, 1.5, 1, 2)
+        );
         assert_eq!(r.headline, "2 shows, 2 songs, 3 requests, 2 problems");
         assert!(!r.series.temp_c[0].points.is_empty());
-        golden("night-2026-12-01.json", &serde_json::to_string_pretty(&r).unwrap());
+        golden(
+            "night-2026-12-01.json",
+            &serde_json::to_string_pretty(&r).unwrap(),
+        );
     }
 
     #[test]
@@ -1485,24 +1725,56 @@ mod tests {
         let c = ctx(&s);
         let mut s2 = s.clone();
         s2.props[0].suspect_pixels.clear();
-        let quiet = aggregate(&ReportContext { show: &s2, ..ctx(&s2) }, &[]);
+        let quiet = aggregate(
+            &ReportContext {
+                show: &s2,
+                ..ctx(&s2)
+            },
+            &[],
+        );
         assert_eq!(quiet.status, "ok");
         assert!(quiet.headline.starts_with("No show tonight"));
         let err = aggregate(
             &c,
-            &[rec("2026-12-01T19:00:00-06:00", Event::Error { code: "show".into(), msg: "The show stopped".into() })],
+            &[rec(
+                "2026-12-01T19:00:00-06:00",
+                Event::Error {
+                    code: "show".into(),
+                    msg: "The show stopped".into(),
+                },
+            )],
         );
         assert_eq!(err.status, "fail");
         // Offline until the end of the window: counted to the report time.
-        let off = aggregate(&c, &[rec("2026-12-02T06:00:00-06:00", Event::NodeOffline { id: "ngarage001".into() })]);
+        let off = aggregate(
+            &c,
+            &[rec(
+                "2026-12-02T06:00:00-06:00",
+                Event::NodeOffline {
+                    id: "ngarage001".into(),
+                },
+            )],
+        );
         assert_eq!(off.status, "fail");
-        assert_eq!(off.nodes.iter().find(|n| n.node_id == "ngarage001").unwrap().offline_min, 60.0);
+        assert_eq!(
+            off.nodes
+                .iter()
+                .find(|n| n.node_id == "ngarage001")
+                .unwrap()
+                .offline_min,
+            60.0
+        );
         // A failing health check at the end of the night.
         let h = aggregate(
-            &ReportContext { show: &s2, ..ctx(&s2) },
+            &ReportContext {
+                show: &s2,
+                ..ctx(&s2)
+            },
             &[rec(
                 "2026-12-01T16:00:00-06:00",
-                Event::Health { checks: serde_json::json!([{"id":"disk","label":"Storage","status":"warn","detail":"8 % free"},{"id":"ok","label":"x","status":"ok","detail":""}]) },
+                Event::Health {
+                    checks: serde_json::json!([{"id":"disk","label":"Storage","status":"warn","detail":"8 % free"},{"id":"ok","label":"x","status":"ok","detail":""}]),
+                },
             )],
         );
         assert_eq!(h.status, "warn");
@@ -1525,19 +1797,55 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2026, 10, 31).unwrap();
         let (from, to) = night_window(&tz, date);
         let r = aggregate(
-            &ReportContext { date, from, to, generated_at: at("2026-11-01T07:00:00-06:00"), ..ctx(&s) },
+            &ReportContext {
+                date,
+                from,
+                to,
+                generated_at: at("2026-11-01T07:00:00-06:00"),
+                ..ctx(&s)
+            },
             &[
-                rec("2026-11-01T01:30:00-05:00", Event::Request { sequence_id: "s".into(), name: "A".into() }),
-                rec("2026-11-01T01:30:00-06:00", Event::Request { sequence_id: "s".into(), name: "A".into() }),
-                rec("2026-10-31T11:59:59-05:00", Event::Request { sequence_id: "s".into(), name: "A".into() }),
-                rec("2026-11-01T12:00:00-06:00", Event::Request { sequence_id: "s".into(), name: "A".into() }),
+                rec(
+                    "2026-11-01T01:30:00-05:00",
+                    Event::Request {
+                        sequence_id: "s".into(),
+                        name: "A".into(),
+                    },
+                ),
+                rec(
+                    "2026-11-01T01:30:00-06:00",
+                    Event::Request {
+                        sequence_id: "s".into(),
+                        name: "A".into(),
+                    },
+                ),
+                rec(
+                    "2026-10-31T11:59:59-05:00",
+                    Event::Request {
+                        sequence_id: "s".into(),
+                        name: "A".into(),
+                    },
+                ),
+                rec(
+                    "2026-11-01T12:00:00-06:00",
+                    Event::Request {
+                        sequence_id: "s".into(),
+                        name: "A".into(),
+                    },
+                ),
             ],
         );
         assert_eq!(r.requests, 2);
         // Which night a moment belongs to.
         let t = |s: &str| at(s).with_timezone(&tz);
-        assert_eq!(night_of(t("2026-12-02T07:00:00-06:00")), NaiveDate::from_ymd_opt(2026, 12, 1).unwrap());
-        assert_eq!(night_of(t("2026-12-01T22:15:00-06:00")), NaiveDate::from_ymd_opt(2026, 12, 1).unwrap());
+        assert_eq!(
+            night_of(t("2026-12-02T07:00:00-06:00")),
+            NaiveDate::from_ymd_opt(2026, 12, 1).unwrap()
+        );
+        assert_eq!(
+            night_of(t("2026-12-01T22:15:00-06:00")),
+            NaiveDate::from_ymd_opt(2026, 12, 1).unwrap()
+        );
     }
 
     #[test]
@@ -1546,21 +1854,31 @@ mod tests {
         let mut s = show();
         let d = NaiveDate::from_ymd_opt(2026, 12, 1).unwrap();
         assert_eq!(
-            due_at(&s, &tz, d, "07:00").unwrap().fixed_offset().to_rfc3339(),
+            due_at(&s, &tz, d, "07:00")
+                .unwrap()
+                .fixed_offset()
+                .to_rfc3339(),
             "2026-12-02T07:00:00-06:00"
         );
         assert_eq!(
-            due_at(&s, &tz, d, "23:00").unwrap().fixed_offset().to_rfc3339(),
+            due_at(&s, &tz, d, "23:00")
+                .unwrap()
+                .fixed_offset()
+                .to_rfc3339(),
             "2026-12-01T23:00:00-06:00"
         );
         assert!(due_at(&s, &tz, d, "7am").is_none());
         // afterShow: 15 min after the last window; none scheduled → next noon.
         assert_eq!(
-            due_at(&s, &tz, d, AFTER_SHOW).unwrap().fixed_offset().to_rfc3339(),
+            due_at(&s, &tz, d, AFTER_SHOW)
+                .unwrap()
+                .fixed_offset()
+                .to_rfc3339(),
             "2026-12-02T12:00:00-06:00"
         );
         s.schedule.enabled = true;
-        s.playlists.push(serde_json::from_value(serde_json::json!({"id":"p","name":"P"})).unwrap());
+        s.playlists
+            .push(serde_json::from_value(serde_json::json!({"id":"p","name":"P"})).unwrap());
         s.schedule.entries.push(
             serde_json::from_value(serde_json::json!({
                 "id":"e","name":"Nightly","enabled":true,"playlistId":"p",
@@ -1570,7 +1888,10 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(
-            due_at(&s, &tz, d, AFTER_SHOW).unwrap().fixed_offset().to_rfc3339(),
+            due_at(&s, &tz, d, AFTER_SHOW)
+                .unwrap()
+                .fixed_offset()
+                .to_rfc3339(),
             "2026-12-01T22:15:00-06:00"
         );
     }
@@ -1585,13 +1906,21 @@ mod tests {
             message: "<script>alert(1)</script> & more".into(),
             count: 1,
         });
-        let html = render_html(&r, "Chandler <Lights>", Some("http://pixelplus.local/reports?date=2026-12-01"));
+        let html = render_html(
+            &r,
+            "Chandler <Lights>",
+            Some("http://pixelplus.local/reports?date=2026-12-01"),
+        );
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more"));
         assert!(!html.contains("<script>"));
         assert!(html.contains("Chandler &lt;Lights&gt;"));
         assert!(html.contains("Tuesday, Dec 1"));
         golden("night-2026-12-01.html", &html);
-        let text = render_text(&r, "Chandler Lights", Some("http://pixelplus.local/reports?date=2026-12-01"));
+        let text = render_text(
+            &r,
+            "Chandler Lights",
+            Some("http://pixelplus.local/reports?date=2026-12-01"),
+        );
         golden("night-2026-12-01.txt", &text);
         let (title, body) = push_text(&r);
         assert_eq!(title, "⚠️ Mostly fine: Tuesday, Dec 1");
@@ -1602,7 +1931,8 @@ mod tests {
 
     #[test]
     fn storage_list_and_purge() {
-        let d = std::env::temp_dir().join(format!("pp-reports-{}", pixelplus_core::model::new_id()));
+        let d =
+            std::env::temp_dir().join(format!("pp-reports-{}", pixelplus_core::model::new_id()));
         let s = show();
         for day in 1..=5 {
             let date = NaiveDate::from_ymd_opt(2026, 12, day).unwrap();
@@ -1612,7 +1942,10 @@ mod tests {
         }
         std::fs::write(d.join("notes.txt"), "x").unwrap();
         let l = list(&d, 3);
-        assert_eq!(l.iter().map(|r| r.date.as_str()).collect::<Vec<_>>(), ["2026-12-05", "2026-12-04", "2026-12-03"]);
+        assert_eq!(
+            l.iter().map(|r| r.date.as_str()).collect::<Vec<_>>(),
+            ["2026-12-05", "2026-12-04", "2026-12-03"]
+        );
         purge(&d, NaiveDate::from_ymd_opt(2026, 12, 6).unwrap(), 3);
         assert_eq!(list(&d, 30).len(), 3);
         assert!(d.join("notes.txt").exists());
@@ -1623,7 +1956,10 @@ mod tests {
     fn links_never_leak_more_than_the_origin() {
         let mut s = show();
         s.settings.requests.public_url = Some("https://lights.example.com/request?x=1".into());
-        assert_eq!(report_link(&s, "2026-12-01"), "https://lights.example.com/reports?date=2026-12-01");
+        assert_eq!(
+            report_link(&s, "2026-12-01"),
+            "https://lights.example.com/reports?date=2026-12-01"
+        );
         s.settings.requests.public_url = None;
         assert!(report_link(&s, "2026-12-01").ends_with(".local/reports?date=2026-12-01"));
     }

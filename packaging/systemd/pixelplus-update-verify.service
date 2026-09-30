@@ -1,0 +1,17 @@
+[Unit]
+Description=PixelPlus: finish checking an interrupted update (health gate, rollback)
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/ARCHITECTURE.md
+# Runs at boot only while an update is unconfirmed (power pulled during an update):
+# keeps the new version if pixelplusd comes up healthy within 3 minutes, otherwise
+# reinstalls the previous one. See pixelplus-helper "update-verify".
+ConditionPathExists=/var/lib/pixelplus-helper/pending-verify
+After=pixelplusd.service network.target
+Wants=pixelplusd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/pixelplus/pixelplus-helper update-verify
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

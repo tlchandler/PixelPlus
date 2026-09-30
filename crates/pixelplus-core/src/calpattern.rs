@@ -428,7 +428,11 @@ mod tests {
         assert!(c[0].abs() < 1e-6);
         assert!(c[c.len() - 1].abs() < 0.05);
         // Zero crossings grow faster: 2 kHz at the start, 4 kHz at the end.
-        let crossings = |s: &[f32]| s.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+        let crossings = |s: &[f32]| {
+            s.windows(2)
+                .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+                .count()
+        };
         let first = crossings(&c[..96]);
         let last = crossings(&c[c.len() - 96..]);
         assert!(last > first, "{first} {last}");
@@ -453,11 +457,16 @@ mod tests {
         assert!(pcm[..at(LEAD_IN_MS as f64)].iter().all(|&s| s == 0));
         for &e in &events_ms(5) {
             let s = at(e as f64);
-            let energy: i64 = pcm[s..s + at(CHIRP_MS)].iter().map(|&v| (v as i64).abs()).sum();
+            let energy: i64 = pcm[s..s + at(CHIRP_MS)]
+                .iter()
+                .map(|&v| (v as i64).abs())
+                .sum();
             assert!(energy > 0);
             // Silence just before and well after.
             assert_eq!(pcm[s - 1], 0);
-            assert!(pcm[s + at(CHIRP_MS) + 2..s + at(100.0)].iter().all(|&v| v == 0));
+            assert!(pcm[s + at(CHIRP_MS) + 2..s + at(100.0)]
+                .iter()
+                .all(|&v| v == 0));
         }
         assert_eq!(wav_file_name(5), "cal-5.wav");
     }
@@ -465,7 +474,9 @@ mod tests {
     #[test]
     fn schedule_json_is_camel_case() {
         let j = serde_json::to_value(schedule(3, 20.0)).unwrap();
-        for k in ["seed", "v", "eventsMs", "flashMs", "windowMs", "leadInMs", "chirp"] {
+        for k in [
+            "seed", "v", "eventsMs", "flashMs", "windowMs", "leadInMs", "chirp",
+        ] {
             assert!(j.get(k).is_some(), "{k}");
         }
         assert_eq!(j["chirp"]["f0Hz"], 2000.0);

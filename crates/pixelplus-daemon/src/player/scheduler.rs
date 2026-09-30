@@ -30,8 +30,8 @@
 //!   (or dark).
 
 use super::types::NextShowRef;
-use chrono::{DateTime, Utc};
-use pixelplus_core::model::{EndBehavior, Schedule};
+use chrono::{DateTime, Duration, Utc};
+use pixelplus_core::model::{EndBehavior, PlaylistItem, Schedule, Show};
 use pixelplus_core::schedule;
 use std::collections::HashSet;
 
@@ -47,6 +47,10 @@ pub struct ActiveWindow {
     pub ends_at: String,
     pub end_behavior: EndBehavior,
     pub preempted: bool,
+    /// Exact start (F4 `startExact`): the window's intro began this long
+    /// before these facts were computed; the engine starts the intro that
+    /// far in so the first song begins exactly at the window's start.
+    pub late_ms: u64,
 }
 
 /// Everything the engine needs to know about the schedule at one instant.
@@ -59,6 +63,110 @@ pub struct ScheduleFacts {
     pub volume_cap: Option<u8>,
     pub idle_effect_id: Option<String>,
     pub off_effect_id: Option<String>,
+    /// Master-brightness ceiling (percent) from late-night dimming and
+    /// `settings.power.maxBrightness` (F12).
+    pub brightness_cap: Option<u8>,
+}
+
+/// [`facts_at`] plus the show-wide rules: late-night dimming
+/// (`brightness_cap`) and exact starts (an entry with `startExact` becomes
+/// active its intro's length early, see [`intro_lead_ms`]).
+pub fn facts_for(show: &Show, now: DateTime<Utc>) -> ScheduleFacts {
+    let s = &show.schedule;
+    let mut f = facts_at(s, now);
+    let tz = schedule::schedule_timezone(s).unwrap_or(chrono_tz::UTC);
+    let local = now.with_timezone(&tz);
+    f.brightness_cap = brightness_cap(show, now);
+    if f.enabled && f.active.is_none() {
+        if let Some(next) = schedule::next_show(s, local) {
+            let exact = s
+                .entries
+                .iter()
+                .any(|e| e.id == next.entry_id && e.start_exact);
+            let lead = show
+                .playlist(&next.playlist_id)
+                .map_or(0, |pl| intro_lead_ms(show, pl));
+            let begin = next.start - Duration::milliseconds(lead as i64);
+            if exact && lead > 0 && begin <= local && local < next.start {
+                f.active = Some(ActiveWindow {
+                    key: format!("{}@{}", next.entry_id, next.start.to_rfc3339()),
+                    entry_id: next.entry_id,
+                    name: next.name,
+                    playlist_id: next.playlist_id,
+                    ends_at: next.end.to_rfc3339(),
+                    end_behavior: next.end_behavior,
+                    preempted: next.preempted,
+                    late_ms: (local - begin).num_milliseconds().max(0) as u64,
+                });
+            }
+        }
+    }
+    f
+}
+
+/// Length of a playlist's intro when it is known up front (countdowns,
+/// pauses, looks, sequences, audio; commands take no time).
+pub fn intro_lead_ms(show: &Show, pl: &pixelplus_core::model::Playlist) -> u64 {
+    pl.intro
+        .iter()
+        .map(|i| match i {
+            PlaylistItem::Countdown { duration_ms, .. }
+            | PlaylistItem::Pause { duration_ms, .. } => *duration_ms,
+            PlaylistItem::Effect { duration_ms, .. } => {
+                if *duration_ms == 0 {
+                    30_000
+                } else {
+                    *duration_ms
+                }
+            }
+            PlaylistItem::Sequence { sequence_id, .. } => {
+                show.sequence(sequence_id).map_or(0, |s| s.duration_ms)
+            }
+            PlaylistItem::Media { media_id, .. } => {
+                show.media_item(media_id).map_or(0, |m| m.duration_ms)
+            }
+            PlaylistItem::Dj { dj_clip_id, .. } => show
+                .dj_clip(dj_clip_id)
+                .and_then(|c| c.media_id.as_deref())
+                .and_then(|m| show.media_item(m))
+                .map_or(0, |m| m.duration_ms),
+            PlaylistItem::Command { .. } => 0,
+        })
+        .sum()
+}
+
+/// Late-night dimming (F12): the lowest `brightness` of the dim windows in
+/// force at `local` (a window runs from `from` on one of its `days`, empty =
+/// every day, to the next `to`), capped by `maxBrightness`. `None` = 100 %.
+pub fn brightness_cap(show: &Show, now: DateTime<Utc>) -> Option<u8> {
+    let p = &show.settings.power;
+    let s = &show.schedule;
+    let tz = schedule::schedule_timezone(s).unwrap_or(chrono_tz::UTC);
+    let local = now.with_timezone(&tz);
+    let mut cap = p.max_brightness.min(100);
+    for w in &p.dim {
+        let today = local.date_naive();
+        for date in [today - Duration::days(1), today] {
+            if !w.days.is_empty() && !w.days.contains(&schedule::weekday_of(date)) {
+                continue;
+            }
+            let (Some(from), Some(to)) = (
+                schedule::resolve_time(&w.from, date, &tz, s),
+                schedule::resolve_time(&w.to, date, &tz, s),
+            ) else {
+                continue;
+            };
+            let to = if to <= from {
+                to + Duration::days(1)
+            } else {
+                to
+            };
+            if from <= local && local < to {
+                cap = cap.min(w.brightness.min(100));
+            }
+        }
+    }
+    (cap < 100).then_some(cap)
 }
 
 /// Evaluate the schedule at `now` (UTC; converted to the schedule's zone).
@@ -85,6 +193,7 @@ pub fn facts_at(s: &Schedule, now: DateTime<Utc>) -> ScheduleFacts {
             ends_at: o.end.to_rfc3339(),
             end_behavior: o.end_behavior,
             preempted: o.preempted,
+            late_ms: 0,
         }),
         next_show: next.map(|o| NextShowRef {
             name: o.name,
@@ -96,6 +205,7 @@ pub fn facts_at(s: &Schedule, now: DateTime<Utc>) -> ScheduleFacts {
         },
         idle_effect_id: s.idle_effect_id.clone(),
         off_effect_id: s.off_effect_id.clone(),
+        brightness_cap: None,
     }
 }
 
@@ -255,6 +365,7 @@ mod tests {
             ends_at: "2026-12-01T22:00:00-06:00".into(),
             end_behavior: behavior,
             preempted,
+            late_ms: 0,
         }
     }
 
@@ -495,5 +606,145 @@ mod tests {
         assert!(facts_at(&sch, later).active.is_none());
         sch.enabled = false;
         assert!(facts_at(&sch, now).active.is_none());
+    }
+
+    fn exact_show(start_exact: bool) -> Show {
+        use pixelplus_core::model::*;
+        let mut show = Show::default();
+        show.schedule.enabled = true;
+        show.schedule.location.timezone = "UTC".into();
+        show.schedule.entries = vec![ScheduleEntry {
+            start_exact,
+            id: "e1".into(),
+            name: "Nightly".into(),
+            enabled: true,
+            playlist_id: "p1".into(),
+            days: vec![
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri,
+                Weekday::Sat,
+                Weekday::Sun,
+            ],
+            date_range: None,
+            start: TimeSpec::Clock {
+                time: "17:30".into(),
+            },
+            end: TimeSpec::Clock {
+                time: "22:00".into(),
+            },
+            priority: 0,
+            end_behavior: EndBehavior::FinishSong,
+        }];
+        show.playlists = vec![Playlist {
+            id: "p1".into(),
+            name: "Show".into(),
+            items: vec![],
+            intro: vec![
+                PlaylistItem::Pause {
+                    id: "p".into(),
+                    duration_ms: 2_000,
+                },
+                PlaylistItem::Countdown {
+                    id: "c".into(),
+                    duration_ms: 10_000,
+                    matrix_prop_id: None,
+                    text: "{s}".into(),
+                    color: None,
+                    others: CountdownOthers::Fill,
+                    finale: CountdownFinale::Flash,
+                    dj_clip_id: None,
+                    dj_offset_ms: 0,
+                    tick: false,
+                },
+            ],
+            outro: vec![],
+            shuffle: false,
+            repeat: false,
+            crossfade_ms: 0,
+            smart: None,
+        }];
+        show
+    }
+
+    #[test]
+    fn exact_start_begins_the_intro_early() {
+        let show = exact_show(true);
+        assert_eq!(intro_lead_ms(&show, &show.playlists[0]), 12_000);
+        let at = |h, m, s, ms| {
+            Utc.with_ymd_and_hms(2026, 12, 1, h, m, s).unwrap() + chrono::Duration::milliseconds(ms)
+        };
+        // 17:29:47.999: not yet.
+        assert!(facts_for(&show, at(17, 29, 47, 999)).active.is_none());
+        // 17:29:48: the intro starts so the first song begins at 17:30:00.
+        let w = facts_for(&show, at(17, 29, 48, 0))
+            .active
+            .expect("early window");
+        assert_eq!(w.late_ms, 0);
+        // A second later (the scheduler ticks once a second): 1 s late,
+        // the engine starts the intro 1 s in.
+        let w2 = facts_for(&show, at(17, 29, 49, 250)).active.unwrap();
+        assert_eq!(w2.late_ms, 1_250);
+        // The same window (key) as when it is really active: no restart.
+        let real = facts_for(&show, at(17, 30, 0, 0)).active.unwrap();
+        assert_eq!((real.key.clone(), real.late_ms), (w.key.clone(), 0));
+        let mut s = Scheduler::new();
+        let f = facts_for(&show, at(17, 29, 50, 0));
+        assert!(matches!(s.decide(&f, None), Some(SchedAction::Start(_))));
+        let playing = Origin::Schedule(w.key.clone());
+        assert_eq!(
+            s.decide(&facts_for(&show, at(17, 30, 0, 0)), Some(&playing)),
+            None
+        );
+        // Without startExact nothing starts early.
+        assert!(facts_for(&exact_show(false), at(17, 29, 55, 0))
+            .active
+            .is_none());
+    }
+
+    #[test]
+    fn dim_windows_cap_the_brightness() {
+        use pixelplus_core::model::*;
+        let mut show = exact_show(false);
+        let at = |h, m| Utc.with_ymd_and_hms(2026, 12, 1, h, m, 0).unwrap(); // a Tuesday
+        assert_eq!(brightness_cap(&show, at(23, 0)), None);
+        show.settings.power.dim = vec![
+            DimWindow {
+                from: TimeSpec::Clock {
+                    time: "22:00".into(),
+                },
+                to: TimeSpec::Clock {
+                    time: "06:00".into(),
+                },
+                brightness: 40,
+                days: vec![],
+            },
+            DimWindow {
+                from: TimeSpec::Clock {
+                    time: "23:30".into(),
+                },
+                to: TimeSpec::Clock {
+                    time: "01:00".into(),
+                },
+                brightness: 20,
+                days: vec![Weekday::Tue],
+            },
+        ];
+        assert_eq!(brightness_cap(&show, at(21, 59)), None);
+        assert_eq!(brightness_cap(&show, at(22, 0)), Some(40));
+        assert_eq!(brightness_cap(&show, at(23, 45)), Some(20));
+        // Past midnight (Wednesday) the Tuesday window still runs.
+        let wed = Utc.with_ymd_and_hms(2026, 12, 2, 0, 30, 0).unwrap();
+        assert_eq!(brightness_cap(&show, wed), Some(20));
+        assert_eq!(
+            brightness_cap(&show, Utc.with_ymd_and_hms(2026, 12, 2, 5, 0, 0).unwrap()),
+            Some(40)
+        );
+        assert_eq!(brightness_cap(&show, at(12, 0)), None);
+        show.settings.power.max_brightness = 70;
+        assert_eq!(brightness_cap(&show, at(12, 0)), Some(70));
+        assert_eq!(facts_for(&show, at(23, 45)).brightness_cap, Some(20));
     }
 }

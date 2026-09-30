@@ -51,9 +51,7 @@ mod test_pattern;
 
 pub use color::{palette_cyclic, palette_linear, ParseColorError, Rgb};
 pub use geometry::WorldBounds;
-pub use params::{
-    param_schema, resolve_params, ParamKind, ParamSpec, BEAT_PARAMS, MAX_COLORS,
-};
+pub use params::{param_schema, resolve_params, ParamKind, ParamSpec, BEAT_PARAMS, MAX_COLORS};
 pub use presets::builtin_presets;
 pub use test_pattern::{render_test_pattern, TestPattern, DEFAULT_STEP_RATE, DEFAULT_TEST_COLOR};
 
@@ -150,6 +148,37 @@ pub fn effect_catalog() -> Vec<EffectInfo> {
             params: param_schema(kind),
         })
         .collect()
+}
+
+/// A look set to "follow the song's beat" (`beatFollowSong`), stamped for a
+/// song with `bpm` whose first beat is at `first_beat_ms`, where the song
+/// started `song_start_ms` into the look's own time: `beatBpm`/`beatPhaseMs`
+/// then put a pulse on every beat of the song (F2). `None` when the look does
+/// not follow songs or the tempo is unknown. Deterministic, so the stamped
+/// copy renders identically on followers.
+pub fn follow_song_beat(
+    preset: &EffectPreset,
+    bpm: f32,
+    first_beat_ms: u32,
+    song_start_ms: f64,
+) -> Option<EffectPreset> {
+    let follow = preset
+        .params
+        .get("beatFollowSong")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !follow || !(bpm.is_finite() && (20.0..=300.0).contains(&bpm)) || !song_start_ms.is_finite() {
+        return None;
+    }
+    let period = 60_000.0 / f64::from(bpm);
+    let phase = (song_start_ms + f64::from(first_beat_ms)).rem_euclid(period);
+    let mut p = preset.clone();
+    p.params.insert("beatBpm".into(), serde_json::json!((f64::from(bpm) * 100.0).round() / 100.0));
+    p.params.insert("beatPhaseMs".into(), serde_json::json!(phase.round()));
+    if !p.params.contains_key("beatDepth") {
+        p.params.insert("beatDepth".into(), serde_json::json!(0.6));
+    }
+    Some(p)
 }
 
 /// Store the world bounds of `all_props` in the preset's hidden `world`
@@ -1189,5 +1218,56 @@ mod tests {
             pr.params[WORLD_PARAM],
             json!({"x": 10.0, "y": 20.0, "w": 30.0, "h": 40.0})
         );
+    }
+
+    #[test]
+    fn beat_pulse_modulates_brightness_deterministically() {
+        let a = prop("a", PropKind::Line, 4);
+        let pulse = preset(
+            EffectKind::Solid,
+            json!({"color": "#ffffff", "beatBpm": 120, "beatPhaseMs": 100, "beatDepth": 1.0, "beatDecayMs": 100}),
+        );
+        let r = EffectRenderer::new(&pulse, &[&a]);
+        // Beats at 100, 600, 1100 ms …
+        assert_eq!(frame(&r, 100)[0], 255);
+        assert_eq!(frame(&r, 600)[0], 255);
+        assert!(frame(&r, 400)[0] < 20, "decayed between beats");
+        assert!(frame(&r, 700)[0] > frame(&r, 900)[0]);
+        assert_eq!(
+            frame(&r, 1234),
+            frame(&EffectRenderer::new(&pulse, &[&a]), 1234)
+        );
+        // Off (the default) changes nothing; the params survive resolution.
+        let plain = EffectRenderer::new(
+            &preset(EffectKind::Solid, json!({"color": "#ffffff"})),
+            &[&a],
+        );
+        assert_eq!(frame(&plain, 400)[0], 255);
+        let resolved = resolve_params(EffectKind::Chase, &pulse.params);
+        assert_eq!(resolved["beatBpm"], json!(120.0));
+        for kind in ALL_EFFECT_KINDS {
+            let keys: Vec<_> = param_schema(kind).into_iter().map(|p| p.key).collect();
+            assert!(
+                BEAT_PARAMS.iter().all(|k| keys.iter().any(|x| x == k)),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn looks_follow_the_songs_beat() {
+        let a = prop("a", PropKind::Line, 2);
+        let mut look = preset(EffectKind::Solid, json!({"color": "#ffffff", "beatDecayMs": 50, "beatDepth": 1.0}));
+        assert!(follow_song_beat(&look, 120.0, 250, 1_000.0).is_none(), "not asked to follow");
+        look.params.insert("beatFollowSong".into(), json!(true));
+        assert!(follow_song_beat(&look, 0.0, 0, 0.0).is_none(), "unknown tempo");
+        // The song started 1 s into the look; its first beat is 250 ms in: beats at
+        // look time 1250, 1750, 2250 … (period 500 ms).
+        let p = follow_song_beat(&look, 120.0, 250, 1_000.0).unwrap();
+        assert_eq!(p.params["beatPhaseMs"], json!(250.0));
+        let r = EffectRenderer::new(&p, &[&a]);
+        assert_eq!(frame(&r, 1_250)[0], 255);
+        assert_eq!(frame(&r, 2_250)[0], 255);
+        assert!(frame(&r, 1_500)[0] < 10);
     }
 }

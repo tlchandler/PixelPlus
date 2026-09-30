@@ -298,12 +298,24 @@ fn header_text(s: &str) -> String {
     let data = one_line.as_bytes();
     let mut b64 = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
         b64.push(T[(n >> 18) as usize & 63] as char);
         b64.push(T[(n >> 12) as usize & 63] as char);
-        b64.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        b64.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+        b64.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        b64.push(if chunk.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     format!("=?UTF-8?B?{b64}?=")
 }
@@ -360,14 +372,18 @@ pub fn start(state: &AppState) {
             // Journal (F11 nightly report): every transition, alert or not.
             match &ev {
                 ClusterEvent::NodeOffline { node_id, .. } => {
-                    st.services.journal.record(super::journal::Event::NodeOffline {
-                        id: node_id.clone(),
-                    })
+                    st.services
+                        .journal
+                        .record(super::journal::Event::NodeOffline {
+                            id: node_id.clone(),
+                        })
                 }
                 ClusterEvent::NodeOnline { node_id, .. } => {
-                    st.services.journal.record(super::journal::Event::NodeOnline {
-                        id: node_id.clone(),
-                    })
+                    st.services
+                        .journal
+                        .record(super::journal::Event::NodeOnline {
+                            id: node_id.clone(),
+                        })
                 }
                 ClusterEvent::SyncProblem { message, .. } => {
                     st.services.journal.record(super::journal::Event::Warn {

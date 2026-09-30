@@ -5,10 +5,17 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { KIND_META } from '$lib/util/kinds';
 	import LayoutCanvas from '$lib/components/viz/LayoutCanvas.svelte';
+	import PreviewTransport from '$lib/components/viz/PreviewTransport.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
+	import { PreviewPlayer } from '$lib/preview/player.svelte';
+	import { liveSource } from '$lib/preview/source';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import { onDestroy, untrack } from 'svelte';
 	import {
 		Eye,
+		Film,
 		Move,
 		ZoomIn,
 		ZoomOut,
@@ -20,7 +27,34 @@
 	} from '@lucide/svelte';
 
 	const show = $derived(app.show);
-	let mode = $state<'live' | 'edit'>('live');
+	// ?preview=<sequenceId> opens a sequence preview (Sequences → Preview).
+	const initialPreview = page.url.searchParams.get('preview');
+	let mode = $state<'live' | 'preview' | 'edit'>(initialPreview ? 'preview' : 'live');
+	let previewId = $state<string>(initialPreview ?? '');
+	const player = new PreviewPlayer();
+	const previewSeq = $derived(show?.sequences.find((s) => s.id === previewId) ?? null);
+
+	// Load the chosen sequence while in preview mode; stop it when leaving.
+	$effect(() => {
+		const m = mode;
+		const first = show?.sequences[0]?.id;
+		const seq = show?.sequences.find((s) => s.id === previewId);
+		untrack(() => {
+			if (m !== 'preview') {
+				if (player.status !== 'idle') player.unload();
+				return;
+			}
+			if (!previewId && first) previewId = first;
+			if (seq && player.seqId !== seq.id) void player.load(seq.id, seq.mediaId);
+		});
+	});
+	$effect(() => {
+		// Keep the URL shareable (and Back-friendly) without a navigation.
+		const want = mode === 'preview' && previewId ? `?preview=${previewId}` : '';
+		if (page.url.search !== want)
+			void goto(`/layout${want}`, { replaceState: true, keepFocus: true, noScroll: true });
+	});
+	onDestroy(() => player.unload());
 	let labels = $state(false);
 	let selected = $state<string | null>(null);
 	let q = $state('');
@@ -70,10 +104,20 @@
 				label="Mode"
 				options={[
 					{ value: 'live', label: 'Live', icon: Eye },
+					{ value: 'preview', label: 'Preview', icon: Film },
 					{ value: 'edit', label: 'Arrange', icon: Move }
 				]}
 			/>
 		</div>
+		{#if mode === 'preview'}
+			<div class="b3">
+				<label class="sr-only" for="pv-seq">Sequence to preview</label>
+				<select id="pv-seq" class="select sm" bind:value={previewId} disabled={!show?.sequences.length}>
+					{#if !show?.sequences.length}<option value="">No sequences yet</option>{/if}
+					{#each show?.sequences ?? [] as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+				</select>
+			</div>
+		{/if}
 		<div class="b2">
 			<label class="lbl"
 				><Switch bind:checked={labels} label="Show names" size="sm" />
@@ -112,7 +156,19 @@
 					{labels}
 					bind:selected
 					onmove={(id, pos) => saveLayout(id, pos)}
+					source={mode === 'preview' ? player.source : liveSource}
 				/>
+			{/if}
+			{#if mode === 'preview' && show?.props.length}
+				<div class="dock">
+					{#if previewSeq}
+						<PreviewTransport {player} mediaId={previewSeq.mediaId} onclose={() => (mode = 'live')} />
+					{:else}
+						<div class="pt-empty small">
+							Upload a sequence on the <a href="/sequences">Sequences</a> page to preview it here.
+						</div>
+					{/if}
+				</div>
 			{/if}
 			{#if show && !show.props.length}
 				<div class="empty-stage">
@@ -228,6 +284,30 @@
 		color: var(--text-2);
 		font-size: 13px;
 		cursor: pointer;
+	}
+	.b3 {
+		display: flex;
+		min-width: 0;
+		flex: 0 1 320px;
+	}
+	.b3 select {
+		width: 100%;
+	}
+	.dock {
+		position: absolute;
+		left: 16px;
+		right: 16px;
+		bottom: 16px;
+		max-width: 720px;
+		margin: 0 auto;
+		box-shadow: var(--shadow-3, 0 10px 30px rgba(0, 0, 0, 0.4));
+		border-radius: 14px;
+	}
+	.pt-empty {
+		padding: 14px;
+		border-radius: 14px;
+		background: var(--surface);
+		border: 1px solid var(--border);
 	}
 	.zoom {
 		display: flex;
@@ -348,9 +428,16 @@
 			gap: 8px;
 		}
 		.b1,
-		.b2 {
+		.b2,
+		.b3 {
 			width: 100%;
 			gap: 10px;
+			flex-basis: auto;
+		}
+		.dock {
+			left: 8px;
+			right: 8px;
+			bottom: 8px;
 		}
 		.b1 h1 {
 			flex: 1;

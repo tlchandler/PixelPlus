@@ -1,0 +1,8 @@
+{
+  "name": "pp_protocol",
+  "version": "1.0.0",
+  "description": "PixelPlus sensor-node protocol: SHA-256/HMAC, X25519, datagram MACs, signed requests, input debouncing. Portable C++ (ESP32 and host tests).",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": { "flags": ["-std=gnu++17"] }
+}

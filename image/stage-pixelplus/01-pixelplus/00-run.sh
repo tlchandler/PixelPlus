@@ -21,6 +21,16 @@ fi
 install -d "${ROOTFS_DIR}/tmp/pixelplus-debs"
 cp "${debs[@]}" "${ROOTFS_DIR}/tmp/pixelplus-debs/"
 
+# Keep the installed package (and its signature, when the release is signed) as the
+# version signed updates can go back to (F15): the first over-the-air update then
+# needs neither apt nor dpkg-repack to keep a rollback copy.
+install -d -m 0755 "${ROOTFS_DIR}/var/cache/pixelplus"
+install -d -m 0700 "${ROOTFS_DIR}/var/cache/pixelplus/rollback"
+for d in "${debs[@]}"; do
+	install -m 0600 "$d" "${ROOTFS_DIR}/var/cache/pixelplus/rollback/"
+	[ -f "$d.minisig" ] && install -m 0600 "$d.minisig" "${ROOTFS_DIR}/var/cache/pixelplus/rollback/"
+done
+
 on_chroot <<'CHROOT'
 set -e
 apt-get -o Acquire::Retries=3 install -y --no-install-recommends /tmp/pixelplus-debs/*.deb

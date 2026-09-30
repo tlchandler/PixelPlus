@@ -33,19 +33,27 @@ use super::clock::{
     ServoGains,
 };
 use super::compose::{self, find_effect, EffectLayer, PropSlot, Sink, TestLayer};
+use super::limiter::EngineLimiter;
 use super::overlay::OverlayManager;
 use super::playlist::PlaylistCursor;
 use super::reader::{FrameLayout, FrameReader, SeqMeta};
 use super::scheduler::{self, Origin, SchedAction, ScheduleFacts, Scheduler};
+use super::surprise::{self, SurpriseLayer, SurpriseRequest, SurpriseStarted};
 use super::types::*;
 use super::{Anchor, OverlayCmd, PlayerCmd, PlayerHandle, SyncPacket};
 use crate::api::{ApiError, ApiResult};
 use crate::events::ToastKind;
 use crate::node::LocalRole;
+use crate::services::journal::Event as JournalEvent;
 use crate::services::tts::DynamicContext;
 use crate::state::AppState;
+use pixelplus_core::calpattern::{self, CalSchedule};
+use pixelplus_core::effects::countdown;
+use pixelplus_core::mapcode::MapPlan;
 use pixelplus_core::mapping::{NodeMap, OutputFrame, PropMap};
-use pixelplus_core::model::{BoardKind, EffectPreset, OutputConfig, PlaylistItem, Show};
+use pixelplus_core::model::{
+    BoardKind, EffectPreset, NodePowerBudget, OutputConfig, Playlist, PlaylistItem, Show,
+};
 use pixelplus_output::{
     BackendKind, OutputFrameRef, PixelOutput, PixelPipeline, SimHandle, SimOutput,
 };
@@ -74,6 +82,13 @@ pub const CALIBRATION_FLASH_MS: f64 = 50.0;
 const CALIBRATION_LEN_MS: u64 = 60_000;
 /// Anchor epochs: the engine's epoch in the high bits, timeline jumps below.
 const EPOCH_SHIFT: u32 = 20;
+/// Phone calibration (F1 v2): item ids are `v2:<seed>`.
+const CALIBRATION_V2_PREFIX: &str = "v2:";
+/// Show-derived context (budgets, prop mask, smart playlists) is refreshed at
+/// least this often.
+const CONTEXT_EVERY: Duration = Duration::from_secs(30);
+/// Mapping plans kept for `mapRunId` references.
+const MAP_PLANS_KEPT: usize = 8;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -165,7 +180,9 @@ pub fn start_with(state: &AppState, opts: EngineOptions) -> anyhow::Result<Engin
         .spawn(move || run_output_thread(core))?;
 
     tokio::spawn(control_task(state.clone(), cmd_rx, core_tx.clone(), ev_rx));
+    tokio::spawn(context_task(state.clone(), core_tx.clone()));
     tokio::spawn(status_publisher(state.clone(), status_rx.clone()));
+    tokio::spawn(power_publisher(state.clone(), status_rx.clone()));
     Ok(Engine {
         handle: PlayerHandle::new(cmd_tx, status_rx),
         sim,
@@ -216,7 +233,21 @@ enum CoreCmd {
         clip_id: String,
         path: PathBuf,
     },
+    /// Show-derived context computed off the output thread.
+    Context(Box<EngineContext>),
     Shutdown,
+}
+
+/// What the output thread needs from files and the journal (computed by the
+/// context task; see [`compute_context`]).
+#[derive(Debug, Default, Clone, PartialEq)]
+struct EngineContext {
+    /// Power limiter budget of this node (F12).
+    budget: Option<NodePowerBudget>,
+    /// Props kept dark by the season profile (F8).
+    disabled: Vec<String>,
+    /// Smart playlists (F18): tonight's items per playlist id.
+    smart: HashMap<String, Vec<PlaylistItem>>,
 }
 
 enum CoreEvent {
@@ -313,7 +344,7 @@ async fn control_task(
                     last_identity = Some(key);
                 }
                 let show = state.store.get();
-                let facts = scheduler::facts_at(&show.schedule, chrono::Utc::now());
+                let facts = scheduler::facts_for(&show, chrono::Utc::now());
                 if core.send(CoreCmd::Facts(facts)).is_err() {
                     break;
                 }
@@ -435,6 +466,138 @@ async fn games_command(path: &Path, cmd: &serde_json::Value) -> Result<serde_jso
     {
         let _ = (path, cmd);
         Err("games are only available on Linux".into())
+    }
+}
+
+/// Keep the output thread's [`EngineContext`] current: on show and identity
+/// changes and every [`CONTEXT_EVERY`] (smart playlists follow the journal).
+async fn context_task(state: AppState, core: Sender<CoreCmd>) {
+    let mut show_rx = state.store.subscribe();
+    let mut tick = tokio::time::interval(Duration::from_secs(2));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last: Option<EngineContext> = None;
+    let mut last_key = None;
+    let mut last_full = std::time::Instant::now() - CONTEXT_EVERY;
+    loop {
+        tokio::select! {
+            r = show_rx.changed() => if r.is_err() { break },
+            _ = tick.tick() => {
+                let id = state.identity();
+                let key = (id.id.clone(), id.role, state.store.get().version);
+                if last_key.as_ref() == Some(&key) && last_full.elapsed() < CONTEXT_EVERY {
+                    continue;
+                }
+                last_key = Some(key);
+            }
+        }
+        last_full = std::time::Instant::now();
+        let st = state.clone();
+        let Ok(ctx) = tokio::task::spawn_blocking(move || compute_context(&st)).await else {
+            continue;
+        };
+        if last.as_ref() != Some(&ctx) {
+            last = Some(ctx.clone());
+            if core.send(CoreCmd::Context(Box::new(ctx))).is_err() {
+                break;
+            }
+        }
+    }
+}
+
+/// Budget, prop mask and smart playlist expansions for this node.
+fn compute_context(state: &AppState) -> EngineContext {
+    let show = state.store.get();
+    let id = state.identity();
+    let follower = id.role == LocalRole::Follower;
+    let data = &state.config.data_dir;
+    EngineContext {
+        budget: super::limiter::budget_for(&show, &id.id, follower, data),
+        disabled: super::limiter::disabled_props(&show, follower, data),
+        smart: if follower {
+            HashMap::new()
+        } else {
+            smart_expansions(state, &show)
+        },
+    }
+}
+
+/// Tonight's items of every smart playlist (F18), from the journal's play
+/// history (`core::smartlist`; the seed is the show night and playlist, so
+/// the "Tonight" preview equals what plays).
+fn smart_expansions(state: &AppState, show: &Show) -> HashMap<String, Vec<PlaylistItem>> {
+    use pixelplus_core::smartlist;
+    let smart: Vec<&Playlist> = show
+        .playlists
+        .iter()
+        .filter(|p| p.smart.is_some())
+        .collect();
+    if smart.is_empty() {
+        return HashMap::new();
+    }
+    let now = state.services.journal.now();
+    let nights = smart
+        .iter()
+        .filter_map(|p| p.smart.as_ref())
+        .map(|r| r.no_repeat_nights)
+        .max()
+        .unwrap_or(0)
+        .clamp(1, 30);
+    let from = now - chrono::Duration::days(i64::from(nights) + 1);
+    let types = ["itemStart".to_string()];
+    let dir = crate::services::journal::dir(&state.config.data_dir);
+    let history = smartlist::PlayHistory {
+        plays: crate::services::journal::read_range(&dir, from, now, Some(&types))
+            .into_iter()
+            .filter_map(|r| {
+                let at = r.time()?;
+                match r.event {
+                    JournalEvent::ItemStart {
+                        item,
+                        id,
+                        playlist_id,
+                        ..
+                    } if item == "sequence" || item == "request" || item == "media" => {
+                        Some(smartlist::Play {
+                            id,
+                            at,
+                            playlist_id,
+                        })
+                    }
+                    _ => None,
+                }
+            })
+            .collect(),
+    };
+    let night = smartlist::night_of(now.naive_local());
+    smart
+        .into_iter()
+        .filter_map(|p| {
+            let seed = smartlist::night_seed(night, &p.id);
+            smartlist::expand_playlist(show, &p.id, &history, now, seed)
+                .map(|e| (p.id.clone(), e.items))
+        })
+        .collect()
+}
+
+/// WS `power` (F12): every second while something lights the display and
+/// the limiter is on, the live power view (`GET /power/live`).
+async fn power_publisher(state: AppState, rx: watch::Receiver<PlayerStatus>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tick.tick().await;
+        let st = rx.borrow().clone();
+        let lit = matches!(
+            st.state,
+            PlayerState::Playing | PlayerState::Effect | PlayerState::Testing
+        );
+        if st.power.is_some() && lit {
+            let v = super::limiter::power_live(&state);
+            state.events.publish("power", &v);
+        }
+        if rx.has_changed().is_err() {
+            break;
+        }
     }
 }
 
@@ -636,6 +799,17 @@ struct Program {
     crossfade_ms: u32,
 }
 
+/// Countdown DJ clip (F4): starts at item position `at_pos` so that it ends
+/// at zero (plus the item's offset); `skip_ms` into the clip when it is
+/// longer than the countdown.
+#[derive(Debug, Clone)]
+struct DelayedAudio {
+    path: PathBuf,
+    gain: f32,
+    at_pos: f64,
+    skip_ms: u64,
+}
+
 /// Something that will play next.
 #[derive(Debug, Clone)]
 enum Pending {
@@ -646,6 +820,8 @@ enum Pending {
     },
     /// "Sync lights to sound" calibration pattern.
     Calibration,
+    /// Phone calibration (F1): the v2 pattern with this seed.
+    CalibrationV2(u32),
 }
 
 enum ActiveKind {
@@ -657,8 +833,9 @@ enum ActiveKind {
     /// DJ clip or media: audio only, the idle look runs under it.
     Audio,
     Pause,
-    /// Calibration: every prop flashes white at each click of the audio.
-    Flash,
+    /// Calibration: every prop flashes white at each click of the audio
+    /// (v1: every second; v2: the seeded pattern).
+    Flash(Option<Box<CalSchedule>>),
 }
 
 struct Active {
@@ -680,6 +857,13 @@ struct Active {
     buf: Vec<u8>,
     have_frame: bool,
     warned_audio: bool,
+    /// Countdown DJ clip waiting for its moment (F4).
+    delayed_audio: Option<DelayedAudio>,
+    /// Keep the audio playing past the item's end (a countdown clip that
+    /// ends after zero).
+    detach_audio: bool,
+    /// Start this far into the item (exact show starts, F4).
+    start_at_ms: f64,
 }
 
 impl Active {
@@ -700,6 +884,9 @@ impl Active {
             buf: Vec::new(),
             have_frame: false,
             warned_audio: false,
+            delayed_audio: None,
+            detach_audio: false,
+            start_at_ms: 0.0,
         }
     }
 
@@ -719,6 +906,8 @@ struct Look {
     name: String,
     layer: EffectLayer,
     started_ms: f64,
+    /// The song the look's beat pulse follows (`beatFollowSong`, F2).
+    beat_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -729,8 +918,9 @@ struct FollowState {
     anchor: Option<Anchor>,
     /// Our position, following `anchor` (see [`Servo`]).
     clock: Option<Servo>,
-    /// Calibration flash pattern.
+    /// Calibration flash pattern (v2: its schedule).
     flash: bool,
+    cal: Option<CalSchedule>,
     item_key: Option<String>,
     reader: Option<FrameReader>,
     meta: Option<SeqMeta>,
@@ -823,6 +1013,25 @@ struct Core {
     shown: Option<(String, u32)>,
     /// Timeline position (ms, unquantised) the shown frame was chosen for.
     shown_pos: Option<f64>,
+
+    // ----- feature wave -----
+    /// Power limiter on the wire bytes (F12).
+    limiter: EngineLimiter,
+    /// Props the season profile keeps dark (F8).
+    disabled_ids: Vec<String>,
+    disabled_slots: Vec<PropSlot>,
+    zeros: Vec<u8>,
+    /// Smart playlists (F18): tonight's items per playlist id.
+    smart: HashMap<String, Vec<PlaylistItem>>,
+    /// The running surprise (F20).
+    surprise: Option<SurpriseLayer>,
+    surprise_seq: u64,
+    /// Mapping plans by run id (F6/F7; sync packets carry only the id).
+    map_plans: VecDeque<(String, MapPlan)>,
+    /// A timeline test started: its anchor epoch.
+    test_epoch: u64,
+    /// Schedule window of the running program (journal `showEnd`).
+    show_window: Option<(String, String)>,
 
     // ----- presentation timing (see `plan_next`) -----
     /// Engine clock (ms) at which the frame being composed lights up.
@@ -950,6 +1159,16 @@ impl Core {
             tap: None,
             shown: None,
             shown_pos: None,
+            limiter: EngineLimiter::default(),
+            disabled_ids: Vec::new(),
+            disabled_slots: Vec::new(),
+            zeros: Vec::new(),
+            smart: HashMap::new(),
+            surprise: None,
+            surprise_seq: 0,
+            map_plans: VecDeque::new(),
+            test_epoch: 0,
+            show_window: None,
             light_ms: 0.0,
             slot_ms: SOFT_SLOT_MS,
             planned: None,
@@ -1178,6 +1397,7 @@ impl Core {
         self.rebuild_maps();
         let show = self.show.clone();
         self.overlays.retain_props(|id| show.prop(id).is_some());
+        self.rebuild_mask();
         // Settings: volume set in the UI, audio device.
         let sv = show.settings.audio.volume.min(100);
         if sv != self.settings_volume {
@@ -1242,6 +1462,7 @@ impl Core {
             CoreCmd::DjRendered { clip_id, path } => {
                 self.dj_rendered.insert(clip_id, path);
             }
+            CoreCmd::Context(ctx) => self.set_context(*ctx),
             CoreCmd::Shutdown => {}
         }
     }
@@ -1271,8 +1492,27 @@ impl Core {
                 self.save_levels();
             }
             PlayerCmd::TestStart(req, reply) => {
-                let r = match TestLayer::new(&self.show, &self.node_id, &req, now_ms) {
+                if let (Some(plan), Some(id)) = (&req.map, &req.map_run_id) {
+                    self.map_plans.retain(|(k, _)| k != id);
+                    self.map_plans.push_back((id.clone(), plan.clone()));
+                    while self.map_plans.len() > MAP_PLANS_KEPT {
+                        self.map_plans.pop_front();
+                    }
+                }
+                let plan = self.plan_for(&req);
+                let r = match TestLayer::with_plan(
+                    &self.show,
+                    &self.node_id,
+                    &req,
+                    now_ms,
+                    plan.as_ref(),
+                ) {
                     Ok(t) => {
+                        if t.is_timeline() {
+                            self.test_epoch += 1;
+                            // Mapping and calibration patterns need a clean display.
+                            self.surprise = None;
+                        }
                         self.test = Some(t);
                         Ok(())
                     }
@@ -1288,12 +1528,150 @@ impl Core {
                 }
             }
             PlayerCmd::Calibrate(on) => self.calibrate(on, now_ms),
+            PlayerCmd::CalibrateV2(seed) => self.calibrate_v2(seed, now_ms),
+            PlayerCmd::Surprise(req, reply) => {
+                let r = self.start_surprise(req, now_ms);
+                let _ = reply.send(r);
+            }
+            PlayerCmd::SurpriseStop => self.surprise = None,
             PlayerCmd::Overlay(o) => self.overlay_cmd(o),
             PlayerCmd::Reload => {
                 let show = self.app.store.get();
                 self.reload(show);
             }
         }
+    }
+
+    fn set_context(&mut self, ctx: EngineContext) {
+        self.limiter.set_budget(&self.node_id, ctx.budget);
+        self.smart = ctx.smart;
+        if ctx.disabled != self.disabled_ids {
+            self.disabled_ids = ctx.disabled;
+            self.rebuild_mask();
+        }
+    }
+
+    /// Slots of the props kept dark (F8), for the current show.
+    fn rebuild_mask(&mut self) {
+        self.disabled_slots = self
+            .disabled_ids
+            .iter()
+            .filter_map(|id| self.show.prop(id))
+            .map(PropSlot::of)
+            .collect();
+        let most = self.disabled_slots.iter().map(|s| s.len).max().unwrap_or(0);
+        self.zeros = vec![0; most];
+    }
+
+    /// The mapping plan a test refers to (inline, or by run id).
+    fn plan_for(&self, req: &TestRequest) -> Option<MapPlan> {
+        req.map.clone().or_else(|| {
+            let id = req.map_run_id.as_ref()?;
+            self.map_plans
+                .iter()
+                .find(|(k, _)| k == id)
+                .map(|(_, p)| p.clone())
+        })
+    }
+
+    fn journal(&self, ev: JournalEvent) {
+        if !self.is_follower() {
+            self.app.services.journal.record(ev);
+        }
+    }
+
+    fn journal_end(&self, a: &Active, ended_by: &str) {
+        if !a.started || matches!(a.kind, ActiveKind::Flash(_)) {
+            return;
+        }
+        self.journal(JournalEvent::ItemEnd {
+            item: a.iref.kind.clone(),
+            id: a.iref.id.clone(),
+            name: a.iref.name.clone(),
+            dur_ms: (self.now_ms() - a.begun_ms).max(0.0) as u64,
+            ended_by: ended_by.into(),
+        });
+    }
+
+    /// Start a surprise over whatever plays (F20; leader).
+    fn start_surprise(&mut self, req: SurpriseRequest, now_ms: f64) -> ApiResult<SurpriseStarted> {
+        let calibrating = self
+            .current
+            .as_ref()
+            .is_some_and(|a| a.iref.kind == CALIBRATION_ID);
+        let testing = self.test.as_ref().is_some_and(|t| !t.is_look());
+        if let Some(why) =
+            surprise::refusal(self.is_follower(), self.blackout, testing, calibrating)
+        {
+            return Err(ApiError::conflict(why));
+        }
+        let show = self.show.clone();
+        let kind = if req.kind == "sequence" {
+            "sequence"
+        } else {
+            "effect"
+        };
+        let default_ms = match kind {
+            "sequence" => {
+                show.sequence(&req.r#ref)
+                    .ok_or_else(|| {
+                        ApiError::bad_request("That surprise's sequence no longer exists.")
+                    })?
+                    .duration_ms
+            }
+            _ => {
+                find_effect(&show, &req.r#ref).ok_or_else(|| {
+                    ApiError::bad_request("That surprise's look no longer exists.")
+                })?;
+                surprise::DEFAULT_EFFECT_MS
+            }
+        };
+        let duration_ms = req
+            .duration_ms
+            .filter(|d| *d > 0)
+            .unwrap_or(default_ms)
+            .min(if kind == "sequence" {
+                default_ms.max(surprise::MIN_MS)
+            } else {
+                u64::MAX
+            })
+            .clamp(surprise::MIN_MS, surprise::MAX_MS);
+        let targets: Vec<String> = req
+            .targets
+            .iter()
+            .filter(|id| show.prop(id).is_some())
+            .cloned()
+            .collect();
+        if !req.targets.is_empty() && targets.is_empty() {
+            return Err(ApiError::bad_request(
+                "The surprise's props no longer exist.",
+            ));
+        }
+        self.surprise_seq += 1;
+        let anchor = SurpriseAnchor {
+            id: req.id.clone(),
+            kind: kind.into(),
+            r#ref: req.r#ref.clone(),
+            targets,
+            start_pos: 0.0,
+            duration_ms,
+            epoch: ((now_ms.max(0.0) as u64) << 8) | (self.surprise_seq & 0xff),
+        };
+        let layer = SurpriseLayer::new(&show, &self.app.config.data_dir, anchor, now_ms)
+            .map_err(ApiError::bad_request)?;
+        let started = SurpriseStarted {
+            name: layer.name.clone(),
+            duration_ms,
+            props: if layer.anchor.targets.is_empty() {
+                show.props.len()
+            } else {
+                layer.anchor.targets.len()
+            },
+            replaced: self.surprise.is_some(),
+        };
+        tracing::info!("surprise: {} for {} ms", started.name, duration_ms);
+        self.surprise = Some(layer);
+        Ok(started)
     }
 
     /// Remember the leader's levels for the next start (written off this thread).
@@ -1380,7 +1758,7 @@ impl Core {
             // Manual play (scheduler.rs rules): "Loop until I stop" repeats; outside
             // the show windows a playlist plays once; inside one it follows its
             // own `repeat` until the window ends.
-            let mut pl = pl.clone();
+            let mut pl = self.smart_playlist(pl);
             if req.loop_until_stopped {
                 pl.repeat = true;
             } else if !(self.facts.enabled && self.facts.active.is_some()) {
@@ -1479,10 +1857,15 @@ impl Core {
         if self.is_follower() {
             return;
         }
-        let running = self
+        let running_any = self
             .current
             .as_ref()
             .is_some_and(|a| a.iref.kind == CALIBRATION_ID);
+        let running = running_any
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|a| a.iref.id == CALIBRATION_ID);
         if on && !running {
             self.test = None;
             self.start_program(
@@ -1499,15 +1882,40 @@ impl Core {
                 Pending::Calibration,
                 now_ms,
             );
-        } else if !on && running {
+        } else if !on && running_any {
             self.stop(false, true, now_ms);
         }
+    }
+
+    /// Start the phone calibration pattern (F1 v2) with `seed` (leader).
+    fn calibrate_v2(&mut self, seed: u32, now_ms: f64) {
+        if self.is_follower() {
+            return;
+        }
+        self.test = None;
+        self.surprise = None;
+        self.start_program(
+            Program {
+                origin: Origin::Manual {
+                    window: None,
+                    looping: true,
+                },
+                source: Source::Single,
+                playlist: None,
+                crossfade_ms: 0,
+            },
+            Pending::CalibrationV2(seed),
+            now_ms,
+        );
     }
 
     fn start_program(&mut self, program: Program, first: Pending, now_ms: f64) {
         // Replace whatever plays (quick fade to avoid clicks).
         self.audio.stop_all(80);
-        self.current = None;
+        if let Some(a) = self.current.take() {
+            self.journal_end(&a, "stopped");
+        }
+        self.end_show_window();
         self.outgoing = None;
         self.stop_fade = None;
         self.paused = false;
@@ -1536,10 +1944,12 @@ impl Core {
 
     fn clear_playback(&mut self) {
         if let Some(a) = self.current.take() {
+            self.journal_end(&a, "stopped");
             if let Some(id) = a.audio {
                 self.audio.stop(id);
             }
         }
+        self.end_show_window();
         if let Some(o) = self.outgoing.take() {
             if let Some(id) = o.active.audio {
                 self.audio.stop(id);
@@ -1663,9 +2073,17 @@ impl Core {
         }
     }
 
+    /// Journal the end of the scheduled show (if one was running).
+    fn end_show_window(&mut self) {
+        if let Some((entry_id, name)) = self.show_window.take() {
+            self.journal(JournalEvent::ShowEnd { entry_id, name });
+        }
+    }
+
     /// Stop the current item's audio (quick fade) and drop it.
     fn end_current(&mut self, fade_ms: u32) {
         if let Some(a) = self.current.take() {
+            self.journal_end(&a, "skipped");
             if let Some(id) = a.audio {
                 self.audio.fade_out(id, fade_ms);
             }
@@ -1682,6 +2100,19 @@ impl Core {
     fn take_next(&mut self) -> Option<Pending> {
         if let Some((sequence_id, name)) = self.requests.pop_front() {
             return Some(Pending::Request { sequence_id, name });
+        }
+        // Smart playlists re-expand for every repeat pass (F18).
+        let smart_items = self
+            .program
+            .as_ref()
+            .and_then(|p| p.playlist.as_ref())
+            .and_then(|(id, _)| self.show.playlist(id))
+            .filter(|pl| pl.smart.is_some())
+            .map(|pl| self.smart_playlist(pl).items);
+        if let (Some(items), Some(Source::Playlist(c))) =
+            (smart_items, self.program.as_mut().map(|p| &mut p.source))
+        {
+            c.set_next_cycle_items(items);
         }
         match self.program.as_mut().map(|p| &mut p.source) {
             Some(Source::Playlist(c)) => c.advance().cloned().map(Pending::Item),
@@ -1715,6 +2146,18 @@ impl Core {
                 Ok(Some(mut active)) => {
                     self.epoch += 1;
                     active.fade_in_ms = fade_in_ms;
+                    if !matches!(active.kind, ActiveKind::Flash(_)) {
+                        self.journal(JournalEvent::ItemStart {
+                            item: active.iref.kind.clone(),
+                            id: active.iref.id.clone(),
+                            name: active.iref.name.clone(),
+                            playlist_id: self
+                                .program
+                                .as_ref()
+                                .and_then(|p| p.playlist.as_ref())
+                                .map(|p| p.0.clone()),
+                        });
+                    }
                     self.current = Some(active);
                     self.after_begin(&p);
                     return;
@@ -1724,6 +2167,10 @@ impl Core {
                     let name = self.pending_ref(&p).name;
                     let msg = format!("Skipped “{name}”: {e}");
                     self.item_error = Some((msg.clone(), Instant::now()));
+                    self.journal(JournalEvent::Error {
+                        code: "itemSkipped".into(),
+                        msg: msg.clone(),
+                    });
                     self.warn(msg, true);
                 }
             }
@@ -1806,6 +2253,11 @@ impl Core {
             Pending::Calibration => {
                 item_ref(CALIBRATION_ID, CALIBRATION_ID, "Sync lights to sound")
             }
+            Pending::CalibrationV2(seed) => item_ref(
+                CALIBRATION_ID,
+                &format!("{CALIBRATION_V2_PREFIX}{seed}"),
+                "Measure with my phone",
+            ),
             Pending::Item(i) => match i {
                 PlaylistItem::Sequence { sequence_id, .. } => item_ref(
                     "sequence",
@@ -1912,9 +2364,18 @@ impl Core {
         if matches!(p, Pending::Calibration) {
             let path = calibration_click(&self.app.config.data_dir)
                 .map_err(|e| format!("could not write the calibration sound: {e}"))?;
-            let mut a = Active::new(iref, ActiveKind::Flash, now_ms);
+            let mut a = Active::new(iref, ActiveKind::Flash(None), now_ms);
             a.audio_src = Some((path, 0.0));
             a.duration_ms = Some(CALIBRATION_LEN_MS);
+            return Ok(Some(a));
+        }
+        if let Pending::CalibrationV2(seed) = p {
+            let path = calibration_v2_wav(&self.app.config.data_dir, *seed)
+                .map_err(|e| format!("could not write the calibration sound: {e}"))?;
+            let sched = calpattern::schedule(*seed, self.slot_ms);
+            let mut a = Active::new(iref, ActiveKind::Flash(Some(Box::new(sched))), now_ms);
+            a.audio_src = Some((path, 0.0));
+            a.duration_ms = Some(calpattern::RUN_MS);
             return Ok(Some(a));
         }
         let Pending::Item(item) = p else {
@@ -1923,23 +2384,7 @@ impl Core {
         match item {
             PlaylistItem::Sequence { .. } => unreachable!("handled above"),
             PlaylistItem::Dj { dj_clip_id, .. } => {
-                let clip = show.dj_clip(dj_clip_id).ok_or("the DJ clip was deleted")?;
-                let rendered = self
-                    .dj_rendered
-                    .get(dj_clip_id)
-                    .filter(|p| p.exists())
-                    .cloned();
-                let media = clip.media_id.as_deref().and_then(|m| show.media_item(m));
-                let (path, gain, duration) = match (rendered, media) {
-                    (Some(p), m) => (p, 0.0, m.map(|m| m.duration_ms)),
-                    (None, Some(m)) => (
-                        self.media_path(&m.file)
-                            .ok_or("the DJ clip's audio file is missing")?,
-                        self.media_gain(m),
-                        Some(m.duration_ms),
-                    ),
-                    (None, None) => return Err("the DJ clip has not been rendered yet".into()),
-                };
+                let (path, gain, duration) = self.dj_audio(dj_clip_id)?;
                 let mut a = Active::new(iref, ActiveKind::Audio, now_ms);
                 a.audio_src = Some((path, gain));
                 a.duration_ms = duration.filter(|&d| d > 0);
@@ -1981,15 +2426,83 @@ impl Core {
                 self.run_command(command, args);
                 Ok(None)
             }
-            // F4 placeholder until WS3 renders countdowns: keep the timing
-            // (dark for its duration) so intros still end on time.
-            PlaylistItem::Countdown { duration_ms, .. } => {
-                tracing::warn!("countdowns are not rendered yet; the lights stay dark for it");
-                let mut a = Active::new(iref, ActiveKind::Pause, now_ms);
-                a.duration_ms = Some(*duration_ms);
+            PlaylistItem::Countdown {
+                id,
+                duration_ms,
+                matrix_prop_id,
+                text,
+                color,
+                others,
+                finale,
+                dj_clip_id,
+                dj_offset_ms,
+                tick,
+            } => {
+                let preset = countdown::countdown_preset(
+                    &show,
+                    id,
+                    *duration_ms,
+                    matrix_prop_id.as_deref(),
+                    text,
+                    color.as_deref(),
+                    *others,
+                    *finale,
+                );
+                let dur = countdown::CountdownSpec::from_params(&preset.params).duration_ms;
+                let layer = EffectLayer::new(&show, &preset);
+                let mut a = Active::new(iref, ActiveKind::Effect(Box::new(layer)), now_ms);
+                a.duration_ms = Some(dur);
+                if let Some(clip) = dj_clip_id {
+                    // The clip ends at zero (+ offset): "Showtime in 3, 2, 1…".
+                    match self.dj_audio(clip) {
+                        Ok((path, gain, clip_ms)) => {
+                            let start =
+                                dur as i64 - clip_ms.unwrap_or(0) as i64 + i64::from(*dj_offset_ms);
+                            a.delayed_audio = Some(DelayedAudio {
+                                path,
+                                gain,
+                                at_pos: start.max(0) as f64,
+                                skip_ms: (-start).max(0) as u64,
+                            });
+                            a.detach_audio = true;
+                        }
+                        Err(e) => self.warn(
+                            format!("The countdown plays without its DJ clip: {e}"),
+                            false,
+                        ),
+                    }
+                } else if *tick {
+                    match countdown_ticks(&self.app.config.data_dir, dur) {
+                        Ok(path) => a.audio_src = Some((path, 0.0)),
+                        Err(e) => tracing::warn!("countdown tick sound: {e}"),
+                    }
+                }
                 Ok(Some(a))
             }
         }
+    }
+
+    /// A DJ clip's audio: its showtime render or its saved audio, with the
+    /// gain and length.
+    fn dj_audio(&self, clip_id: &str) -> Result<(PathBuf, f32, Option<u64>), String> {
+        let show = self.show.clone();
+        let clip = show.dj_clip(clip_id).ok_or("the DJ clip was deleted")?;
+        let rendered = self
+            .dj_rendered
+            .get(clip_id)
+            .filter(|p| p.exists())
+            .cloned();
+        let media = clip.media_id.as_deref().and_then(|m| show.media_item(m));
+        Ok(match (rendered, media) {
+            (Some(p), m) => (p, 0.0, m.map(|m| m.duration_ms)),
+            (None, Some(m)) => (
+                self.media_path(&m.file)
+                    .ok_or("the DJ clip's audio file is missing")?,
+                self.media_gain(m),
+                Some(m.duration_ms),
+            ),
+            (None, None) => return Err("the DJ clip has not been rendered yet".into()),
+        })
     }
 
     fn run_command(&mut self, command: &str, args: &serde_json::Value) {
@@ -2062,6 +2575,7 @@ impl Core {
                     self.sched.on_finished(&w.key);
                     return;
                 };
+                let pl = self.smart_playlist(pl);
                 let cursor = PlaylistCursor::new(pl.clone());
                 let Some(first) = cursor.current().cloned() else {
                     self.sched.on_finished(&w.key);
@@ -2094,6 +2608,19 @@ impl Core {
                     Pending::Item(first),
                     now_ms,
                 );
+                if self.program.is_some() {
+                    // Exact start (F4): the intro began `late_ms` ago.
+                    if w.late_ms > 0 {
+                        if let Some(a) = self.current.as_mut() {
+                            a.start_at_ms = w.late_ms as f64;
+                        }
+                    }
+                    self.journal(JournalEvent::ShowStart {
+                        entry_id: w.entry_id.clone(),
+                        name: w.name.clone(),
+                    });
+                    self.show_window = Some((w.entry_id.clone(), w.name.clone()));
+                }
             }
             SchedAction::End(behavior) => {
                 use pixelplus_core::model::EndBehavior;
@@ -2121,6 +2648,35 @@ impl Core {
         }
     }
 
+    /// A smart playlist (F18) with tonight's items; other playlists as they are.
+    fn smart_playlist(&self, pl: &Playlist) -> Playlist {
+        let mut pl = pl.clone();
+        if pl.smart.is_some() {
+            pl.items = match self.smart.get(&pl.id) {
+                Some(items) => items.clone(),
+                // Not expanded yet (just created): expand without history.
+                None => {
+                    let show = &self.show;
+                    let tz = pixelplus_core::schedule::schedule_timezone(&show.schedule)
+                        .unwrap_or(chrono_tz::UTC);
+                    let now = chrono::Utc::now().with_timezone(&tz);
+                    let night = pixelplus_core::smartlist::night_of(now.naive_local());
+                    let seed = pixelplus_core::smartlist::night_seed(night, &pl.id);
+                    pixelplus_core::smartlist::expand_playlist(
+                        show,
+                        &pl.id,
+                        &Default::default(),
+                        now,
+                        seed,
+                    )
+                    .map(|e| e.items)
+                    .unwrap_or_default()
+                }
+            };
+        }
+        pl
+    }
+
     fn set_look(&mut self, id: Option<String>, force: bool) {
         if !force && self.look.as_ref().map(|l| &l.id) == id.as_ref() {
             return;
@@ -2133,8 +2689,54 @@ impl Core {
                 name: preset.name.clone(),
                 layer: EffectLayer::new(&self.show, &preset),
                 started_ms: now_ms,
+                beat_key: None,
             })
         });
+    }
+
+    /// An idle look that "follows the song's beat" (F2): under a song or DJ
+    /// clip whose beat was analysed (`Media.analysis`, WS2), its pulse is
+    /// stamped with the song's tempo and first beat; followers get the stamped
+    /// preset as the sync effect, so every node pulses on the same beats.
+    fn sync_idle_beat(&mut self, now_ms: f64) {
+        let Some(l) = self.idle_layer.as_mut() else {
+            return;
+        };
+        let song = self
+            .current
+            .as_ref()
+            .filter(|a| a.started && matches!(a.kind, ActiveKind::Audio))
+            .and_then(|a| {
+                let media_id = match a.iref.kind.as_str() {
+                    "media" => Some(a.iref.id.clone()),
+                    "dj" => self
+                        .show
+                        .dj_clip(&a.iref.id)
+                        .and_then(|c| c.media_id.clone()),
+                    _ => None,
+                }?;
+                let an = self.show.media_item(&media_id)?.analysis.clone()?;
+                Some((format!("{}@{}", a.iref.id, a.begun_ms), an, a.last_pos))
+            });
+        let want = song.as_ref().map(|s| s.0.clone());
+        if want == l.beat_key {
+            return;
+        }
+        let Some(original) = find_effect(&self.show, &l.id) else {
+            return;
+        };
+        let preset = match &song {
+            Some((_, an, pos)) => {
+                let start = (now_ms - l.started_ms) - pos;
+                pixelplus_core::effects::follow_song_beat(&original, an.bpm, an.first_beat_ms, start)
+                    .unwrap_or(original)
+            }
+            None => original,
+        };
+        if preset != l.layer.preset {
+            l.layer = EffectLayer::new(&self.show, &preset);
+        }
+        l.beat_key = want;
     }
 
     /// The idle look that runs under DJ clips and pauses.
@@ -2156,6 +2758,7 @@ impl Core {
                 name: preset.name.clone(),
                 layer: EffectLayer::new(&self.show, &preset),
                 started_ms: now_ms,
+                beat_key: None,
             })
         });
     }
@@ -2331,12 +2934,16 @@ impl Core {
             }
         }
         a.started = true;
-        a.clock = MonoClock::new(0.0, now_ms);
+        let start = a
+            .start_at_ms
+            .clamp(0.0, a.duration_ms.map_or(0.0, |d| d as f64 - 1.0).max(0.0));
+        a.clock = MonoClock::new(start, now_ms);
+        a.last_pos = start;
         if paused {
             a.clock.set_paused(true, now_ms);
         }
         if let Some((path, gain)) = a.audio_src.clone() {
-            a.audio = self.audio.play(&path, 0, gain, a.fade_in_ms);
+            a.audio = self.audio.play(&path, start as u64, gain, a.fade_in_ms);
             a.use_audio_clock = a.audio.is_some();
             if let (Some(id), true) = (a.audio, paused) {
                 self.audio.set_paused(id, true);
@@ -2347,7 +2954,7 @@ impl Core {
         } else {
             ServoGains::FOLLOWER
         };
-        a.servo = Some(Servo::new(0.0, now_ms, gains));
+        a.servo = Some(Servo::new(start, now_ms, gains));
         Ok(())
     }
 
@@ -2372,6 +2979,10 @@ impl Core {
                 .unwrap_or_default();
             let msg = format!("Skipped “{name}”: {e}");
             self.item_error = Some((msg.clone(), Instant::now()));
+            self.journal(JournalEvent::Error {
+                code: "itemSkipped".into(),
+                msg: msg.clone(),
+            });
             self.warn(msg, true);
             self.current = None;
             let next = self.take_next();
@@ -2411,11 +3022,21 @@ impl Core {
                 }
             }
         }
+        // Countdown DJ clip (F4): starts so that it ends at zero.
+        if a.delayed_audio.as_ref().is_some_and(|d| pos >= d.at_pos) {
+            if let Some(d) = a.delayed_audio.take() {
+                let into = d.skip_ms + (pos - d.at_pos).max(0.0) as u64;
+                a.audio = self.audio.play(&d.path, into, d.gain, 0);
+                if let (Some(id), true) = (a.audio, paused) {
+                    self.audio.set_paused(id, true);
+                }
+            }
+        }
         let ended = match &a.kind {
             ActiveKind::Sequence { .. }
             | ActiveKind::Effect(_)
             | ActiveKind::Pause
-            | ActiveKind::Flash => a.duration_ms.is_some_and(|d| pos >= d as f64),
+            | ActiveKind::Flash(_) => a.duration_ms.is_some_and(|d| pos >= d as f64),
             ActiveKind::Audio => match a.audio {
                 Some(id) => {
                     self.audio.is_finished(id)
@@ -2427,11 +3048,14 @@ impl Core {
         };
         let remaining = a.duration_ms.map(|d| d as f64 - pos);
         let duration = a.duration_ms;
+        let countdown = a.iref.kind == "countdown";
         if ended {
-            if let Some(id) = a.audio {
+            if let (Some(id), false) = (a.audio, a.detach_audio) {
                 self.audio.fade_out(id, 30);
             }
-            self.current = None;
+            if let Some(a) = self.current.take() {
+                self.journal_end(&a, "finished");
+            }
             let next = self.take_next();
             self.start_next(next, now_ms, 0);
             return;
@@ -2454,8 +3078,9 @@ impl Core {
                 }
             }
         }
-        // Crossfade into the next item.
-        if crossfade_ms > 0 && self.outgoing.is_none() {
+        // Crossfade into the next item (never out of a countdown: the song
+        // must start exactly at zero).
+        if crossfade_ms > 0 && self.outgoing.is_none() && !countdown {
             if let Some(d) = duration {
                 let start_at = crossfade_start(d, crossfade_ms) as f64;
                 let blendable = matches!(
@@ -2516,8 +3141,18 @@ impl Core {
                 layer.render(pos.max(0.0) as u64, &mut Sink::Chan(chan));
                 None
             }
-            ActiveKind::Flash => {
-                if flash_on(pos, slot_ms) {
+            ActiveKind::Flash(sched) => {
+                let lit = match sched {
+                    Some(s) => {
+                        let len = calpattern::flash_len_ms(slot_ms);
+                        if (s.flash_ms - len).abs() > 0.01 {
+                            **s = calpattern::schedule(s.seed, slot_ms);
+                        }
+                        s.flash_on(pos)
+                    }
+                    None => flash_on(pos, slot_ms),
+                };
+                if lit {
                     chan.fill(255);
                 }
                 None
@@ -2549,6 +3184,7 @@ impl Core {
             .any(|a| matches!(a.kind, ActiveKind::Audio | ActiveKind::Pause));
         if needs_idle {
             self.ensure_idle_layer();
+            self.sync_idle_beat(now_ms);
         }
         self.chan.fill(0);
         let mut blend_t = None;
@@ -2607,6 +3243,20 @@ impl Core {
             let incoming = b.clone();
             clock::blend(a, &incoming, t, b);
         }
+        // Surprise layer over the show (F20), then the season's prop mask (F8).
+        if let Some(sp) = self.surprise.as_mut() {
+            if sp.done(now_ms) {
+                self.surprise = None;
+            } else {
+                if let Some(ms) = sp.sequence_ms() {
+                    sp.anchor.duration_ms = sp.anchor.duration_ms.min(ms.max(surprise::MIN_MS));
+                }
+                sp.render_chan(light, slot, &mut self.chan);
+            }
+        }
+        for s in &self.disabled_slots {
+            Sink::Chan(&mut self.chan).put(s, &self.zeros[..s.len.min(self.zeros.len())]);
+        }
         if let Some(t) = self.test.as_mut() {
             t.render_props(now_ms, &mut Sink::Chan(&mut self.chan));
         }
@@ -2631,7 +3281,11 @@ impl Core {
         }
         self.node_map.render(&self.chan, &mut self.frame);
         if let Some(t) = self.test.as_mut() {
-            t.render_raw(now_ms, &mut self.frame);
+            if t.is_timeline() {
+                t.render_timeline(light - t.started_ms, slot, &mut self.frame);
+            } else {
+                t.render_raw(now_ms, &mut self.frame);
+            }
         }
     }
 
@@ -2694,11 +3348,39 @@ impl Core {
                 pos.max(0.0) as u64,
                 &mut Sink::Frame(&mut self.frame, &self.prop_map),
             );
-        } else if f.flash && flash_on(pos, slot) {
-            for i in 0..self.frame.output_count() {
-                self.frame.output_mut(i).fill(255);
+        } else if f.flash {
+            let lit = match f.cal.as_mut() {
+                Some(c) => {
+                    let len = calpattern::flash_len_ms(slot);
+                    if (c.flash_ms - len).abs() > 0.01 {
+                        *c = calpattern::schedule(c.seed, slot);
+                    }
+                    c.flash_on(pos)
+                }
+                None => flash_on(pos, slot),
+            };
+            if lit {
+                for i in 0..self.frame.output_count() {
+                    self.frame.output_mut(i).fill(255);
+                }
             }
         }
+        // Surprise layer (F20), then the season's prop mask (F8).
+        if let Some(sp) = self.surprise.as_mut() {
+            if sp.done(now_ms) {
+                self.surprise = None;
+            } else {
+                sp.render_frame(light, slot, &mut self.frame, &self.prop_map);
+            }
+        }
+        for s in &self.disabled_slots {
+            self.prop_map.apply_overlay(
+                &s.id,
+                &self.zeros[..s.len.min(self.zeros.len())],
+                &mut self.frame,
+            );
+        }
+        let f = &mut self.follow;
         if let Some(t) = f.test.as_mut() {
             t.render_props(now_ms, &mut Sink::Frame(&mut self.frame, &self.prop_map));
         }
@@ -2716,10 +3398,25 @@ impl Core {
             });
         }
         if let Some(t) = self.follow.test.as_mut() {
-            t.render_raw(now_ms, &mut self.frame);
+            if t.is_timeline() {
+                // The leader's test timeline (anchored like a song).
+                let at = self
+                    .follow
+                    .clock
+                    .as_ref()
+                    .filter(|_| self.follow.anchor.is_some())
+                    .map_or(light - t.started_ms, |c| c.pos_at(light));
+                t.render_timeline(at, slot, &mut self.frame);
+            } else {
+                t.render_raw(now_ms, &mut self.frame);
+            }
         }
         if let Some(t) = self.test.as_mut() {
-            t.render_raw(now_ms, &mut self.frame);
+            if t.is_timeline() {
+                t.render_timeline(light - t.started_ms, slot, &mut self.frame);
+            } else {
+                t.render_raw(now_ms, &mut self.frame);
+            }
         }
     }
 
@@ -2737,9 +3434,18 @@ impl Core {
         level
     }
 
+    /// The master brightness the lights use: the leader caps its own by
+    /// late-night dimming (F12); followers get the capped value in sync.
+    fn light_brightness(&self) -> u8 {
+        match (self.is_follower(), self.facts.brightness_cap) {
+            (false, Some(cap)) => self.brightness.min(cap),
+            _ => self.brightness,
+        }
+    }
+
     fn write_output(&mut self, now: Instant, now_ms: f64) {
         let level = self.light_level(now_ms);
-        let master = (self.brightness as f32 * level).round() as u8;
+        let master = (self.light_brightness() as f32 * level).round() as u8;
         self.pipeline.set_master_brightness(master);
         if level <= 0.0 {
             self.frame.clear();
@@ -2755,6 +3461,15 @@ impl Core {
         match OutputFrameRef::from_contiguous(data, &ppo[..n]) {
             Ok(input) => {
                 self.pipeline.process(&input, &mut self.wire);
+                // Power limiter (F12) on what the pixels actually draw.
+                for ep in self.limiter.process(&mut self.wire, now_ms) {
+                    tracing::info!(
+                        "power limiter: {} limited for {:.0} s",
+                        ep.group_id,
+                        ep.seconds
+                    );
+                    self.app.services.journal.record(ep.event(&self.node_id));
+                }
                 let wire = self.wire.as_frame_ref();
                 self.output.write(&wire, now);
                 if let Some(tap) = &self.tap {
@@ -2796,7 +3511,7 @@ impl Core {
         }
         self.last_preview = now;
         self.preview_no = self.preview_no.wrapping_add(1);
-        let level = self.light_level(now_ms) * self.brightness as f32 / 100.0;
+        let level = self.light_level(now_ms) * self.light_brightness() as f32 / 100.0;
         let bytes = if self.is_follower() {
             compose::preview_frame(
                 &self.show,
@@ -2826,8 +3541,10 @@ impl Core {
             }
         };
         if let Some(ms) = seq_ms {
-            // Crossfades and live overlays (games) run at least at the effect rate.
-            let fast = self.outgoing.is_some() || self.overlays.any_active();
+            // Crossfades, live overlays (games) and surprises run at least at
+            // the effect rate.
+            let fast =
+                self.outgoing.is_some() || self.overlays.any_active() || self.surprise.is_some();
             return clamp(ms).min(if fast {
                 self.effect_period
             } else {
@@ -2837,6 +3554,7 @@ impl Core {
         let busy = self.program.is_some()
             || self.look.is_some()
             || self.test.is_some()
+            || self.surprise.is_some()
             || self.follow.effect.is_some()
             || self.follow.test.is_some()
             || self.follow.lost_fade.is_some()
@@ -3026,8 +3744,16 @@ impl Core {
         match (&p.test, p.state) {
             (Some(t), PlayerState::Testing) => {
                 if f.test.as_ref().map(|x| &x.req) != Some(t) {
-                    f.test = TestLayer::new(&show, &self.node_id, t, now_ms).ok();
-                    new_leader_test = true;
+                    let plan = t.map.clone().or_else(|| {
+                        let id = t.map_run_id.as_ref()?;
+                        self.map_plans
+                            .iter()
+                            .find(|(k, _)| k == id)
+                            .map(|(_, p)| p.clone())
+                    });
+                    f.test =
+                        TestLayer::with_plan(&show, &self.node_id, t, now_ms, plan.as_ref()).ok();
+                    new_leader_test = f.test.is_some();
                 }
             }
             _ => f.test = None,
@@ -3101,8 +3827,20 @@ impl Core {
             None => f.effect = None,
         }
         f.flash = flash;
+        // Phone calibration (F1): the item id carries the pattern's seed.
+        f.cal = p
+            .item
+            .as_ref()
+            .filter(|_| flash)
+            .and_then(|i| i.id.strip_prefix(CALIBRATION_V2_PREFIX))
+            .and_then(|seed| seed.parse::<u32>().ok())
+            .map(|seed| match f.cal.take() {
+                Some(c) if c.seed == seed => c,
+                _ => calpattern::schedule(seed, 0.0),
+            });
         // Clock: follow the anchor (jump on a new epoch, slew otherwise).
-        let active = seq_item.is_some() || f.effect.is_some() || flash;
+        let timeline_test = f.test.as_ref().is_some_and(|t| t.is_timeline());
+        let active = seq_item.is_some() || f.effect.is_some() || flash || timeline_test;
         if !active {
             f.clock = None;
             f.anchor = None;
@@ -3120,7 +3858,36 @@ impl Core {
             f.anchor = Some(anchor);
         }
         let released = p.leader.is_empty() && p.state == PlayerState::Idle;
+        let surprise = p.surprise.clone();
+        let base_ms = f.anchor.map_or(now_ms, |a| a.at_ms);
+        let packet_anchor_ms = p.anchor.map_or(now_ms, |a| a.at_ms);
         f.pkt = Some(p);
+        // Surprise layer (F20): placed on our clock like the timeline.
+        let _ = base_ms;
+        match surprise {
+            Some(sa) => {
+                let start = packet_anchor_ms + sa.start_pos;
+                let same = self
+                    .surprise
+                    .as_ref()
+                    .is_some_and(|l| l.anchor.id == sa.id && l.anchor.epoch == sa.epoch);
+                if same {
+                    if let Some(l) = self.surprise.as_mut() {
+                        l.start_ms = start;
+                        l.anchor.duration_ms = sa.duration_ms;
+                    }
+                } else {
+                    match SurpriseLayer::new(&show, &self.app.config.data_dir, sa, start) {
+                        Ok(l) => self.surprise = Some(l),
+                        Err(e) => {
+                            tracing::debug!("surprise not shown here: {e}");
+                            self.surprise = None;
+                        }
+                    }
+                }
+            }
+            None => self.surprise = None,
+        }
         if new_leader_test {
             // A test started on the leader (fault finder, test pattern) replaces a
             // local one, e.g. the "identify" chase, which would otherwise cover it.
@@ -3130,6 +3897,7 @@ impl Core {
             // Released by the leader: stop everything it had us doing.
             self.follow = FollowState::default();
             self.test = None;
+            self.surprise = None;
         }
     }
 
@@ -3301,9 +4069,37 @@ impl Core {
                     epoch: self.epoch << EPOCH_SHIFT,
                 });
             }
-            Some(_) => s.state = PlayerState::Testing,
+            Some(t) => {
+                s.state = PlayerState::Testing;
+                // Mapping codes, identify and calibration run on a timeline
+                // every controller follows (like a song).
+                if t.is_timeline() && !self.is_follower() {
+                    s.anchor = Some(Anchor {
+                        pos_ms: now_ms - t.started_ms,
+                        at_ms: now_ms,
+                        rate: 1.0,
+                        epoch: ((self.epoch + self.test_epoch) << EPOCH_SHIFT) | 1,
+                    });
+                }
+            }
             None => {}
         }
+        if !self.is_follower() {
+            s.light_brightness = Some(self.light_brightness());
+            if let Some(sp) = &self.surprise {
+                let anchor = s.anchor.get_or_insert(Anchor {
+                    pos_ms: 0.0,
+                    at_ms: now_ms,
+                    rate: 0.0,
+                    epoch: self.epoch << EPOCH_SHIFT,
+                });
+                let mut a = sp.anchor.clone();
+                // Relative to the timeline anchor's clock time (see surprise.rs).
+                a.start_pos = ((sp.start_ms - anchor.at_ms) * 1000.0).round() / 1000.0;
+                s.surprise = Some(a);
+            }
+        }
+        s.power = self.limiter.status();
         if !errors.is_empty() {
             s.error = Some(errors.join(" · "));
         }
@@ -3328,6 +4124,10 @@ impl Core {
             }),
             sync_error_ms: None,
             refresh_hz: None,
+            surprise: s.surprise.as_ref().map(|a| SurpriseAnchor {
+                start_pos: 0.0,
+                ..a.clone()
+            }),
             ..s.clone()
         };
         let changed = strip(&s) != strip(&self.last_status);
@@ -3358,14 +4158,21 @@ impl Core {
                 ActiveKind::Audio | ActiveKind::Pause => {
                     self.idle_layer.as_ref().map(|l| l.layer.preset.clone())
                 }
-                ActiveKind::Sequence { .. } | ActiveKind::Flash => None,
+                ActiveKind::Sequence { .. } | ActiveKind::Flash(_) => None,
             },
             _ => self.look.as_ref().map(|l| l.layer.preset.clone()),
         };
         // A live look (effect test) goes out as the effect, on the test's target.
         let (effect, test) = match self.test.as_ref() {
             Some(t) if t.is_look() => (t.look_preset(), None),
-            Some(t) => (effect, Some(t.req.clone())),
+            Some(t) => {
+                let mut req = t.req.clone();
+                // Plans can be large: followers got them by command (F6).
+                if req.map_run_id.is_some() {
+                    req.map = None;
+                }
+                (effect, Some(req))
+            }
             None => (effect, None),
         };
         if (effect.as_ref(), test.as_ref())
@@ -3403,6 +4210,85 @@ fn calibration_click(data_dir: &Path) -> std::io::Result<PathBuf> {
         std::fs::rename(&tmp, &path)?;
     }
     Ok(path)
+}
+
+/// The phone calibration sound for `seed` (F1 v2), written once to
+/// `<data>/cache/cal-<seed>.wav`.
+fn calibration_v2_wav(data_dir: &Path, seed: u32) -> std::io::Result<PathBuf> {
+    let dir = data_dir.join("cache");
+    let path = dir.join(calpattern::wav_file_name(seed));
+    if !path.exists() {
+        std::fs::create_dir_all(&dir)?;
+        // Only the newest few patterns are kept.
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            let mut old: Vec<(std::time::SystemTime, PathBuf)> = rd
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().to_string();
+                    n.starts_with("cal-") && n.ends_with(".wav")
+                })
+                .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+                .collect();
+            old.sort();
+            let excess = old.len().saturating_sub(3);
+            for (_, p) in old.into_iter().take(excess) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        let tmp = dir.join(format!("{}.tmp", calpattern::wav_file_name(seed)));
+        std::fs::write(&tmp, calpattern::wav(seed))?;
+        std::fs::rename(&tmp, &path)?;
+    }
+    Ok(path)
+}
+
+/// Countdown tick sound (F4): a soft 1 kHz tick at every digit change, the
+/// last one a second before zero; `<data>/cache/countdown-<ms>.wav`.
+fn countdown_ticks(data_dir: &Path, duration_ms: u64) -> std::io::Result<PathBuf> {
+    let dir = data_dir.join("cache");
+    let path = dir.join(format!("countdown-{duration_ms}.wav"));
+    if path.exists() {
+        return Ok(path);
+    }
+    const RATE: u32 = 16_000;
+    let samples = (duration_ms * RATE as u64 / 1000) as usize;
+    let mut pcm = vec![0i16; samples];
+    let tick = (RATE as usize) * 20 / 1000;
+    for t in countdown::tick_times(duration_ms) {
+        let start = (t * RATE as u64 / 1000) as usize;
+        for i in 0..tick.min(samples.saturating_sub(start)) {
+            let x = i as f64 / RATE as f64;
+            let env = (-(i as f64) / (tick as f64 / 5.0)).exp();
+            let v = (2.0 * std::f64::consts::PI * 1000.0 * x).sin() * env * 0.5;
+            pcm[start + i] = (v * i16::MAX as f64) as i16;
+        }
+    }
+    std::fs::create_dir_all(&dir)?;
+    let tmp = dir.join(format!("countdown-{duration_ms}.wav.tmp"));
+    std::fs::write(&tmp, wav_mono16(RATE, &pcm))?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(path)
+}
+
+fn wav_mono16(rate: u32, pcm: &[i16]) -> Vec<u8> {
+    let data_len = (pcm.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + pcm.len() * 2);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for s in pcm {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    out
 }
 
 /// 16-bit mono 24 kHz WAV: a 4 ms 2 kHz tone burst with a sharp attack at

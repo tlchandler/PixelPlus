@@ -4,7 +4,7 @@
 use super::cluster::handle;
 use super::crud::merge_patch;
 use super::{ApiError, ApiResult};
-use crate::cluster::leader::{self, AdoptRequest, ReleaseResult};
+use crate::cluster::leader::{self, AdoptRequest, ReleaseResult, ReplaceRequest};
 use crate::cluster::{ClusterCommand, CommandResult, DiscoveredNode, NodeStatus};
 use crate::node::LocalRole;
 use crate::state::AppState;
@@ -28,6 +28,8 @@ pub fn routes() -> Router<AppState> {
         .route("/nodes/{id}/release", post(release))
         .route("/nodes/{id}/resync", post(resync))
         .route("/nodes/{id}/identify", post(identify))
+        .route("/nodes/{id}/replace", post(replace))
+        .route("/nodes/{id}/release-retired", post(release_retired))
 }
 
 /// A node plus its live status (status fields win).
@@ -99,6 +101,32 @@ async fn adopt(
     let cluster = handle(&state)?;
     let node = leader::adopt(&state, &cluster.shared, req).await?;
     Ok(Json(node))
+}
+
+/// `POST /nodes/:id/replace {candidateId, force?}` (F10): the new controller
+/// takes over the dead one's id, name, wiring and sequences.
+async fn replace(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<ReplaceRequest>,
+) -> ApiResult<Json<Node>> {
+    require_leader(&state)?;
+    let cluster = handle(&state)?;
+    Ok(Json(
+        leader::replace(&state, &cluster.shared, &id, req).await?,
+    ))
+}
+
+/// `POST /nodes/:id/release-retired` (F10): a replaced controller showed up
+/// again; tell it to forget this leader and start over.
+async fn release_retired(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    require_leader(&state)?;
+    let cluster = handle(&state)?;
+    leader::release_retired(&state, &cluster.shared, &id).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Deserialize, Default)]

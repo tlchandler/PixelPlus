@@ -87,7 +87,8 @@ esac
 # ConditionPathExists=/etc/pixelplus/appliance, the sidecars by their venvs.
 if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ]; then
     for u in pixelplusd.service pixelplus-tts.service pixelplus-games.service \
-        pixelplus-firstboot.service pixelplus-reapply.path pixelplus-netwatch.service; do
+        pixelplus-firstboot.service pixelplus-reapply.path pixelplus-netwatch.service \
+        pixelplus-update-verify.service; do
         deb-systemd-helper enable "$u" >/dev/null 2>&1 || systemctl enable "$u" >/dev/null 2>&1 || true
     done
     if [ -d /run/systemd/system ] && [ -z "${DPKG_ROOT:-}" ]; then

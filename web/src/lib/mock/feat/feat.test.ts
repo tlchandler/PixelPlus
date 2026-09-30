@@ -78,16 +78,24 @@ describe('feature-wave mock endpoints', () => {
 		const run = await call<any>(m, 'POST', '/mapping/runs', { scope: { all: true } });
 		expect(run.data.plan.bitMs).toBe(200);
 		expect((await call(m, 'GET', `/mapping/runs/${run.data.runId}`)).status).toBe(200);
-		let step = (await call<any>(m, 'POST', '/pixelcount/start', { nodeId: 'n', output: 1, method: 'manual' }))
-			.data;
+		// WS4: the demo string is two pixels shorter than configured.
+		const seg = m.show.props.find((x) => x.segments.length)!.segments[0];
+		let step = (
+			await call<any>(m, 'POST', '/pixelcount/start', {
+				nodeId: seg.nodeId,
+				output: seg.output,
+				method: 'manual'
+			})
+		).data;
+		const real = step.configured - 2;
 		let n = 0;
 		while (step.step && n++ < 12)
 			step = (
 				await call<any>(m, 'POST', `/pixelcount/${step.session}/answer`, {
-					seen: step.step.litUntil < 48
+					seen: step.step.litUntil < real
 				})
 			).data;
-		expect(step.count).toBe(48);
+		expect(step.count).toBe(real);
 		const wiz = await call<any>(m, 'POST', '/wizard/receiver/identify-jack', { nodeId: m.show.nodes[0].id });
 		expect(wiz.data.candidates.length).toBeGreaterThan(0);
 		const before = m.show.receivers.length;

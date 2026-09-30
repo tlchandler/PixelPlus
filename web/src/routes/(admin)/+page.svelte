@@ -15,6 +15,7 @@
 	import LayoutCanvas from '$lib/components/viz/LayoutCanvas.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
+	import PowerBadge from '$lib/components/power/PowerBadge.svelte';
 	import {
 		Play,
 		Pause,
@@ -195,6 +196,7 @@
 				{:else if st?.state === 'testing'}<span class="testing">TESTING</span>
 				{:else if st?.state === 'effect'}<span class="testing">EFFECT</span>
 				{:else}<span class="idle">IDLE</span>{/if}
+				<PowerBadge />
 			</div>
 		</div>
 		<div class="np">

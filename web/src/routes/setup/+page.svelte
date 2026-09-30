@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api/client';
+	import { api, upload } from '$lib/api/client';
+	import { MIN_PASSPHRASE } from '$lib/api/fleet';
 	import type { BoardKind, NodeRole } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -24,7 +25,8 @@
 		CalendarClock,
 		Sparkles,
 		TriangleAlert,
-		CircleCheck
+		CircleCheck,
+		ArchiveRestore
 	} from '@lucide/svelte';
 	import { fly } from 'svelte/transition';
 
@@ -42,6 +44,12 @@
 	let password2 = $state('');
 	let busy = $state(false);
 	let followerDone = $state(false);
+	// F10 (WS5): restore a show leader from a controller transfer file.
+	let xferFile = $state<File | null>(null);
+	let xferPass = $state('');
+	let xferPct = $state<number | null>(null);
+	let xferError = $state<string | null>(null);
+	let restoreNotes = $state<string[]>([]);
 
 	const detected = $derived(app.system?.detectedBoard ?? app.system?.board ?? null);
 	$effect(() => {
@@ -118,6 +126,39 @@
 			toasts.error('Setup didn’t finish', (e as Error).message);
 		} finally {
 			busy = false;
+		}
+	}
+
+	async function restore() {
+		if (!xferFile) return;
+		busy = true;
+		xferError = null;
+		xferPct = 0;
+		try {
+			const form = new FormData();
+			// The passphrase must come first: the file is decrypted while it uploads.
+			form.append('passphrase', xferPass);
+			form.append('transfer', xferFile, xferFile.name);
+			const r = (await upload('/system/setup', form, (p) => (xferPct = Math.round(p * 100)))) as {
+				notes?: string[];
+				restored?: { showName: string; hostname: string; files: number };
+			};
+			restoreNotes = r?.notes ?? [];
+			showName = r?.restored?.showName ?? showName;
+			try {
+				sessionStorage.removeItem('pp-mock-setup');
+			} catch {
+				/* ignore */
+			}
+			await app.loadSystem();
+			await app.reloadShow();
+			dir = 1;
+			step = 5;
+		} catch (e) {
+			xferError = (e as Error).message;
+		} finally {
+			busy = false;
+			xferPct = null;
 		}
 	}
 
@@ -201,6 +242,15 @@
 								{#if role === 'follower'}<span class="tick"><Check size={14} /></span>{/if}
 							</button>
 						</div>
+						<button
+							class="btn ghost sm restore-link"
+							onclick={() => {
+								dir = 1;
+								step = 10;
+							}}
+						>
+							<ArchiveRestore size={16} /> Replacing a show leader? Restore a show from a transfer file
+						</button>
 						<div class="nav">
 							<button class="btn ghost" onclick={back}><ArrowLeft size={16} /> Back</button>
 							{#if role === 'leader'}
@@ -406,9 +456,77 @@
 								>{busy ? 'Finishing…' : 'Finish setup'} <ArrowRight size={16} /></button
 							>
 						</div>
+					{:else if step === 10}
+						<div class="ri accent big"><ArchiveRestore size={28} /></div>
+						<h1>Restore a show</h1>
+						<p class="lead">
+							This controller takes over from the one the transfer file was made on: its show, sequences,
+							music, followers and name. The old controller must stay switched off.
+						</p>
+						<div class="col" style="gap:12px;width:100%;max-width:420px">
+							<label class="field">
+								<span class="label">Transfer file (.ppxfer)</span>
+								<input
+									class="input"
+									type="file"
+									accept=".ppxfer"
+									onchange={(e) => (xferFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null)}
+								/>
+							</label>
+							<label class="field">
+								<span class="label">Passphrase</span>
+								<input
+									class="input lg"
+									type="password"
+									autocomplete="off"
+									bind:value={xferPass}
+									placeholder="The passphrase you chose when downloading it"
+								/>
+							</label>
+							{#if xferPct !== null}
+								<div
+									class="bar"
+									role="progressbar"
+									aria-valuenow={xferPct}
+									aria-valuemin={0}
+									aria-valuemax={100}
+								>
+									<span style="width:{xferPct}%"></span>
+								</div>
+								<span class="faint small"
+									>{xferPct < 100
+										? `Uploading and checking… ${xferPct}%`
+										: 'Putting the show in place…'}</span
+								>
+							{/if}
+							{#if xferError}
+								<span class="small" style="color:var(--red)"><TriangleAlert size={14} /> {xferError}</span>
+							{/if}
+						</div>
+						<div class="nav">
+							<button
+								class="btn ghost"
+								onclick={() => {
+									dir = -1;
+									step = 1;
+								}}
+								disabled={busy}><ArrowLeft size={16} /> Back</button
+							>
+							<button
+								class="btn primary"
+								onclick={restore}
+								disabled={busy || !xferFile || [...xferPass].length < MIN_PASSPHRASE}
+								>{busy ? 'Restoring…' : 'Restore'} <ArrowRight size={16} /></button
+							>
+						</div>
 					{:else}
 						<div class="celebrate"><Sparkles size={34} /></div>
 						<h1>{showName || 'Your show'} is ready</h1>
+						{#if restoreNotes.length}
+							<div class="notes">
+								{#each restoreNotes as n (n)}<p class="small"><TriangleAlert size={14} /> {n}</p>{/each}
+							</div>
+						{/if}
 						<p class="lead">Here’s what to do next. You can come back to any of these at any time.</p>
 						<ol class="next">
 							<li>
@@ -545,6 +663,30 @@
 		50% {
 			transform: translateY(-6px);
 		}
+	}
+	.restore-link {
+		margin-top: 12px;
+	}
+	.bar {
+		height: 6px;
+		border-radius: 3px;
+		background: var(--surface-3);
+		overflow: hidden;
+	}
+	.bar span {
+		display: block;
+		height: 100%;
+		background: var(--accent);
+		transition: width 0.2s;
+	}
+	.notes {
+		display: grid;
+		gap: 4px;
+		max-width: 520px;
+		color: var(--text-2);
+	}
+	.notes p {
+		margin: 0;
 	}
 	.roles {
 		display: grid;

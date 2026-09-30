@@ -288,7 +288,7 @@ fn follower_status(
             })
         }
         _ if online => m
-            .and_then(|p| super::follower::protocol_mismatch(p.beacon.proto, &p.beacon.ver, false))
+            .and_then(|p| super::follower::protocol_mismatch(&p.beacon, false))
             .or_else(|| report.problem.clone()),
         _ => None,
     };
@@ -403,8 +403,37 @@ pub(crate) fn discovered(state: &AppState, sh: &Shared) -> Vec<DiscoveredNode> {
             last_seen: rfc3339(p.seen_at),
             duplicate: p.duplicate(),
             joining: p.beacon.joining,
+            retired: None,
         })
         .collect();
+    drop(peers);
+    for (r, s) in retired_seen(sh) {
+        out.retain(|d| d.id != r.id || d.ip != s.addr.ip().to_string());
+        out.push(DiscoveredNode {
+            id: r.id.clone(),
+            name: s.beacon.name.clone(),
+            hostname: s.beacon.hostname.clone(),
+            role: s.beacon.role,
+            board: s.beacon.board,
+            board_rev: s.beacon.board_rev.clone(),
+            pi: s.beacon.pi.clone(),
+            ip: s.addr.ip().to_string(),
+            ips: s.beacon.ips.clone(),
+            http: s.beacon.http,
+            ver: s.beacon.ver.clone(),
+            adopted_by: s.beacon.adopted_by.clone(),
+            last_seen: rfc3339(
+                chrono::Utc::now()
+                    - chrono::Duration::from_std(s.last_seen.elapsed()).unwrap_or_default(),
+            ),
+            duplicate: false,
+            joining: false,
+            retired: Some(super::RetiredInfo {
+                replaced_at: r.replaced_at.clone(),
+                name: r.name.clone(),
+            }),
+        });
+    }
     out.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
     out
 }
@@ -442,6 +471,20 @@ pub struct AdoptCall {
     pub force: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// F10 "Replace with…": take over this node id (the dead controller's),
+    /// so its wiring, props and slices apply unchanged. Accepted only by an
+    /// unconfigured or released controller (trust on first use).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assume_id: Option<String>,
+    /// F10: the dead controller's host name, taken over with its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    /// F10: the dead controller's board; a replacement board with a blank
+    /// EEPROM gets it written (so it boots as the same board type).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board: Option<BoardKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_rev: Option<String>,
 }
 
 /// Follower's reply to an adoption.
@@ -462,6 +505,12 @@ pub struct AdoptReply {
     /// [`sig::adopt_proof`] with the derived key.
     #[serde(default)]
     pub proof: String,
+    /// Hardware serial (board EEPROM or Pi), F10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial: Option<String>,
+    /// The board EEPROM was written during this adoption (F10).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub eeprom_written: bool,
 }
 
 pub fn validate_node_name(name: &str) -> ApiResult<()> {
@@ -491,12 +540,22 @@ pub(crate) async fn error_message(resp: reqwest::Response) -> String {
 /// Run the adoption handshake with `peer`: returns its reply and the new
 /// follower key. The call is signed with the key we already share with that
 /// controller, if any (re-adoption, re-keying).
+/// F10: what a replacement takes over from the controller it replaces.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Takeover {
+    pub assume_id: String,
+    pub hostname: String,
+    pub board: Option<BoardKind>,
+    pub board_rev: Option<String>,
+}
+
 async fn call_adopt(
     state: &AppState,
     sh: &Shared,
     peer: &Peer,
     force: bool,
     name: Option<String>,
+    takeover: Option<&Takeover>,
 ) -> ApiResult<(AdoptReply, String)> {
     let identity = state.identity();
     let ip = net::local_ip_towards(peer.addr.ip())
@@ -509,6 +568,12 @@ async fn call_adopt(
         dh: offer.public_hex.clone(),
         force,
         name,
+        assume_id: takeover.map(|t| t.assume_id.clone()),
+        hostname: takeover
+            .map(|t| t.hostname.clone())
+            .filter(|h| !h.is_empty()),
+        board: takeover.and_then(|t| t.board),
+        board_rev: takeover.and_then(|t| t.board_rev.clone()),
     };
     let body = serde_json::to_vec(&call).map_err(ApiError::internal)?;
     let url = format!("{}/api/v1/cluster/adopt", peer.http_base());
@@ -664,7 +729,7 @@ pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResul
             )));
         }
     }
-    let (reply, key) = call_adopt(state, sh, &peer, req.force, req.name.clone()).await?;
+    let (reply, key) = call_adopt(state, sh, &peer, req.force, req.name.clone(), None).await?;
     if reply.id != req.id {
         return Err(ApiError::conflict(
             "A different controller answered at that address; try again.",
@@ -743,6 +808,434 @@ pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResul
     );
     tracing::info!("adopted {} ({}) at {}", node.name, node.id, peer.addr.ip());
     Ok(node)
+}
+
+// ---------------------------------------------------------------------------
+// Controller replacement (F10)
+// ---------------------------------------------------------------------------
+
+/// Body of `POST /nodes/:id/replace`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceRequest {
+    /// The new (unadopted) controller that takes over.
+    pub candidate_id: String,
+    /// Replace although the old controller is online, or the new board has
+    /// fewer outputs than are wired.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// A controller that was replaced ("Replace with…"): its old key is kept
+/// only to tell *it* to forget this leader if it shows up again; it never
+/// authenticates anything (`cluster/retired.json`, 0600).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Retired {
+    /// The node id it had (its replacement has it now).
+    pub id: String,
+    pub name: String,
+    /// Its hardware serial, when known.
+    #[serde(default)]
+    pub serial: Option<String>,
+    /// RFC 3339.
+    pub replaced_at: String,
+    /// The revoked key.
+    pub key: String,
+}
+
+/// A retired controller heard on the network (leader).
+#[derive(Debug, Clone)]
+pub(crate) struct RetiredSighting {
+    pub beacon: proto::Beacon,
+    pub addr: SocketAddr,
+    pub last_seen: Instant,
+}
+
+fn retired_path(sh: &Shared) -> std::path::PathBuf {
+    sh.cluster_dir.join("retired.json")
+}
+
+pub(crate) fn load_retired(sh: &Shared) -> Vec<Retired> {
+    std::fs::read(retired_path(sh))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save_retired(sh: &Shared, list: &[Retired]) {
+    if let Err(e) = super::write_private_json(&retired_path(sh), &list) {
+        tracing::warn!("could not save cluster/retired.json: {e:#}");
+    }
+}
+
+/// Is this unauthenticated beacon (id of an adopted follower, claiming to be
+/// ours) the controller that was replaced? Its hardware serial tells, else
+/// the fact that it still believes it is adopted by us without our key.
+pub(crate) fn is_retired_beacon(
+    sh: &Shared,
+    b: &proto::Beacon,
+    current_serial: Option<&str>,
+) -> bool {
+    let retired = load_retired(sh);
+    let Some(r) = retired.iter().rev().find(|r| r.id == b.id) else {
+        return false;
+    };
+    match (&b.hw, &r.serial) {
+        (Some(hw), Some(old)) => hw == old,
+        (Some(hw), None) => current_serial.is_some_and(|cur| cur != hw),
+        (None, _) => true,
+    }
+}
+
+/// Wired outputs of `node_id` that a board with `outputs` outputs would lose.
+pub fn outputs_lost(show: &Show, node_id: &str, outputs: usize) -> Vec<u32> {
+    let mut lost: Vec<u32> = show
+        .props
+        .iter()
+        .flat_map(|p| &p.segments)
+        .filter(|s| s.node_id == node_id && s.output as usize > outputs)
+        .map(|s| s.output)
+        .collect();
+    lost.extend(
+        show.receivers
+            .iter()
+            .filter(|r| r.node_id == node_id && r.jack as usize > outputs.max(1))
+            .map(|r| r.jack),
+    );
+    lost.sort_unstable();
+    lost.dedup();
+    lost
+}
+
+fn pixelplus_board(b: BoardKind) -> bool {
+    matches!(
+        b,
+        BoardKind::Difftx | BoardKind::Difftxlarge | BoardKind::Diffsmart
+    )
+}
+
+/// "Replace with…": the new controller `req.candidate_id` takes over node
+/// `old_id` — its id, name, host name, wiring, props and sequences — in one
+/// step. The old controller's key is revoked first, so the old hardware can
+/// never take part again (if it reappears it shows as retired).
+pub async fn replace(
+    state: &AppState,
+    sh: &Shared,
+    old_id: &str,
+    req: ReplaceRequest,
+) -> ApiResult<Node> {
+    if !is_leader(state) {
+        return Err(ApiError::conflict(
+            "Only the show leader can replace controllers.",
+        ));
+    }
+    let show = state.store.get();
+    let old = show
+        .node(old_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("The controller to replace"))?;
+    if old.role == NodeRole::Leader {
+        return Err(ApiError::bad_request(
+            "The show leader is replaced with a transfer file: download it under Settings → Updates & transfer, then choose “Restore a show” when setting up the new controller.",
+        ));
+    }
+    if req.candidate_id == old_id {
+        return Err(ApiError::bad_request("Pick the new controller."));
+    }
+    if show.node(&req.candidate_id).is_some_and(|n| n.adopted) {
+        return Err(ApiError::conflict(
+            "That controller is already part of the show.",
+        ));
+    }
+    let my_id = state.identity().id;
+    let online = {
+        let peers = sh.peers.read();
+        member(peers.get(old_id), &my_id)
+            .is_some_and(|p| p.last_seen.elapsed() < sh.settings.offline_after)
+    };
+    if online && !req.force {
+        return Err(ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "node_online",
+            format!(
+                "{} is online. Replace a controller only when it is broken; confirm to replace it anyway.",
+                old.name
+            ),
+        ));
+    }
+    let peer = sh
+        .peers
+        .read()
+        .get(&req.candidate_id)
+        .filter(|p| p.last_seen.elapsed() < Duration::from_secs(30))
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::new(
+                axum::http::StatusCode::NOT_FOUND,
+                "not_found",
+                "The new controller is not announcing itself any more. Check that it is powered on and on the same network.",
+            )
+        })?;
+    if peer.duplicate() {
+        return Err(ApiError::conflict(format!(
+            "Two devices on the network claim to be {}; wait a minute and try again.",
+            peer.beacon.name
+        )));
+    }
+    let fresh = peer.beacon.role == LocalRole::Unconfigured
+        || (peer.beacon.role == LocalRole::Follower && peer.beacon.adopted_by.is_none());
+    if !fresh {
+        return Err(ApiError::conflict(format!(
+            "{} is already set up. Use a freshly flashed controller (or release it from its leader first).",
+            peer.beacon.name
+        )));
+    }
+    // A blank replacement board is written as the old board's type.
+    let takes_board = pixelplus_board(old.board)
+        && matches!(peer.beacon.board, BoardKind::BarePi | BoardKind::Virtual);
+    let new_board = if takes_board {
+        old.board
+    } else {
+        peer.beacon.board
+    };
+    if new_board != old.board {
+        let lost = outputs_lost(&show, old_id, new_board.output_count());
+        if !lost.is_empty() && !req.force {
+            let list = lost
+                .iter()
+                .map(|o| old.board.output_label(*o as usize))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "board_mismatch",
+                format!(
+                    "The new controller is a {} with {} outputs; {} had {} and uses {list}, which would be unwired. Confirm to replace it anyway.",
+                    new_board.display_name(),
+                    new_board.output_count(),
+                    old.name,
+                    old.board.output_count()
+                ),
+            ));
+        }
+    }
+    if online {
+        // Forced while the old one still runs: tell it to go dark first.
+        let _ = send_release(state, sh, old_id).await;
+    }
+    // Revoke the old key now: from here on the old hardware is a stranger.
+    let old_key = sh.keys.lock().followers.get(old_id).cloned();
+    sh.update_keys(|k| {
+        k.followers.remove(old_id);
+    });
+    sh.replay.lock().forget(old_id);
+    let takeover = Takeover {
+        assume_id: old_id.to_string(),
+        hostname: old.hostname.clone(),
+        board: takes_board.then_some(old.board),
+        board_rev: takes_board.then(|| old.board_rev.clone()).flatten(),
+    };
+    let (reply, key) = match call_adopt(
+        state,
+        sh,
+        &peer,
+        false,
+        Some(old.name.clone()),
+        Some(&takeover),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // Nothing changed: the old controller keeps its key.
+            if let Some(k) = old_key {
+                sh.update_keys(|ks| {
+                    ks.followers.insert(old_id.to_string(), k);
+                });
+            }
+            return Err(e);
+        }
+    };
+    // An older PixelPlus ignores `assumeId`: it answers with its own id, and
+    // the old node's wiring is moved to that id instead.
+    let renamed = reply.id != old_id;
+    if renamed && reply.id != req.candidate_id {
+        return Err(ApiError::conflict(
+            "A different controller answered at that address; try again.",
+        ));
+    }
+    let new_id = reply.id.clone();
+    sh.update_keys(|k| {
+        k.followers.insert(new_id.clone(), key);
+    });
+    sh.replay.lock().forget(&new_id);
+    {
+        let mut peers = sh.peers.write();
+        peers.remove(&req.candidate_id);
+        peers.remove(old_id);
+    }
+    if let Some(k) = old_key {
+        let mut list = load_retired(sh);
+        list.retain(|r| r.id != old_id || r.serial != old.serial);
+        list.push(Retired {
+            id: old_id.to_string(),
+            name: old.name.clone(),
+            serial: old.serial.clone(),
+            replaced_at: rfc3339(chrono::Utc::now()),
+            key: k,
+        });
+        let excess = list.len().saturating_sub(32);
+        list.drain(..excess);
+        save_retired(sh, &list);
+    }
+    let now = rfc3339(chrono::Utc::now());
+    let old_id2 = old_id.to_string();
+    let hostname = old.hostname.clone();
+    let (node, _) = state
+        .store
+        .update(move |s| {
+            if renamed {
+                rename_node(s, &old_id2, &reply.id);
+            }
+            let n = s
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == reply.id)
+                .ok_or_else(|| ApiError::not_found("The controller to replace"))?;
+            n.hardware_history
+                .push(pixelplus_core::model::HardwareRecord {
+                    at: now.clone(),
+                    serial: n.serial.take(),
+                    board: n.board,
+                    pi_model: n.pi_model.clone(),
+                    reason: "replaced".into(),
+                });
+            let excess = n.hardware_history.len().saturating_sub(20);
+            n.hardware_history.drain(..excess);
+            n.serial = reply.serial.clone();
+            n.pi_model = reply.pi_model.clone();
+            n.board_rev = reply.board_rev.clone().or(n.board_rev.take());
+            n.adopted = true;
+            n.role = NodeRole::Follower;
+            n.hostname = if renamed {
+                reply.hostname.clone()
+            } else {
+                hostname
+            };
+            n.last_seen = None;
+            if reply.board != n.board {
+                n.outputs = fit_outputs(&n.outputs, reply.board);
+                n.board = reply.board;
+            }
+            Ok(n.clone())
+        })
+        .await?;
+    sh.health.lock().insert(
+        node.id.clone(),
+        super::Health {
+            adopted_at: Some(Instant::now()),
+            ..Default::default()
+        },
+    );
+    tracing::info!(
+        "replaced {} ({}) with the controller at {}{}",
+        node.name,
+        node.id,
+        peer.addr.ip(),
+        if reply.eeprom_written {
+            " (board EEPROM written)"
+        } else {
+            ""
+        }
+    );
+    if let Some(app) = sh.app() {
+        crate::services::journal::record(
+            &app,
+            crate::services::journal::Event::Warn {
+                code: "nodeReplaced".into(),
+                msg: format!("{} was replaced by new hardware", node.name),
+            },
+        );
+    }
+    Ok(node)
+}
+
+/// Retired controllers heard recently (for "New controllers found").
+pub(crate) fn retired_seen(sh: &Shared) -> Vec<(Retired, RetiredSighting)> {
+    let list = load_retired(sh);
+    let seen = sh.retired.lock();
+    seen.iter()
+        .filter(|(_, s)| s.last_seen.elapsed() < DISCOVERY_FRESH)
+        .filter_map(|(id, s)| {
+            list.iter()
+                .rev()
+                .find(|r| &r.id == id)
+                .map(|r| (r.clone(), s.clone()))
+        })
+        .collect()
+}
+
+/// "Release it": tell a retired controller (signed with its revoked key) to
+/// forget this leader and start over as a new, unconfigured controller.
+pub async fn release_retired(state: &AppState, sh: &Shared, id: &str) -> ApiResult<()> {
+    if !is_leader(state) {
+        return Err(ApiError::conflict("Only the show leader can do that."));
+    }
+    let retired = load_retired(sh);
+    let r = retired
+        .iter()
+        .rev()
+        .find(|r| r.id == id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("That retired controller"))?;
+    let sighting = sh
+        .retired
+        .lock()
+        .get(id)
+        .cloned()
+        .filter(|s| s.last_seen.elapsed() < Duration::from_secs(30))
+        .ok_or_else(|| {
+            ApiError::not_found("The retired controller isn't on the network right now")
+        })?;
+    let url = format!(
+        "{}/api/v1/cluster/release",
+        net::http_url(sighting.addr.ip(), sighting.beacon.http)
+    );
+    let my_id = state.identity().id;
+    let body = serde_json::to_vec(&serde_json::json!({ "retire": true })).unwrap_or_default();
+    let resp = sig::call(
+        sh,
+        &r.key,
+        &my_id,
+        id,
+        reqwest::Method::POST,
+        &url,
+        Some(body),
+        Duration::from_secs(6),
+        &[],
+    )
+    .await
+    .map_err(|e| {
+        ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "unreachable",
+            format!("Couldn't reach the retired controller ({e})."),
+        )
+    })?
+    .resp;
+    if !resp.status().is_success() {
+        return Err(ApiError::conflict(format!(
+            "The retired controller refused: {}",
+            error_message(resp).await
+        )));
+    }
+    sh.retired.lock().remove(id);
+    let mut list = load_retired(sh);
+    list.retain(|x| !(x.id == r.id && x.serial == r.serial && x.key == r.key));
+    save_retired(sh, &list);
+    tracing::info!("released retired controller {} ({})", r.name, r.id);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1160,15 +1653,11 @@ pub(crate) async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                     );
                 }
                 h.warned_power_save = ps;
-                let mismatch = p.beacon.proto != proto::PROTOCOL_VERSION;
-                if mismatch && !h.warned_protocol {
-                    if let Some(msg) =
-                        super::follower::protocol_mismatch(p.beacon.proto, &p.beacon.ver, false)
-                    {
-                        log_warning(state, format!("{}: {msg}", node.name));
-                    }
+                let mismatch = super::follower::protocol_mismatch(&p.beacon, false);
+                if let Some(msg) = mismatch.as_ref().filter(|_| !h.warned_protocol) {
+                    log_warning(state, format!("{}: {msg}", node.name));
                 }
-                h.warned_protocol = mismatch;
+                h.warned_protocol = mismatch.is_some();
             }
             let Some(peer) = peer.filter(|p| p.last_seen.elapsed() < sh.settings.offline_after)
             else {
@@ -1233,7 +1722,7 @@ pub(crate) async fn check_health(state: &AppState, sh: &Arc<Shared>) {
         let sh2 = sh.clone();
         let state2 = state.clone();
         tokio::spawn(async move {
-            match call_adopt(&state2, &sh2, &peer, false, None).await {
+            match call_adopt(&state2, &sh2, &peer, false, None, None).await {
                 Ok((reply, key)) if reply.id == peer.beacon.id => {
                     sh2.update_keys(|k| {
                         k.followers.insert(reply.id.clone(), key);
@@ -1365,7 +1854,8 @@ pub(crate) fn build_sync(
         })
         .rounded();
     SyncPacket {
-        surprise: Default::default(),
+        // F20 surprise layer and F12 dimmed brightness (engine, WS3).
+        surprise: status.surprise.clone(),
         leader: identity.id,
         show_version: show.version,
         state: status.state,
@@ -1375,7 +1865,7 @@ pub(crate) fn build_sync(
         anchor: Some(anchor),
         effect,
         test,
-        brightness: status.brightness,
+        brightness: status.light_brightness.unwrap_or(status.brightness),
         blackout: status.blackout,
     }
 }

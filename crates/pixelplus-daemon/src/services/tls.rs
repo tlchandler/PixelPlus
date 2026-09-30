@@ -149,7 +149,12 @@ pub fn ca_dns_constraints(hostname: &str) -> Vec<String> {
 
 /// Every name the leaf should carry, in a stable order: host-name variants,
 /// extra names, then addresses — filtered to what the CA may sign.
-pub fn desired_names(hostname: &str, ips: &[IpAddr], extra: &[String], dns: &[String]) -> Vec<String> {
+pub fn desired_names(
+    hostname: &str,
+    ips: &[IpAddr],
+    extra: &[String],
+    dns: &[String],
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut push = |n: String| {
         if permitted(&n, dns) && !out.contains(&n) {
@@ -281,9 +286,9 @@ fn ca_params(meta: &CaMeta) -> anyhow::Result<CertificateParams> {
         .map(|d| GeneralSubtree::DnsName(d.clone()))
         .collect();
     permitted.extend(
-        permitted_ip_ranges()
-            .into_iter()
-            .map(|(ip, prefix)| GeneralSubtree::IpAddress(CidrSubnet::from_addr_prefix(ip, prefix))),
+        permitted_ip_ranges().into_iter().map(|(ip, prefix)| {
+            GeneralSubtree::IpAddress(CidrSubnet::from_addr_prefix(ip, prefix))
+        }),
     );
     p.name_constraints = Some(NameConstraints {
         permitted_subtrees: permitted,
@@ -307,7 +312,11 @@ pub fn ca_common_name(show_name: &str, node_id: &str) -> String {
         .take(4)
         .collect::<String>()
         .to_ascii_lowercase();
-    let show = if show.is_empty() { "My show".into() } else { show };
+    let show = if show.is_empty() {
+        "My show".into()
+    } else {
+        show
+    };
     if short.is_empty() {
         format!("PixelPlus Local CA – {show}")
     } else {
@@ -334,8 +343,11 @@ pub fn create_ca(common_name: &str, hostname: &str, now: DateTime<Utc>) -> anyho
         not_before.month() as u8,
         not_before.day() as u8,
     );
-    params.not_after =
-        rcgen::date_time_ymd(not_after.year(), not_after.month() as u8, not_after.day() as u8);
+    params.not_after = rcgen::date_time_ymd(
+        not_after.year(),
+        not_after.month() as u8,
+        not_after.day() as u8,
+    );
     params.serial_number = Some(random_serial());
     let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
     let cert = params.self_signed(&key)?;
@@ -379,8 +391,11 @@ pub fn issue_leaf(ca: &Ca, names: &[String], now: DateTime<Utc>) -> anyhow::Resu
         not_before.month() as u8,
         not_before.day() as u8,
     );
-    params.not_after =
-        rcgen::date_time_ymd(not_after.year(), not_after.month() as u8, not_after.day() as u8);
+    params.not_after = rcgen::date_time_ymd(
+        not_after.year(),
+        not_after.month() as u8,
+        not_after.day() as u8,
+    );
     let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
     let issuer_params = ca_params(&ca.meta)?;
     let issuer = rcgen::Issuer::from_params(&issuer_params, &ca.key);
@@ -401,14 +416,23 @@ pub fn issue_leaf(ca: &Ca, names: &[String], now: DateTime<Utc>) -> anyhow::Resu
 }
 
 /// Why the leaf must be re-issued now (`None` = it is fine).
-pub fn reissue_reason(leaf: &LeafMeta, ca_fp: &str, desired: &[String], now: DateTime<Utc>) -> Option<&'static str> {
+pub fn reissue_reason(
+    leaf: &LeafMeta,
+    ca_fp: &str,
+    desired: &[String],
+    now: DateTime<Utc>,
+) -> Option<&'static str> {
     if leaf.ca_fingerprint != ca_fp {
         return Some("the certificate authority changed");
     }
     if desired.iter().any(|n| !leaf.names.contains(n)) {
         return Some("an address or the host name changed");
     }
-    let parse = |s: &str| DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc));
+    let parse = |s: &str| {
+        DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|d| d.with_timezone(&Utc))
+    };
     let (Some(nb), Some(na)) = (parse(&leaf.not_before), parse(&leaf.not_after)) else {
         return Some("its dates are unreadable");
     };
@@ -474,7 +498,11 @@ fn pem_to_der(pem: &str) -> anyhow::Result<Vec<u8>> {
 pub fn save_ca(dir: &Path, ca: &Ca) -> anyhow::Result<()> {
     write_atomic(&dir.join("ca.key"), ca.key.serialize_pem().as_bytes(), true)?;
     write_atomic(&dir.join("ca.crt"), ca.cert_pem.as_bytes(), false)?;
-    write_atomic(&dir.join("ca.json"), &serde_json::to_vec_pretty(&ca.meta)?, false)?;
+    write_atomic(
+        &dir.join("ca.json"),
+        &serde_json::to_vec_pretty(&ca.meta)?,
+        false,
+    )?;
     Ok(())
 }
 
@@ -486,8 +514,8 @@ pub fn load_ca(dir: &Path) -> anyhow::Result<Option<Ca>> {
     }
     let key = KeyPair::from_pem(&std::fs::read_to_string(&key_path)?).context("reading ca.key")?;
     let cert_pem = std::fs::read_to_string(dir.join("ca.crt")).context("reading ca.crt")?;
-    let meta: CaMeta = serde_json::from_slice(&std::fs::read(dir.join("ca.json"))?)
-        .context("reading ca.json")?;
+    let meta: CaMeta =
+        serde_json::from_slice(&std::fs::read(dir.join("ca.json"))?).context("reading ca.json")?;
     let cert_der = pem_to_der(&cert_pem)?;
     Ok(Some(Ca {
         key,
@@ -501,7 +529,11 @@ pub fn load_ca(dir: &Path) -> anyhow::Result<Option<Ca>> {
 pub fn save_leaf(dir: &Path, leaf: &Leaf) -> anyhow::Result<()> {
     write_atomic(&dir.join("leaf.key"), leaf.key_pem.as_bytes(), true)?;
     write_atomic(&dir.join("leaf.crt"), leaf.cert_pem.as_bytes(), false)?;
-    write_atomic(&dir.join("leaf.json"), &serde_json::to_vec_pretty(&leaf.meta)?, false)?;
+    write_atomic(
+        &dir.join("leaf.json"),
+        &serde_json::to_vec_pretty(&leaf.meta)?,
+        false,
+    )?;
     Ok(())
 }
 
@@ -531,7 +563,6 @@ pub fn load_leaf(dir: &Path) -> anyhow::Result<Option<Leaf>> {
 /// The CA + leaf in use.
 pub struct Material {
     pub ca_der: Vec<u8>,
-    pub ca_pem: String,
     pub ca_meta: CaMeta,
     pub ca_fingerprint: String,
     pub leaf: Leaf,
@@ -555,7 +586,6 @@ impl rustls::server::ResolvesServerCert for LeafResolver {
 /// Listener facts for `/tls/status`.
 #[derive(Debug, Clone, Default)]
 pub struct ListenerInfo {
-    pub port: u16,
     pub listening: bool,
     pub error: Option<String>,
 }
@@ -641,7 +671,8 @@ impl TlsState {
             rustls::pki_types::CertificateDer::from(m.leaf.cert_der.clone()),
             rustls::pki_types::CertificateDer::from(m.ca_der.clone()),
         ];
-        *self.resolver.current.write() = Some(Arc::new(rustls::sign::CertifiedKey::new(chain, signer)));
+        *self.resolver.current.write() =
+            Some(Arc::new(rustls::sign::CertifiedKey::new(chain, signer)));
         *self.material.write() = Some(Arc::new(m));
         Ok(())
     }
@@ -658,17 +689,18 @@ pub fn active(state: &AppState) -> bool {
 /// (trust page / HTTPS settings opened in the last 10 minutes), for the
 /// OLED status screen: `CA 1A:2B:3C:4D:5E:6F`.
 pub fn oled_line(state: &AppState) -> Option<String> {
-    let t = state.services.tls.fingerprint_shown.lock().as_ref().copied()?;
+    let t = state
+        .services
+        .tls
+        .fingerprint_shown
+        .lock()
+        .as_ref()
+        .copied()?;
     if t.elapsed() > OLED_FINGERPRINT_FOR {
         return None;
     }
     let m = state.services.tls.material()?;
     Some(format!("CA {}", m.ca_fingerprint.get(..17)?))
-}
-
-fn names_now(state: &AppState, dns: &[String]) -> Vec<String> {
-    let extra = state.store.get().settings.https.extra_names.clone();
-    desired_names(&crate::cluster::net::hostname(), &local_addresses(), &extra, dns)
 }
 
 /// Make sure a CA and a current leaf exist (creating / re-issuing as needed).
@@ -722,7 +754,6 @@ pub async fn ensure(state: &AppState, rotate_ca: bool, rotate_leaf: bool) -> any
         Ok((
             Material {
                 ca_der: ca.cert_der.clone(),
-                ca_pem: ca.cert_pem.clone(),
                 ca_meta: ca.meta.clone(),
                 ca_fingerprint: ca_fp,
                 leaf,
@@ -803,7 +834,12 @@ pub fn export_ca(data_dir: &Path) -> anyhow::Result<Option<(String, String, Stri
 /// Restore a CA from a transfer bundle (validated first); the leaf is
 /// re-issued on the next check. Call [`TlsState::poke`] afterwards.
 #[allow(dead_code)] // used by the F10 transfer restore (WS5)
-pub fn import_ca(data_dir: &Path, key_pem: &str, cert_pem: &str, meta_json: &str) -> anyhow::Result<()> {
+pub fn import_ca(
+    data_dir: &Path,
+    key_pem: &str,
+    cert_pem: &str,
+    meta_json: &str,
+) -> anyhow::Result<()> {
     let key = KeyPair::from_pem(key_pem).context("the certificate authority key is damaged")?;
     let meta: CaMeta = serde_json::from_str(meta_json).context("ca.json is damaged")?;
     let ca = Ca {
@@ -830,7 +866,11 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 pub fn b64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
         for i in 0..4 {
             if i <= chunk.len() {

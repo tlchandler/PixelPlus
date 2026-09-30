@@ -231,6 +231,20 @@ pub struct DiscoveredNode {
     /// A show leader whose admin chose "Join another show".
     #[serde(default)]
     pub joining: bool,
+    /// A controller that was replaced ("Replace with…", F10) and is back on
+    /// the network: offer "Release it" instead of adoption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired: Option<RetiredInfo>,
+}
+
+/// Why a discovered controller is retired (F10).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RetiredInfo {
+    /// RFC 3339.
+    pub replaced_at: String,
+    /// Name of the controller it used to be.
+    pub name: String,
 }
 
 /// Commands the leader sends to followers (`POST /cluster/command`).
@@ -276,6 +290,23 @@ pub enum ClusterCommand {
     Identify {
         duration_ms: u64,
     },
+    /// F15: download `file` from the leader (`GET /cluster/update/:file`),
+    /// check size, SHA-256 and the minisign signature `sig`, and stage it
+    /// through the root helper. Progress shows in the beacon report.
+    #[serde(rename_all = "camelCase")]
+    UpdateStage {
+        version: String,
+        file: String,
+        size: u64,
+        sha256: String,
+        sig: String,
+    },
+    /// F15: install the staged version (the daemon restarts).
+    UpdateCommit {
+        version: String,
+    },
+    /// F15: go back to the version before the last update.
+    UpdateRollback,
 }
 
 impl ClusterCommand {
@@ -464,6 +495,8 @@ pub(crate) struct Shared {
     /// `X-PixelPlus-Time` answers.
     pub skew: Mutex<HashMap<String, i64>>,
     pub join: Mutex<Option<JoinWindow>>,
+    /// Leader: replaced controllers heard on the network, by their old id (F10).
+    pub retired: Mutex<HashMap<String, leader::RetiredSighting>>,
 }
 
 impl Shared {
@@ -893,6 +926,7 @@ pub async fn start_with(
         nonces: Default::default(),
         skew: Default::default(),
         join: Default::default(),
+        retired: Default::default(),
     });
     shared.load_keys();
     let handle = ClusterHandle {

@@ -98,6 +98,15 @@ pub struct PlayerStatus {
     /// out on a vblank grid (DPI).
     #[serde(skip)]
     pub refresh_hz: Option<f64>,
+    /// Engine-internal (leader): the running surprise for sync packets, its
+    /// `start_pos` relative to `anchor.at_ms` (F20).
+    #[serde(skip)]
+    pub surprise: Option<SurpriseAnchor>,
+    /// Engine-internal (leader): the master brightness the lights actually
+    /// use (`brightness` capped by late-night dimming, F12); sync packets
+    /// carry this one.
+    #[serde(skip)]
+    pub light_brightness: Option<u8>,
 }
 
 /// Power limiter summary in [`PlayerStatus::power`] (F12).

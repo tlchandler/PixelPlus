@@ -138,8 +138,7 @@ async fn update(
                 // Keep edits made on the normal pages (schedule, requests, …).
                 svc::save_live_into_active(s);
             }
-            let mut value =
-                serde_json::to_value(&s.profiles[idx]).map_err(ApiError::internal)?;
+            let mut value = serde_json::to_value(&s.profiles[idx]).map_err(ApiError::internal)?;
             merge_patch(&mut value, &patch);
             let mut p: ShowProfile = serde_json::from_value(value)
                 .map_err(|e| ApiError::bad_request(format!("That season isn't valid: {e}")))?;
@@ -251,6 +250,9 @@ async fn auto_switch(
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        // xLights FPP Connect admin endpoints (F16, also WS6): merged here so
+        // the shared `api/mod.rs` stays untouched.
+        .merge(super::fppcompat::admin_routes())
         .route("/profiles", get(list).post(create))
         .route("/profiles/capture", post(capture))
         .route("/profiles/active", get(active))
@@ -304,7 +306,11 @@ mod tests {
             .await;
         assert_eq!(st, StatusCode::OK);
         let (st, xmas) = app
-            .json("POST", "/profiles/capture", Some(json!({"name": "Christmas"})))
+            .json(
+                "POST",
+                "/profiles/capture",
+                Some(json!({"name": "Christmas"})),
+            )
             .await;
         assert_eq!(st, StatusCode::OK, "{xmas}");
         assert_eq!(xmas["schedule"]["entries"].as_array().unwrap().len(), 1);
@@ -339,7 +345,11 @@ mod tests {
             .any(|l| l.as_str().unwrap().starts_with("Song requests")));
 
         let (st, show) = app
-            .json("POST", &format!("/profiles/{hw_id}/activate"), Some(json!({})))
+            .json(
+                "POST",
+                &format!("/profiles/{hw_id}/activate"),
+                Some(json!({})),
+            )
             .await;
         assert_eq!(st, StatusCode::OK, "{show}");
         assert_eq!(show["activeProfileId"], hw_id.as_str());
@@ -378,7 +388,11 @@ mod tests {
 
         // Auto-switch toggle.
         let (st, _) = app
-            .json("PUT", "/profiles/auto-switch", Some(json!({"enabled": true})))
+            .json(
+                "PUT",
+                "/profiles/auto-switch",
+                Some(json!({"enabled": true})),
+            )
             .await;
         assert_eq!(st, StatusCode::OK);
         let (_, show) = app.json("GET", "/show", None).await;

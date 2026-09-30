@@ -179,7 +179,13 @@ fn direction() -> ParamSpec {
 
 /// Keys of the beat-reactive parameters every look accepts (F2): the
 /// Effects page shows them as "Pulse to a beat" rather than in the list.
-pub const BEAT_PARAMS: [&str; 4] = ["beatBpm", "beatPhaseMs", "beatDepth", "beatDecayMs"];
+pub const BEAT_PARAMS: [&str; 5] = [
+    "beatBpm",
+    "beatPhaseMs",
+    "beatDepth",
+    "beatDecayMs",
+    "beatFollowSong",
+];
 
 fn beat_params() -> Vec<ParamSpec> {
     vec![
@@ -194,6 +200,9 @@ fn beat_params() -> Vec<ParamSpec> {
         ParamSpec::number("beatDecayMs", "Pulse decay", 30.0, 2_000.0, 10.0, 220.0)
             .unit("ms")
             .help("How quickly each pulse fades."),
+        ParamSpec::boolean("beatFollowSong", "Follow the song's beat", false).help(
+            "Under a song or DJ clip whose beat was analysed, pulse with its tempo and beats.",
+        ),
     ]
 }
 

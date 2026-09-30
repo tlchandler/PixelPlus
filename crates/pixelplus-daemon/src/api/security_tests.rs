@@ -343,18 +343,10 @@ async fn xlights_upload_password_is_write_only() {
 // F16 hook: root-mounted FPP Connect routes (security::fpp_compat_guard)
 // ---------------------------------------------------------------------
 
-async fn fpp_send(
-    app: &TestApp,
-    method: &str,
-    peer: &str,
-    headers: &[(&str, &str)],
-) -> StatusCode {
+async fn fpp_send(app: &TestApp, method: &str, peer: &str, headers: &[(&str, &str)]) -> StatusCode {
     use tower::ServiceExt;
     let router = axum::Router::new()
-        .route(
-            "/api/file/{dir}",
-            axum::routing::any(|| async { "ok" }),
-        )
+        .route("/api/file/{dir}", axum::routing::any(|| async { "ok" }))
         .layer(axum::middleware::from_fn_with_state(
             app.state.clone(),
             super::security::fpp_compat_guard,
@@ -380,8 +372,16 @@ fn basic(password: &str) -> String {
         let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
         out.push(t[(n >> 18) as usize & 63] as char);
         out.push(t[(n >> 12) as usize & 63] as char);
-        out.push(if c.len() > 1 { t[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if c.len() > 2 { t[n as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 1 {
+            t[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            t[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     format!("Basic {out}")
 }
@@ -407,7 +407,13 @@ async fn fpp_connect_hook_replaces_csrf_with_lan_and_upload_password() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        fpp_send(&app, "PATCH", "127.0.0.1:1", &[("cf-connecting-ip", "203.0.113.9")]).await,
+        fpp_send(
+            &app,
+            "PATCH",
+            "127.0.0.1:1",
+            &[("cf-connecting-ip", "203.0.113.9")]
+        )
+        .await,
         StatusCode::NOT_FOUND
     );
     // DNS rebinding.
@@ -438,7 +444,10 @@ async fn fpp_connect_hook_replaces_csrf_with_lan_and_upload_password() {
         })
         .await
         .unwrap();
-    assert_eq!(fpp_send(&app, "PATCH", lan, &[]).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        fpp_send(&app, "PATCH", lan, &[]).await,
+        StatusCode::UNAUTHORIZED
+    );
     let wrong = basic("nope-nope");
     assert_eq!(
         fpp_send(&app, "PATCH", lan, &[("authorization", &wrong)]).await,
@@ -455,7 +464,10 @@ async fn fpp_connect_hook_replaces_csrf_with_lan_and_upload_password() {
             &app,
             "POST",
             lan,
-            &[("authorization", &good), ("content-type", "multipart/form-data; boundary=x")]
+            &[
+                ("authorization", &good),
+                ("content-type", "multipart/form-data; boundary=x")
+            ]
         )
         .await,
         StatusCode::OK
@@ -504,8 +516,9 @@ async fn public_status(router: &axum::Router, method: &str, path: &str) -> Statu
         .header("cf-connecting-ip", "203.0.113.5")
         .body(Body::empty())
         .unwrap();
-    r.extensions_mut()
-        .insert(ConnectInfo::<SocketAddr>("127.0.0.1:40000".parse().unwrap()));
+    r.extensions_mut().insert(ConnectInfo::<SocketAddr>(
+        "127.0.0.1:40000".parse().unwrap(),
+    ));
     router.clone().oneshot(r).await.unwrap().status()
 }
 
@@ -553,10 +566,17 @@ async fn public_listener_serves_only_the_public_pages() {
         ("POST", "/request"),
     ];
     for (m, p) in admin {
-        assert_eq!(public_status(&router, m, p).await, StatusCode::NOT_FOUND, "{m} {p}");
+        assert_eq!(
+            public_status(&router, m, p).await,
+            StatusCode::NOT_FOUND,
+            "{m} {p}"
+        );
     }
     // The public page, its assets and API work (under any host name).
-    assert_eq!(public_status(&router, "GET", "/request").await, StatusCode::OK);
+    assert_eq!(
+        public_status(&router, "GET", "/request").await,
+        StatusCode::OK
+    );
     assert_eq!(
         public_status(&router, "GET", "/api/v1/public/health").await,
         StatusCode::OK
@@ -573,8 +593,8 @@ async fn public_listener_serves_only_the_public_pages() {
 
 #[test]
 fn public_path_policy() {
-    use axum::http::Method;
     use super::security::public_path_allowed as ok;
+    use axum::http::Method;
     assert!(ok(&Method::GET, "/request"));
     assert!(ok(&Method::GET, "/request/thanks"));
     assert!(!ok(&Method::GET, "/requests"));

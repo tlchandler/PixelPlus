@@ -1,0 +1,211 @@
+{
+  "date": "2026-12-01",
+  "status": "warn",
+  "headline": "2 shows, 2 songs, 3 requests, 2 problems",
+  "shows": [
+    {
+      "entryId": "scweeknt01",
+      "name": "Weeknights",
+      "startedAt": "2026-12-01T17:00:00-06:00",
+      "runtimeMin": 300
+    },
+    {
+      "entryId": "late",
+      "name": "Late show",
+      "startedAt": "2026-12-01T23:30:00-06:00",
+      "runtimeMin": 60
+    }
+  ],
+  "itemsPlayed": 2,
+  "requests": 3,
+  "topRequests": [
+    {
+      "sequenceId": "s2",
+      "name": "All I Want",
+      "count": 2
+    },
+    {
+      "sequenceId": "s1",
+      "name": "Wizards in Winter",
+      "count": 1
+    }
+  ],
+  "problems": [
+    {
+      "level": "warn",
+      "code": "temp",
+      "message": "Garage reached 58 °C",
+      "count": 1
+    }
+  ],
+  "nodes": [
+    {
+      "nodeId": "nmain00001",
+      "name": "Main Controller",
+      "tempMinC": 40.0,
+      "tempMaxC": 44.0,
+      "voltsMin": 11.8,
+      "offlineMin": 0.0
+    },
+    {
+      "nodeId": "ngarage001",
+      "name": "Garage",
+      "offlineMin": 4.5,
+      "syncP50Ms": 0.7,
+      "syncP95Ms": 1.1
+    }
+  ],
+  "limiter": [
+    {
+      "nodeId": "ngarage001",
+      "port": 2,
+      "seconds": 15.0
+    }
+  ],
+  "suspectPixels": [
+    {
+      "propId": "parch00002",
+      "name": "Arch 2",
+      "pixels": [
+        36
+      ]
+    }
+  ],
+  "diskFreePct": 71.0,
+  "updates": [
+    "1.4.0 → 1.4.1"
+  ],
+  "backupAgeDays": 1,
+  "generatedAt": "2026-12-02T07:00:00-06:00",
+  "window": {
+    "from": "2026-12-01T12:00:00-06:00",
+    "to": "2026-12-02T07:00:00-06:00"
+  },
+  "runtimeMin": 360,
+  "games": 1,
+  "gameMinutes": 1.5,
+  "triggers": 1,
+  "restarts": 2,
+  "series": {
+    "tempC": [
+      {
+        "nodeId": "nmain00001",
+        "name": "Main Controller",
+        "points": [
+          [
+            1796166000000.0,
+            41.0
+          ],
+          [
+            1796166900000.0,
+            42.0
+          ],
+          [
+            1796167800000.0,
+            44.0
+          ],
+          [
+            1796168700000.0,
+            40.0
+          ],
+          [
+            1796169600000.0,
+            42.0
+          ],
+          [
+            1796170500000.0,
+            43.0
+          ],
+          [
+            1796171400000.0,
+            44.0
+          ],
+          [
+            1796172300000.0,
+            41.0
+          ],
+          [
+            1796173200000.0,
+            43.0
+          ],
+          [
+            1796174100000.0,
+            44.0
+          ],
+          [
+            1796175000000.0,
+            41.0
+          ],
+          [
+            1796175900000.0,
+            42.0
+          ],
+          [
+            1796176800000.0,
+            44.0
+          ]
+        ]
+      }
+    ],
+    "syncMs": [
+      {
+        "nodeId": "ngarage001",
+        "name": "Garage",
+        "points": [
+          [
+            1796166000000.0,
+            0.25
+          ],
+          [
+            1796166900000.0,
+            0.3
+          ],
+          [
+            1796167800000.0,
+            0.4
+          ],
+          [
+            1796168700000.0,
+            0.45
+          ],
+          [
+            1796169600000.0,
+            0.55
+          ],
+          [
+            1796170500000.0,
+            0.6
+          ],
+          [
+            1796171400000.0,
+            0.7
+          ],
+          [
+            1796172300000.0,
+            0.75
+          ],
+          [
+            1796173200000.0,
+            0.85
+          ],
+          [
+            1796174100000.0,
+            0.9
+          ],
+          [
+            1796175000000.0,
+            1.0
+          ],
+          [
+            1796175900000.0,
+            1.05
+          ],
+          [
+            1796176800000.0,
+            1.15
+          ]
+        ]
+      }
+    ]
+  }
+}

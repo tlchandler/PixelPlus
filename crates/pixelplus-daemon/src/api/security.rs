@@ -434,10 +434,8 @@ pub async fn public_only(req: Request, next: Next) -> Response {
     }
     let mut resp = next.run(req).await;
     if !path.starts_with("/_app/immutable/") {
-        resp.headers_mut().insert(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
-        );
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     resp
 }
@@ -455,7 +453,11 @@ pub fn tunnel_request(peer: Option<SocketAddr>, headers: &HeaderMap) -> bool {
 /// listed: public pages answer under any name and the admin must not.
 pub fn remote_admin_hosts(remote: &pixelplus_core::model::RemoteSettings) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(ts) = remote.tailscale.as_ref().filter(|t| t.enabled && t.serve_admin) {
+    if let Some(ts) = remote
+        .tailscale
+        .as_ref()
+        .filter(|t| t.enabled && t.serve_admin)
+    {
         if let Some(n) = ts.dns_name.as_deref().filter(|n| !n.is_empty()) {
             out.push(n.trim_end_matches('.').to_ascii_lowercase());
         }
@@ -626,8 +628,8 @@ pub async fn fpp_compat_authorize(
         return Ok(());
     };
     let unauthorized = |msg: &str| {
-        let mut r = super::ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized", msg)
-            .into_response();
+        let mut r =
+            super::ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized", msg).into_response();
         r.headers_mut().insert(
             header::WWW_AUTHENTICATE,
             HeaderValue::from_static("Basic realm=\"PixelPlus xLights upload\""),
@@ -653,7 +655,10 @@ pub async fn fpp_compat_authorize(
         return Err(super::ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "throttled",
-            format!("Too many wrong passwords. Try again in {} s.", wait.as_secs().max(1)),
+            format!(
+                "Too many wrong passwords. Try again in {} s.",
+                wait.as_secs().max(1)
+            ),
         )
         .into_response());
     }

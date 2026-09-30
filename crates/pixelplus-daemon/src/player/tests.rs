@@ -16,10 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-struct Env {
-    state: AppState,
-    dir: PathBuf,
-    engine: Engine,
+pub(super) struct Env {
+    pub(super) state: AppState,
+    pub(super) dir: PathBuf,
+    pub(super) engine: Engine,
 }
 
 impl Drop for Env {
@@ -30,14 +30,14 @@ impl Drop for Env {
 }
 
 impl Env {
-    fn out(&self, i: usize) -> Vec<u8> {
+    pub(super) fn out(&self, i: usize) -> Vec<u8> {
         let sim = self.engine.sim.as_ref().expect("sim output");
         sim.with_latest(|s| s.outputs.get(i).cloned().unwrap_or_default())
     }
 
     /// Outputs `i` and `j` read from the same frame (one lock), so a frame
     /// arriving between two separate reads can't tear the comparison.
-    fn out_pair(&self, i: usize, j: usize) -> (Vec<u8>, Vec<u8>) {
+    pub(super) fn out_pair(&self, i: usize, j: usize) -> (Vec<u8>, Vec<u8>) {
         let sim = self.engine.sim.as_ref().expect("sim output");
         sim.with_latest(|s| {
             (
@@ -47,12 +47,12 @@ impl Env {
         })
     }
 
-    fn status(&self) -> PlayerStatus {
+    pub(super) fn status(&self) -> PlayerStatus {
         self.engine.handle.status()
     }
 }
 
-fn prop(id: &str, n: u32, chan: u32, output: u32) -> Prop {
+pub(super) fn prop(id: &str, n: u32, chan: u32, output: u32) -> Prop {
     Prop {
         suspect_pixels: Default::default(),
         id: id.into(),
@@ -82,7 +82,7 @@ fn prop(id: &str, n: u32, chan: u32, output: u32) -> Prop {
 }
 
 /// 15 channels: prop A = channels 0..6 (output 1), prop B = 6..15 (output 2).
-fn write_fseq(path: &Path, frames: u32, frame_ms: u8, value: impl Fn(u32) -> u8) {
+pub(super) fn write_fseq(path: &Path, frames: u32, frame_ms: u8, value: impl Fn(u32) -> u8) {
     let mut w = FseqWriter::create(path, FseqWriterOptions::new(15, frame_ms)).unwrap();
     for f in 0..frames {
         w.write_frame(&[value(f); 15]).unwrap();
@@ -90,7 +90,7 @@ fn write_fseq(path: &Path, frames: u32, frame_ms: u8, value: impl Fn(u32) -> u8)
     w.finish().unwrap();
 }
 
-fn sequence(
+pub(super) fn sequence(
     dir: &Path,
     id: &str,
     frames: u32,
@@ -119,7 +119,7 @@ fn sequence(
     }
 }
 
-fn base_show() -> Show {
+pub(super) fn base_show() -> Show {
     let mut show = Show::default();
     show.nodes.push(Node {
         hardware_history: Default::default(),
@@ -140,7 +140,7 @@ fn base_show() -> Show {
     show
 }
 
-fn playlist(id: &str, items: &[&str], crossfade_ms: u32) -> Playlist {
+pub(super) fn playlist(id: &str, items: &[&str], crossfade_ms: u32) -> Playlist {
     Playlist {
         smart: Default::default(),
         id: id.into(),
@@ -160,11 +160,11 @@ fn playlist(id: &str, items: &[&str], crossfade_ms: u32) -> Playlist {
     }
 }
 
-async fn env(role: LocalRole, audio: bool, setup: impl FnOnce(&Path, &mut Show)) -> Env {
+pub(super) async fn env(role: LocalRole, audio: bool, setup: impl FnOnce(&Path, &mut Show)) -> Env {
     env_with(role, audio, None, setup).await
 }
 
-async fn env_with(
+pub(super) async fn env_with(
     role: LocalRole,
     audio: bool,
     sim_refresh_hz: Option<f64>,
@@ -220,7 +220,7 @@ async fn env_with(
     Env { state, dir, engine }
 }
 
-async fn wait_for(timeout_ms: u64, mut cond: impl FnMut() -> bool) -> bool {
+pub(super) async fn wait_for(timeout_ms: u64, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     while Instant::now() < deadline {
         if cond() {
@@ -231,7 +231,7 @@ async fn wait_for(timeout_ms: u64, mut cond: impl FnMut() -> bool) -> bool {
     cond()
 }
 
-fn uniform(bytes: &[u8]) -> Option<u8> {
+pub(super) fn uniform(bytes: &[u8]) -> Option<u8> {
     let first = *bytes.first()?;
     bytes.iter().all(|&b| b == first).then_some(first)
 }

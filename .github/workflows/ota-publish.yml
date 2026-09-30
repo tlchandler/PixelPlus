@@ -1,0 +1,60 @@
+name: Publish OTA index
+
+# When a release is published (not while it is a draft: its download URLs don't work
+# yet), copy its signed update indexes (pixelplus-<channel>.json + .minisig) to GitHub
+# Pages under ota/, where controllers look for updates (PIXELPLUS_UPDATE_URL, default
+# https://<owner>.github.io/PixelPlus/ota). The files are signed in the release workflow;
+# this job only copies them, so a compromised Pages branch can't forge an update.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download the release's indexes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p ota
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D ota \
+            -p 'pixelplus-*.json' -p 'pixelplus-*.json.minisig' || true
+          ls -la ota
+          if ! ls ota/pixelplus-*.json >/dev/null 2>&1; then
+            echo "::warning::$TAG has no signed update index (MINISIGN_SECRET_KEY not set?)"
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/checkout@v4
+        if: env.SKIP != '1'
+        with:
+          ref: gh-pages
+          path: pages
+      - name: Commit to gh-pages
+        if: env.SKIP != '1'
+        run: |
+          set -euo pipefail
+          mkdir -p pages/ota
+          # A stable release also becomes the beta channel's latest (controllers never downgrade).
+          for f in ota/pixelplus-*.json; do
+            ch="$(basename "$f" .json)"
+            cp "$f" "pages/ota/$ch.json"
+            cp "$f.minisig" "pages/ota/$ch.json.minisig"
+          done
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ota
+          git commit -m "OTA index: ${{ inputs.tag || github.event.release.tag_name }}" || exit 0
+          git push

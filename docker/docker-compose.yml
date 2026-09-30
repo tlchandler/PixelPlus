@@ -3,6 +3,8 @@
 #   docker compose -f docker/docker-compose.yml up -d            # daemon only
 #   docker compose -f docker/docker-compose.yml --profile tts up -d      # + on-device DJ voices
 #   docker compose -f docker/docker-compose.yml --profile games up -d    # + games sidecar
+#   TUNNEL_TOKEN=... docker compose -f docker/docker-compose.yml --profile tunnel up -d
+#                                                  # + Cloudflare Tunnel (remote access, F14)
 #
 # Open http://<this-machine>:80 (or the port you set below).
 # Host networking is required: followers are found by UDP broadcast (32420) and mDNS.
@@ -70,6 +72,24 @@ services:
     ipc: "service:pixelplus"           # same /dev/shm as the daemon (overlay buffers)
     healthcheck:
       disable: true
+    depends_on:
+      pixelplus:
+        condition: service_healthy
+
+  # Remote access without port forwarding (Settings → Remote access explains the steps).
+  # In the Cloudflare Zero Trust dashboard point the tunnel's public hostname at
+  # http://localhost:8081 — PixelPlus's public-only port: the song request page and games,
+  # never the admin pages. (An admin hostname → http://localhost:80 needs a password and
+  # should sit behind Cloudflare Access.)
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pixelplus-cloudflared
+    profiles: ["tunnel"]
+    network_mode: host
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN to the tunnel token from the Cloudflare dashboard}
     depends_on:
       pixelplus:
         condition: service_healthy

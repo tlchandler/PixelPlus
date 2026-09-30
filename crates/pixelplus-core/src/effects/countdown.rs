@@ -118,12 +118,7 @@ impl CountdownSpec {
             return -rem;
         }
         let frac = rem % 1000.0;
-        if frac == 0.0 {
-            0.0
-        } else {
-            1000.0 - frac
-        }
-        .min(t_ms.max(0.0))
+        if frac == 0.0 { 0.0 } else { 1000.0 - frac }.min(t_ms.max(0.0))
     }
 
     /// The finale flash is on at `t_ms`.
@@ -155,7 +150,11 @@ pub fn tick_times(duration_ms: u64) -> Vec<u64> {
 /// The matrix prop a countdown draws its digits on: `wanted` when it is a
 /// matrix, else the largest matrix prop of the show.
 pub fn pick_matrix<'a>(show: &'a Show, wanted: Option<&str>) -> Option<&'a Prop> {
-    let usable = |p: &&Prop| p.matrix.as_ref().is_some_and(|m| m.width > 0 && m.height > 0);
+    let usable = |p: &&Prop| {
+        p.matrix
+            .as_ref()
+            .is_some_and(|m| m.width > 0 && m.height > 0)
+    };
     if let Some(id) = wanted {
         if let Some(p) = show.prop(id).filter(usable) {
             return Some(p);
@@ -399,20 +398,46 @@ mod tests {
         assert_eq!(spec.others, CountdownOthers::Pulse);
         assert_eq!(spec.to_params(), p.params);
         // A non-matrix "matrix" is ignored.
-        let p = countdown_preset(&s, "i", 5_000, Some("line"), "", None, CountdownOthers::Fill, CountdownFinale::Flash);
-        assert_eq!(CountdownSpec::from_params(&p.params).matrix_prop_id.as_deref(), Some("m"));
+        let p = countdown_preset(
+            &s,
+            "i",
+            5_000,
+            Some("line"),
+            "",
+            None,
+            CountdownOthers::Fill,
+            CountdownFinale::Flash,
+        );
+        assert_eq!(
+            CountdownSpec::from_params(&p.params)
+                .matrix_prop_id
+                .as_deref(),
+            Some("m")
+        );
         // Garbage params still count down.
         let mut bad = EffectParams::new();
         bad.insert("durationMs".into(), json!("soon"));
         bad.insert("others".into(), json!("sideways"));
         let spec = CountdownSpec::from_params(&bad);
-        assert_eq!((spec.duration_ms, spec.others), (10_000, CountdownOthers::Fill));
+        assert_eq!(
+            (spec.duration_ms, spec.others),
+            (10_000, CountdownOthers::Fill)
+        );
     }
 
     #[test]
     fn digits_on_the_matrix_fill_on_the_others_and_finale() {
         let s = show();
-        let p = countdown_preset(&s, "i", 10_000, None, "{s}", None, CountdownOthers::Fill, CountdownFinale::Flash);
+        let p = countdown_preset(
+            &s,
+            "i",
+            10_000,
+            None,
+            "{s}",
+            None,
+            CountdownOthers::Fill,
+            CountdownFinale::Flash,
+        );
         let props: Vec<&Prop> = s.props.iter().collect();
         let r = EffectRenderer::new(&p, &props);
         let f0 = render(&r, 0);
@@ -420,7 +445,11 @@ mod tests {
         assert_eq!(lit(line), 0, "the bar starts empty");
         assert!(lit(mat) > 10, "\"10\" is drawn");
         let half = render(&r, 5_000);
-        assert!((4..=6).contains(&lit(&half[..30])), "half full: {}", lit(&half[..30]));
+        assert!(
+            (4..=6).contains(&lit(&half[..30])),
+            "half full: {}",
+            lit(&half[..30])
+        );
         // Digits change with the seconds.
         assert_ne!(render(&r, 1_500)[30..], render(&r, 2_500)[30..]);
         // Finale: everything white just before zero, dark after.
@@ -428,11 +457,35 @@ mod tests {
         assert!(fin.iter().all(|&b| b == 255));
         assert!(render(&r, 10_000).iter().all(|&b| b == 0));
         // Pulse and dark modes.
-        let p = countdown_preset(&s, "i", 10_000, None, "{s}", None, CountdownOthers::Pulse, CountdownFinale::None);
+        let p = countdown_preset(
+            &s,
+            "i",
+            10_000,
+            None,
+            "{s}",
+            None,
+            CountdownOthers::Pulse,
+            CountdownFinale::None,
+        );
         let r = EffectRenderer::new(&p, &props);
-        assert!(render(&r, 1_010)[0] > render(&r, 1_900)[0], "pulses decay within each second");
-        assert!(render(&r, 9_900)[..30].iter().any(|&b| b < 255), "no finale");
-        let p = countdown_preset(&s, "i", 10_000, None, "{s}", None, CountdownOthers::Dark, CountdownFinale::None);
+        assert!(
+            render(&r, 1_010)[0] > render(&r, 1_900)[0],
+            "pulses decay within each second"
+        );
+        assert!(
+            render(&r, 9_900)[..30].iter().any(|&b| b < 255),
+            "no finale"
+        );
+        let p = countdown_preset(
+            &s,
+            "i",
+            10_000,
+            None,
+            "{s}",
+            None,
+            CountdownOthers::Dark,
+            CountdownFinale::None,
+        );
         let r = EffectRenderer::new(&p, &props);
         assert_eq!(lit(&render(&r, 3_000)[..30]), 0);
     }
@@ -442,7 +495,16 @@ mod tests {
         // A follower that has only the matrix renders the same pixels for it
         // as the leader rendering everything (the preset carries the matrix id).
         let s = show();
-        let p = countdown_preset(&s, "i", 30_000, None, "SHOW IN {s}", Some("#00ff00"), CountdownOthers::Fill, CountdownFinale::Flash);
+        let p = countdown_preset(
+            &s,
+            "i",
+            30_000,
+            None,
+            "SHOW IN {s}",
+            Some("#00ff00"),
+            CountdownOthers::Fill,
+            CountdownFinale::Flash,
+        );
         let all: Vec<&Prop> = s.props.iter().collect();
         let leader = EffectRenderer::new(&p, &all);
         let follower = EffectRenderer::new(&p, &[&s.props[1]]);

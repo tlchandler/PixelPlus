@@ -9,7 +9,9 @@
 use super::content::player;
 use super::{ApiError, ApiResult};
 use crate::player::{PlayerCmd, PlayerState, TestRequest};
-use crate::services::mapping::{self as svc, ActivePattern, MapScope, MappingRun, PlanOptions, RunResults};
+use crate::services::mapping::{
+    self as svc, ActivePattern, MapScope, MappingRun, PlanOptions, RunResults,
+};
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -156,7 +158,8 @@ async fn start_run(State(state): State<AppState>, body: Bytes) -> ApiResult<Json
     let b: StartBody = if body.is_empty() {
         StartBody::default()
     } else {
-        serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(format!("Bad request: {e}")))?
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("Bad request: {e}")))?
     };
     check_idle(&state, b.force)?;
     let show = state.store.get();
@@ -165,7 +168,8 @@ async fn start_run(State(state): State<AppState>, body: Bytes) -> ApiResult<Json
         scope.all = true;
     }
     if let Some(n) = &scope.node_id {
-        show.node(n).ok_or_else(|| ApiError::not_found("That controller"))?;
+        show.node(n)
+            .ok_or_else(|| ApiError::not_found("That controller"))?;
     }
     let outs = svc::scope_targets(&show, &scope);
     if outs.is_empty() {
@@ -173,9 +177,14 @@ async fn start_run(State(state): State<AppState>, body: Bytes) -> ApiResult<Json
             "No props are wired to controller outputs here yet. Set up wiring first.",
         ));
     }
-    let (plan, targets) =
-        svc::build_plan(&show, &outs, &b.opts, mapcode::PHASE_A | mapcode::PHASE_B, |_| None)
-            .map_err(ApiError::bad_request)?;
+    let (plan, targets) = svc::build_plan(
+        &show,
+        &outs,
+        &b.opts,
+        mapcode::PHASE_A | mapcode::PHASE_B,
+        |_| None,
+    )
+    .map_err(ApiError::bad_request)?;
     let run = MappingRun {
         id: pixelplus_core::model::new_id(),
         kind: "map".into(),
@@ -220,7 +229,8 @@ async fn frame_lights(State(state): State<AppState>, body: Bytes) -> ApiResult<J
     let b: B = if body.is_empty() {
         B::default()
     } else {
-        serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(format!("Bad request: {e}")))?
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("Bad request: {e}")))?
     };
     if b.on == Some(false) {
         stop_pattern(&state, Some("frame")).await;
@@ -245,7 +255,14 @@ async fn frame_lights(State(state): State<AppState>, body: Bytes) -> ApiResult<J
         cal: None,
     };
     // Framing ends by itself after 5 minutes.
-    start_test(&state, "frame", req, Some(Duration::from_secs(300)), "Framing").await?;
+    start_test(
+        &state,
+        "frame",
+        req,
+        Some(Duration::from_secs(300)),
+        "Framing",
+    )
+    .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -260,11 +277,17 @@ async fn list_runs(State(state): State<AppState>) -> Json<Vec<MappingRun>> {
     Json(runs)
 }
 
-async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<MappingRun>> {
+async fn get_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<MappingRun>> {
     svc::load(&state, &id).await.map(Json)
 }
 
-async fn delete_run(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn delete_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     stop_pattern(&state, Some(&id)).await;
     svc::delete(&state, &id).await?;
     Ok(Json(json!({ "ok": true })))
@@ -285,7 +308,9 @@ async fn post_results(
         return Err(ApiError::bad_request("Too many results for one run."));
     }
     if b.detected.iter().any(|d| d.k as usize >= run.targets.len()) {
-        return Err(ApiError::bad_request("A result refers to an unknown output."));
+        return Err(ApiError::bad_request(
+            "A result refers to an unknown output.",
+        ));
     }
     let mut ids = std::collections::HashSet::new();
     if b.proposals.iter().any(|p| !ids.insert(p.id.clone())) {
@@ -312,7 +337,8 @@ async fn put_photo(
     if !body.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return Err(ApiError::bad_request("The photo must be a JPEG."));
     }
-    let path = svc::photo_path(&state, &id).ok_or_else(|| ApiError::not_found("That mapping run"))?;
+    let path =
+        svc::photo_path(&state, &id).ok_or_else(|| ApiError::not_found("That mapping run"))?;
     tokio::fs::write(&path, &body)
         .await
         .map_err(|e| ApiError::internal(format!("couldn't save the photo: {e}")))?;
@@ -350,9 +376,13 @@ async fn photo_as_background(
     }
     let dst = background_path(&state);
     if let Some(d) = dst.parent() {
-        tokio::fs::create_dir_all(d).await.map_err(ApiError::internal)?;
+        tokio::fs::create_dir_all(d)
+            .await
+            .map_err(ApiError::internal)?;
     }
-    tokio::fs::copy(src, &dst).await.map_err(ApiError::internal)?;
+    tokio::fs::copy(src, &dst)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(Json(json!({ "ok": true, "path": "layout/background.jpg" })))
 }
 
@@ -380,7 +410,8 @@ async fn apply_run(
     }
     // Dry run first: a bad selection must not leave a pointless snapshot.
     svc::apply_proposals(&mut (*state.store.get()).clone(), &run, &b.proposal_ids)?;
-    let snap = crate::services::snapshots::create(&state, "Before camera mapping", true, false).await?;
+    let snap =
+        crate::services::snapshots::create(&state, "Before camera mapping", true, false).await?;
     let r = run.clone();
     let ids = b.proposal_ids.clone();
     let (applied, show) = state
@@ -394,7 +425,9 @@ async fn apply_run(
         }
     }
     svc::save(&state, &run).await?;
-    Ok(Json(json!({ "show": &*show, "snapshotId": snap.id, "applied": applied })))
+    Ok(Json(
+        json!({ "show": &*show, "snapshotId": snap.id, "applied": applied }),
+    ))
 }
 
 pub fn routes() -> Router<AppState> {
@@ -414,7 +447,10 @@ pub fn routes() -> Router<AppState> {
                 .put(put_photo)
                 .layer(DefaultBodyLimit::max(svc::MAX_PHOTO + 1024)),
         )
-        .route("/mapping/runs/{id}/photo/background", post(photo_as_background))
+        .route(
+            "/mapping/runs/{id}/photo/background",
+            post(photo_as_background),
+        )
         .route("/mapping/runs/{id}/apply", post(apply_run))
 }
 
@@ -454,10 +490,16 @@ mod tests {
                 {"id": "n", "kind": "notSeen", "message": "Not seen"}
             ]
         });
-        let (s, v) = app.json("POST", &format!("/mapping/runs/{id}/results"), Some(res)).await;
+        let (s, v) = app
+            .json("POST", &format!("/mapping/runs/{id}/results"), Some(res))
+            .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         let (s, v) = app
-            .json("POST", &format!("/mapping/runs/{id}/apply"), Some(json!({"proposalIds": ["r"]})))
+            .json(
+                "POST",
+                &format!("/mapping/runs/{id}/apply"),
+                Some(json!({"proposalIds": ["r"]})),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert!(v["snapshotId"].as_str().is_some());
@@ -466,14 +508,22 @@ mod tests {
         assert_eq!(v["appliedProposalIds"][0], "r");
         // Unknown proposal: 404 and nothing changes.
         let (s, _) = app
-            .json("POST", &format!("/mapping/runs/{id}/apply"), Some(json!({"proposalIds": ["zz"]})))
+            .json(
+                "POST",
+                &format!("/mapping/runs/{id}/apply"),
+                Some(json!({"proposalIds": ["zz"]})),
+            )
             .await;
         assert_eq!(s, StatusCode::NOT_FOUND);
 
-        let (s, _) = app.json("POST", &format!("/mapping/runs/{id}/stop"), None).await;
+        let (s, _) = app
+            .json("POST", &format!("/mapping/runs/{id}/stop"), None)
+            .await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(app.commands_matching("TestStop").await, 1);
-        let (s, _) = app.json("DELETE", &format!("/mapping/runs/{id}"), None).await;
+        let (s, _) = app
+            .json("DELETE", &format!("/mapping/runs/{id}"), None)
+            .await;
         assert_eq!(s, StatusCode::OK);
         let (s, _) = app.json("GET", &format!("/mapping/runs/{id}"), None).await;
         assert_eq!(s, StatusCode::NOT_FOUND);
@@ -485,13 +535,21 @@ mod tests {
     async fn empty_scope_and_bad_options_are_rejected() {
         let app = app_with_show().await;
         let (s, _) = app
-            .json("POST", "/mapping/runs", Some(json!({"scope": {"nodeId": "nope"}})))
+            .json(
+                "POST",
+                "/mapping/runs",
+                Some(json!({"scope": {"nodeId": "nope"}})),
+            )
             .await;
         assert_eq!(s, StatusCode::NOT_FOUND);
-        let (s, _) = app.json("POST", "/mapping/runs", Some(json!({"level": 250}))).await;
+        let (s, _) = app
+            .json("POST", "/mapping/runs", Some(json!({"level": 250})))
+            .await;
         // Level is clamped to 50 %, not rejected.
         assert_eq!(s, StatusCode::OK);
-        let (s, v) = app.json("POST", "/mapping/runs", Some(json!({"bitMs": 20}))).await;
+        let (s, v) = app
+            .json("POST", "/mapping/runs", Some(json!({"bitMs": 20})))
+            .await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     }
 
@@ -504,7 +562,9 @@ mod tests {
             .method("PUT")
             .uri(format!("/api/v1/mapping/runs/{id}/photo"))
             .header("content-type", "image/jpeg")
-            .body(axum::body::Body::from(vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]))
+            .body(axum::body::Body::from(vec![
+                0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3,
+            ]))
             .unwrap();
         let (s, _, _) = app.send(req).await;
         assert_eq!(s, StatusCode::OK);
@@ -517,7 +577,11 @@ mod tests {
         assert_eq!(h["content-type"], "image/jpeg");
         assert_eq!(body.len(), 7);
         let (s, _) = app
-            .json("POST", &format!("/mapping/runs/{id}/photo/background"), None)
+            .json(
+                "POST",
+                &format!("/mapping/runs/{id}/photo/background"),
+                None,
+            )
             .await;
         assert_eq!(s, StatusCode::OK);
         let req = axum::http::Request::builder()

@@ -1,0 +1,33 @@
+[Unit]
+Description=PixelPlus Cloudflare Tunnel (named tunnel, token from the PixelPlus UI)
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/INSTALL.md
+# Started/enabled by the root helper (`pixelplus-helper cloudflared-token`). Its public
+# hostnames are configured in the Cloudflare Zero Trust dashboard: the song request page
+# -> http://localhost:8081 (PixelPlus's public-only port), optionally an admin hostname
+# -> http://localhost:80 (PixelPlus insists on a password for that).
+After=network-online.target pixelplusd.service
+Wants=network-online.target
+ConditionPathExists=/etc/pixelplus/cloudflared.env
+
+[Service]
+Type=simple
+# TUNNEL_TOKEN=... (0600, root): read by systemd, never on a command line.
+EnvironmentFile=/etc/pixelplus/cloudflared.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=on-failure
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

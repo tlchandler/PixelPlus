@@ -744,6 +744,8 @@ export interface SensorInput {
 	activeLow: boolean;
 	debounceMs: number;
 	holdMs: number;
+	/** `kind: 'current'` (INA219/INA226, `pin` = I²C address): shunt in milliohms. */
+	shuntMilliohms?: number;
 }
 export interface SensorNode {
 	id: Id;
@@ -945,6 +947,8 @@ export interface DiscoveredNode {
 	duplicate?: boolean;
 	/** A show leader whose owner chose "Join another show" (adopting replaces its show). */
 	joining?: boolean;
+	/** F10: a controller that was replaced ("Replace with…") and is back: offer "Release it". */
+	retired?: { replacedAt: string; name: string } | null;
 }
 
 /** "Join another show" / "Allow a new leader" (POST /system/join-show). */
@@ -1134,13 +1138,28 @@ export interface TlsStatus {
 	leafNotAfter: string;
 	urls: { lan: string[]; tailscale?: string; tunnel?: string };
 	secureNow: boolean;
+	/** WS1 additions: listener state (this node serves HTTPS now), bind error, node role. */
+	active?: boolean;
+	listening?: boolean;
+	error?: string | null;
+	role?: 'leader' | 'follower' | 'unconfigured';
+	caCreatedAt?: string | null;
+	caNotAfter?: string | null;
+	leafIssuedAt?: string | null;
+	/** `https.extraNames` the local CA can't vouch for (public domains). */
+	rejectedNames?: string[];
 }
-/** POST /player/calibration {on, pattern: 'v2'} → */
+/** POST /player/calibration {on, pattern: 'v2'} → (see pixelplus_core::calpattern) */
 export interface CalibrationPattern {
 	seed: number;
 	eventsMs: number[];
 	flashMs: number;
 	startsInMs: number;
+	/** WS1 additions (optional; lib/sensing/schedule.ts rebuilds them from the seed). */
+	v?: number;
+	windowMs?: number;
+	leadInMs?: number;
+	chirp?: { ms: number; f0Hz: number; f1Hz: number; rampMs: number };
 }
 export interface CalibrationResultBody {
 	residualMs: number;
@@ -1217,9 +1236,34 @@ export interface PowerLive {
 }
 /** F14 remote access status. */
 export interface RemoteStatus {
-	tailscale: { installed: boolean; state: string; dnsName?: string; httpsOk: boolean; funnel: boolean };
-	cloudflare: { installed: boolean; running: boolean; mode?: 'quick' | 'token'; urls: string[] };
+	tailscale: {
+		installed: boolean;
+		state: string;
+		dnsName?: string;
+		httpsOk: boolean;
+		funnel: boolean;
+		/** `tailscale serve` publishes the admin pages to the tailnet (WS5). */
+		serve?: boolean;
+		/** Open to connect this controller to a tailnet. */
+		loginUrl?: string;
+		ips?: string[];
+	};
+	cloudflare: {
+		installed: boolean;
+		running: boolean;
+		mode?: 'quick' | 'token';
+		urls: string[];
+		publicHost?: string;
+		adminHost?: string;
+		tokenSet?: boolean;
+	};
 	publicListener: boolean;
+	publicPort?: number;
+	/** A web UI password is set (required before exposing the admin pages). */
+	passwordSet?: boolean;
+	/** Remote access can be set up from here (PixelPlus Pi image / package, not Docker). */
+	canManage?: boolean;
+	message?: string;
 }
 /** F20 sensor nodes. */
 export interface DiscoveredSensorNode {
@@ -1343,6 +1387,8 @@ export interface WsPayloads {
 	mapping: { runId: string; state: 'running' | 'done' | 'stopped'; pct: number };
 	/** F20 a sensor input changed. */
 	sensorInput: SensorInputEvent;
+	/** F15 cluster update progress (every state change). */
+	updateJob: UpdateRun;
 }
 
 export interface UpdateInfo {
@@ -1358,7 +1404,17 @@ export interface UpdateInfo {
 	/** The latest install run, if any. */
 	job?: HelperStatus | null;
 	// F15 (cluster updates, WS5):
-	nodes?: { id: Id; name?: string; version: string; proto?: number; canApply: boolean }[];
+	nodes?: {
+		id: Id;
+		name?: string;
+		version: string;
+		proto?: number;
+		canApply: boolean;
+		online?: boolean;
+		arch?: string;
+		/** idle | staging | staged | committing | rollingBack | failed */
+		phase?: string;
+	}[];
 	history?: {
 		at: string;
 		from: string;
@@ -1366,7 +1422,42 @@ export interface UpdateInfo {
 		ok: boolean;
 		scope: 'cluster' | 'this';
 		message?: string;
+		nodes?: number;
 	}[];
+	/** Signed over-the-air updates are used here (else apt). */
+	ota?: boolean;
+	/** What keeps "Update everything" from starting right now. */
+	problems?: string[];
+	/** The current / last cluster update. */
+	run?: UpdateRun | null;
+	/** The version before the last update ("Roll back to …"). */
+	previous?: string;
+}
+
+/** F15: one cluster update / rollback job (`GET /system/update` `run`, WS `updateJob`). */
+export interface UpdateRun {
+	id: string;
+	kind: 'update' | 'rollback';
+	scope: 'cluster' | 'this';
+	version: string;
+	from: string;
+	phase:
+		'staging' | 'committingFollowers' | 'committingLeader' | 'rollingBack' | 'done' | 'rolledBack' | 'failed';
+	nodes: {
+		id: Id;
+		name: string;
+		isSelf: boolean;
+		arch: string;
+		from: string;
+		phase:
+			'pending' | 'staging' | 'staged' | 'committing' | 'healthy' | 'failed' | 'rollingBack' | 'rolledBack';
+		committed?: boolean;
+		message?: string;
+	}[];
+	startedAt: string;
+	finishedAt?: string;
+	message?: string;
+	auto?: boolean;
 }
 
 export interface ImportPreview {

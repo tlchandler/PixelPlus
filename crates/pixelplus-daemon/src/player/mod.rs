@@ -15,18 +15,24 @@
 //! | [`reader`] | background fseq/ppseq frame reader with read-ahead |
 //! | [`overlay`] | shared-memory / text / QR prop overlays |
 //! | [`compose`] | prop slots, effect layers, test patterns, preview frames |
+//! | [`limiter`] | power limiter on the wire bytes (F12) |
+//! | [`surprise`] | surprise layer over whatever plays (F20) |
 
 pub mod audio;
 pub mod clock;
 pub mod compose;
 pub mod debugtap;
 pub mod engine;
+pub mod limiter;
 pub mod overlay;
 pub mod playlist;
 pub mod reader;
 pub mod scheduler;
+pub mod surprise;
 pub mod types;
 
+#[cfg(test)]
+mod feature_tests;
 #[cfg(test)]
 mod tests;
 
@@ -136,6 +142,16 @@ pub enum PlayerCmd {
     /// "Sync lights to sound": play (`true`) or stop the calibration pattern
     /// (a click every second, every prop flashing white with it).
     Calibrate(bool),
+    /// Phone calibration (F1): the v2 pattern (`core::calpattern`) with
+    /// this seed; stop it with `Calibrate(false)`.
+    CalibrateV2(u32),
+    /// Start a surprise over whatever plays (F20).
+    Surprise(
+        surprise::SurpriseRequest,
+        oneshot::Sender<ApiResult<surprise::SurpriseStarted>>,
+    ),
+    /// Stop the running surprise (if any).
+    SurpriseStop,
     /// Overlay control for a prop (games, text, QR, fault finder).
     Overlay(OverlayCmd),
     /// Show changed (new version): rebuild maps, reload files. (The engine
@@ -223,6 +239,12 @@ impl PlayerHandle {
     }
     pub async fn test_start(&self, req: TestRequest) -> ApiResult<()> {
         self.request(|tx| PlayerCmd::TestStart(req, tx)).await
+    }
+    pub async fn surprise(
+        &self,
+        req: surprise::SurpriseRequest,
+    ) -> ApiResult<surprise::SurpriseStarted> {
+        self.request(|tx| PlayerCmd::Surprise(req, tx)).await
     }
     pub async fn overlay_open(&self, prop_id: String) -> ApiResult<OverlayInfo> {
         self.request(|reply| PlayerCmd::Overlay(OverlayCmd::Open { prop_id, reply }))

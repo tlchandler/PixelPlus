@@ -123,6 +123,48 @@ pub fn pi_model() -> Option<String> {
     crate::services::system::detection().1.map(|p| p.model)
 }
 
+/// Identifier of this hardware (F10 hardware history, retired-controller
+/// detection): the board EEPROM serial (`PPX-…`), else `pi-<serial>` from
+/// the Raspberry Pi's device tree / cpuinfo. `None` on a PC without either.
+pub fn hardware_serial() -> Option<String> {
+    if let Some(s) = crate::services::system::detection()
+        .0
+        .serial
+        .filter(|s| valid_serial(s))
+    {
+        return Some(s);
+    }
+    static PI: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PI.get_or_init(|| {
+        let dt = std::fs::read_to_string("/sys/firmware/devicetree/base/serial-number")
+            .ok()
+            .map(|s| s.trim_matches(char::from(0)).trim().to_string());
+        let cpu = || {
+            std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|t| {
+                t.lines()
+                    .find(|l| l.starts_with("Serial"))
+                    .and_then(|l| l.split(':').nth(1))
+                    .map(|s| s.trim().to_string())
+            })
+        };
+        dt.filter(|s| !s.is_empty())
+            .or_else(cpu)
+            .map(|s| s.trim_start_matches('0').to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("pi-{s}"))
+            .filter(|s| valid_serial(s))
+    })
+    .clone()
+}
+
+/// A serial as it may appear in beacons and the show (short, printable).
+pub fn valid_serial(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 40
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 // ---------------------------------------------------------------------------
 // Socket options for timing
 // ---------------------------------------------------------------------------

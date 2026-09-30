@@ -6,7 +6,8 @@
 // sync quality reports, "Sync lights to sound" calibration,
 // tools (tests, fault finder, blackout, brightness, looks, overlays, requests,
 // snapshots, health, power, sensors, games/TTS without sidecars), password,
-// follower restart mid-show, leader crash, live prop changes, remove + re-adopt.
+// follower restart mid-show, leader crash, live prop changes, remove + re-adopt;
+// engine features: countdown, power limiter + dimming, surprises, calibration v2, identify.
 //
 //   cargo build -p pixelplus-daemon && (cd web && pnpm build)
 //   node scripts/e2e/run.mjs            # fresh cluster in a temp dir, stopped afterwards
@@ -1039,6 +1040,210 @@ async function phaseResilience() {
 	});
 }
 
+
+// ---------------------------------------------------------------------------
+// Engine features (WS3): countdown (F4), power limiter + dimming (F12),
+// surprises (F20), phone calibration v2 (F1), identify test mode (F9).
+// ---------------------------------------------------------------------------
+
+async function phaseEngine() {
+	const statusOf = async (c) => c.get('/player');
+	const whiteLook = async () => {
+		const look = await L.post('/effects', {
+			name: 'E2E white',
+			effect: 'solid',
+			params: { color: '#ffffff' },
+			target: { all: true, propIds: [], groupIds: [] }
+		});
+		S.white = look;
+		return look;
+	};
+
+	await step('countdown intro: every controller counts down, the first song starts on zero', async () => {
+		const pl = await L.post('/playlists', {
+			name: 'E2E countdown',
+			intro: [{ id: 'cd1', type: 'countdown', durationMs: 4000, others: 'fill', finale: 'flash' }],
+			items: [{ id: 'cs1', type: 'sequence', sequenceId: S.seq.id }],
+			outro: [],
+			shuffle: false,
+			repeat: false,
+			crossfadeMs: 2000
+		});
+		await L.post('/player/play', { playlistId: pl.id });
+		const t0 = Date.now();
+		await until(
+			'countdown on every controller',
+			async () =>
+				(await Promise.all([L, F1, F2].map(statusOf))).every((p) => p.item?.type === 'countdown'),
+			{ timeout: 3000, every: 50 }
+		);
+		// Halfway, the "fill up" bar lights part of every controller.
+		await sleep(2200);
+		for (const [n, c] of Object.entries(NODES)) check(lit(Buffer.concat((await tap(c)).rgb)), `${n}: countdown dark`);
+		const song = await until(
+			'the first song',
+			async () => {
+				const p = await statusOf(L);
+				return p.item?.type === 'sequence' && p;
+			},
+			{ timeout: 5000, every: 20 }
+		);
+		const took = Date.now() - t0;
+		check(took > 3300 && took < 4800, `the song started ${took} ms after a 4 s countdown`);
+		check(song.item.id === S.seq.id, 'the playlist’s first song');
+		await L.post('/player/stop');
+	});
+
+	await step('power limiter: a small supply dims only its output; warn mode only reports', async () => {
+		await whiteLook();
+		await L.post('/player/effect', { effectId: S.white.id });
+		await sleep(700);
+		const before = await tap(L);
+		const out = before.wire.findIndex((w) => w.length && w.every((b) => b === 255));
+		check(out >= 0, 'a fully white leader output');
+		const pixels = before.ppo[out];
+		// Half of what the output draws at white, after the 0.9 safety factor.
+		const amps = (pixels * 0.06 * 0.5) / 0.9;
+		await L.put('/show/settings', { power: { mode: 'limit', safety: 0.9 } });
+		const psu = await L.post('/power-supplies', {
+			name: 'E2E tiny PSU',
+			volts: 12,
+			amps,
+			receiverIds: [],
+			directOutputs: [{ nodeId: S.ids.leader, output: out + 1 }]
+		});
+		const dup = await L.post(
+			'/power-supplies',
+			{ name: 'Twice', volts: 12, amps: 5, receiverIds: [], directOutputs: [{ nodeId: S.ids.leader, output: out + 1 }] },
+			{ expect: 400 }
+		);
+		check(/already fed/.test(dup.error.message), dup.error.message);
+		const t = await until(
+			'the supply’s output dimmed to about half',
+			async () => {
+				const t = await tap(L);
+				const w = t.wire[out];
+				return w.every((b) => b > 110 && b < 146) && t;
+			},
+			{ timeout: 6000 }
+		);
+		check(t.wire.some((w, i) => i !== out && w.length && w.every((b) => b === 255)), 'other outputs untouched');
+		const st = await statusOf(L);
+		check(st.power?.limiting && st.power.minScale < 0.6, `status.power ${JSON.stringify(st.power)}`);
+		const live = await L.get('/power/live');
+		const g = live.nodes.find((n) => n.nodeId === S.ids.leader)?.groups.find((x) => x.id === `supply:${psu.id}`);
+		check(g && g.scale < 0.6 && g.budget > 0, `live group ${JSON.stringify(g)}`);
+		const budget = await L.get(`/power/budget?nodeId=${S.ids.leader}`);
+		check(budget.groups.some((x) => x.id === `supply:${psu.id}` && x.tauMs === 0), 'budget has the supply');
+		await L.put('/show/settings', { power: { mode: 'warn' } });
+		await until('warn mode: full white again', async () => (await tap(L)).wire[out].every((b) => b === 255), {
+			timeout: 6000
+		});
+		check((await statusOf(L)).power?.limiting, 'warn mode still reports');
+		await L.del(`/power-supplies/${psu.id}`);
+	});
+
+	await step('late-night dimming lowers the brightness on every controller', async () => {
+		await L.put('/show/settings', {
+			power: {
+				dim: [{ from: { kind: 'clock', time: '00:00' }, to: { kind: 'clock', time: '00:00' }, brightness: 30, days: [] }]
+			}
+		});
+		await until(
+			'every controller at 30 %',
+			async () => (await Promise.all([L, F1, F2].map(tap))).every((t) => t.master === 30),
+			{ timeout: 6000 }
+		);
+		eq((await statusOf(L)).brightness, 100, 'the owner’s brightness setting is unchanged');
+		await L.put('/show/settings', { power: { dim: [] } });
+		await until('back to 100 %', async () => (await tap(F1)).master === 100, { timeout: 6000 });
+		await L.post('/player/effect', { effect: null });
+	});
+
+	await step('surprise: a look layered over the song on one prop, on its follower; trigger gates', async () => {
+		const red = await L.post('/effects', {
+			name: 'E2E surprise red',
+			effect: 'solid',
+			params: { color: '#ff0000' },
+			target: { all: true, propIds: [], groupIds: [] }
+		});
+		await L.post('/player/play', { sequenceId: S.seq.id });
+		await until('song playing', async () => (await statusOf(L)).item?.id === S.seq.id);
+		const arch = S.props['Big Arch'];
+		const r = await L.post('/player/surprise', {
+			ref: red.id,
+			source: 'effect',
+			target: { propIds: [arch.id] },
+			durationMs: 3000
+		});
+		eq(r.surprise.props, 1, 'one prop');
+		const archRed = (t) => {
+			const a = t.rgb[0].subarray(0, 50 * 3);
+			return a.every((v, i) => (i % 3 === 0 ? v === 255 : v === 0));
+		};
+		await until('Big Arch red on f1', async () => archRed(await tap(F1)), { timeout: 5000, every: 30 });
+		eq((await statusOf(L)).item?.id, S.seq.id, 'the song goes on');
+		await until('the surprise ends', async () => !archRed(await tap(F1)), { timeout: 5000 });
+		// A trigger with a cooldown: fires once, then is gated.
+		const show = await L.get('/show');
+		const trig = {
+			id: 'e2esurprise',
+			name: 'E2E doorbell',
+			kind: 'http',
+			action: { type: 'surprise', ref: red.id, source: 'effect', target: { propIds: [arch.id] }, durationMs: 800 },
+			cooldownS: 60
+		};
+		await L.put('/show/settings', { triggers: [...(show.settings.triggers ?? []), trig] });
+		const ok = await L.post(`/triggers/${trig.id}/fire`);
+		check(/Surprise/.test(ok.message), ok.message);
+		const again = await L.post(`/triggers/${trig.id}/fire`, {}, { expect: 409 });
+		check(/cooling down/.test(again.error.message), again.error.message);
+		await L.put('/show/settings', { triggers: show.settings.triggers ?? [] });
+	});
+
+	await step('phone calibration v2: the seeded pattern flashes on every controller', async () => {
+		const cal = await L.post('/player/calibration', { on: true, pattern: 'v2' });
+		check(cal.seed > 0 && cal.eventsMs.length >= 32 && cal.flashMs >= 80, `plan ${JSON.stringify(cal).slice(0, 120)}`);
+		await until('v2 pattern everywhere', async () =>
+			(await Promise.all([L, F1, F2].map(statusOf))).every((p) => p.item?.id === `v2:${cal.seed}`)
+		);
+		const flashed = new Set();
+		const t0 = Date.now();
+		while (flashed.size < 3 && Date.now() - t0 < 7000) {
+			const taps = await Promise.all([tap(L), tap(F1), tap(F2)]);
+			taps.forEach((t, i) => {
+				if (t.rgb.some((o) => o.length && o.every((b) => b === 255))) flashed.add(i);
+			});
+			await sleep(5);
+		}
+		eq(flashed.size, 3, 'all three controllers flashed');
+		await L.post('/player/calibration', { on: false });
+		await until('calibration stopped', async () => (await statusOf(L)).item?.type !== 'calibration');
+	});
+
+	await step('identify test mode lights one follower output in its colour', async () => {
+		await L.post('/test/start', {
+			mode: 'identify',
+			identify: [{ nodeId: S.ids.f2, output: 1, color: '#00ff00', blinks: 0 }]
+		});
+		await until(
+			'f2 output 1 green, the rest dark',
+			async () => {
+				const t = await tap(F2);
+				return (
+					t.rgb[0].length &&
+					t.rgb[0].every((v, i) => (i % 3 === 1 ? v === 255 : v === 0)) &&
+					t.rgb.slice(1).every((o) => !lit(o))
+				);
+			},
+			{ timeout: 3000 }
+		);
+		await L.post('/test/stop');
+		// Back to the scheduled show for the next phase.
+		await L.post('/player/play', { playlistId: S.playlist.id });
+	});
+}
+
 // ---------------------------------------------------------------------------
 
 const PHASES = [
@@ -1047,6 +1252,7 @@ const PHASES = [
 	['content', phaseContent],
 	['show', phaseShow],
 	['tools', phaseTools],
+	['engine', phaseEngine],
 	['resilience', phaseResilience]
 ];
 

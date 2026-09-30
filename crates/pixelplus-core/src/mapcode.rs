@@ -279,7 +279,10 @@ pub struct Schedule {
     pub bit_ms: u32,
     pub lead_in_ms: u64,
     pub preamble_ms: u64,
+    /// JSON `phaseAms` (the web contract's spelling).
+    #[serde(rename = "phaseAms")]
     pub phase_a_ms: u64,
+    #[serde(rename = "phaseBms")]
     pub phase_b_ms: u64,
     pub gap_ms: u64,
     pub pass_ms: u64,

@@ -126,6 +126,61 @@ pub enum HelperVerb {
     WifiCountry(String),
     /// Sync the `127.0.1.1` line of /etc/hosts with the current hostname.
     Hosts,
+    /// Verbs of the fleet features (F14 remote access, F15 updates), built
+    /// and validated by their owners (`services::remote`, `services::updates_orch`).
+    Ext(ExtVerb),
+}
+
+/// A fleet helper verb (see [`HelperVerb::Ext`]): `name[:arg]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtVerb {
+    pub name: &'static str,
+    /// Version, `on`/`off`, channel… (`[A-Za-z0-9.+~_-]`, at most 64).
+    pub arg: Option<String>,
+    /// Progress text ("Installing Tailscale").
+    pub describe: String,
+    pub timeout: Duration,
+    /// For "PixelPlus can't … here" ("install updates").
+    pub what: &'static str,
+}
+
+impl ExtVerb {
+    pub fn new(
+        name: &'static str,
+        arg: Option<&str>,
+        describe: impl Into<String>,
+        timeout: Duration,
+        what: &'static str,
+    ) -> Self {
+        ExtVerb {
+            name,
+            arg: arg.map(str::to_string),
+            describe: describe.into(),
+            timeout,
+            what,
+        }
+    }
+}
+
+fn valid_ext_arg(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '~' | '_' | '-'))
+}
+
+/// Escape a unit instance for systemd (`~` and `+` are not allowed in unit
+/// names; `%I` in the helper unit undoes it).
+pub fn escape_instance(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '.' | '-') {
+                c.to_string()
+            } else {
+                format!("\\x{:02x}", c as u32)
+            }
+        })
+        .collect()
 }
 
 fn valid_token(s: &str) -> bool {
@@ -147,6 +202,7 @@ impl HelperVerb {
             HelperVerb::Reapply => "reapply",
             HelperVerb::WifiCountry(_) => "wifi-country",
             HelperVerb::Hosts => "hosts",
+            HelperVerb::Ext(v) => v.name,
         }
     }
 
@@ -177,6 +233,18 @@ impl HelperVerb {
                 }
                 format!("wifi-country:{}", cc.to_ascii_uppercase())
             }
+            HelperVerb::Ext(v) => {
+                if !valid_token(v.name) {
+                    return Err(ApiError::internal("invalid helper verb"));
+                }
+                match &v.arg {
+                    Some(a) if !valid_ext_arg(a) => {
+                        return Err(ApiError::bad_request("Invalid helper argument."))
+                    }
+                    Some(a) => format!("{}:{a}", v.name),
+                    None => v.name.to_string(),
+                }
+            }
             other => other.name().to_string(),
         };
         Ok(s)
@@ -184,7 +252,10 @@ impl HelperVerb {
 
     /// systemd unit name for this instance.
     pub fn unit(&self) -> ApiResult<String> {
-        Ok(format!("pixelplus-helper@{}.service", self.instance()?))
+        Ok(format!(
+            "pixelplus-helper@{}.service",
+            escape_instance(&self.instance()?)
+        ))
     }
 
     /// Human description used in progress messages.
@@ -204,6 +275,7 @@ impl HelperVerb {
             HelperVerb::Reapply => "Applying pixelplus.txt".into(),
             HelperVerb::WifiCountry(cc) => format!("Setting the Wi-Fi country to {cc}"),
             HelperVerb::Hosts => "Updating /etc/hosts".into(),
+            HelperVerb::Ext(v) => v.describe.clone(),
         }
     }
 
@@ -212,6 +284,7 @@ impl HelperVerb {
         match self {
             HelperVerb::Update => Duration::from_secs(30 * 60),
             HelperVerb::Reapply => Duration::from_secs(5 * 60),
+            HelperVerb::Ext(v) => v.timeout,
             _ => Duration::from_secs(120),
         }
     }
@@ -483,6 +556,7 @@ pub async fn run_helper(
         HelperVerb::Reapply => "apply pixelplus.txt",
         HelperVerb::WifiCountry(_) => "set the Wi-Fi country",
         HelperVerb::Hosts => "update /etc/hosts",
+        HelperVerb::Ext(v) => v.what,
     }))
 }
 
@@ -567,6 +641,8 @@ pub(crate) async fn follow(
 
 fn direct_precheck(verb: &HelperVerb) -> ApiResult<()> {
     match verb {
+        // Fleet verbs need the packaged helper (repositories, dpkg, services).
+        HelperVerb::Ext(v) => Err(not_possible_here(v.what)),
         HelperVerb::ConfigTxt { .. } | HelperVerb::Reapply if !Path::new(FIRSTBOOT).is_file() => {
             Err(ApiError::unavailable(
                 "Boot settings can only be changed on a PixelPlus Pi image (the PixelPlus boot tools aren't installed).",
@@ -601,6 +677,7 @@ async fn ok_or(program: &str, args: &[&str], timeout: Duration, what: &str) -> R
 /// Do a helper verb directly (we are root and the helper isn't installed).
 async fn direct(verb: &HelperVerb) -> Result<String, String> {
     match verb {
+        HelperVerb::Ext(v) => Err(format!("PixelPlus can't {} here.", v.what)),
         HelperVerb::ConfigTxt { board, pixels } => {
             let mut args = vec![
                 FIRSTBOOT.to_string(),

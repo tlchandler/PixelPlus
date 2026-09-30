@@ -3,7 +3,8 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import Modal from './Modal.svelte';
 	import Slider from './Slider.svelte';
-	import { Play, Square, Minus, Plus } from '@lucide/svelte';
+	import { app } from '$lib/stores/app.svelte';
+	import { Play, Square, Minus, Plus, Smartphone, ChevronRight } from '@lucide/svelte';
 
 	/**
 	 * "Sync lights to sound": plays a click every second while every prop on every controller
@@ -22,7 +23,8 @@
 	} = $props();
 
 	const MIN = -500;
-	const MAX = 1000;
+	/** The controller allows up to 2 s (streaming / Bluetooth chains). */
+	const MAX = 2000;
 	const PRESETS = [
 		{ label: 'Speakers by the lights', ms: 0 },
 		{ label: 'FM transmitter', ms: 20 },
@@ -70,6 +72,9 @@
 		clearTimeout(timer);
 		if (playing) stop();
 	}
+	const lastCal = $derived(app.show?.settings.audio.lastCalibration);
+	/** Camera + microphone pages need https; the calibrate page explains how when it isn't. */
+	const secure = typeof window !== 'undefined' && window.isSecureContext;
 	const fmt = (v: number) => (v === 0 ? '0 ms' : `${v > 0 ? '+' : '−'}${Math.abs(v)} ms`);
 	const metres = $derived(Math.round(Math.max(0, value) / 2.9));
 </script>
@@ -80,6 +85,27 @@
 	subtitle="Match the lights to what the audience hears"
 	{onclose}
 >
+	<a class="measure interactive" href="/calibrate" onclick={onclose}>
+		<span class="mico"><Smartphone size={20} /></span>
+		<span class="grow mtxt">
+			<span class="mtitle">Measure with my phone</span>
+			<span class="faint small">
+				Point your phone at the lights and it sets the delay for you — about 30 seconds.{#if !secure}
+					Needs a secure connection; the page shows how.{/if}
+			</span>
+			{#if lastCal}
+				<span class="faint small">
+					Last measured {new Date(lastCal.measuredAt).toLocaleDateString()}{lastCal.device
+						? ` with ${lastCal.device}`
+						: ''}:
+					{lastCal.appliedDelayMs} ms
+				</span>
+			{/if}
+		</span>
+		<ChevronRight size={18} />
+	</a>
+	<p class="or faint small">or by eye and ear:</p>
+
 	<ol class="steps">
 		<li>
 			Stand where your audience listens — on the sidewalk, or in a car tuned to your FM station — with the
@@ -151,6 +177,41 @@
 </Modal>
 
 <style>
+	.measure {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 14px;
+		margin-bottom: 10px;
+		border-radius: var(--r-2);
+		border: 1px solid var(--accent-line);
+		background: var(--accent-soft);
+		color: var(--text);
+		text-decoration: none;
+		min-height: 64px;
+	}
+	.mico {
+		width: 38px;
+		height: 38px;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		background: var(--surface);
+		color: var(--accent-text);
+		flex: 0 0 auto;
+	}
+	.mtxt {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+	.mtitle {
+		font-weight: 600;
+	}
+	.or {
+		margin: 0 0 8px;
+	}
 	.steps {
 		margin: 0 0 14px;
 		padding-left: 20px;

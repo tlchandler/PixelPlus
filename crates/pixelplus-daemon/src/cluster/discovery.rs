@@ -193,7 +193,34 @@ fn same_device(old: &Peer, new: &Beacon, src: SocketAddr) -> bool {
 fn on_beacon(state: &AppState, sh: &Arc<Shared>, b: Beacon, src: SocketAddr, authenticated: bool) {
     let now = Instant::now();
     // Released nodes legitimately switch to unauthenticated beacons.
-    let member = state.store.get().node(&b.id).is_some_and(|n| n.adopted);
+    let show = state.store.get();
+    let node = show.node(&b.id).filter(|n| n.adopted);
+    let member = node.is_some();
+    // A replaced controller (F10) still believes it belongs to us but has a
+    // revoked key: keep it apart from its replacement, which has its id now.
+    if member
+        && !authenticated
+        && state.identity().role == LocalRole::Leader
+        && b.adopted_by.as_deref() == Some(state.identity().id.as_str())
+        // The replacement's own broadcast beacons are unauthenticated too.
+        && !sh
+            .peers
+            .read()
+            .get(&b.id)
+            .is_some_and(|p| p.authenticated && same_device(p, &b, src))
+        && leader::is_retired_beacon(sh, &b, node.and_then(|n| n.serial.as_deref()))
+    {
+        sh.retired.lock().insert(
+            b.id.clone(),
+            leader::RetiredSighting {
+                beacon: b,
+                addr: src,
+                last_seen: now,
+            },
+        );
+        return;
+    }
+    drop(show);
     {
         let mut peers = sh.peers.write();
         peers.retain(|_, p| now.duration_since(p.last_seen) < PEER_EXPIRY);
@@ -269,8 +296,9 @@ pub(crate) fn build_beacon(state: &AppState, sh: &Shared, ips: Vec<std::net::IpA
         LocalRole::Unconfigured => (None, 0, None),
     };
     Beacon {
-        proto_max: Default::default(),
-        proto_min: Default::default(),
+        proto_max: Some(proto::PROTOCOL_MAX),
+        proto_min: Some(proto::PROTOCOL_MIN),
+        hw: net::hardware_serial(),
         id: identity.id.clone(),
         name,
         hostname,

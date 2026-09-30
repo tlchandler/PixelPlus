@@ -2,8 +2,10 @@
 //! leader, the node's output frame on followers), effect looks, test
 //! patterns and the live-preview frame (ARCHITECTURE §8.1).
 
-use super::types::TestRequest;
-use pixelplus_core::effects::{builtin_presets, EffectRenderer, TestPattern};
+use super::types::{IdentifyLight, TestRequest};
+use pixelplus_core::calpattern::CalSchedule;
+use pixelplus_core::effects::{builtin_presets, EffectRenderer, Rgb, TestPattern};
+use pixelplus_core::mapcode::MapPlan;
 use pixelplus_core::mapping::{read_prop_channels, write_channel_runs, OutputFrame, PropMap};
 use pixelplus_core::model::{ChannelRun, EffectPreset, Prop, Show, Target};
 use std::ops::Range;
@@ -112,6 +114,8 @@ impl EffectLayer {
 /// A running test.
 pub struct TestLayer {
     pub req: TestRequest,
+    /// This node (timeline tests render its outputs).
+    node_id: String,
     kind: TestKind,
     slots: Vec<PropSlot>,
     /// Raw output test on this node: `Some(None)` = every output (identify),
@@ -126,11 +130,43 @@ pub struct TestLayer {
 enum TestKind {
     Pattern(TestPattern),
     Effect(Box<EffectLayer>),
+    /// Camera mapping code (F6/F7, `core::mapcode`) on the plan's targets.
+    Map(Box<MapPlan>),
+    /// Receiver wizard (F9): blinking colours on some outputs.
+    Identify(Vec<(String, u32, [u8; 3], u8)>),
+    /// Phone calibration v2 (F1): every output flashes with the pattern.
+    Cal(Box<CalSchedule>),
 }
+
+/// Test modes the API accepts.
+pub const TEST_MODES: &[&str] = &[
+    "solid",
+    "chase",
+    "rgbCycle",
+    "countPixels",
+    "walk",
+    "effect",
+    "mapCode",
+    "identify",
+    "calibration",
+];
 
 impl TestLayer {
     /// Build from a request. `node_id` is this node's id.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(show: &Show, node_id: &str, req: &TestRequest, now_ms: f64) -> Result<Self, String> {
+        Self::with_plan(show, node_id, req, now_ms, None)
+    }
+
+    /// [`TestLayer::new`], with the mapping plan of `req.mapRunId` when the
+    /// request carries only the id (sync packets).
+    pub fn with_plan(
+        show: &Show,
+        node_id: &str,
+        req: &TestRequest,
+        now_ms: f64,
+        plan: Option<&MapPlan>,
+    ) -> Result<Self, String> {
         let mut raw_output = None;
         let mut remote_only = false;
         if let Some(n) = &req.target.node_id {
@@ -148,10 +184,32 @@ impl TestLayer {
                 req.target.props.clone()
             };
             TestKind::Effect(Box::new(EffectLayer::on_target(show, &preset, &target)))
+        } else if req.mode == "mapCode" {
+            let plan = req
+                .map
+                .as_ref()
+                .or(plan)
+                .ok_or("the mapping plan has not arrived yet")?;
+            TestKind::Map(Box::new(plan.clone()))
+        } else if req.mode == "identify" {
+            let lights = req
+                .identify
+                .as_ref()
+                .ok_or("an identify test needs the lights to show")?;
+            TestKind::Identify(identify_lights(lights))
+        } else if req.mode == "calibration" {
+            let cal = req.cal.ok_or("a calibration test needs a seed")?;
+            TestKind::Cal(Box::new(pixelplus_core::calpattern::schedule(
+                cal.seed, 0.0,
+            )))
         } else {
             TestKind::Pattern(test_pattern(req)?)
         };
-        let slots = if raw_output.is_some() || remote_only {
+        let whole_node = matches!(
+            kind,
+            TestKind::Map(_) | TestKind::Identify(_) | TestKind::Cal(_)
+        );
+        let slots = if raw_output.is_some() || remote_only || whole_node {
             vec![]
         } else {
             resolve_target(show, &req.target.props)
@@ -161,6 +219,7 @@ impl TestLayer {
         };
         Ok(TestLayer {
             req: req.clone(),
+            node_id: node_id.to_string(),
             kind,
             slots,
             raw_output,
@@ -186,6 +245,67 @@ impl TestLayer {
                     sink.put(slot, &self.scratch);
                 }
             }
+            TestKind::Map(_) | TestKind::Identify(_) | TestKind::Cal(_) => {}
+        }
+    }
+
+    /// Timeline tests (mapping codes, identify, calibration) are rendered from
+    /// a shared timeline so every controller shows the same slot at the same
+    /// moment: the leader's status carries an anchor for them.
+    pub fn is_timeline(&self) -> bool {
+        matches!(
+            self.kind,
+            TestKind::Map(_) | TestKind::Identify(_) | TestKind::Cal(_)
+        )
+    }
+
+    /// Mapping codes / calibration / identify at test position `pos_ms` (a
+    /// presentation slot of `slot_ms`): the node's outputs go dark and the
+    /// pattern is drawn on the ones it covers. Other tests: [`Self::render_raw`].
+    pub fn render_timeline(&mut self, pos_ms: f64, slot_ms: f64, frame: &mut OutputFrame) {
+        let pos = pos_ms.max(0.0);
+        match &mut self.kind {
+            TestKind::Map(plan) => {
+                frame.clear();
+                for o in 0..frame.output_count() {
+                    pixelplus_core::mapcode::render_output(
+                        plan,
+                        &self.node_id,
+                        o as u32 + 1,
+                        pos as u64,
+                        frame.output_mut(o),
+                    );
+                }
+            }
+            TestKind::Identify(lights) => {
+                frame.clear();
+                for (node, output, rgb, blinks) in lights.iter() {
+                    if *node != self.node_id || *output == 0 {
+                        continue;
+                    }
+                    let o = *output as usize - 1;
+                    if o < frame.output_count() {
+                        pixelplus_core::mapcode::render_identify(
+                            *rgb,
+                            *blinks,
+                            pos as u64,
+                            frame.output_mut(o),
+                        );
+                    }
+                }
+            }
+            TestKind::Cal(cal) => {
+                // Flash length: max(80 ms, 2 presentation slots) on this node.
+                let len = pixelplus_core::calpattern::flash_len_ms(slot_ms);
+                if (cal.flash_ms - len).abs() > 0.01 {
+                    **cal = pixelplus_core::calpattern::schedule(cal.seed, slot_ms);
+                }
+                let lit = cal.flash_on(pos);
+                for o in 0..frame.output_count() {
+                    frame.output_mut(o).fill(if lit { 255 } else { 0 });
+                }
+            }
+            TestKind::Pattern(_) | TestKind::Effect(_) => {}
         }
     }
 
@@ -203,6 +323,7 @@ impl TestLayer {
                 TestKind::Pattern(p) => p.render(t, out),
                 // Effects need prop geometry; show a solid colour instead.
                 TestKind::Effect(_) => TestPattern::Solid { color: None }.render(t, out),
+                TestKind::Map(_) | TestKind::Identify(_) | TestKind::Cal(_) => {}
             }
         }
     }
@@ -220,6 +341,17 @@ impl TestLayer {
         }
         Some(p)
     }
+}
+
+/// Identify lights with parsed colours (bad colours show white).
+fn identify_lights(lights: &[IdentifyLight]) -> Vec<(String, u32, [u8; 3], u8)> {
+    lights
+        .iter()
+        .map(|l| {
+            let c = Rgb::from_hex(&l.color).unwrap_or(Rgb::WHITE);
+            (l.node_id.clone(), l.output, c.to_array(), l.blinks)
+        })
+        .collect()
 }
 
 fn is_empty(t: &Target) -> bool {

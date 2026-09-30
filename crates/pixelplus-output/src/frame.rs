@@ -96,10 +96,50 @@ impl OutputFrame {
         }
     }
 
+    /// Sum of the (wire) bytes of each output into `sums` (resized to the
+    /// output count). The power limiter's current estimate is linear in it.
+    pub fn byte_sums(&self, sums: &mut Vec<u64>) {
+        sums.clear();
+        sums.extend(self.outputs.iter().map(|o| byte_sum(o)));
+    }
+
+    /// Scale output `index` (0-based) by `scale` (clamped to 0..=1, rounded):
+    /// a uniform scale keeps the hue and, since LED current is linear in the
+    /// PWM duty, scales the current by the same factor. No-op at 1.
+    pub fn scale_output(&mut self, index: usize, scale: f32) {
+        let Some(out) = self.outputs.get_mut(index) else {
+            return;
+        };
+        let s = if scale.is_finite() {
+            scale.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        if s >= 1.0 {
+            return;
+        }
+        let mut lut = [0u8; 256];
+        for (i, v) in lut.iter_mut().enumerate() {
+            *v = (i as f32 * s).round() as u8;
+        }
+        for b in out.iter_mut() {
+            *b = lut[usize::from(*b)];
+        }
+    }
+
     /// Borrow as an [`OutputFrameRef`].
     pub fn as_frame_ref(&self) -> OutputFrameRef<'_> {
         OutputFrameRef::new(self.outputs.iter().map(Vec::as_slice).collect())
     }
+}
+
+/// Sum of `bytes`, in u32 blocks (vectorises; no overflow below 16 M bytes
+/// per block).
+fn byte_sum(bytes: &[u8]) -> u64 {
+    bytes
+        .chunks(1 << 16)
+        .map(|c| u64::from(c.iter().map(|&b| u32::from(b)).sum::<u32>()))
+        .sum()
 }
 
 impl<'a> From<&'a OutputFrame> for OutputFrameRef<'a> {
@@ -129,6 +169,30 @@ mod tests {
         let data = [0u8; 5];
         assert!(OutputFrameRef::from_contiguous(&data, &[2]).is_err());
         assert!(OutputFrameRef::from_contiguous(&data, &[u32::MAX, u32::MAX]).is_err());
+    }
+
+    #[test]
+    fn sums_and_scaling() {
+        let mut f = OutputFrame {
+            outputs: vec![vec![255; 300], vec![10, 20, 30], vec![]],
+        };
+        let mut sums = vec![9; 7];
+        f.byte_sums(&mut sums);
+        assert_eq!(sums, vec![255 * 300, 60, 0]);
+        f.scale_output(0, 0.5);
+        assert!(f.outputs[0].iter().all(|&b| b == 128));
+        f.scale_output(1, 1.0);
+        assert_eq!(f.outputs[1], vec![10, 20, 30]);
+        f.scale_output(1, f32::NAN);
+        assert_eq!(f.outputs[1], vec![10, 20, 30]);
+        f.scale_output(1, -3.0);
+        assert_eq!(f.outputs[1], vec![0, 0, 0]);
+        f.scale_output(9, 0.1); // out of range: ignored
+        let big = OutputFrame {
+            outputs: vec![vec![255; 200_000]],
+        };
+        big.byte_sums(&mut sums);
+        assert_eq!(sums, vec![255 * 200_000]);
     }
 
     #[test]

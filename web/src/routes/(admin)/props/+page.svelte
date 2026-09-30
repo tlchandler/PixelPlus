@@ -32,8 +32,12 @@
 		GripVertical,
 		TriangleAlert,
 		Pencil,
-		ChevronRight
+		ChevronRight,
+		Camera,
+		Ruler
 	} from '@lucide/svelte';
+	// WS4 (F6/F7): camera mapping entry and the pixel-count check.
+	import PixelCount from '$lib/components/props/PixelCount.svelte';
 	import { fly } from 'svelte/transition';
 
 	const show = $derived(app.show);
@@ -47,6 +51,12 @@
 	let drawerTab = $state('overview');
 	let activeId = $state<string | null>(null);
 	let importOpen = $state(false);
+	let countOpen = $state(false);
+	let countProp = $state<Prop | null>(null);
+	function checkCount(p: Prop) {
+		countProp = p;
+		countOpen = true;
+	}
 	let addOpen = $state(false);
 	let groupOpen = $state(false);
 	let bulkOpen = $state(false);
@@ -291,6 +301,7 @@
 			: 'Everything in your display'}
 	>
 		{#snippet actions()}
+			<a class="btn ghost" href="/map"><Camera size={16} /> Map my yard</a>
 			<button class="btn" onclick={() => (importOpen = true)}><FileUp size={16} /> Import from xLights</button
 			>
 			<button class="btn primary" onclick={() => (addOpen = true)}><Plus size={16} /> Add prop</button>
@@ -456,7 +467,7 @@
 				<span class="c-px">Pixels</span>
 				<span class="c-wire">Wired to</span>
 				<span class="c-pw">Full white</span>
-				<span style="width:32px"></span>
+				<span style="width:76px"></span>
 			</div>
 			<div use:sortable={{ onsort: reorder, disabled: filtering }}>
 				{#each filtered as p, i (p.id)}
@@ -487,6 +498,15 @@
 							>{p.segments.length ? shortChain(p) : 'Not wired'}</span
 						>
 						<span class="c-pw num small faint">{propPower(p).peak.toFixed(1)} A</span>
+						{#if p.segments.length}
+							<button
+								class="btn ghost icon sm"
+								onclick={() => checkCount(p)}
+								aria-label="Check pixel count of {p.name}"
+								title="Check pixel count"><Ruler size={14} /></button
+							>
+						{:else}<span style="width:32px" aria-hidden="true"></span>
+						{/if}
 						<button class="btn ghost icon sm" onclick={() => openProp(p.id)} aria-label="Edit {p.name}"
 							><Pencil size={14} /></button
 						>
@@ -520,6 +540,7 @@
 {/if}
 
 <PropDrawer bind:open={drawerOpen} propId={activeId} bind:tab={drawerTab} />
+<PixelCount bind:open={countOpen} prop={countProp} />
 <ImportModal bind:open={importOpen} />
 
 <Modal bind:open={addOpen} title="Add a prop" size="sm">

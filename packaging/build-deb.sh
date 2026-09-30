@@ -205,6 +205,10 @@ fi
 
 # helpers
 inst 0755 "${PKG}/bin/pixelplus-helper" /usr/lib/pixelplus/pixelplus-helper
+# update signing keys (minisign), re-checked by the helper before every install
+for k in "${PKG}"/keys/*.pub; do
+    inst 0644 "$k" "/usr/share/pixelplus/keys/$(basename "$k")"
+done
 inst 0755 "${PKG}/bin/tts-capable" /usr/lib/pixelplus/tts-capable
 
 # system integration

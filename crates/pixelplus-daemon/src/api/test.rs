@@ -20,14 +20,64 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-const TEST_MODES: &[&str] = &[
-    "solid",
-    "chase",
-    "rgbCycle",
-    "countPixels",
-    "walk",
-    "effect",
-];
+use crate::player::compose::TEST_MODES;
+
+/// Checks for the timeline test modes (mapping codes, identify, phone
+/// calibration): they run on whole controller outputs, not on props.
+pub(crate) fn validate_timeline_test(
+    req: &TestRequest,
+    show: &pixelplus_core::model::Show,
+) -> ApiResult<()> {
+    match req.mode.as_str() {
+        "mapCode" => {
+            if req.map.is_none() && req.map_run_id.is_none() {
+                return Err(ApiError::bad_request("A mapping test needs its plan."));
+            }
+            if let Some(plan) = &req.map {
+                pixelplus_core::mapcode::validate(plan).map_err(ApiError::bad_request)?;
+                for t in &plan.targets {
+                    show.node(&t.node_id).ok_or_else(|| {
+                        ApiError::bad_request(
+                            "The plan names a controller that isn't in this show.",
+                        )
+                    })?;
+                }
+            }
+        }
+        "identify" => {
+            let lights = req
+                .identify
+                .as_ref()
+                .filter(|l| !l.is_empty())
+                .ok_or_else(|| ApiError::bad_request("Say which outputs to light."))?;
+            for l in lights {
+                let n = show
+                    .node(&l.node_id)
+                    .ok_or_else(|| ApiError::not_found("That controller"))?;
+                if l.output == 0 || l.output as usize > n.outputs.len().max(n.board.output_count())
+                {
+                    return Err(ApiError::bad_request(format!(
+                        "{} doesn't have output {}.",
+                        n.name, l.output
+                    )));
+                }
+                if pixelplus_core::effects::Rgb::from_hex(&l.color).is_none() {
+                    return Err(ApiError::bad_request(format!(
+                        "\"{}\" isn't a colour (use #rrggbb).",
+                        l.color
+                    )));
+                }
+            }
+        }
+        "calibration" => {
+            if req.cal.is_none() {
+                return Err(ApiError::bad_request("A calibration test needs its seed."));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
 
 async fn test_start(
     State(state): State<AppState>,
@@ -40,6 +90,11 @@ async fn test_start(
         )));
     }
     let show = state.store.get();
+    if matches!(req.mode.as_str(), "mapCode" | "identify" | "calibration") {
+        validate_timeline_test(&req, &show)?;
+        player(&state)?.test_start(req).await?;
+        return Ok(Json(json!({ "ok": true })));
+    }
     let t = &req.target;
     if let Some(node) = &t.node_id {
         let n = show

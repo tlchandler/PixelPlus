@@ -232,6 +232,163 @@ fn analyze_symphonia(path: &Path) -> Result<MediaMeta, String> {
     })
 }
 
+/// Stream an audio file as mono f32 samples (blocking; for the beat analysis,
+/// F2). `on_chunk(sample_rate, samples)` returns false to stop early. Uses
+/// symphonia, or ffmpeg (22.05 kHz) when symphonia can't read the file and
+/// ffmpeg is installed. Returns the number of samples delivered.
+pub fn decode_mono(
+    path: &Path,
+    on_chunk: &mut dyn FnMut(u32, &[f32]) -> bool,
+) -> Result<u64, String> {
+    match decode_mono_symphonia(path, on_chunk) {
+        Ok(n) => Ok(n),
+        Err((e, 0)) if super::system::have("ffmpeg") => {
+            decode_mono_ffmpeg(path, on_chunk).map_err(|e2| format!("{e}; ffmpeg: {e2}"))
+        }
+        Err((e, _)) => Err(e),
+    }
+}
+
+fn decode_mono_symphonia(
+    path: &Path,
+    on_chunk: &mut dyn FnMut(u32, &[f32]) -> bool,
+) -> Result<u64, (String, u64)> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::errors::Error as SErr;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let fail = |e: String| (e, 0u64);
+    let file = std::fs::File::open(path).map_err(|e| fail(format!("can't open the file: {e}")))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| fail(format!("not a supported audio format ({e})")))?;
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| fail("the file has no audio track".into()))?
+        .clone();
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| fail(format!("unsupported audio codec ({e})")))?;
+    let track_id = track.id;
+    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut mono: Vec<f32> = Vec::new();
+    let mut delivered = 0u64;
+    let mut errors = 0;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SErr::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(SErr::ResetRequired) => break,
+            Err(e) => {
+                if delivered > 0 {
+                    break;
+                }
+                return Err(fail(format!("couldn't read the audio ({e})")));
+            }
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(SErr::DecodeError(_)) => {
+                errors += 1;
+                if errors > 1000 {
+                    return Err(("the audio is damaged".into(), delivered));
+                }
+                continue;
+            }
+            Err(e) => return Err((format!("couldn't decode the audio ({e})"), delivered)),
+        };
+        let spec = *decoded.spec();
+        let ch = spec.channels.count().max(1);
+        let dur = decoded.capacity() as u64;
+        let buf = sample_buf.get_or_insert_with(|| SampleBuffer::<f32>::new(dur.max(4096), spec));
+        if (buf.capacity() as u64) < dur * ch as u64 {
+            *buf = SampleBuffer::<f32>::new(dur, spec);
+        }
+        buf.copy_interleaved_ref(decoded);
+        mono.clear();
+        let inv = 1.0 / ch as f32;
+        mono.extend(
+            buf.samples()
+                .chunks_exact(ch)
+                .map(|f| f.iter().sum::<f32>() * inv),
+        );
+        delivered += mono.len() as u64;
+        if !on_chunk(spec.rate, &mono) {
+            break;
+        }
+    }
+    if delivered == 0 {
+        return Err(fail("the file contains no audio".into()));
+    }
+    Ok(delivered)
+}
+
+fn decode_mono_ffmpeg(
+    path: &Path,
+    on_chunk: &mut dyn FnMut(u32, &[f32]) -> bool,
+) -> Result<u64, String> {
+    use std::io::Read;
+    const RATE: u32 = 22_050;
+    let mut child = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-nostats", "-loglevel", "error"])
+        .args(ffmpeg_input(path))
+        .args(["-ac", "1", "-ar", "22050", "-f", "f32le", "pipe:1"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("couldn't run ffmpeg: {e}"))?;
+    let mut out = child.stdout.take().ok_or("no ffmpeg output")?;
+    let mut bytes = vec![0u8; 64 * 1024];
+    let mut carry: Vec<u8> = Vec::new();
+    let mut samples: Vec<f32> = Vec::new();
+    let mut delivered = 0u64;
+    loop {
+        let n = out.read(&mut bytes).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        carry.extend_from_slice(&bytes[..n]);
+        let whole = carry.len() / 4 * 4;
+        samples.clear();
+        samples.extend(
+            carry[..whole]
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+        );
+        carry.drain(..whole);
+        delivered += samples.len() as u64;
+        if !on_chunk(RATE, &samples) {
+            break;
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    if delivered == 0 {
+        return Err("ffmpeg couldn't read the file".into());
+    }
+    Ok(delivered)
+}
+
 /// Reduce/expand window peaks to `n` bins (max per bin), normalized to 0..1.
 pub fn resample_peaks(windows: &[f32], n: usize) -> Vec<f32> {
     if windows.is_empty() || n == 0 {

@@ -205,7 +205,14 @@ pub fn expand_playlist<Tz: TimeZone>(
 ) -> Option<Expansion> {
     let pl = show.playlists.iter().find(|p| p.id == playlist_id)?;
     let rules = pl.smart.as_ref()?;
-    Some(expand_for(show, rules, history, now, seed, Some(playlist_id)))
+    Some(expand_for(
+        show,
+        rules,
+        history,
+        now,
+        seed,
+        Some(playlist_id),
+    ))
 }
 
 fn expand_for<Tz: TimeZone>(
@@ -329,7 +336,11 @@ fn expand_for<Tz: TimeZone>(
     let first_ms = pinned_ms(&rules.pinned_first);
     let last_ms = pinned_ms(&rules.pinned_last);
     let every = rules.interleave_every as usize;
-    let inter = if every > 0 { &rules.interleave[..] } else { &[] };
+    let inter = if every > 0 {
+        &rules.interleave[..]
+    } else {
+        &[]
+    };
     let tz = schedule_timezone(&show.schedule).ok();
     // (rule end instant, required tags), only rules still ahead tonight.
     let mut rules_ahead: Vec<(DateTime<FixedOffset>, Vec<String>)> = Vec::new();
@@ -351,7 +362,9 @@ fn expand_for<Tz: TimeZone>(
         match at {
             Some(t) if t > now => rules_ahead.push((t, tags)),
             Some(_) => {}
-            None => notes.push("A time rule has a time PixelPlus can't read; it was skipped.".into()),
+            None => {
+                notes.push("A time rule has a time PixelPlus can't read; it was skipped.".into())
+            }
         }
     }
     let allowed = |c: &Candidate, t: DateTime<FixedOffset>| {
@@ -369,11 +382,12 @@ fn expand_for<Tz: TimeZone>(
     let mut relaxed_rule = false;
     loop {
         // Interleave duration that would come before the next song.
-        let gap = if every > 0 && !inter.is_empty() && !placed.is_empty() && placed.len() % every == 0 {
-            item_duration_ms(show, &inter[inter_k % inter.len()])
-        } else {
-            0
-        };
+        let gap =
+            if every > 0 && !inter.is_empty() && !placed.is_empty() && placed.len() % every == 0 {
+                item_duration_ms(show, &inter[inter_k % inter.len()])
+            } else {
+                0
+            };
         let at = t + ms(gap);
         let mut pick = (0..cands.len()).find(|&i| !used[i] && allowed(cands[i], at));
         if pick.is_none() && target.is_none() {
@@ -608,7 +622,10 @@ mod tests {
         assert_eq!(ids(&e), ["a", "b", "f"]);
         r.include_tags = vec!["kids".into(), "upbeat".into()];
         r.include_mode = TagMatch::All;
-        assert_eq!(ids(&expand(&s, &r, &PlayHistory::default(), at(18, 0), 1)), ["f"]);
+        assert_eq!(
+            ids(&expand(&s, &r, &PlayHistory::default(), at(18, 0), 1)),
+            ["f"]
+        );
         r.include_mode = TagMatch::Any;
         r.exclude_tags = vec!["classic".into()];
         assert_eq!(
@@ -624,7 +641,11 @@ mod tests {
     #[test]
     fn deterministic_by_seed_and_duration_within_tolerance() {
         let s = show();
-        for order in [SmartOrder::Shuffle, SmartOrder::LeastRecent, SmartOrder::Rotation] {
+        for order in [
+            SmartOrder::Shuffle,
+            SmartOrder::LeastRecent,
+            SmartOrder::Rotation,
+        ] {
             for target_min in [5u64, 10, 15, 20] {
                 for seed in 0..40u64 {
                     let r = SmartRules {
@@ -678,12 +699,18 @@ mod tests {
             order: SmartOrder::Fixed,
             ..Default::default()
         };
-        assert_eq!(ids(&expand(&s, &r, &h, at(18, 0), 1)), ["c", "d", "e", "f", "g"]);
+        assert_eq!(
+            ids(&expand(&s, &r, &h, at(18, 0), 1)),
+            ["c", "d", "e", "f", "g"]
+        );
         let r3 = SmartRules {
             no_repeat_nights: 3,
             ..r.clone()
         };
-        assert_eq!(ids(&expand(&s, &r3, &h, at(18, 0), 1)), ["d", "e", "f", "g"]);
+        assert_eq!(
+            ids(&expand(&s, &r3, &h, at(18, 0), 1)),
+            ["d", "e", "f", "g"]
+        );
         // Only kids songs a, b, f: two played last night -> relaxed.
         let kids = SmartRules {
             include_tags: vec!["kids".into()],
@@ -691,7 +718,11 @@ mod tests {
         };
         let e = expand(&s, &kids, &h, at(18, 0), 1);
         assert_eq!(ids(&e), ["a", "b", "f"]);
-        assert!(e.notes.iter().any(|n| n.contains("repeats")), "{:?}", e.notes);
+        assert!(
+            e.notes.iter().any(|n| n.contains("repeats")),
+            "{:?}",
+            e.notes
+        );
     }
 
     #[test]
@@ -734,14 +765,19 @@ mod tests {
             for id in ids(&e) {
                 let sq = s.sequence(&id).unwrap();
                 if t < at(19, 0) {
-                    assert!(sq.tags.contains(&"kids".to_string()), "seed {seed}: {id} at {t}");
+                    assert!(
+                        sq.tags.contains(&"kids".to_string()),
+                        "seed {seed}: {id} at {t}"
+                    );
                 }
                 t += Duration::milliseconds(sq.duration_ms as i64);
             }
         }
         // After 19:00 the rule is over.
         let e = expand(&s, &r, &PlayHistory::default(), at(19, 30), 3);
-        assert!(ids(&e).iter().any(|id| !s.sequence(id).unwrap().tags.contains(&"kids".into())));
+        assert!(ids(&e)
+            .iter()
+            .any(|id| !s.sequence(id).unwrap().tags.contains(&"kids".into())));
     }
 
     #[test]
@@ -760,7 +796,11 @@ mod tests {
         let e = expand(&s, &r, &PlayHistory::default(), at(18, 0), 1);
         assert_eq!(&ids(&e)[..3], ["a", "b", "f"]);
         assert_eq!(ids(&e).len(), 7);
-        assert!(e.notes.iter().any(|n| n.contains("11:00 PM")), "{:?}", e.notes);
+        assert!(
+            e.notes.iter().any(|n| n.contains("11:00 PM")),
+            "{:?}",
+            e.notes
+        );
     }
 
     #[test]

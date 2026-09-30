@@ -37,4 +37,13 @@ for (const u of ['pixelplus-games','pixelplus-tts']) {
   t(u,A('org.freedesktop.login1.reboot'),'nh');
   t(u,A('org.freedesktop.systemd1.manage-units',{unit:'pixelplus-helper@ssh-on.service',verb:'start'}),'nh');
 }
+// Fleet verbs (F14/F15); versions like 1.3.0~beta1 arrive systemd-escaped (\x7e).
+for (const u of ['update-stage:1.2.3','update-commit:1.3.0\\x7ebeta1','update-rollback','update-verify',
+                 'update-channel:beta','tailscale-install','tailscale-up','tailscale-serve:on','tailscale-funnel:off',
+                 'tailscale-down','cloudflared-install','cloudflared-quick:on','cloudflared-token','cloudflared-stop'])
+  t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:`pixelplus-helper@${u}.service`,verb:'start'}),'yes');
+// ...but the tunnels' own units are the helper's business, not the daemon's.
+t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'pixelplus-cloudflared.service',verb:'start'}),'nh');
+t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'tailscaled.service',verb:'stop'}),'nh');
+t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'pixelplus-helper@update-stage:1.0$(x).service',verb:'start'}),'nh');
 if(!process.exitCode)console.log('polkit rules OK');

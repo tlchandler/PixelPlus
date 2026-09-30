@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api/client';
-	import type { Playlist, PlaylistItem, Show } from '$lib/api/types';
+	import type { CountdownItem, Playlist, PlaylistItem, Show, SmartRules } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts, confirm } from '$lib/stores/toasts.svelte';
 	import { fmtDuration, plural } from '$lib/util/format';
@@ -15,6 +15,10 @@
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
+	import SmartRulesEditor from '$lib/components/library/SmartRulesEditor.svelte';
+	import SmartTonight from '$lib/components/library/SmartTonight.svelte';
+	import CountdownItemEditor from '$lib/components/playlist/CountdownItemEditor.svelte';
+	import { newCountdownItem } from '$lib/playlist/countdown';
 	import {
 		Plus,
 		Play,
@@ -33,7 +37,10 @@
 		ListMusic,
 		Gamepad2,
 		Search,
-		Check
+		Check,
+		Sparkles,
+		Timer,
+		Pencil
 	} from '@lucide/svelte';
 
 	type Section = 'intro' | 'items' | 'outro';
@@ -47,6 +54,47 @@
 	let libQ = $state('');
 	let addOpen = $state(false);
 	let dragOver = $state<Section | null>(null);
+	/** Length of tonight's smart line-up (from the preview). */
+	let smartTotal = $state(0);
+	/** Rules kept while "Smart" is switched off, so switching back restores them. */
+	let stashedRules: SmartRules | null = null;
+	let editing = $state<{ section: Section; id: string; item: CountdownItem } | null>(null);
+
+	function defaultRules(): SmartRules {
+		return {
+			includeTags: [],
+			includeMode: 'any',
+			excludeTags: [],
+			noRepeatNights: 1,
+			timeRules: [],
+			order: 'leastRecent',
+			pinnedFirst: [],
+			pinnedLast: [],
+			interleave: [],
+			interleaveEvery: 0
+		};
+	}
+	function setSmart(on: boolean) {
+		if (!draft) return;
+		if (on) {
+			draft.smart = stashedRules ?? defaultRules();
+			if (target === 'items') target = 'intro';
+		} else {
+			stashedRules = $state.snapshot(draft.smart) as SmartRules;
+			delete draft.smart;
+		}
+		queueSave();
+	}
+	function editCountdown(section: Section, it: PlaylistItem) {
+		if (it.type !== 'countdown') return;
+		editing = { section, id: it.id, item: structuredClone($state.snapshot(it)) as CountdownItem };
+	}
+	function saveCountdown() {
+		if (!draft || !editing) return;
+		const e = editing;
+		draft[e.section] = draft[e.section].map((x) => (x.id === e.id ? { ...e.item, id: e.id } : x));
+		queueSave();
+	}
 
 	$effect(() => {
 		if (!show) return;
@@ -140,7 +188,13 @@
 				};
 			// F4 (WS3 editor, WS2 page): a minimal row until the countdown editor lands.
 			case 'countdown':
-				return { name: 'Countdown', sub: 'Show start', ms: it.durationMs, icon: Clock, tone: '' };
+				return {
+					name: 'Countdown',
+					sub: `${Math.round(it.durationMs / 1000)} s to show start`,
+					ms: it.durationMs,
+					icon: Timer,
+					tone: 'accent'
+				};
 		}
 	}
 	function commandKind(c: string) {
@@ -160,13 +214,21 @@
 
 	function total(p: Playlist | null) {
 		if (!p || !show) return 0;
-		return [...p.intro, ...p.items, ...p.outro].reduce((n, it) => n + itemInfo(it, show).ms, 0);
+		const s = show;
+		const sum = (l: PlaylistItem[]) => l.reduce((n, it) => n + itemInfo(it, s).ms, 0);
+		if (p.smart) {
+			const main = p.id === draft?.id && smartTotal ? smartTotal : (p.smart.targetDurationMs ?? 0);
+			return sum(p.intro) + main + sum(p.outro);
+		}
+		return sum([...p.intro, ...p.items, ...p.outro]);
 	}
 
 	/** Items added while the add sheet is open (it stays open so you can add several). */
 	let addedNow = $state<string[]>([]);
 	function add(it: Omit<PlaylistItem, 'id'>, section: Section = target, key?: string) {
 		if (!draft) return;
+		// A smart playlist picks its own songs: extra items go into the intro.
+		if (draft.smart && section === 'items') section = 'intro';
 		const item = { ...it, id: newId() } as PlaylistItem;
 		draft[section] = [...draft[section], item];
 		queueSave();
@@ -339,6 +401,12 @@
 						item: { type: 'command', command: 'games.stop', args: {} } as Omit<PlaylistItem, 'id'>
 					},
 					{
+						key: 'countdown',
+						name: 'Countdown to showtime',
+						sub: 'Big numbers on the matrix, then the show starts',
+						item: newCountdownItem() as Omit<PlaylistItem, 'id'>
+					},
+					{
 						key: 'text',
 						name: 'Scroll a message',
 						sub: 'Text on the matrix',
@@ -445,6 +513,7 @@
 								>{plural(n, 'item')} · {fmtDuration(total(p), { long: true })}</span
 							></span
 						>
+						{#if p.smart}<span title="Smart playlist"><Sparkles size={13} class="faint" /></span>{/if}
 						{#if p.shuffle}<Shuffle size={13} class="faint" />{/if}
 						{#if p.repeat}<Repeat size={13} class="faint" />{/if}
 					</button>
@@ -476,11 +545,21 @@
 						>
 					</header>
 					<div class="opts">
-						<label class="opt"
-							><Switch bind:checked={draft.shuffle} label="Shuffle" size="sm" onchange={queueSave} /><Shuffle
+						<label class="opt" title="Pick tonight’s songs by tags, length and history"
+							><Switch checked={!!draft.smart} label="Smart" size="sm" onchange={setSmart} /><Sparkles
 								size={14}
-							/> Shuffle</label
+							/> Smart</label
 						>
+						{#if !draft.smart}
+							<label class="opt"
+								><Switch
+									bind:checked={draft.shuffle}
+									label="Shuffle"
+									size="sm"
+									onchange={queueSave}
+								/><Shuffle size={14} /> Shuffle</label
+							>
+						{/if}
 						<label class="opt"
 							><Switch bind:checked={draft.repeat} label="Repeat" size="sm" onchange={queueSave} /><Repeat
 								size={14}
@@ -534,45 +613,68 @@
 										>{fmtDuration(list.reduce((n, it) => n + itemInfo(it, show).ms, 0))}</span
 									>{/if}
 							</button>
-							<ol use:sortable={{ onsort: (f, t) => reorder(sec.id, f, t) }}>
-								{#each list as it, i (it.id)}
-									{@const info = itemInfo(it, show)}
-									<li class="item" data-sort-index={i}>
-										<button class="drag-handle" aria-label="Move {info.name} (use arrow keys)"
-											><GripVertical size={16} /></button
-										>
-										<span class="num idx faint">{i + 1}</span>
-										<span class="iicon {info.tone}"><info.icon size={16} /></span>
-										<span class="grow iname"
-											><span class="ellipsis">{info.name}</span><span class="faint tiny">{info.sub}</span
-											></span
-										>
-										{#if it.type === 'effect' || it.type === 'pause'}
-											<label class="dur"
-												><input
-													class="input sm num"
-													type="number"
-													min="1"
-													value={Math.round(it.durationMs / 1000)}
-													onchange={(e) => {
-														(it as any).durationMs = Number((e.target as HTMLInputElement).value) * 1000;
-														queueSave();
-													}}
-													aria-label="Duration in seconds"
-												/><span class="faint tiny">s</span></label
+							{#if sec.id === 'items' && draft.smart}
+								<div class="smart">
+									<p class="faint small smart-intro">
+										Songs are picked every night from your tagged library. Repeat plays a fresh pick each
+										pass.
+									</p>
+									<SmartRulesEditor bind:rules={draft.smart} {show} onchange={queueSave} />
+									<SmartTonight
+										rules={draft.smart}
+										playlistId={draft.id}
+										{show}
+										ontotal={(ms) => (smartTotal = ms)}
+									/>
+								</div>
+							{:else}
+								<ol use:sortable={{ onsort: (f, t) => reorder(sec.id, f, t) }}>
+									{#each list as it, i (it.id)}
+										{@const info = itemInfo(it, show)}
+										<li class="item" data-sort-index={i}>
+											<button class="drag-handle" aria-label="Move {info.name} (use arrow keys)"
+												><GripVertical size={16} /></button
 											>
-										{:else if info.ms}
-											<span class="faint small num">{fmtDuration(info.ms)}</span>
-										{/if}
-										<button
-											class="btn ghost icon sm"
-											onclick={() => removeItem(sec.id, i)}
-											aria-label="Remove {info.name}"><X size={15} /></button
-										>
-									</li>
-								{/each}
-							</ol>
-							{#if !list.length}
+											<span class="num idx faint">{i + 1}</span>
+											<span class="iicon {info.tone}"><info.icon size={16} /></span>
+											<span class="grow iname"
+												><span class="ellipsis">{info.name}</span><span class="faint tiny">{info.sub}</span
+												></span
+											>
+											{#if it.type === 'effect' || it.type === 'pause'}
+												<label class="dur"
+													><input
+														class="input sm num"
+														type="number"
+														min="1"
+														value={Math.round(it.durationMs / 1000)}
+														onchange={(e) => {
+															(it as any).durationMs = Number((e.target as HTMLInputElement).value) * 1000;
+															queueSave();
+														}}
+														aria-label="Duration in seconds"
+													/><span class="faint tiny">s</span></label
+												>
+											{:else if info.ms}
+												<span class="faint small num">{fmtDuration(info.ms)}</span>
+											{/if}
+											{#if it.type === 'countdown'}
+												<button
+													class="btn ghost icon sm"
+													onclick={() => editCountdown(sec.id, it)}
+													aria-label="Edit the countdown"><Pencil size={14} /></button
+												>
+											{/if}
+											<button
+												class="btn ghost icon sm"
+												onclick={() => removeItem(sec.id, i)}
+												aria-label="Remove {info.name}"><X size={15} /></button
+											>
+										</li>
+									{/each}
+								</ol>
+							{/if}
+							{#if !list.length && !(sec.id === 'items' && draft.smart)}
 								<button
 									class="dropzone"
 									onclick={() => {
@@ -597,6 +699,21 @@
 	{/if}
 </div>
 
+<Modal
+	open={!!editing}
+	title="Countdown to showtime"
+	subtitle="Shown just before the show starts"
+	size="md"
+	onclose={() => (editing = null)}
+>
+	{#if editing}
+		<CountdownItemEditor bind:item={editing.item} onchange={saveCountdown} />
+	{/if}
+	{#snippet footer()}
+		<button class="btn primary" onclick={() => (editing = null)}>Done</button>
+	{/snippet}
+</Modal>
+
 <Modal bind:open={addOpen} title="Add to {sectionMeta.find((s) => s.id === target)?.title}" size="md">
 	{@render libraryPanel()}
 	{#snippet footer()}
@@ -608,6 +725,15 @@
 </Modal>
 
 <style>
+	.smart {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		padding: 4px 16px 16px;
+	}
+	.smart-intro {
+		margin: 0;
+	}
 	.layout {
 		display: grid;
 		grid-template-columns: 240px minmax(0, 1fr) 300px;

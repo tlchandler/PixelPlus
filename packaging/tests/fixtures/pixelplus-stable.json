@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "channel": "stable",
+  "version": "9.9.9",
+  "date": "2026-09-30T00:00:00Z",
+  "notes": null,
+  "protoMin": 2,
+  "protoMax": 2,
+  "formatVersion": 1,
+  "files": [
+    {
+      "arch": "arm64",
+      "name": "pixelplus_9.9.9_arm64.deb",
+      "size": 3400,
+      "sha256": "7528295a191056f9880097d2f48e9f07087d9c40cb89713d6c4b02ee3d3efeb6",
+      "url": "https://github.com/tlchandler/PixelPlus/releases/download/v9.9.9/pixelplus_9.9.9_arm64.deb"
+    }
+  ]
+}

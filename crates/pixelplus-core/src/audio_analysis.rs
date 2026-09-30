@@ -31,10 +31,10 @@
 //!    those energy vectors, peaks at least 8 s apart, each section labelled
 //!    low / mid / high by its mean energy.
 //!
-//! Beat-reactive effects (F2, rendered by `effects*`, WS3) use
-//! [`beat_pulse`] (a fixed BPM, no audio needed) or
-//! [`Analysis::beat_envelope`] (real beats of a song); both are pure functions
-//! of the timeline position, so followers render identically.
+//! Beat-reactive looks: effects with a fixed BPM use `effects::BeatPulse`
+//! (WS3); anything following a real song uses [`Analysis::beat_envelope`],
+//! [`Analysis::section_at`] and [`Analysis::energy_at`]. All are pure
+//! functions of the timeline position, so followers render identically.
 
 use crate::model::AudioAnalysisSummary;
 use rustfft::num_complex::Complex32;
@@ -209,21 +209,6 @@ pub fn envelope(beats: &[u32], t_ms: u64, tau_ms: f32) -> f32 {
     }
 }
 
-/// Brightness multiplier for beat-reactive looks without audio (effect params
-/// `beatBpm`, `beatPhaseMs`, `beatDepth`, `beatDecayMs`): `1 − depth·(1 − e)`
-/// with `e = exp(−Δt/decay)` since the last beat of a `bpm` grid through
-/// `phase_ms`. Returns 1.0 when `bpm` ≤ 0 or `depth` ≤ 0. Pure function of
-/// `t_ms`, so every node renders the same pulse.
-pub fn beat_pulse(t_ms: u64, bpm: f32, phase_ms: i64, depth: f32, decay_ms: f32) -> f32 {
-    if !(bpm > 0.0) || !(depth > 0.0) {
-        return 1.0;
-    }
-    let period = 60_000.0 / f64::from(bpm.clamp(1.0, 1000.0));
-    let dt = (t_ms as f64 - phase_ms as f64).rem_euclid(period) as f32;
-    let e = (-dt / decay_ms.max(1.0)).exp();
-    1.0 - depth.min(1.0) * (1.0 - e)
-}
-
 // ---------------------------------------------------------------------------
 // Streaming analyzer
 // ---------------------------------------------------------------------------
@@ -282,7 +267,8 @@ impl Analyzer {
         let nyq_bin = WIN / 2;
         let bin = |hz: f32| ((hz / df).round() as usize).clamp(1, nyq_bin);
         let mut bands = [(0usize, 0usize); BANDS];
-        let ratio = (BAND_HI_HZ.min(rate as f32 / 2.0 * 0.98) / BAND_LO_HZ).powf(1.0 / BANDS as f32);
+        let ratio =
+            (BAND_HI_HZ.min(rate as f32 / 2.0 * 0.98) / BAND_LO_HZ).powf(1.0 / BANDS as f32);
         let mut lo_hz = BAND_LO_HZ;
         let mut next_lo = bin(lo_hz);
         for b in bands.iter_mut() {
@@ -377,13 +363,15 @@ impl Analyzer {
             self.rms_acc += f64::from(x * x);
             self.rms_n += 1;
             if self.rms_n == self.block {
-                self.rms.push((self.rms_acc / self.rms_n as f64).sqrt() as f32);
+                self.rms
+                    .push((self.rms_acc / self.rms_n as f64).sqrt() as f32);
                 self.rms_acc = 0.0;
                 self.rms_n = 0;
             }
         }
         self.samples += s.len() as u64;
-        self.buf.extend(s.iter().map(|x| if x.is_finite() { *x } else { 0.0 }));
+        self.buf
+            .extend(s.iter().map(|x| if x.is_finite() { *x } else { 0.0 }));
         let mut start = 0;
         while self.buf.len() - start >= WIN {
             self.frame(start);
@@ -753,14 +741,20 @@ fn global_tempo(o: &[f32], fps: f32) -> Option<Tempo> {
         return None;
     }
     let mut r = vec![0f32; hi + 2];
-    for (lag, v) in r.iter_mut().enumerate().take(hi + 2).skip(lo.saturating_sub(1)) {
+    for (lag, v) in r
+        .iter_mut()
+        .enumerate()
+        .take(hi + 2)
+        .skip(lo.saturating_sub(1))
+    {
         *v = acf(o, lag);
     }
     let raw = |lag: usize| r.get(lag).copied().unwrap_or(0.0);
-    // Peak value near a (fractional) lag.
+    // Peak mass near a (fractional) lag: a period between two frames splits
+    // its correlation over both neighbours.
     let near = |lag: f32| {
         let k = lag.round() as usize;
-        raw(k.saturating_sub(1)).max(raw(k)).max(raw(k + 1))
+        raw(k.saturating_sub(1)).max(0.0) + raw(k).max(0.0) + raw(k + 1).max(0.0)
     };
     let score = |lag: usize| raw(lag) * prior(60.0 * fps / lag as f32);
     let lmin = lag_of(MAX_BPM).floor() as usize;
@@ -774,8 +768,8 @@ fn global_tempo(o: &[f32], fps: f32) -> Option<Tempo> {
     }
     let scores: Vec<f32> = range.iter().map(|&l| score(l)).collect();
     let mean = scores.iter().sum::<f32>() / scores.len() as f32;
-    let std = (scores.iter().map(|s| (s - mean) * (s - mean)).sum::<f32>() / scores.len() as f32)
-        .sqrt();
+    let std =
+        (scores.iter().map(|s| (s - mean) * (s - mean)).sum::<f32>() / scores.len() as f32).sqrt();
     let raw_conf = score(best) / (mean + std).max(1e-6);
     let confidence = ((raw_conf - 1.0) / 3.0).clamp(0.0, 1.0);
 
@@ -937,7 +931,10 @@ fn track_beats(o: &[f32], period_at: &dyn Fn(usize) -> f32, global: f32) -> Vec<
     let rms = (w.iter().map(|v| v * v).sum::<f32>() / w.len().max(1) as f32).sqrt();
     let th = 0.5 * rms;
     let s = w.iter().position(|&v| v >= th).unwrap_or(0);
-    let e = w.iter().rposition(|&v| v >= th).map_or(beats.len(), |p| p + 1);
+    let e = w
+        .iter()
+        .rposition(|&v| v >= th)
+        .map_or(beats.len(), |p| p + 1);
     beats[s..e.max(s)].to_vec()
 }
 
@@ -1168,7 +1165,11 @@ fn sections(e: &Energy, duration_ms: u64) -> Vec<Section> {
             };
             Section {
                 start_ms: (a as u32 * 200).min(dur),
-                end_ms: if b == n { dur } else { (b as u32 * 200).min(dur) },
+                end_ms: if b == n {
+                    dur
+                } else {
+                    (b as u32 * 200).min(dur)
+                },
                 level,
             }
         })
@@ -1269,7 +1270,12 @@ pub(crate) mod tests {
 
     #[test]
     fn click_tracks_tempo_and_beats() {
-        for (bpm, rate) in [(90.0, 44_100), (120.0, 22_050), (174.0, 48_000), (128.0, 44_100)] {
+        for (bpm, rate) in [
+            (90.0, 44_100),
+            (120.0, 22_050),
+            (174.0, 48_000),
+            (128.0, 44_100),
+        ] {
             let (s, truth) = click_track(bpm, 40.0, rate, 0.01, 0.02, 0, 7);
             let a = analyze(&s, rate);
             let err = (a.bpm / bpm - 1.0).abs();
@@ -1291,6 +1297,91 @@ pub(crate) mod tests {
                 / a.beats.len() as f32;
             assert!(mean_abs < 25.0, "{bpm}: mean error {mean_abs} ms");
         }
+    }
+
+    /// A drum loop: kick on 1 and 3, snare on 2 and 4, softer hi-hats on
+    /// eighth notes; `drift` = total tempo change over the clip (fraction).
+    fn drum_loop(bpm: f32, seconds: f32, rate: u32, drift: f32) -> (Vec<f32>, Vec<f32>) {
+        let mut rng = SplitMix(21);
+        let n = (seconds * rate as f32) as usize;
+        let mut s = vec![0f32; n];
+        let hit = |s: &mut Vec<f32>, at: f32, kind: u8, rng: &mut SplitMix| {
+            let start = (at * rate as f32) as usize;
+            for i in 0..(0.2 * rate as f32) as usize {
+                if start + i >= n {
+                    break;
+                }
+                let t = i as f32 / rate as f32;
+                s[start + i] += match kind {
+                    0 => {
+                        (std::f32::consts::TAU * (50.0 + 60.0 * (-t / 0.03).exp()) * t).sin()
+                            * (-t / 0.12).exp()
+                    }
+                    1 => {
+                        (rng.unit() * 2.0 - 1.0) * 0.6 * (-t / 0.06).exp()
+                            + (std::f32::consts::TAU * 190.0 * t).sin() * 0.3 * (-t / 0.05).exp()
+                    }
+                    _ => (rng.unit() * 2.0 - 1.0) * 0.12 * (-t / 0.015).exp(),
+                };
+            }
+        };
+        let mut truth = Vec::new();
+        let mut t = 0.3f32;
+        let mut k = 0usize;
+        while t < seconds - 0.3 {
+            let progress = t / seconds;
+            let period = 60.0 / (bpm * (1.0 + drift * progress));
+            truth.push(t * 1000.0);
+            hit(&mut s, t, if k % 2 == 0 { 0 } else { 1 }, &mut rng);
+            hit(&mut s, t, 2, &mut rng);
+            hit(&mut s, t + period / 2.0, 2, &mut rng);
+            t += period;
+            k += 1;
+        }
+        (s, truth)
+    }
+
+    #[test]
+    fn drum_loops_keep_the_beat_not_the_hats() {
+        for bpm in [85.0f32, 100.0, 128.0, 150.0] {
+            let (s, truth) = drum_loop(bpm, 40.0, 44_100, 0.0);
+            let a = analyze(&s, 44_100);
+            assert!((a.bpm / bpm - 1.0).abs() < 0.01, "{bpm}: {}", a.bpm);
+            let f = f_measure(&a.beats, &truth);
+            assert!(f > 0.9, "{bpm}: F = {f}");
+        }
+    }
+
+    #[test]
+    fn moderate_tempo_drift_is_followed() {
+        // 110 -> 118.8 BPM over 80 s.
+        let (s, truth) = drum_loop(110.0, 80.0, 22_050, 0.08);
+        let a = analyze(&s, 22_050);
+        let f = f_measure(&a.beats, &truth);
+        assert!(f > 0.85, "F = {f}, curve {:?}", a.tempo_curve);
+        assert!(a.tempo_curve.len() >= 4);
+        let first = a.tempo_curve[0];
+        let last = *a.tempo_curve.last().unwrap();
+        assert!(last > first, "{:?}", a.tempo_curve);
+    }
+
+    #[test]
+    fn beat_times_are_unbiased() {
+        let (s, truth) = click_track(120.0, 30.0, 44_100, 0.0, 0.01, 0, 4);
+        let a = analyze(&s, 44_100);
+        let signed: Vec<f32> = a
+            .beats
+            .iter()
+            .map(|&b| {
+                let t = truth
+                    .iter()
+                    .min_by(|x, y| (*x - b as f32).abs().total_cmp(&(*y - b as f32).abs()))
+                    .unwrap();
+                b as f32 - t
+            })
+            .collect();
+        let bias = signed.iter().sum::<f32>() / signed.len() as f32;
+        assert!(bias.abs() < 12.0, "bias {bias} ms");
     }
 
     #[test]
@@ -1396,23 +1487,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn envelopes_and_pulse() {
+    fn envelopes() {
         let beats = [1000u32, 1500, 2000];
         assert_eq!(envelope(&beats, 500, 120.0), 0.0);
         assert!((envelope(&beats, 1000, 120.0) - 1.0).abs() < 1e-6);
         let e = envelope(&beats, 1120, 120.0);
         assert!((e - (-1.0f32).exp()).abs() < 1e-4);
         assert!((envelope(&beats, 1500, 120.0) - 1.0).abs() < 1e-6);
-        // Pulse: 120 BPM, phase 0: full on each 500 ms, dimmer between.
-        assert_eq!(beat_pulse(0, 120.0, 0, 0.5, 100.0), 1.0);
-        assert_eq!(beat_pulse(1500, 120.0, 0, 0.5, 100.0), 1.0);
-        let mid = beat_pulse(250, 120.0, 0, 0.5, 100.0);
-        assert!(mid > 0.5 && mid < 0.6, "{mid}");
-        assert_eq!(beat_pulse(250, 0.0, 0, 0.5, 100.0), 1.0);
-        assert_eq!(beat_pulse(250, 120.0, 0, 0.0, 100.0), 1.0);
-        // Phase shifts the grid; negative phases work.
-        assert_eq!(beat_pulse(100, 120.0, 100, 1.0, 50.0), 1.0);
-        assert_eq!(beat_pulse(400, 120.0, -100, 1.0, 50.0), 1.0);
         assert_eq!(curve_at(&[0, 255], 50), 0.5);
     }
 

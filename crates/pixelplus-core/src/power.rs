@@ -23,9 +23,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::fseq::{FseqError, FseqFile};
-use crate::model::{
-    LimiterMode, Node, NodePowerBudget, PowerGroup, PowerGroupKind, Prop, Show,
-};
+use crate::model::{LimiterMode, Node, NodePowerBudget, PowerGroup, PowerGroupKind, Prop, Show};
 use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
@@ -671,7 +669,8 @@ pub fn show_budgets(show: &Show) -> BTreeMap<String, NodePowerBudget> {
     let (plan, _) = build_plan(show);
     let facts = output_facts(&plan);
     let node_idx = |id: &str| show.nodes.iter().position(|n| n.id == id);
-    let fact = |node: usize, output: u32| facts.iter().find(|f| f.node == node && f.output == output);
+    let fact =
+        |node: usize, output: u32| facts.iter().find(|f| f.node == node && f.output == output);
 
     for n in &show.nodes {
         out.insert(
@@ -751,23 +750,19 @@ pub fn show_budgets(show: &Show) -> BTreeMap<String, NodePowerBudget> {
                 fact(ni, o).map(|f| (ni, o, f.max_ma))
             })
             .collect();
-        split_group(
-            &members,
-            sup.amps * safety,
-            |ni, budget, members| {
-                push(
-                    &mut out,
-                    &show.nodes[ni].id,
-                    PowerGroup {
-                        id: format!("supply:{}", sup.id),
-                        kind: PowerGroupKind::Supply,
-                        budget_a: round(budget),
-                        tau_ms: SUPPLY_TAU_MS,
-                        members,
-                    },
-                )
-            },
-        );
+        split_group(&members, sup.amps * safety, |ni, budget, members| {
+            push(
+                &mut out,
+                &show.nodes[ni].id,
+                PowerGroup {
+                    id: format!("supply:{}", sup.id),
+                    kind: PowerGroupKind::Supply,
+                    budget_a: round(budget),
+                    tau_ms: SUPPLY_TAU_MS,
+                    members,
+                },
+            )
+        });
     }
 
     // 4. Global cap: pixel-side amps, or wall watts at the pixel voltage.
@@ -781,7 +776,10 @@ pub fn show_budgets(show: &Show) -> BTreeMap<String, NodePowerBudget> {
         .global_watts
         .filter(|w| w.is_finite() && *w > 0.0)
         .map(|w| w * SUPPLY_EFFICIENCY / volts);
-    let global = match (settings.global_amps.filter(|a| a.is_finite() && *a > 0.0), from_watts) {
+    let global = match (
+        settings.global_amps.filter(|a| a.is_finite() && *a > 0.0),
+        from_watts,
+    ) {
         (Some(a), Some(w)) => Some(a.min(w)),
         (a, w) => a.or(w),
     };
@@ -814,7 +812,11 @@ pub fn show_budgets(show: &Show) -> BTreeMap<String, NodePowerBudget> {
 /// Split a budget over the nodes of `members` (node index, output, max mA)
 /// pro rata by each node's possible current (equal shares when nothing can
 /// light), calling `f(node, budget, outputs)` once per node.
-fn split_group(members: &[(usize, u32, f64)], budget: f32, mut f: impl FnMut(usize, f32, Vec<u32>)) {
+fn split_group(
+    members: &[(usize, u32, f64)],
+    budget: f32,
+    mut f: impl FnMut(usize, f32, Vec<u32>),
+) {
     let mut by_node: BTreeMap<usize, (f64, Vec<u32>)> = BTreeMap::new();
     for &(ni, o, ma) in members {
         let e = by_node.entry(ni).or_default();
@@ -957,7 +959,11 @@ impl Limiter {
     /// Current (A) of output `index` (0-based) for a byte sum of its wire data
     /// (`I = Σbytes / 765 × mApp`).
     pub fn amps_for(&self, index: usize, byte_sum: u64) -> f32 {
-        let ma = self.ma_pp.get(index).copied().unwrap_or(Prop::DEFAULT_MA_PER_PIXEL);
+        let ma = self
+            .ma_pp
+            .get(index)
+            .copied()
+            .unwrap_or(Prop::DEFAULT_MA_PER_PIXEL);
         (byte_sum as f64 / 765.0 * f64::from(ma) / 1000.0) as f32
     }
 
@@ -965,9 +971,17 @@ impl Limiter {
     /// `dt_ms` the time since the previous frame. Returns the per-output scale
     /// to apply (all 1.0 unless the mode is `limit`).
     pub fn step(&mut self, amps: &[f32], dt_ms: f32) -> &[f32] {
-        let dt = if dt_ms.is_finite() { dt_ms.clamp(0.0, 250.0) } else { 0.0 };
+        let dt = if dt_ms.is_finite() {
+            dt_ms.clamp(0.0, 250.0)
+        } else {
+            0.0
+        };
         for (i, r) in self.raw.iter_mut().enumerate() {
-            *r = amps.get(i).copied().filter(|a| a.is_finite() && *a > 0.0).unwrap_or(0.0);
+            *r = amps
+                .get(i)
+                .copied()
+                .filter(|a| a.is_finite() && *a > 0.0)
+                .unwrap_or(0.0);
         }
         let mut target = vec![1.0f32; self.scale.len()];
         let mut limiting = false;
@@ -1005,7 +1019,11 @@ impl Limiter {
         // What actually flows: scaled when limiting, the raw current otherwise.
         let apply = self.mode == LimiterMode::Limit;
         for g in &mut self.groups {
-            let k = if g.tau_ms <= 0.0 { 1.0 } else { (dt / g.tau_ms).min(1.0) };
+            let k = if g.tau_ms <= 0.0 {
+                1.0
+            } else {
+                (dt / g.tau_ms).min(1.0)
+            };
             let act: f32 = g
                 .members
                 .iter()
@@ -1548,12 +1566,23 @@ mod tests {
         let b = node_budget(&s, "n1").unwrap();
         assert_eq!(b.mode, LimiterMode::Limit);
         assert_eq!(b.ma_pp.get(&1), Some(&60.0));
-        let g = |id: &str| b.groups.iter().find(|g| g.id == id).unwrap_or_else(|| panic!("{id}"));
+        let g = |id: &str| {
+            b.groups
+                .iter()
+                .find(|g| g.id == id)
+                .unwrap_or_else(|| panic!("{id}"))
+        };
         // 6 A diffrx fuse × 0.8 (temperature unknown) × 0.9 safety.
         let p1 = g("port:r1:1");
-        assert_eq!((p1.kind, p1.tau_ms, p1.members.clone()), (PowerGroupKind::Port, PORT_TAU_MS, vec![1]));
+        assert_eq!(
+            (p1.kind, p1.tau_ms, p1.members.clone()),
+            (PowerGroupKind::Port, PORT_TAU_MS, vec![1])
+        );
         assert!((p1.budget_a - 4.32).abs() < 1e-3, "{}", p1.budget_a);
-        assert!(b.groups.iter().all(|g| g.id != "port:r1:3"), "unused ports have no group");
+        assert!(
+            b.groups.iter().all(|g| g.id != "port:r1:3"),
+            "unused ports have no group"
+        );
         let bus = g("bus:r1");
         assert_eq!(bus.members, vec![1, 2]);
         assert!((bus.budget_a - 18.0).abs() < 1e-3);
@@ -1585,21 +1614,43 @@ mod tests {
             amps: 10.0,
             receiver_ids: vec![],
             direct_outputs: vec![
-                NodeOutputRef { node_id: "n1".into(), output: 1 },
-                NodeOutputRef { node_id: "n2".into(), output: 2 },
+                NodeOutputRef {
+                    node_id: "n1".into(),
+                    output: 1,
+                },
+                NodeOutputRef {
+                    node_id: "n2".into(),
+                    output: 2,
+                },
             ],
             sensor: None,
         });
         let all = show_budgets(&s);
-        let a = all["n1"].groups.iter().find(|g| g.id == "supply:psu").unwrap();
-        let b = all["n2"].groups.iter().find(|g| g.id == "supply:psu").unwrap();
-        assert!((a.budget_a - 6.0).abs() < 0.01 && (b.budget_a - 3.0).abs() < 0.01, "{} {}", a.budget_a, b.budget_a);
+        let a = all["n1"]
+            .groups
+            .iter()
+            .find(|g| g.id == "supply:psu")
+            .unwrap();
+        let b = all["n2"]
+            .groups
+            .iter()
+            .find(|g| g.id == "supply:psu")
+            .unwrap();
+        assert!(
+            (a.budget_a - 6.0).abs() < 0.01 && (b.budget_a - 3.0).abs() < 0.01,
+            "{} {}",
+            a.budget_a,
+            b.budget_a
+        );
         assert_eq!(b.members, vec![2]);
     }
 
     #[test]
     fn limiter_is_linear_and_instant_for_supplies() {
-        let mut l = Limiter::new(&budget(vec![group("s", 3.0, 0, vec![1])], LimiterMode::Limit));
+        let mut l = Limiter::new(&budget(
+            vec![group("s", 3.0, 0, vec![1])],
+            LimiterMode::Limit,
+        ));
         // 100 white pixels at 60 mA = 6 A; 255 × 300 bytes.
         let a = l.amps_for(0, 255 * 300);
         assert!((a - 6.0).abs() < 1e-3);
@@ -1621,7 +1672,10 @@ mod tests {
     fn strobe_does_not_pump() {
         // 2 Hz strobe, 6 A white vs a 3 A supply: every white frame gets the
         // same scale (no visible brightness wobble between flashes).
-        let mut l = Limiter::new(&budget(vec![group("s", 3.0, 0, vec![1])], LimiterMode::Limit));
+        let mut l = Limiter::new(&budget(
+            vec![group("s", 3.0, 0, vec![1])],
+            LimiterMode::Limit,
+        ));
         let mut white = vec![];
         for f in 0..400 {
             let on = (f * 25 / 250) % 2 == 0;
@@ -1630,8 +1684,13 @@ mod tests {
                 white.push(s);
             }
         }
-        let (lo, hi) = white.iter().fold((1.0f32, 0.0f32), |(a, b), &s| (a.min(s), b.max(s)));
-        assert!((lo - 0.5).abs() < 1e-3 && (hi - 0.5).abs() < 1e-3, "{lo}..{hi}");
+        let (lo, hi) = white
+            .iter()
+            .fold((1.0f32, 0.0f32), |(a, b), &s| (a.min(s), b.max(s)));
+        assert!(
+            (lo - 0.5).abs() < 1e-3 && (hi - 0.5).abs() < 1e-3,
+            "{lo}..{hi}"
+        );
     }
 
     #[test]
@@ -1656,7 +1715,10 @@ mod tests {
         // Gradual: no single frame changes brightness by more than 2 %.
         assert!(max_step < 0.02, "dimming is gradual: {max_step}");
         // The first seconds are not limited at all (the fuse is still cool).
-        let mut l = Limiter::new(&budget(vec![group("p", 4.0, PORT_TAU_MS, vec![1])], LimiterMode::Limit));
+        let mut l = Limiter::new(&budget(
+            vec![group("p", 4.0, PORT_TAU_MS, vec![1])],
+            LimiterMode::Limit,
+        ));
         for _ in 0..40 {
             l.step(&[8.0], 25.0);
         }
@@ -1665,12 +1727,19 @@ mod tests {
 
     #[test]
     fn warn_mode_reports_but_draws_full_current() {
-        let mut l = Limiter::new(&budget(vec![group("s", 3.0, 0, vec![1])], LimiterMode::Warn));
+        let mut l = Limiter::new(&budget(
+            vec![group("s", 3.0, 0, vec![1])],
+            LimiterMode::Warn,
+        ));
         let s = l.step(&[6.0], 25.0)[0];
         assert!((s - 0.5).abs() < 1e-3, "reports what it would do");
         assert_eq!(l.mode(), LimiterMode::Warn);
         let g = &l.groups()[0];
-        assert!((g.amps - 6.0).abs() < 1e-3, "the full current flows: {}", g.amps);
+        assert!(
+            (g.amps - 6.0).abs() < 1e-3,
+            "the full current flows: {}",
+            g.amps
+        );
         // Garbage in: nothing panics, nothing limits.
         let mut l = Limiter::new(&NodePowerBudget::default());
         assert!(l.step(&[f32::NAN, -1.0], f32::INFINITY).is_empty());
@@ -1696,15 +1765,30 @@ mod tests {
         }
         let bytes = w.finish().unwrap().into_inner();
         let mut fseq = FseqFile::from_reader(Cursor::new(bytes)).unwrap();
-        let e = estimate_power(&s, &mut fseq, &PowerOptions { sample_every: Some(1), target_samples: 0 }).unwrap();
+        let e = estimate_power(
+            &s,
+            &mut fseq,
+            &PowerOptions {
+                sample_every: Some(1),
+                target_samples: 0,
+            },
+        )
+        .unwrap();
         let sp = &e.per_supply[0];
         assert!((sp.peak_amps - 9.0).abs() < 0.02 && sp.status == PowerStatus::Over);
         assert!((sp.peak_watts - 108.0).abs() < 0.5);
-        let lim = e.limited.iter().find(|l| l.group_id == "supply:psu").unwrap();
+        let lim = e
+            .limited
+            .iter()
+            .find(|l| l.group_id == "supply:psu")
+            .unwrap();
         assert!((lim.seconds - 10.0).abs() < 0.1, "{}", lim.seconds);
         assert!((lim.min_scale - 0.5).abs() < 0.01, "{}", lim.min_scale);
         assert_eq!(lim.label, "Garage PSU");
-        assert!(e.warnings.iter().any(|w| w.contains("power limiter would dim")));
+        assert!(e
+            .warnings
+            .iter()
+            .any(|w| w.contains("power limiter would dim")));
         let json = serde_json::to_value(&e).unwrap();
         assert!(json["perSupply"][0]["peakWatts"].is_number());
         assert!(json["limited"][0]["minScale"].is_number());

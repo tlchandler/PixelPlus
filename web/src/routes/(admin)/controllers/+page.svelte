@@ -46,9 +46,13 @@
 		Cpu,
 		Settings2,
 		GripVertical,
-		Search
+		Search,
+		Wand,
+		Camera
 	} from '@lucide/svelte';
 	import { slide } from 'svelte/transition';
+	// WS4 (F9): guided "Add receiver". WS5's ReplaceDialog (F10) is embedded here once it exists.
+	import ReceiverWizard from '$lib/components/controllers/ReceiverWizard.svelte';
 
 	const show = $derived(app.show);
 	let discovered = $state<DiscoveredNode[]>([]);
@@ -59,6 +63,12 @@
 	let selJack = $state<Record<string, number | null>>({});
 	let editOut = $state<string | null>(null);
 	let rxModal = $state(false);
+	let wizardOpen = $state(false);
+	let wizardNode = $state<string | null>(null);
+	function openWizard(nodeId: string | null) {
+		wizardNode = nodeId;
+		wizardOpen = true;
+	}
 	let rxDraft = $state<Partial<Receiver>>({});
 	let renameNode = $state<Node | null>(null);
 	let renameValue = $state('');
@@ -265,7 +275,9 @@
 		subtitle="Set everything up here on the leader — followers receive their settings and sequences automatically."
 	>
 		{#snippet actions()}
+			<a class="btn ghost" href="/map"><Camera size={16} /> Map my yard</a>
 			<button class="btn ghost" onclick={() => (joinOpen = true)}>Join another show…</button>
+			<button class="btn soft" onclick={() => openWizard(null)}><Wand size={16} /> Add receiver</button>
 			<button class="btn" onclick={() => scan(true)} disabled={scanning}
 				><span class:spin={scanning} class="ic"><RefreshCw size={16} /></span> Scan network</button
 			>
@@ -457,6 +469,12 @@
 											><Pencil size={14} /> Edit</button
 										>
 									{:else if grp.jack != null}
+										<button
+											class="btn sm soft"
+											onclick={() => openWizard(n.id)}
+											title="Guided: find the jack and its props by lighting them"
+											><Wand size={14} /> Guided</button
+										>
 										<button class="btn sm" onclick={() => newReceiver(n, grp.jack!)}
 											><Plus size={14} /> Add receiver</button
 										>
@@ -753,6 +771,8 @@
 		<button class="btn primary" onclick={joinShow} disabled={joinBusy}>Allow for 15 minutes</button>
 	{/snippet}
 </Modal>
+
+<ReceiverWizard bind:open={wizardOpen} nodeId={wizardNode} />
 
 <Modal bind:open={rxModal} title={rxDraft.id ? `Edit ${rxDraft.name}` : 'Add a receiver'} size="sm">
 	<form id="rxform" class="col" style="gap:14px" onsubmit={saveReceiver}>

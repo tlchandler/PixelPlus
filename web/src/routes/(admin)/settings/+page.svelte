@@ -8,7 +8,6 @@
 		ShowSettings,
 		Snapshot,
 		SongRequest,
-		Trigger,
 		UpdateInfo,
 		WifiNetwork
 	} from '$lib/api/types';
@@ -46,7 +45,6 @@
 		RefreshCw,
 		Lock,
 		Send,
-		Plus,
 		Trash2,
 		RotateCcw,
 		Upload,
@@ -80,7 +78,6 @@
 		| 'alerts'
 		| 'mqtt'
 		| 'requests'
-		| 'triggers'
 		| 'security'
 		| 'snapshots'
 		| 'updates'
@@ -105,7 +102,6 @@
 		{ id: 'alerts', label: 'Alerts', icon: Bell, desc: 'A message when something needs you' },
 		{ id: 'mqtt', label: 'Home Assistant', icon: House, desc: 'Control the show from your smart home' },
 		{ id: 'requests', label: 'Song requests', icon: Hand, desc: 'Visitors pick songs · radio · yard sign' },
-		{ id: 'triggers', label: 'Triggers', icon: Zap, desc: 'Start things with a button or a link' },
 		{ id: 'security', label: 'Security', icon: ShieldCheck, desc: 'Password and remote access' },
 		{ id: 'snapshots', label: 'Backups', icon: History, desc: 'Go back to any earlier version' },
 		{ id: 'updates', label: 'Updates', icon: Download, desc: 'New versions of PixelPlus', device: true },
@@ -126,6 +122,12 @@
 			label: 'Power',
 			icon: Zap,
 			desc: 'Supplies, brightness limit, late-night dimming'
+		},
+		{
+			href: '/settings/triggers',
+			label: 'Triggers',
+			icon: Zap,
+			desc: 'Buttons, links and sensor surprises'
 		},
 		{
 			href: '/settings/sensors',
@@ -155,6 +157,11 @@
 	let mobileOpen = $state(false);
 	$effect(() => {
 		const h = location.hash.slice(1) as Sec;
+		// Triggers have their own page now (WS6); keep old #triggers links working.
+		if ((h as string) === 'triggers') {
+			location.replace('/settings/triggers');
+			return;
+		}
 		if (sections.some((s) => s.id === h)) {
 			sec = h;
 			mobileOpen = true;
@@ -519,27 +526,6 @@
 	function copyLogs() {
 		navigator.clipboard?.writeText(logs ?? '');
 		toasts.success('Logs copied — paste them into your support message');
-	}
-
-	// ---- triggers
-	function addTrigger() {
-		if (!s) return;
-		s.triggers = [
-			...s.triggers,
-			{
-				id: newId(),
-				name: 'New trigger',
-				kind: 'gpio',
-				gpio: 17,
-				action: { type: 'playPlaylist', ref: show?.playlists[0]?.id }
-			}
-		];
-		changed('triggers');
-	}
-	function removeTrigger(t: Trigger) {
-		if (!s) return;
-		s.triggers = s.triggers.filter((x) => x.id !== t.id);
-		changed('triggers');
 	}
 
 	const sys = $derived(app.system);
@@ -1423,91 +1409,6 @@
 						</div>
 					</div>
 				</section>
-			{:else if sec === 'triggers'}
-				<section class="card">
-					<div class="card-head">
-						<Zap size={16} />
-						<h2 class="grow">Triggers</h2>
-						<button class="btn sm" onclick={addTrigger}><Plus size={14} /> Add trigger</button>
-					</div>
-					<div class="card-body">
-						<p class="muted small" style="margin-bottom:14px">
-							Start things with a push button wired to the controller, or from another app (like Home
-							Assistant) by opening a link.
-						</p>
-						{#each s.triggers as t (t.id)}
-							<div class="trig">
-								<input
-									class="input"
-									bind:value={t.name}
-									oninput={() => changed('triggers')}
-									aria-label="Trigger name"
-								/>
-								<div class="row wrap">
-									<select
-										class="select sm"
-										style="width:auto"
-										bind:value={t.kind}
-										onchange={() => changed('triggers')}
-										aria-label="Trigger kind"
-										><option value="gpio">Button wired to the controller</option><option value="http"
-											>Link (web request)</option
-										></select
-									>
-									{#if t.kind === 'gpio'}<span
-											class="small muted"
-											title="The Raspberry Pi GPIO pin the button is wired to">on pin</span
-										><input
-											class="input sm num"
-											style="width:70px"
-											type="number"
-											min="2"
-											max="27"
-											bind:value={t.gpio}
-											oninput={() => changed('triggers')}
-											aria-label="GPIO pin"
-										/>{/if}
-									<span class="small muted">→</span>
-									<select
-										class="select sm"
-										style="width:auto"
-										bind:value={t.action.type}
-										onchange={() => changed('triggers')}
-										aria-label="Action"
-									>
-										<option value="playPlaylist">Play playlist</option><option value="playSequence"
-											>Play sequence</option
-										><option value="effect">Show a look</option><option value="stop">Stop the show</option>
-									</select>
-									{#if t.action.type !== 'stop'}
-										<select
-											class="select sm"
-											style="width:auto;max-width:220px"
-											bind:value={t.action.ref}
-											onchange={() => changed('triggers')}
-											aria-label="Target"
-										>
-											{#each t.action.type === 'playPlaylist' ? show.playlists : t.action.type === 'playSequence' ? show.sequences : show.effects as o (o.id)}<option
-													value={o.id}>{o.name}</option
-												>{/each}
-										</select>
-									{/if}
-									<span class="grow"></span>
-									<button
-										class="btn ghost icon sm"
-										onclick={() => removeTrigger(t)}
-										aria-label="Remove trigger"><Trash2 size={14} /></button
-									>
-								</div>
-								{#if t.kind === 'http'}<code class="mono faint tiny"
-										>POST {location.origin}/api/v1/triggers/{t.id}</code
-									>{/if}
-							</div>
-						{:else}
-							<div class="faint small">No triggers yet.</div>
-						{/each}
-					</div>
-				</section>
 			{:else if sec === 'security'}
 				<section class="card">
 					<div class="card-head">
@@ -2170,15 +2071,6 @@
 		padding-left: 0;
 		padding-right: 0;
 		min-height: 44px;
-	}
-	.trig {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding: 14px;
-		border-radius: 12px;
-		background: var(--surface-2);
-		margin-bottom: 10px;
 	}
 	.snap {
 		position: relative;

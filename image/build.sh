@@ -104,8 +104,12 @@ fi
 STAGE="${PIGEN}/stage-pixelplus"
 rm -rf "${STAGE}"
 cp -a "${HERE}/stage-pixelplus" "${STAGE}"
-rm -f "${STAGE}"/01-pixelplus/files/*.deb
+rm -f "${STAGE}"/01-pixelplus/files/*.deb "${STAGE}"/01-pixelplus/files/*.minisig
 cp "${DEBS[@]}" "${STAGE}/01-pixelplus/files/"
+# Signatures next to the packages (signed releases) are kept for signed updates' rollback.
+for d in "${DEBS[@]}"; do
+    [[ -f "$d.minisig" ]] && cp "$d.minisig" "${STAGE}/01-pixelplus/files/"
+done
 if [[ "${TTS}" == 1 ]]; then
     [[ -f "${REPO}/tts/pyproject.toml" ]] || die "tts/pyproject.toml not found (use --no-tts)"
     rm -rf "${STAGE}/03-tts/files/tts"

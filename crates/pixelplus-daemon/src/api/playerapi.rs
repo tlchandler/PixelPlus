@@ -95,7 +95,8 @@ async fn play(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Valu
         let pl = show
             .playlist(id)
             .ok_or_else(|| ApiError::not_found("That playlist"))?;
-        if pl.items.is_empty() && pl.intro.is_empty() {
+        // Smart playlists (F18) get their songs when they start.
+        if pl.items.is_empty() && pl.intro.is_empty() && pl.smart.is_none() {
             return Err(ApiError::bad_request(format!(
                 "\"{}\" is empty. Add some sequences to it first.",
                 pl.name
@@ -212,10 +213,15 @@ async fn blackout(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<
     Ok(Json(json!({ "ok": true, "blackout": on })))
 }
 
-/// `POST /player/calibration` `{on: bool}` (default on): play or stop the
-/// "Sync lights to sound" pattern: a click every second and every prop on
-/// every controller flashing white with it. While it runs, change
-/// `settings.audio.outputDelayMs` until flash and click coincide.
+/// `POST /player/calibration` `{on: bool, pattern?: "v1"|"v2", seed?}`
+/// (default on, v1): play or stop the calibration pattern.
+///
+/// * v1 ("Sync lights to sound"): a click every second and every prop on
+///   every controller flashing white with it. While it runs, change
+///   `settings.audio.outputDelayMs` until flash and click coincide.
+/// * v2 (F1 "Measure with my phone"): the seeded pseudo-random train of
+///   `core::calpattern`; answers with the plan
+///   `{seed, v, eventsMs, flashMs, windowMs, leadInMs, chirp, startsInMs}`.
 async fn calibration(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Value>> {
     let v: Value = body_or_default(&body)?;
     let on = v["on"].as_bool().unwrap_or(true);
@@ -224,8 +230,68 @@ async fn calibration(State(state): State<AppState>, body: Bytes) -> ApiResult<Js
             "This controller follows its show leader; calibrate on the leader.",
         ));
     }
-    player(&state)?.send(PlayerCmd::Calibrate(on)).await?;
-    Ok(Json(json!({ "ok": true, "on": on })))
+    let v2 = on && v["pattern"].as_str() == Some("v2");
+    if !v2 {
+        player(&state)?.send(PlayerCmd::Calibrate(on)).await?;
+        return Ok(Json(json!({ "ok": true, "on": on })));
+    }
+    let seed = match v.get("seed") {
+        None | Some(Value::Null) => pixelplus_core::calpattern::seed_from(rand::random()),
+        Some(s) => s
+            .as_u64()
+            .filter(|s| (1..=u64::from(u32::MAX)).contains(s))
+            .map(|s| s as u32)
+            .ok_or_else(|| ApiError::bad_request("The seed must be a whole number from 1."))?,
+    };
+    let p = player(&state)?;
+    p.send(PlayerCmd::CalibrateV2(seed)).await?;
+    // Flash length follows this controller's refresh (2 slots at least).
+    let slot_ms = p.status().refresh_hz.map_or(0.0, |hz| 1000.0 / hz.max(1.0));
+    let plan = pixelplus_core::calpattern::schedule(seed, slot_ms);
+    let mut out = serde_json::to_value(&plan).map_err(ApiError::internal)?;
+    out["ok"] = json!(true);
+    out["on"] = json!(true);
+    // The pattern (and its sound) start with the next output frame.
+    out["startsInMs"] = json!(0);
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SurpriseBody {
+    /// "sequence" | "effect" (guessed from `ref` when missing).
+    #[serde(default)]
+    source: Option<String>,
+    r#ref: String,
+    #[serde(default)]
+    target: Option<pixelplus_core::model::Target>,
+    #[serde(default)]
+    duration_ms: Option<u64>,
+}
+
+/// `POST /player/surprise {ref, source?, target?, durationMs?}`: show a
+/// surprise now, without a trigger's gates (the trigger editor's "Try it").
+async fn surprise(
+    State(state): State<AppState>,
+    Json(b): Json<SurpriseBody>,
+) -> ApiResult<Json<Value>> {
+    let show = state.store.get();
+    let action = pixelplus_core::model::TriggerAction {
+        kind: pixelplus_core::model::TriggerActionType::Surprise,
+        r#ref: Some(b.r#ref),
+        target: b.target,
+        duration_ms: b.duration_ms,
+        source: b.source,
+    };
+    let req = crate::services::triggers::surprise_request(&show, "test", &action)?;
+    let started = player(&state)?.surprise(req).await?;
+    Ok(Json(json!({ "ok": true, "surprise": started })))
+}
+
+/// `POST /player/surprise/stop`: end the running surprise at once.
+async fn surprise_stop(State(state): State<AppState>) -> ApiResult<Json<Value>> {
+    player(&state)?.send(PlayerCmd::SurpriseStop).await?;
+    Ok(ok())
 }
 
 /// Show a look live (`{effect: EffectPreset}`), or stop it (`{effect: null}`).
@@ -316,4 +382,6 @@ pub fn routes() -> Router<AppState> {
         .route("/player/blackout", post(blackout))
         .route("/player/effect", post(effect))
         .route("/player/calibration", post(calibration))
+        .route("/player/surprise", post(surprise))
+        .route("/player/surprise/stop", post(surprise_stop))
 }

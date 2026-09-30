@@ -35,9 +35,12 @@ jobs:
     steps:
       - id: v
         run: |
-          v="${VERSION#v}"
+          tag="${VERSION#v}"
+          # Pre-release tags (v1.3.0-beta1) become Debian versions that sort BEFORE the
+          # release (1.3.0~beta1) and are published on the beta channel only.
+          v="${tag/-/\~}"
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$tag" >> "$GITHUB_OUTPUT"
 
   deb:
     name: .deb (${{ matrix.arch }})
@@ -71,6 +74,66 @@ jobs:
         with:
           name: deb-${{ matrix.arch }}
           path: dist/*.deb
+
+  # Signed over-the-air updates (docs/BUILDING.md "Signed updates"): every .deb gets a
+  # minisign signature, and a signed release index per channel (pixelplus-<channel>.json)
+  # lists them. Needs the repository secrets MINISIGN_SECRET_KEY (the contents of the
+  # password-protected minisign.key made with `minisign -G`) and MINISIGN_PASSWORD; the
+  # public key is in packaging/keys/pixelplus-release.pub. Without them the release is
+  # built unsigned and controllers won't offer it as an update (apt still works).
+  sign:
+    name: Sign packages and release index
+    needs: [meta, deb]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deb-*
+          path: dist
+          merge-multiple: true
+      - name: Sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_SECRET_KEY}" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY not set: this release is not signed for over-the-air updates"
+            exit 0
+          fi
+          sudo apt-get update -q && sudo apt-get install -y -q minisign
+          umask 077
+          key="$RUNNER_TEMP/minisign.key"
+          printf '%s\n' "${MINISIGN_SECRET_KEY}" > "$key"
+          trap 'rm -f "$key"' EXIT
+          sign() { printf '%s\n' "${MINISIGN_PASSWORD}" | minisign -S -s "$key" -m "$1" -t "pixelplus $VERSION $(basename "$1")"; }
+          for d in dist/*.deb; do sign "$d"; done
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          git log -1 --format=%B > "$RUNNER_TEMP/notes.md" || true
+          channels="beta"
+          case "$VERSION" in *"~"*) ;; *) channels="stable beta" ;; esac
+          for ch in $channels; do
+            python3 packaging/release-index.py --channel "$ch" --version "$VERSION" \
+              --base-url "$base" --notes-file "$RUNNER_TEMP/notes.md" \
+              --out "dist/pixelplus-$ch.json" dist/*.deb
+            sign "dist/pixelplus-$ch.json"
+          done
+          # Every signature must verify with the key the daemon is built with.
+          grep '^RW' packaging/keys/pixelplus-release.pub > "$RUNNER_TEMP/release.pub.b64" || {
+            echo "::error::packaging/keys/pixelplus-release.pub has no key"; exit 1; }
+          for f in dist/*.deb dist/pixelplus-*.json; do
+            minisign -V -q -P "$(head -n1 "$RUNNER_TEMP/release.pub.b64")" -m "$f"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signatures
+          path: |
+            dist/*.minisig
+            dist/pixelplus-*.json
+          if-no-files-found: ignore
 
   image:
     name: SD image (${{ matrix.release }})
@@ -193,7 +256,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [meta, deb, image]
+    needs: [meta, deb, image, sign]
     runs-on: ubuntu-24.04
     outputs:
       id: ${{ steps.rel.outputs.id }}
@@ -213,8 +276,10 @@ jobs:
           name: PixelPlus ${{ needs.meta.outputs.version }}
           draft: true
           generate_release_notes: true
+          prerelease: ${{ contains(needs.meta.outputs.version, '~') }}
           files: |
             artifacts/deb-*/*.deb
+            artifacts/signatures/*
             artifacts/image-*/*.img.xz
             artifacts/image-*/*.sha256
             artifacts/pixelplus-imager.json

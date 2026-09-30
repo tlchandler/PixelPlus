@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use pixelplus_core::faultfinder::CountSearch;
 use pixelplus_core::mapcode::{self, MapPlan, MapTarget};
 use pixelplus_core::model::{
-    ColorOrder, MeasuredCount, PropLayout, PropSegment, LayoutSource, Show,
+    ColorOrder, LayoutSource, MeasuredCount, PropLayout, PropSegment, Show,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -426,7 +426,9 @@ pub fn codebook_bits(plan: &MapPlan) -> Vec<Vec<u8>> {
     (0..plan.targets.len())
         .map(|k| {
             let w = mapcode::codeword(plan, k);
-            (0..bits).map(|i| ((w >> (bits - 1 - i)) & 1) as u8).collect()
+            (0..bits)
+                .map(|i| ((w >> (bits - 1 - i)) & 1) as u8)
+                .collect()
         })
         .collect()
 }
@@ -494,7 +496,11 @@ pub fn check_overlaps(show: &Show) -> ApiResult<()> {
             by_out
                 .entry((s.node_id.as_str(), s.output))
                 .or_default()
-                .push((s.start_pixel, s.start_pixel + s.pixel_count, p.name.as_str()));
+                .push((
+                    s.start_pixel,
+                    s.start_pixel + s.pixel_count,
+                    p.name.as_str(),
+                ));
         }
     }
     for ((node, out), mut v) in by_out {
@@ -571,12 +577,19 @@ pub fn apply_count(
             .props
             .iter()
             .enumerate()
-            .flat_map(|(pi, p)| p.segments.iter().enumerate().map(move |(si, s)| (pi, si, s)))
+            .flat_map(|(pi, p)| {
+                p.segments
+                    .iter()
+                    .enumerate()
+                    .map(move |(si, s)| (pi, si, s))
+            })
             .filter(|(_, _, s)| s.node_id == node_id && s.output == output)
             .max_by_key(|(_, _, s)| s.start_pixel)
             .map(|(pi, si, s)| (pi, si, s.start_pixel));
         let Some((pi, si, start)) = last else {
-            return Err(ApiError::bad_request(format!("No prop is wired to {label}.")));
+            return Err(ApiError::bad_request(format!(
+                "No prop is wired to {label}."
+            )));
         };
         if count <= start {
             return Err(ApiError::bad_request(format!(
@@ -600,7 +613,10 @@ pub fn apply_count(
         prop.pixel_count = prop.pixel_count - seg_len + new_len;
         prop.suspect_pixels.retain(|&i| i < prop.pixel_count);
         if let Some(l) = prop.layout.as_mut() {
-            if l.points.as_ref().is_some_and(|p| p.len() as u32 != prop.pixel_count) {
+            if l.points
+                .as_ref()
+                .is_some_and(|p| p.len() as u32 != prop.pixel_count)
+            {
                 l.points = None;
             }
         }
@@ -611,7 +627,11 @@ pub fn apply_count(
 
 /// Apply the selected proposals of `run` to `show`. Returns one summary line
 /// per applied proposal.
-pub fn apply_proposals(show: &mut Show, run: &MappingRun, ids: &[String]) -> ApiResult<Vec<String>> {
+pub fn apply_proposals(
+    show: &mut Show,
+    run: &MappingRun,
+    ids: &[String],
+) -> ApiResult<Vec<String>> {
     let results = run
         .results
         .as_ref()
@@ -670,7 +690,9 @@ pub fn apply_proposals(show: &mut Show, run: &MappingRun, ids: &[String]) -> Api
                     .find(|x| x.id == d.prop_id)
                     .ok_or_else(|| ApiError::not_found("A prop in this proposal"))?;
                 let mut l = d.layout;
-                let finite = [l.x, l.y, l.w, l.h, l.rotation].iter().all(|v| v.is_finite());
+                let finite = [l.x, l.y, l.w, l.h, l.rotation]
+                    .iter()
+                    .all(|v| v.is_finite());
                 if !finite || l.w < 0.0 || l.h < 0.0 {
                     return Err(ApiError::bad_request("The proposed layout is invalid."));
                 }
@@ -679,8 +701,16 @@ pub fn apply_proposals(show: &mut Show, run: &MappingRun, ids: &[String]) -> Api
                         l.points = None;
                     } else {
                         for pt in pts.iter_mut() {
-                            pt[0] = if pt[0].is_finite() { pt[0].clamp(0.0, 1.0) } else { 0.5 };
-                            pt[1] = if pt[1].is_finite() { pt[1].clamp(0.0, 1.0) } else { 0.5 };
+                            pt[0] = if pt[0].is_finite() {
+                                pt[0].clamp(0.0, 1.0)
+                            } else {
+                                0.5
+                            };
+                            pt[1] = if pt[1].is_finite() {
+                                pt[1].clamp(0.0, 1.0)
+                            } else {
+                                0.5
+                            };
                         }
                     }
                 }
@@ -745,7 +775,11 @@ pub fn free_jacks(show: &Show, node_id: &str) -> Vec<u32> {
 /// The strip's real colour order, from what the user saw when the wizard
 /// sent pure red and pure green through the output's configured order.
 /// `seen_*` are 0 = red, 1 = green, 2 = blue.
-pub fn detect_color_order(configured: ColorOrder, seen_red: usize, seen_green: usize) -> Option<ColorOrder> {
+pub fn detect_color_order(
+    configured: ColorOrder,
+    seen_red: usize,
+    seen_green: usize,
+) -> Option<ColorOrder> {
     if seen_red > 2 || seen_green > 2 || seen_red == seen_green {
         return None;
     }
@@ -789,7 +823,9 @@ pub fn expire_sessions(state: &AppState) {
 #[cfg(test)]
 pub(crate) mod tests_support {
     use super::*;
-    use pixelplus_core::model::{BoardKind, Node, NodeRole, Prop, PropKind, Receiver, ReceiverKind};
+    use pixelplus_core::model::{
+        BoardKind, Node, NodeRole, Prop, PropKind, Receiver, ReceiverKind,
+    };
 
     pub fn show() -> Show {
         let mut s = Show::default();
@@ -858,7 +894,13 @@ mod tests {
     use super::*;
 
     fn run_with(show: &Show, proposals: Vec<Proposal>) -> MappingRun {
-        let outs = scope_targets(show, &MapScope { all: true, ..Default::default() });
+        let outs = scope_targets(
+            show,
+            &MapScope {
+                all: true,
+                ..Default::default()
+            },
+        );
         let (plan, targets) =
             build_plan(show, &outs, &PlanOptions::default(), 3, |_| None).unwrap();
         MappingRun {
@@ -891,7 +933,13 @@ mod tests {
     #[test]
     fn plan_covers_wired_outputs_in_order() {
         let s = show();
-        let outs = scope_targets(&s, &MapScope { all: true, ..Default::default() });
+        let outs = scope_targets(
+            &s,
+            &MapScope {
+                all: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(outs, vec![("lead".into(), 1), ("lead".into(), 2)]);
         let (plan, targets) = build_plan(&s, &outs, &PlanOptions::default(), 3, |_| None).unwrap();
         assert_eq!(plan.targets[0].max_pixels, 80);
@@ -899,7 +947,13 @@ mod tests {
         assert_eq!(plan.pixel_bits, 7);
         assert_eq!(targets[0].label, "Garage J1-1");
         assert_eq!(targets[0].prop_ids, vec!["a", "b"]);
-        let only_c = scope_targets(&s, &MapScope { prop_ids: vec!["c".into()], ..Default::default() });
+        let only_c = scope_targets(
+            &s,
+            &MapScope {
+                prop_ids: vec!["c".into()],
+                ..Default::default()
+            },
+        );
         assert_eq!(only_c, vec![("lead".into(), 2)]);
         let bits = codebook_bits(&plan);
         assert_eq!(bits.len(), 2);
@@ -923,8 +977,16 @@ mod tests {
         let run = run_with(
             &s,
             vec![
-                prop_json("p1", "swap", serde_json::json!({"a": {"propId": "a"}, "b": {"propId": "c"}})),
-                prop_json("p2", "reverse", serde_json::json!({"propId": "b", "segment": 0})),
+                prop_json(
+                    "p1",
+                    "swap",
+                    serde_json::json!({"a": {"propId": "a"}, "b": {"propId": "c"}}),
+                ),
+                prop_json(
+                    "p2",
+                    "reverse",
+                    serde_json::json!({"propId": "b", "segment": 0}),
+                ),
                 prop_json("p3", "notSeen", serde_json::json!({})),
             ],
         );
@@ -942,7 +1004,11 @@ mod tests {
         s.props[2].segments[0].pixel_count = 60;
         let run = run_with(
             &s,
-            vec![prop_json("p1", "swap", serde_json::json!({"a": {"propId": "a"}, "b": {"propId": "c"}}))],
+            vec![prop_json(
+                "p1",
+                "swap",
+                serde_json::json!({"a": {"propId": "a"}, "b": {"propId": "c"}}),
+            )],
         );
         // a (50) ↔ c (60): c at output 1 start 0 now covers 0..60, b starts at 50.
         let err = apply_proposals(&mut s, &run, &["p1".into()]).unwrap_err();
@@ -958,7 +1024,10 @@ mod tests {
         assert_eq!(b.pixel_count, 26);
         assert_eq!(b.segments[0].pixel_count, 26);
         assert_eq!(b.suspect_pixels, vec![5]);
-        let m = s.node("lead").unwrap().outputs[0].measured_pixels.clone().unwrap();
+        let m = s.node("lead").unwrap().outputs[0]
+            .measured_pixels
+            .clone()
+            .unwrap();
         assert_eq!(m.count, 76);
         assert_eq!(m.dead, vec![55]);
         assert!(apply_count(&mut s, "lead", 1, 40, &[], "manual", true).is_err());
@@ -1000,12 +1069,24 @@ mod tests {
     #[test]
     fn color_order_detection() {
         // Configured RGB, strip is GRB: red shows green, green shows red.
-        assert_eq!(detect_color_order(ColorOrder::RGB, 1, 0), Some(ColorOrder::GRB));
-        assert_eq!(detect_color_order(ColorOrder::RGB, 0, 1), Some(ColorOrder::RGB));
+        assert_eq!(
+            detect_color_order(ColorOrder::RGB, 1, 0),
+            Some(ColorOrder::GRB)
+        );
+        assert_eq!(
+            detect_color_order(ColorOrder::RGB, 0, 1),
+            Some(ColorOrder::RGB)
+        );
         // Configured GRB and correct: colours look right.
-        assert_eq!(detect_color_order(ColorOrder::GRB, 0, 1), Some(ColorOrder::GRB));
+        assert_eq!(
+            detect_color_order(ColorOrder::GRB, 0, 1),
+            Some(ColorOrder::GRB)
+        );
         // Configured GRB but strip is RGB: red shows green.
-        assert_eq!(detect_color_order(ColorOrder::GRB, 1, 0), Some(ColorOrder::RGB));
+        assert_eq!(
+            detect_color_order(ColorOrder::GRB, 1, 0),
+            Some(ColorOrder::RGB)
+        );
         // Every combination round-trips.
         let all = [
             ColorOrder::RGB,

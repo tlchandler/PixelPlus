@@ -46,7 +46,28 @@ struct SetupBody {
     write_eeprom: bool,
 }
 
-async fn setup(State(state): State<AppState>, Json(b): Json<SetupBody>) -> ApiResult<Response> {
+/// `POST /system/setup`: JSON [`SetupBody`] (the wizard), or multipart
+/// `passphrase` + `transfer` (in that order): restore a show leader from a
+/// controller transfer file (F10), only while unconfigured and — like any
+/// unconfigured setup — only from the local network (`auth::require_auth`).
+async fn setup(State(state): State<AppState>, req: axum::extract::Request) -> ApiResult<Response> {
+    let multipart = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.to_ascii_lowercase().starts_with("multipart/form-data"));
+    if multipart {
+        use axum::extract::FromRequest;
+        let mp = axum::extract::Multipart::from_request(req, &state)
+            .await
+            .map_err(|e| ApiError::bad_request(e.body_text()))?;
+        return setup_restore(state, mp).await;
+    }
+    let bytes = axum::body::to_bytes(req.into_body(), 256 * 1024)
+        .await
+        .map_err(|_| ApiError::bad_request("That setup request is too large."))?;
+    let b: SetupBody = serde_json::from_slice(&bytes)
+        .map_err(|e| ApiError::bad_request(format!("Invalid setup request: {e}")))?;
     let Some(role) = setup::parse_role(&b.role) else {
         return Err(ApiError::bad_request(
             "Choose whether this controller runs the show (leader) or joins one (follower).",
@@ -74,16 +95,142 @@ async fn setup(State(state): State<AppState>, Json(b): Json<SetupBody>) -> ApiRe
     let mut resp = Json(body).into_response();
     // Keep the person who just chose the password signed in.
     if out.password_set {
-        let token = state.sessions.create();
-        let cookie = format!(
-            "pp_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
-            60 * 60 * 24 * 30
-        );
-        if let Ok(v) = HeaderValue::from_str(&cookie) {
-            resp.headers_mut().insert(header::SET_COOKIE, v);
-        }
+        sign_in(&state, &mut resp);
     }
     Ok(resp)
+}
+
+fn sign_in(state: &AppState, resp: &mut Response) {
+    let token = state.sessions.create();
+    let cookie = format!(
+        "pp_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        60 * 60 * 24 * 30
+    );
+    if let Ok(v) = HeaderValue::from_str(&cookie) {
+        resp.headers_mut().insert(header::SET_COOKIE, v);
+    }
+}
+
+/// Only one restore at a time.
+static RESTORING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn setup_restore(state: AppState, mut mp: axum::extract::Multipart) -> ApiResult<Response> {
+    use super::content::multipart_error;
+    let Ok(_busy) = RESTORING.try_lock() else {
+        return Err(ApiError::conflict("A restore is already running."));
+    };
+    if state.identity().role != LocalRole::Unconfigured {
+        return Err(ApiError::conflict(
+            "A show can only be restored onto a new (not yet set up) controller.",
+        ));
+    }
+    let mut passphrase: Option<String> = None;
+    let mut outcome = None;
+    while let Some(mut field) = mp.next_field().await.map_err(multipart_error)? {
+        match field.name().unwrap_or_default() {
+            "passphrase" => {
+                let text = field.text().await.map_err(multipart_error)?;
+                if text.len() > 1024 {
+                    return Err(ApiError::bad_request("That passphrase is too long."));
+                }
+                passphrase = Some(text);
+            }
+            "transfer" => {
+                let Some(pass) = passphrase.take() else {
+                    return Err(ApiError::bad_request(
+                        "Send the passphrase before the transfer file.",
+                    ));
+                };
+                let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(16);
+                let st = state.clone();
+                let job = tokio::spawn(async move { setup::restore_transfer(&st, pass, rx).await });
+                let mut upload_err = None;
+                loop {
+                    match field.chunk().await {
+                        Ok(Some(chunk)) => {
+                            if tx.send(chunk).await.is_err() {
+                                break; // the restore gave up (wrong passphrase, damage)
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            upload_err = Some(multipart_error(e));
+                            break;
+                        }
+                    }
+                }
+                drop(tx);
+                let res = job.await.map_err(ApiError::internal)?;
+                outcome = Some(match (res, upload_err) {
+                    // The upload broke off: that, not "cut off", is the news.
+                    (Err(_), Some(e)) => return Err(e),
+                    (res, _) => res?,
+                });
+                break;
+            }
+            _ => {}
+        }
+    }
+    let out = outcome.ok_or_else(|| ApiError::bad_request("Choose a transfer file (.ppxfer)."))?;
+    for n in &out.notes {
+        state
+            .events
+            .toast(crate::events::ToastKind::Warning, n.clone());
+    }
+    state.events.toast(
+        crate::events::ToastKind::Success,
+        format!(
+            "“{}” restored. This controller is now its show leader.",
+            out.show_name
+        ),
+    );
+    let mut body = sys::system_info(&state, true).await;
+    body["notes"] = json!(out.notes);
+    body["restored"] = json!({
+        "showName": out.show_name,
+        "hostname": out.hostname,
+        "files": out.files,
+    });
+    let mut resp = Json(body).into_response();
+    // Whoever holds the transfer file and its passphrase holds every secret
+    // of the show anyway: keep them signed in.
+    sign_in(&state, &mut resp);
+    Ok(resp)
+}
+
+#[derive(Deserialize)]
+struct TransferBody {
+    passphrase: String,
+}
+
+/// `POST /system/transfer/export {passphrase}` → `{url, expiresInS}`: a
+/// one-time link that downloads the encrypted controller transfer file.
+async fn transfer_export(
+    State(state): State<AppState>,
+    Json(b): Json<TransferBody>,
+) -> ApiResult<Json<Value>> {
+    let token = crate::services::snapshots::transfer_prepare(&state, &b.passphrase)?;
+    Ok(Json(json!({
+        "url": format!("/api/v1/system/transfer/download/{token}"),
+        "expiresInS": 600,
+    })))
+}
+
+async fn transfer_download(
+    State(state): State<AppState>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> ApiResult<Response> {
+    let (name, body) = crate::services::snapshots::transfer_stream(&state, &token)?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{name}\""),
+        )
+        // Already encrypted (incompressible): keep the compression layer away.
+        .header(header::CONTENT_ENCODING, "identity")
+        .body(body)
+        .map_err(ApiError::internal)
 }
 
 async fn power(state: AppState, action: sys::PowerAction) -> ApiResult<Json<Value>> {
@@ -204,17 +351,98 @@ async fn eeprom(
     Ok(Json(json!({ "ok": true, "message": msg })))
 }
 
-async fn update_check(State(state): State<AppState>) -> Json<crate::services::updates::UpdateInfo> {
-    Json(crate::services::updates::check(&state).await)
+#[derive(Deserialize, Default)]
+struct UpdateQuery {
+    /// Check the release index now instead of using the cached answer.
+    #[serde(default)]
+    refresh: bool,
 }
 
-async fn update_apply(State(state): State<AppState>, _body: Bytes) -> ApiResult<Json<Value>> {
+async fn update_check(
+    State(state): State<AppState>,
+    Query(q): Query<UpdateQuery>,
+) -> Json<crate::services::updates::UpdateInfo> {
+    Json(crate::services::updates::check_all(&state, q.refresh).await)
+}
+
+/// `POST /system/update {version?, scope?:"cluster"|"this", force?}`: a signed
+/// cluster update (F15), or `apt` where signed updates aren't set up.
+async fn update_apply(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Value>> {
+    use crate::services::updates_orch as orch;
+    if orch::ota_available() {
+        let req: orch::StartRequest = body_or_default(&body)?;
+        let run = orch::start_update(&state, req, false).await?;
+        let msg = format!("Updating to PixelPlus {}…", run.version);
+        state
+            .events
+            .toast(crate::events::ToastKind::Info, msg.clone());
+        return Ok(Json(json!({ "ok": true, "message": msg, "run": run })));
+    }
     let msg = crate::services::updates::apply(&state).await?;
     state
         .events
         .toast(crate::events::ToastKind::Info, msg.clone());
     let job = state.services.helpers.get("update");
     Ok(Json(json!({ "ok": true, "message": msg, "job": job })))
+}
+
+#[derive(Deserialize, Default)]
+struct RollbackBody {
+    #[serde(default)]
+    scope: Option<crate::services::updates_orch::Scope>,
+}
+
+/// `POST /system/update/rollback {scope?}`: back to the version before the last update.
+async fn update_rollback(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Value>> {
+    use crate::services::updates_orch as orch;
+    let b: RollbackBody = body_or_default(&body)?;
+    let run = orch::start_rollback(&state, b.scope.unwrap_or(orch::Scope::Cluster)).await?;
+    Ok(Json(json!({ "ok": true, "run": run })))
+}
+
+/// `PUT /system/update/settings` UpdateSettings (channel, automatic, window).
+async fn update_settings(
+    State(state): State<AppState>,
+    Json(new): Json<pixelplus_core::model::UpdateSettings>,
+) -> ApiResult<Json<pixelplus_core::model::UpdateSettings>> {
+    use pixelplus_core::schedule::parse_clock;
+    if parse_clock(&new.window.from).is_none() || parse_clock(&new.window.to).is_none() {
+        return Err(ApiError::bad_request(
+            "Give the update window as two times like 10:00 and 14:00.",
+        ));
+    }
+    if new.window.from == new.window.to {
+        return Err(ApiError::bad_request(
+            "The update window needs different start and end times.",
+        ));
+    }
+    if new.avoid_show_hours > 24 {
+        return Err(ApiError::bad_request(
+            "Keep updates at most 24 hours away from a show.",
+        ));
+    }
+    let old_channel = state.store.get().settings.updates.channel;
+    let n2 = new.clone();
+    let (saved, _) = state
+        .store
+        .update(move |s| {
+            s.settings.updates = n2;
+            Ok(s.settings.updates.clone())
+        })
+        .await?;
+    if saved.channel != old_channel && platform::helper_installed() {
+        // The apt source follows the channel too (installs by hand / apt).
+        let st = state.clone();
+        let verb = crate::services::updates_orch::verb_channel(saved.channel);
+        tokio::spawn(async move {
+            if let Err(e) =
+                platform::run_helper(&st, verb, platform::HelperOpts { quiet: true }).await
+            {
+                tracing::info!("apt channel not switched: {}", e.message);
+            }
+        });
+    }
+    Ok(Json(saved))
 }
 
 /// Progress of the root helper jobs started since the daemon started.
@@ -345,7 +573,12 @@ async fn identify_self(State(state): State<AppState>, body: Bytes) -> ApiResult<
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/system", get(info))
-        .route("/system/setup", post(setup))
+        .route(
+            "/system/setup",
+            post(setup).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route("/system/transfer/export", post(transfer_export))
+        .route("/system/transfer/download/{token}", get(transfer_download))
         .route("/system/reboot", post(reboot))
         .route("/system/shutdown", post(shutdown))
         .route("/system/restart-service", post(restart_service))
@@ -356,6 +589,11 @@ pub fn routes() -> Router<AppState> {
         .route("/system/sensors/history", get(sensor_history))
         .route("/system/eeprom", post(eeprom))
         .route("/system/update", get(update_check).post(update_apply))
+        .route("/system/update/rollback", post(update_rollback))
+        .route(
+            "/system/update/settings",
+            axum::routing::put(update_settings),
+        )
         .route("/system/audio/devices", get(audio_devices))
         .route("/system/helpers", get(helpers))
         .route("/system/ssh", get(get_ssh).put(put_ssh))

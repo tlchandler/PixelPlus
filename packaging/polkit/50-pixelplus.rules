@@ -29,8 +29,10 @@ polkit.addRule(function (action, subject) {
     if (action.id === "org.freedesktop.systemd1.manage-units") {
         var unit = action.lookup("unit") || "";
         var verb = action.lookup("verb") || "";
-        // Whitelisted root helper verbs (see /usr/lib/pixelplus/pixelplus-helper).
-        if (/^pixelplus-helper@[A-Za-z0-9:_.\-]+\.service$/.test(unit) && verb === "start") {
+        // Whitelisted root helper verbs (see /usr/lib/pixelplus/pixelplus-helper). Instance
+        // arguments may carry systemd escapes (\x7e for "~" in versions like 1.3.0~beta1);
+        // the helper validates every verb and argument itself.
+        if (/^pixelplus-helper@[A-Za-z0-9:_.\\\-]+\.service$/.test(unit) && verb === "start") {
             return polkit.Result.YES;
         }
         if (/^pixelplus-(tts|games|netwatch)\.service$/.test(unit) &&

@@ -1,0 +1,25 @@
+Chandler Lights: Tuesday, Dec 1
+Mostly fine. 2 shows, 2 songs, 3 requests, 2 problems.
+
+Shows
+  Weeknights (300 min)
+  Late show (60 min)
+
+Problems
+  warn ×1: Garage reached 58 °C
+  error ×1: <script>alert(1)</script> & more
+
+Most requested
+  All I Want ×2
+  Wizards in Winter ×1
+
+Controllers
+  Main Controller: 40–44 °C, min 11.8 V
+  Garage: sync p95 1.1 ms, offline 4 min
+
+Suspect pixels on Arch 2: 37
+Disk: 71 % free
+Newest backup: 1 day old
+Updated: 1.4.0 → 1.4.1
+
+Full report: http://pixelplus.local/reports?date=2026-12-01

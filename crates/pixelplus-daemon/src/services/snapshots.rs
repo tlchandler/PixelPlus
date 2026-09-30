@@ -16,6 +16,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[path = "transfer.rs"]
+pub mod transfer;
+
 pub const KEEP_AUTO: usize = 30;
 const META_NAME: &str = "snapshot.json";
 
@@ -483,6 +486,181 @@ pub async fn import(state: &AppState, tmp: PathBuf, original_name: &str) -> ApiR
     .await
     .map_err(ApiError::internal)?
     .map_err(ApiError::bad_request)
+}
+
+// ---------------------------------------------------------------------------
+// Controller transfer file (F10): export
+// ---------------------------------------------------------------------------
+
+/// A prepared transfer download: the browser gets a one-time link, so a
+/// multi-gigabyte file downloads like any other (no blob in page memory).
+struct PendingTransfer {
+    token: String,
+    passphrase: String,
+    until: std::time::Instant,
+}
+
+static PENDING_TRANSFERS: parking_lot::Mutex<Vec<PendingTransfer>> =
+    parking_lot::const_mutex(Vec::new());
+const TRANSFER_LINK_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// `POST /system/transfer/export {passphrase}` (leader, signed in): check the
+/// passphrase and hand out a one-time download token (10 minutes).
+pub fn transfer_prepare(state: &AppState, passphrase: &str) -> ApiResult<String> {
+    if state.identity().role != crate::node::LocalRole::Leader {
+        return Err(ApiError::conflict(
+            "Only the show leader has a show to transfer.",
+        ));
+    }
+    transfer::validate_passphrase(passphrase).map_err(ApiError::bad_request)?;
+    let token = crate::cluster::sig::random_hex(24);
+    let now = std::time::Instant::now();
+    let mut p = PENDING_TRANSFERS.lock();
+    p.retain(|t| t.until > now);
+    if p.len() >= 4 {
+        p.remove(0);
+    }
+    p.push(PendingTransfer {
+        token: token.clone(),
+        passphrase: passphrase.to_string(),
+        until: now + TRANSFER_LINK_TTL,
+    });
+    Ok(token)
+}
+
+fn take_transfer(token: &str) -> Option<String> {
+    let now = std::time::Instant::now();
+    let mut p = PENDING_TRANSFERS.lock();
+    p.retain(|t| t.until > now);
+    let i = p
+        .iter()
+        .position(|t| crate::cluster::proto::ct_eq(t.token.as_bytes(), token.as_bytes()))?;
+    Some(p.remove(i).passphrase)
+}
+
+/// `Write` into an async channel (the HTTP response body), from a blocking thread.
+struct ChannelWriter {
+    tx: tokio::sync::mpsc::Sender<std::io::Result<bytes::Bytes>>,
+    buf: Vec<u8>,
+}
+
+impl ChannelWriter {
+    fn push(&mut self) -> std::io::Result<()> {
+        if self.buf.is_empty() {
+            return Ok(());
+        }
+        let chunk = bytes::Bytes::from(std::mem::take(&mut self.buf));
+        self.tx
+            .blocking_send(Ok(chunk))
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "download cancelled"))
+    }
+}
+
+impl std::io::Write for ChannelWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.buf.extend_from_slice(data);
+        if self.buf.len() >= 256 * 1024 {
+            self.push()?;
+        }
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.push()
+    }
+}
+
+/// File name for a transfer download.
+pub fn transfer_file_name(show_name: &str) -> String {
+    format!(
+        "{}-{}.ppxfer",
+        slug(show_name),
+        chrono::Local::now().format("%Y%m%d")
+    )
+}
+
+/// Everything the transfer file holds, read now (blocking).
+fn transfer_source_parts(
+    state: &AppState,
+) -> (transfer::Manifest, Vec<u8>, Vec<u8>, Option<Vec<u8>>) {
+    let show = state.store.get();
+    let identity = state.identity();
+    let data_dir = state.config.data_dir.clone();
+    let mut files = referenced_files(&show, &data_dir, true);
+    files.retain(|f| safe_rel(f));
+    let mut show_clean = (*show).clone();
+    show_clean.nodes.iter_mut().for_each(|n| n.last_seen = None);
+    let manifest = transfer::Manifest {
+        v: 1,
+        created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        version: env!("CARGO_PKG_VERSION").into(),
+        show_name: show.name.clone(),
+        leader_id: identity.id.clone(),
+        hostname: crate::cluster::net::hostname(),
+        files,
+    };
+    let keys = std::fs::read(data_dir.join("cluster/keys.json")).ok();
+    (
+        manifest,
+        serde_json::to_vec_pretty(&show_clean).unwrap_or_default(),
+        serde_json::to_vec_pretty(&identity).unwrap_or_default(),
+        keys,
+    )
+}
+
+/// `GET /system/transfer/download/:token`: stream the encrypted transfer
+/// file. Returns `(file name, body)`; the body errors out (the download
+/// fails) if anything goes wrong midway.
+pub fn transfer_stream(state: &AppState, token: &str) -> ApiResult<(String, axum::body::Body)> {
+    let passphrase = take_transfer(token)
+        .ok_or_else(|| ApiError::not_found("That download link (it works once, for 10 minutes)"))?;
+    let (manifest, show_json, node_json, keys_json) = transfer_source_parts(state);
+    let data_dir = state.config.data_dir.clone();
+    let name = transfer_file_name(&manifest.show_name);
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<bytes::Bytes>>(8);
+    tokio::task::spawn_blocking(move || {
+        let ca = match super::tls::export_ca(&data_dir) {
+            Ok(ca) => ca,
+            Err(e) => {
+                tracing::warn!("transfer file: the HTTPS certificate authority can't be read ({e:#}); leaving it out");
+                None
+            }
+        };
+        let meta = transfer::Meta {
+            show_name: manifest.show_name.clone(),
+            leader_id: manifest.leader_id.clone(),
+            hostname: manifest.hostname.clone(),
+            version: manifest.version.clone(),
+        };
+        let files = manifest.files.len();
+        let src = transfer::Source {
+            data_dir: &data_dir,
+            manifest,
+            show_json,
+            node_json,
+            keys_json,
+            ca,
+        };
+        let out = ChannelWriter {
+            tx: tx.clone(),
+            buf: Vec::new(),
+        };
+        let res = transfer::Encryptor::new(out, &passphrase, &meta)
+            .and_then(|enc| transfer::write_bundle(enc, &src))
+            .and_then(|enc| enc.finish())
+            .and_then(|mut w| std::io::Write::flush(&mut w));
+        match res {
+            Ok(()) => tracing::info!("controller transfer file written ({files} data files)"),
+            Err(e) => {
+                tracing::warn!("controller transfer file failed: {e}");
+                let _ = tx.blocking_send(Err(e));
+            }
+        }
+        release_free_memory();
+    });
+    let stream = futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|item| (item, rx))
+    });
+    Ok((name, axum::body::Body::from_stream(stream)))
 }
 
 /// Keep the newest [`KEEP_AUTO`] automatic snapshots.

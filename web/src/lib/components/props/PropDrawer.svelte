@@ -14,6 +14,7 @@
 	import PropPreview from '$lib/components/viz/PropPreview.svelte';
 	import WiringEditor from './WiringEditor.svelte';
 	import FaultFinder from './FaultFinder.svelte';
+	import PropPowerLive from '$lib/components/power/PropPowerLive.svelte';
 	import { Cable, Info, Zap, FlaskConical, Search, Trash2, Square, Copy } from '@lucide/svelte';
 
 	let {
@@ -401,6 +402,7 @@
 				{#if !draft.segments.length}
 					<p class="faint small">Wire this prop to a port to see how much of the receiver’s fuse it uses.</p>
 				{/if}
+				{#if draft.segments.length}<PropPowerLive prop={draft} />{/if}
 				{#each myWarnings as w (w)}
 					<div class="notice warn small">
 						<Zap size={16} />

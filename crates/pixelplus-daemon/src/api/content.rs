@@ -650,6 +650,7 @@ impl Default for MediaImport {
 
 /// Result of [`import_media_file`].
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // `replaced` / `linked_sequence_ids`: contract for WS6 (FPP Connect)
 pub struct ImportedMedia {
     pub media: Media,
     pub replaced: bool,
@@ -1640,6 +1641,117 @@ mod tests {
         )));
         assert!(!restored_media_path_ok(&m("abc", "media/other.mp3")));
         assert!(!restored_media_path_ok(&m("..", "media/...mp3")));
+    }
+
+    /// The import functions WS6 (FPP Connect) calls: files anywhere under the
+    /// data dir are consumed; same-name re-uploads replace in place.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn import_functions_replace_in_place_and_consume_their_files() {
+        let app = super::super::testkit::TestApp::new();
+        let up = app.dir.join("uploads");
+        std::fs::create_dir_all(&up).unwrap();
+        // Audio: first import, then a re-upload of the same file name.
+        let wav = up.join("song.part");
+        crate::services::media::tests::sine_wav(&wav, 1.5, 0.3);
+        let a = import_media_file(
+            &app.state,
+            wav.clone(),
+            "Jingle Bells.wav",
+            MediaImport::default(),
+        )
+        .await
+        .unwrap();
+        assert!(!wav.exists(), "consumed");
+        assert_eq!(a.media.original_name.as_deref(), Some("Jingle Bells.wav"));
+        assert!(a.media.original_size.unwrap() > 1000);
+        assert!(!a.replaced);
+        app.state
+            .store
+            .update({
+                let id = a.media.id.clone();
+                move |s| {
+                    s.media.iter_mut().find(|m| m.id == id).unwrap().tags = vec!["kids".into()];
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap();
+        crate::services::media::tests::sine_wav(&wav, 2.5, 0.3);
+        let b = import_media_file(
+            &app.state,
+            wav.clone(),
+            "Jingle Bells.wav",
+            MediaImport {
+                replace_same_name: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(b.replaced);
+        assert_eq!(b.media.id, a.media.id, "same id");
+        assert_eq!(b.media.tags, ["kids"], "tags kept");
+        assert!(
+            (2400..2600).contains(&b.media.duration_ms),
+            "{}",
+            b.media.duration_ms
+        );
+        assert_eq!(app.state.store.get().media.len(), 1);
+        // Garbage is refused and still consumed.
+        std::fs::write(&wav, b"not audio").unwrap();
+        let e = import_media_file(&app.state, wav.clone(), "x.mp3", MediaImport::default()).await;
+        assert_eq!(e.unwrap_err().status, StatusCode::BAD_REQUEST);
+        assert!(!wav.exists());
+
+        // Sequences: the song is linked from the fseq header's media name.
+        let seq_path = up.join("seq.part");
+        let write_seq = |frames: u32| {
+            let mut o = pixelplus_core::fseq::FseqWriterOptions::new(30, 50);
+            o.media_filename = Some("C:\\Show\\Jingle Bells.wav".into());
+            let mut w = pixelplus_core::fseq::FseqWriter::create(&seq_path, o).unwrap();
+            for f in 0..frames {
+                w.write_frame(&[f as u8; 30]).unwrap();
+            }
+            w.finish().unwrap();
+        };
+        write_seq(20);
+        let s1 = import_sequence_file(
+            &app.state,
+            seq_path.clone(),
+            "Jingle Bells.fseq",
+            SequenceImport::default(),
+        )
+        .await
+        .unwrap();
+        assert!(!seq_path.exists());
+        assert_eq!(s1.sequence.media_id.as_deref(), Some(a.media.id.as_str()));
+        assert_eq!(s1.sequence.duration_ms, 1000);
+        assert_eq!(s1.sequence.hash.len(), 64);
+        assert!(!s1.replaced);
+        write_seq(40);
+        let s2 = import_sequence_file(
+            &app.state,
+            seq_path.clone(),
+            "Jingle Bells.fseq",
+            SequenceImport::default(),
+        )
+        .await
+        .unwrap();
+        assert!(s2.replaced);
+        assert_eq!(s2.sequence.id, s1.sequence.id);
+        assert_eq!(s2.sequence.duration_ms, 2000);
+        assert_ne!(s2.sequence.hash, s1.sequence.hash);
+        assert_eq!(app.state.store.get().sequences.len(), 1);
+        std::fs::write(&seq_path, b"PSEQ garbage").unwrap();
+        let e = import_sequence_file(
+            &app.state,
+            seq_path.clone(),
+            "bad.fseq",
+            SequenceImport::default(),
+        )
+        .await;
+        assert_eq!(e.unwrap_err().status, StatusCode::BAD_REQUEST);
+        assert!(!seq_path.exists());
     }
 
     #[test]

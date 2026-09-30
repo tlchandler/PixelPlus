@@ -57,7 +57,13 @@ fn session_key(id: &str) -> String {
 
 /// Light the identify signals for the session's candidates, or (sequential
 /// method) the first candidate. Returns the JSON answer.
-async fn light_candidates(state: &AppState, id: &str, node_id: &str, cands: &[u32], method: &str) -> ApiResult<Value> {
+async fn light_candidates(
+    state: &AppState,
+    id: &str,
+    node_id: &str,
+    cands: &[u32],
+    method: &str,
+) -> ApiResult<Value> {
     let signals = svc::assign_signals(cands);
     let mut method = method.to_string();
     if method == "identify" {
@@ -73,13 +79,18 @@ async fn light_candidates(state: &AppState, id: &str, node_id: &str, cands: &[u3
         let req = TestRequest {
             mode: "identify".into(),
             identify: Some(lights),
+            target: TestTarget::default(),
             ..raw_test(node_id, 1, "identify", None)
         };
-        let req = TestRequest {
-            target: TestTarget::default(),
-            ..req
-        };
-        match start_test(state, &session_key(id), req, Some(LIGHT_TIMEOUT), "Jack identification").await {
+        match start_test(
+            state,
+            &session_key(id),
+            req,
+            Some(LIGHT_TIMEOUT),
+            "Jack identification",
+        )
+        .await
+        {
             Ok(()) => {}
             Err(e) if e.status == axum::http::StatusCode::SERVICE_UNAVAILABLE => {
                 method = "sequential".into();
@@ -122,7 +133,10 @@ struct IdentifyBody {
     force: bool,
 }
 
-async fn identify_jack(State(state): State<AppState>, Json(b): Json<IdentifyBody>) -> ApiResult<Json<Value>> {
+async fn identify_jack(
+    State(state): State<AppState>,
+    Json(b): Json<IdentifyBody>,
+) -> ApiResult<Json<Value>> {
     svc::expire_sessions(&state);
     let show = state.store.get();
     let node = show
@@ -157,7 +171,11 @@ async fn identify_jack(State(state): State<AppState>, Json(b): Json<IdentifyBody
     Ok(Json(v))
 }
 
-fn with_session<R>(state: &AppState, id: &str, f: impl FnOnce(&mut WizardSession) -> ApiResult<R>) -> ApiResult<R> {
+fn with_session<R>(
+    state: &AppState,
+    id: &str,
+    f: impl FnOnce(&mut WizardSession) -> ApiResult<R>,
+) -> ApiResult<R> {
     let mut map = state.services.mapping.wizards.lock();
     let s = map.get_mut(id).ok_or_else(no_session)?;
     s.last_used = Instant::now();
@@ -171,7 +189,11 @@ struct PickBody {
 }
 
 /// The user saw signal `{color, blinks}` on the new receiver.
-async fn pick(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<PickBody>) -> ApiResult<Json<Value>> {
+async fn pick(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<PickBody>,
+) -> ApiResult<Json<Value>> {
     let (node, left, method) = with_session(&state, &id, |s| {
         let left: Vec<u32> = svc::assign_signals(&s.candidates)
             .into_iter()
@@ -179,7 +201,9 @@ async fn pick(State(state): State<AppState>, Path(id): Path<String>, Json(b): Js
             .map(|(j, _, _)| j)
             .collect();
         if left.is_empty() {
-            return Err(ApiError::bad_request("None of the jacks shows that signal."));
+            return Err(ApiError::bad_request(
+                "None of the jacks shows that signal.",
+            ));
         }
         s.candidates = left.clone();
         if left.len() == 1 {
@@ -202,7 +226,11 @@ struct JackBody {
 }
 
 /// Sequential method: light port 1 of `jack` ("Is it lit now?").
-async fn probe(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<JackBody>) -> ApiResult<Json<Value>> {
+async fn probe(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<JackBody>,
+) -> ApiResult<Json<Value>> {
     let node = with_session(&state, &id, |s| {
         if !s.candidates.contains(&b.jack) {
             return Err(ApiError::bad_request("That jack isn't free."));
@@ -214,11 +242,18 @@ async fn probe(State(state): State<AppState>, Path(id): Path<String>, Json(b): J
 }
 
 /// Choose the jack directly (the user knows it, or the sequential probe lit).
-async fn set_jack(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<JackBody>) -> ApiResult<Json<Value>> {
+async fn set_jack(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<JackBody>,
+) -> ApiResult<Json<Value>> {
     let show = state.store.get();
     with_session(&state, &id, |s| {
         if !svc::free_jacks(&show, &s.node_id).contains(&b.jack) {
-            return Err(ApiError::bad_request(format!("Jack {} already has a receiver.", b.jack)));
+            return Err(ApiError::bad_request(format!(
+                "Jack {} already has a receiver.",
+                b.jack
+            )));
         }
         s.jack = Some(b.jack);
         Ok(())
@@ -242,10 +277,15 @@ async fn light_port(
     let b: LightBody = if body.is_empty() {
         LightBody::default()
     } else {
-        serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(format!("Bad request: {e}")))?
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("Bad request: {e}")))?
     };
     let (node, jack) = with_session(&state, &id, |s| {
-        Ok((s.node_id.clone(), s.jack.ok_or_else(|| ApiError::bad_request("Find the jack first."))?))
+        Ok((
+            s.node_id.clone(),
+            s.jack
+                .ok_or_else(|| ApiError::bad_request("Find the jack first."))?,
+        ))
     })?;
     if !(1..=4).contains(&port) {
         return Err(ApiError::bad_request("Ports are 1–4."));
@@ -264,7 +304,14 @@ async fn light_port(
         }
         p => return Err(ApiError::bad_request(format!("Unknown pattern \"{p}\"."))),
     };
-    start_test(&state, &session_key(&id), raw_test(&node, output, mode, color), Some(LIGHT_TIMEOUT), "Port lighting").await?;
+    start_test(
+        &state,
+        &session_key(&id),
+        raw_test(&node, output, mode, color),
+        Some(LIGHT_TIMEOUT),
+        "Port lighting",
+    )
+    .await?;
     Ok(Json(json!({ "ok": true, "output": output })))
 }
 
@@ -286,9 +333,17 @@ fn color_index(c: &str) -> Option<usize> {
     }
 }
 
-async fn color_order(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<ColorBody>) -> ApiResult<Json<Value>> {
+async fn color_order(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<ColorBody>,
+) -> ApiResult<Json<Value>> {
     let (node, jack) = with_session(&state, &id, |s| {
-        Ok((s.node_id.clone(), s.jack.ok_or_else(|| ApiError::bad_request("Find the jack first."))?))
+        Ok((
+            s.node_id.clone(),
+            s.jack
+                .ok_or_else(|| ApiError::bad_request("Find the jack first."))?,
+        ))
     })?;
     let show = state.store.get();
     let output = (jack - 1) * 4 + b.port;
@@ -302,7 +357,9 @@ async fn color_order(State(state): State<AppState>, Path(id): Path<String>, Json
     };
     let order = svc::detect_color_order(configured, r, g)
         .ok_or_else(|| ApiError::bad_request("Red and green can't look the same; try again."))?;
-    Ok(Json(json!({ "colorOrder": order, "configured": configured, "changed": order != configured })))
+    Ok(Json(
+        json!({ "colorOrder": order, "configured": configured, "changed": order != configured }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -346,10 +403,14 @@ struct FinishBody {
 fn finish_show(show: &mut Show, node_id: &str, jack: u32, b: &FinishBody) -> ApiResult<Receiver> {
     let name = b.receiver.name.trim();
     if name.is_empty() || name.chars().count() > 60 {
-        return Err(ApiError::bad_request("Give the receiver a name (up to 60 characters)."));
+        return Err(ApiError::bad_request(
+            "Give the receiver a name (up to 60 characters).",
+        ));
     }
     if !svc::free_jacks(show, node_id).contains(&jack) {
-        return Err(ApiError::bad_request(format!("Jack {jack} already has a receiver.")));
+        return Err(ApiError::bad_request(format!(
+            "Jack {jack} already has a receiver."
+        )));
     }
     let kind = b.receiver.kind;
     let rx = Receiver {
@@ -366,7 +427,10 @@ fn finish_show(show: &mut Show, node_id: &str, jack: u32, b: &FinishBody) -> Api
     let mut used = std::collections::HashSet::new();
     for p in &b.ports {
         if p.port == 0 || p.port as usize > kind.port_count() {
-            return Err(ApiError::bad_request(format!("Port {} doesn't exist.", p.port)));
+            return Err(ApiError::bad_request(format!(
+                "Port {} doesn't exist.",
+                p.port
+            )));
         }
         let output = rx.output_for_port(p.port);
         let node = show
@@ -409,16 +473,30 @@ fn finish_show(show: &mut Show, node_id: &str, jack: u32, b: &FinishBody) -> Api
     Ok(rx)
 }
 
-async fn finish(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<FinishBody>) -> ApiResult<Json<Value>> {
+async fn finish(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<FinishBody>,
+) -> ApiResult<Json<Value>> {
     let (node, jack) = with_session(&state, &id, |s| {
-        Ok((s.node_id.clone(), s.jack.ok_or_else(|| ApiError::bad_request("Find the jack first."))?))
+        Ok((
+            s.node_id.clone(),
+            s.jack
+                .ok_or_else(|| ApiError::bad_request("Find the jack first."))?,
+        ))
     })?;
     finish_show(&mut (*state.store.get()).clone(), &node, jack, &b)?;
-    let snap = crate::services::snapshots::create(&state, "Before adding a receiver", true, false).await?;
-    let (rx, show) = state.store.update(move |s| finish_show(s, &node, jack, &b)).await?;
+    let snap =
+        crate::services::snapshots::create(&state, "Before adding a receiver", true, false).await?;
+    let (rx, show) = state
+        .store
+        .update(move |s| finish_show(s, &node, jack, &b))
+        .await?;
     state.services.mapping.wizards.lock().remove(&id);
     stop_pattern(&state, Some(&session_key(&id))).await;
-    Ok(Json(json!({ "show": &*show, "receiver": rx, "snapshotId": snap.id })))
+    Ok(Json(
+        json!({ "show": &*show, "receiver": rx, "snapshotId": snap.id }),
+    ))
 }
 
 async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -457,7 +535,11 @@ mod tests {
         app.state.store.replace(show).await.unwrap();
 
         let (s, v) = app
-            .json("POST", "/wizard/receiver/identify-jack", Some(json!({"nodeId": "lead"})))
+            .json(
+                "POST",
+                "/wizard/receiver/identify-jack",
+                Some(json!({"nodeId": "lead"})),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         let id = v["sessionId"].as_str().unwrap().to_string();
@@ -469,7 +551,11 @@ mod tests {
         let c = &v["candidates"][8];
         assert_eq!(c["jack"], 10);
         let (s, v) = app
-            .json("POST", &format!("/wizard/receiver/{id}/pick"), Some(json!({"color": c["color"], "blinks": c["blinks"]})))
+            .json(
+                "POST",
+                &format!("/wizard/receiver/{id}/pick"),
+                Some(json!({"color": c["color"], "blinks": c["blinks"]})),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert_eq!(v["done"], false);
@@ -481,16 +567,30 @@ mod tests {
             .unwrap()
             .clone();
         let (_, v) = app
-            .json("POST", &format!("/wizard/receiver/{id}/pick"), Some(json!({"color": c["color"], "blinks": c["blinks"]})))
+            .json(
+                "POST",
+                &format!("/wizard/receiver/{id}/pick"),
+                Some(json!({"color": c["color"], "blinks": c["blinks"]})),
+            )
             .await;
         assert_eq!(v["done"], true);
         assert_eq!(v["jack"], 10);
 
-        let (s, v) = app.json("POST", &format!("/wizard/receiver/{id}/port/2/light"), Some(json!({"pattern": "chase"}))).await;
+        let (s, v) = app
+            .json(
+                "POST",
+                &format!("/wizard/receiver/{id}/port/2/light"),
+                Some(json!({"pattern": "chase"})),
+            )
+            .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert_eq!(v["output"], 38);
         let (_, v) = app
-            .json("POST", &format!("/wizard/receiver/{id}/color-order"), Some(json!({"port": 2, "red": "green", "green": "red"})))
+            .json(
+                "POST",
+                &format!("/wizard/receiver/{id}/color-order"),
+                Some(json!({"port": 2, "red": "green", "green": "red"})),
+            )
             .await;
         assert_eq!(v["colorOrder"], "GRB");
 
@@ -498,7 +598,9 @@ mod tests {
             "receiver": {"name": "Porch", "kind": "diffrx"},
             "ports": [{"port": 2, "propIds": ["d"], "reverse": true, "colorOrder": "GRB"}]
         });
-        let (s, v) = app.json("POST", &format!("/wizard/receiver/{id}/finish"), Some(body)).await;
+        let (s, v) = app
+            .json("POST", &format!("/wizard/receiver/{id}/finish"), Some(body))
+            .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         let show = app.state.store.get();
         let rx = show.receivers.iter().find(|r| r.name == "Porch").unwrap();
@@ -509,9 +611,13 @@ mod tests {
             show.node("lead").unwrap().outputs[37].color_order,
             pixelplus_core::model::ColorOrder::GRB
         );
-        let (s, _) = app.json("POST", &format!("/wizard/receiver/{id}/cancel"), None).await;
+        let (s, _) = app
+            .json("POST", &format!("/wizard/receiver/{id}/cancel"), None)
+            .await;
         assert_eq!(s, StatusCode::OK);
-        let (s, _) = app.json("POST", &format!("/wizard/receiver/{id}/port/1/light"), None).await;
+        let (s, _) = app
+            .json("POST", &format!("/wizard/receiver/{id}/port/1/light"), None)
+            .await;
         assert_eq!(s, StatusCode::CONFLICT);
     }
 }

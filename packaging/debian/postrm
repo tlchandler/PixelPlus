@@ -3,7 +3,8 @@ set -e
 case "$1" in
 remove | purge)
     for u in pixelplusd.service pixelplus-tts.service pixelplus-games.service \
-        pixelplus-firstboot.service pixelplus-reapply.path pixelplus-netwatch.service; do
+        pixelplus-firstboot.service pixelplus-reapply.path pixelplus-netwatch.service \
+        pixelplus-update-verify.service pixelplus-cloudflared.service; do
         if command -v deb-systemd-helper >/dev/null 2>&1; then
             deb-systemd-helper purge "$u" >/dev/null 2>&1 || true
         fi
@@ -15,7 +16,8 @@ remove | purge)
 esac
 if [ "$1" = "purge" ]; then
     # Show data is only removed on purge.
-    rm -rf /var/lib/pixelplus /var/lib/pixelplus-system /etc/pixelplus/netwatch.json
+    rm -rf /var/lib/pixelplus /var/lib/pixelplus-system /etc/pixelplus/netwatch.json \
+        /var/lib/pixelplus-helper /var/cache/pixelplus /etc/pixelplus/cloudflared.env
     rm -f /var/log/pixelplus-firstboot.log*
     if getent passwd pixelplus >/dev/null; then
         deluser --system pixelplus >/dev/null 2>&1 || true

@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
         .route("/cluster/release", post(release))
         .route("/cluster/command", post(command))
         .route("/cluster/status", get(status))
+        .route("/cluster/update/{file}", get(get_update_package))
         .route(
             "/system/join-show",
             get(join_status).post(join_open).delete(join_close),
@@ -331,6 +332,46 @@ async fn get_slice(
         .map_err(ApiError::internal)
 }
 
+/// `GET /cluster/update/:file` (F15): a signed update package the leader
+/// downloaded, for any adopted follower (signed with its own key). The
+/// follower checks size, SHA-256 and the minisign signature itself.
+async fn get_update_package(
+    State(state): State<AppState>,
+    uri: OriginalUri,
+    headers: HeaderMap,
+    Path(file): Path<String>,
+) -> ApiResult<Response> {
+    let cluster = handle(&state)?;
+    let sh = &cluster.shared;
+    let key_for = |sender: &str| sh.follower_key(&state, sender);
+    if let Err((r, hint)) = sig::check(
+        auth_header(&headers),
+        "GET",
+        &path_of(&uri),
+        b"",
+        &sh.nonces,
+        sig::now_s(),
+        key_for,
+    ) {
+        return Ok(refusal(r, hint));
+    }
+    require_leader(&state)?;
+    let path = crate::services::updates_orch::package_path(&state, &file)
+        .ok_or_else(|| ApiError::not_found("That update package"))?;
+    let f = tokio::fs::File::open(&path).await?;
+    let len = f.metadata().await?.len();
+    let stream = tokio_util::io::ReaderStream::with_capacity(f, 64 * 1024);
+    Response::builder()
+        .header(
+            header::CONTENT_TYPE,
+            "application/vnd.debian.binary-package",
+        )
+        .header(header::CONTENT_LENGTH, len)
+        .header(header::CONTENT_ENCODING, "identity")
+        .body(Body::from_stream(stream))
+        .map_err(ApiError::internal)
+}
+
 async fn adopt(
     State(state): State<AppState>,
     peer: Peer,
@@ -374,6 +415,13 @@ async fn release(
     body: Bytes,
 ) -> ApiResult<Response> {
     let cluster = handle(&state)?;
+    #[derive(Deserialize, Default)]
+    struct ReleaseBody {
+        /// F10: this controller was replaced; start over as a new one.
+        #[serde(default)]
+        retire: bool,
+    }
+    let b: ReleaseBody = serde_json::from_slice(&body).unwrap_or_default();
     // Our leader (signed) or someone signed in to this controller's own UI
     // ("Forget leader") may release it.
     if !super::auth::is_authenticated(&state, &headers, peer.0) {
@@ -388,7 +436,7 @@ async fn release(
             return Ok(*r);
         }
     }
-    follower::handle_release(&state, &cluster.shared).await?;
+    follower::handle_release(&state, &cluster.shared, b.retire).await?;
     Ok(Json(json!({ "ok": true })).into_response())
 }
 

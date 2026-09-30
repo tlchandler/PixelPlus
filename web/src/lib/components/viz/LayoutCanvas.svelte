@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { Prop } from '$lib/api/types';
 	import { propPoints, worldBounds } from '$lib/util/geometry';
-	import { drawPixels, onPreview } from '$lib/preview';
+	import { drawPixels } from '$lib/preview';
+	import { liveSource, type FrameSource, type PropSlot } from '$lib/preview/source';
 
 	let {
 		props,
@@ -11,7 +12,8 @@
 		selected = $bindable<string | null>(null),
 		highlight = [],
 		onmove,
-		height = '100%'
+		height = '100%',
+		source = liveSource
 	}: {
 		props: Prop[];
 		edit?: boolean;
@@ -22,13 +24,29 @@
 		highlight?: string[];
 		onmove?: (id: string, layout: { x: number; y: number }) => void;
 		height?: string;
+		/** Where frames come from: the real lights (default) or a local sequence preview (F3). */
+		source?: FrameSource;
 	} = $props();
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 	let view = { x: 0, y: 0, s: 1 };
 	let fitted = false;
 	let lastRgb: Uint8Array | null = null;
-	let lastOffsets = new Map<string, number>();
+	let lastSlots = new Map<string, PropSlot>();
+	/** Point subsets for subsampled props (preview files keep ≤ 300 pixels a prop). */
+	const subsets = new Map<string, { idx: Uint32Array; base: Float32Array; pts: Float32Array }>();
+
+	function subsetPoints(id: string, base: Float32Array, idx: Uint32Array): Float32Array {
+		const c = subsets.get(id);
+		if (c && c.idx === idx && c.base === base) return c.pts;
+		const pts = new Float32Array(idx.length * 2);
+		for (let k = 0; k < idx.length; k++) {
+			pts[k * 2] = base[idx[k] * 2] ?? 0;
+			pts[k * 2 + 1] = base[idx[k] * 2 + 1] ?? 0;
+		}
+		subsets.set(id, { idx, base, pts });
+		return pts;
+	}
 	let hover: string | null = $state(null);
 	const moved = new Map<string, { x: number; y: number }>();
 
@@ -62,13 +80,13 @@
 	}
 
 	function redraw() {
-		if (lastRgb) draw(lastRgb, lastOffsets);
+		if (lastRgb) draw(lastRgb, lastSlots);
 		else draw(new Uint8Array(0), new Map());
 	}
 
-	function draw(rgb: Uint8Array, offsets: Map<string, number>) {
+	function draw(rgb: Uint8Array, slots: Map<string, PropSlot>) {
 		lastRgb = rgb;
-		lastOffsets = offsets;
+		lastSlots = slots;
 		const c = canvas;
 		if (!c) return;
 		const ctx = c.getContext('2d')!;
@@ -108,7 +126,7 @@
 			const l = layoutOf(p);
 			const box = { x: view.x + l.x * view.s, y: view.y + l.y * view.s, w: l.w * view.s, h: l.h * view.s };
 			if (box.x > cw || box.y > ch || box.x + box.w < 0 || box.y + box.h < 0) continue;
-			const off = offsets.get(p.id);
+			const slot = slots.get(p.id);
 			const pts = propPoints(p);
 			const rot = l.rotation ? (l.rotation * Math.PI) / 180 : 0;
 			if (rot) {
@@ -117,10 +135,14 @@
 				ctx.rotate(rot);
 				ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2));
 			}
-			const dot = p.matrix ? Math.max(1, (box.w / p.matrix.width) * 0.8) : dotBase;
-			if (off != null && rgb.length >= off + p.pixelCount * 3)
-				drawPixels(ctx, pts, rgb, off, p.pixelCount, box, dot, !p.matrix);
-			else {
+			let dot = p.matrix ? Math.max(1, (box.w / p.matrix.width) * 0.8) : dotBase;
+			const n = slot ? (slot.idx ? Math.min(slot.n, slot.idx.length) : Math.min(slot.n, p.pixelCount)) : 0;
+			if (slot && n > 0 && rgb.length >= slot.off + n * 3) {
+				// A subsample draws bigger dots so the prop still reads as a whole.
+				if (slot.idx && p.matrix) dot *= Math.max(1, Math.sqrt(p.pixelCount / n));
+				const at = slot.idx ? subsetPoints(p.id, pts, slot.idx) : pts;
+				drawPixels(ctx, at, rgb, slot.off, n, box, dot, !p.matrix);
+			} else {
 				ctx.fillStyle = 'rgba(255,255,255,0.12)';
 				for (let i = 0; i < p.pixelCount; i += p.pixelCount > 1000 ? 3 : 1)
 					ctx.fillRect(box.x + pts[i * 2] * box.w - 1, box.y + pts[i * 2 + 1] * box.h - 1, 2, 2);
@@ -173,11 +195,16 @@
 			else redraw();
 		});
 		ro.observe(canvas);
-		const unsub = onPreview(draw, 20);
-		return () => {
-			ro.disconnect();
-			unsub();
-		};
+		return () => ro.disconnect();
+	});
+
+	$effect(() => {
+		// (Re)subscribe when the frame source changes: live lights or a local preview.
+		const src = source;
+		lastRgb = null;
+		lastSlots = new Map();
+		redraw();
+		return src.subscribe(draw);
 	});
 
 	// ---------------------------------------------------------------- interaction
@@ -307,9 +334,9 @@
 		}
 	}}
 	onwheel={wheel}
-	aria-label="Live display preview. Drag to pan, scroll or pinch to zoom{edit
-		? ', drag a prop to move it'
-		: ''}."
+	aria-label="{source.kind === 'preview'
+		? 'Sequence preview (your lights are not affected)'
+		: 'Live display preview'}. Drag to pan, scroll or pinch to zoom{edit ? ', drag a prop to move it' : ''}."
 ></canvas>
 
 <style>

@@ -220,8 +220,7 @@ pub fn validate(p: &ShowProfile) -> ApiResult<()> {
             ));
         }
     }
-    if p
-        .power
+    if p.power
         .as_ref()
         .and_then(|pw| pw.max_brightness)
         .is_some_and(|b| b == 0 || b > 100)
@@ -381,11 +380,7 @@ pub fn diff(show: &Show, target: &ShowProfile) -> Vec<String> {
     if live.enabled != new.enabled {
         lines.push(format!(
             "Schedule: {}",
-            if new.enabled {
-                "turns on"
-            } else {
-                "turns off"
-            }
+            if new.enabled { "turns on" } else { "turns off" }
         ));
     }
     if live.idle_effect_id != new.idle_effect_id {
@@ -502,7 +497,11 @@ pub fn diff(show: &Show, target: &ShowProfile) -> Vec<String> {
 
 /// Short label, e.g. "🎄 Christmas".
 pub fn label(p: &ShowProfile) -> String {
-    match p.icon.as_deref().filter(|i| !i.is_empty() && i.chars().count() <= 4) {
+    match p
+        .icon
+        .as_deref()
+        .filter(|i| !i.is_empty() && i.chars().count() <= 4)
+    {
         Some(icon) => format!("{icon} {}", p.name),
         None => p.name.clone(),
     }
@@ -655,7 +654,10 @@ async fn auto_check(state: &AppState) {
             .find(|p| p.id == id)
             .map(|p| p.name.clone())
             .unwrap_or_default();
-        tracing::warn!("Automatic season switch to \"{name}\" failed: {}", e.message);
+        tracing::warn!(
+            "Automatic season switch to \"{name}\" failed: {}",
+            e.message
+        );
         state.services.journal.record(super::journal::Event::Warn {
             code: "profileSwitch".into(),
             msg: e.message.clone(),
@@ -699,6 +701,9 @@ fn due(st: &ProfilesState, now: DateTime<Tz>, show: &Show) -> bool {
 
 /// Start the service (called once from `services::start_all`).
 pub fn start(state: &AppState) {
+    // The xLights watch folder (F16, also WS6) has no service slot of its
+    // own; starting it here keeps the shared `services/mod.rs` untouched.
+    crate::api::fppcompat::start(state);
     let state = state.clone();
     tokio::spawn(async move {
         // Let the scheduler and cluster settle after boot.
@@ -1000,8 +1005,14 @@ mod tests {
         let hw = s.profiles[1].clone();
         let lines = diff(&s, &hw);
         let all = lines.join("\n");
-        assert!(all.contains("Schedule: 2 show times → 1 show time"), "{all}");
-        assert!(all.contains("Idle look: Candy Stripes → Spooky Fog"), "{all}");
+        assert!(
+            all.contains("Schedule: 2 show times → 1 show time"),
+            "{all}"
+        );
+        assert!(
+            all.contains("Idle look: Candy Stripes → Spooky Fog"),
+            "{all}"
+        );
         assert!(
             all.contains("Song requests: Christmas Mix → Halloween Mix"),
             "{all}"
@@ -1040,8 +1051,14 @@ mod tests {
     fn next_switch_date() {
         let s = two_seasons();
         let n = next_switch(&s, NaiveDate::from_ymd_opt(2026, 9, 30).unwrap()).unwrap();
-        assert_eq!((n.profile_id.as_str(), n.date.as_str()), ("hw", "2026-10-01"));
+        assert_eq!(
+            (n.profile_id.as_str(), n.date.as_str()),
+            ("hw", "2026-10-01")
+        );
         let n = next_switch(&s, NaiveDate::from_ymd_opt(2026, 10, 20).unwrap()).unwrap();
-        assert_eq!((n.profile_id.as_str(), n.date.as_str()), ("xmas", "2026-11-01"));
+        assert_eq!(
+            (n.profile_id.as_str(), n.date.as_str()),
+            ("xmas", "2026-11-01")
+        );
     }
 }

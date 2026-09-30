@@ -32,6 +32,9 @@ struct StartBody {
     method: String,
     #[serde(default)]
     force: bool,
+    /// Camera: bit length for the phone's frame rate.
+    #[serde(default)]
+    bit_ms: Option<u32>,
 }
 
 fn manual() -> String {
@@ -130,6 +133,7 @@ async fn start(State(state): State<AppState>, Json(b): Json<StartBody>) -> ApiRe
             let outs = vec![(b.node_id.clone(), b.output)];
             let opts = PlanOptions {
                 probe_extra: true,
+                bit_ms: b.bit_ms,
                 ..Default::default()
             };
             let (plan, targets) = svc::build_plan(&show, &outs, &opts, mapcode::PHASE_B, |_| limit)
@@ -203,7 +207,11 @@ struct AnswerBody {
     seen: bool,
 }
 
-async fn answer_or_undo(state: &AppState, id: &str, answer: Option<bool>) -> ApiResult<Json<Value>> {
+async fn answer_or_undo(
+    state: &AppState,
+    id: &str,
+    answer: Option<bool>,
+) -> ApiResult<Json<Value>> {
     let (v, relight) = {
         let mut map = state.services.mapping.counts.lock();
         let s = map.get_mut(id).ok_or_else(no_session)?;
@@ -216,13 +224,16 @@ async fn answer_or_undo(state: &AppState, id: &str, answer: Option<bool>) -> Api
             }
         }
         let relight = before != s.search;
-        (step_json(id, s), relight.then(|| CountSession {
-            node_id: s.node_id.clone(),
-            output: s.output,
-            configured: s.configured,
-            search: s.search.clone(),
-            last_used: s.last_used,
-        }))
+        (
+            step_json(id, s),
+            relight.then(|| CountSession {
+                node_id: s.node_id.clone(),
+                output: s.output,
+                configured: s.configured,
+                search: s.search.clone(),
+                last_used: s.last_used,
+            }),
+        )
     };
     if let Some(s) = relight {
         light_probe(state, id, &s).await?;
@@ -341,7 +352,8 @@ async fn apply(
         method,
         b.update_prop_count,
     )?;
-    let snap = crate::services::snapshots::create(&state, "Before pixel count fix", true, false).await?;
+    let snap =
+        crate::services::snapshots::create(&state, "Before pixel count fix", true, false).await?;
     let upd = b.update_prop_count;
     let (message, show) = state
         .store
@@ -349,7 +361,9 @@ async fn apply(
         .await?;
     state.services.mapping.counts.lock().remove(&id);
     stop_pattern(&state, Some(&id)).await;
-    Ok(Json(json!({ "show": &*show, "snapshotId": snap.id, "message": message })))
+    Ok(Json(
+        json!({ "show": &*show, "snapshotId": snap.id, "message": message }),
+    ))
 }
 
 pub fn routes() -> Router<AppState> {
@@ -379,7 +393,11 @@ mod tests {
     async fn manual_search_finds_count_and_applies() {
         let app = app().await;
         let (s, mut v) = app
-            .json("POST", "/pixelcount/start", Some(json!({"nodeId": "lead", "output": 2, "method": "manual"})))
+            .json(
+                "POST",
+                "/pixelcount/start",
+                Some(json!({"nodeId": "lead", "output": 2, "method": "manual"})),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert_eq!(v["configured"], 100);
@@ -389,7 +407,11 @@ mod tests {
         let mut steps = 0;
         while let Some(k) = v["step"]["litUntil"].as_u64() {
             let (s, nv) = app
-                .json("POST", &format!("/pixelcount/{id}/answer"), Some(json!({"seen": k < real})))
+                .json(
+                    "POST",
+                    &format!("/pixelcount/{id}/answer"),
+                    Some(json!({"seen": k < real})),
+                )
                 .await;
             assert_eq!(s, StatusCode::OK, "{nv}");
             v = nv;
@@ -397,13 +419,23 @@ mod tests {
             assert!(steps <= 12);
         }
         assert_eq!(v["count"], real);
-        assert!(app.commands_matching("countProbe: Some(").await >= 2);
+        assert!(app.commands_matching("count_probe: Some(").await >= 2);
         let (s, v) = app
-            .json("POST", &format!("/pixelcount/{id}/apply"), Some(json!({"updatePropCount": true})))
+            .json(
+                "POST",
+                &format!("/pixelcount/{id}/apply"),
+                Some(json!({"updatePropCount": true})),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert_eq!(app.state.store.get().prop("c").unwrap().pixel_count, 97);
-        let (s, _) = app.json("POST", &format!("/pixelcount/{id}/answer"), Some(json!({"seen": true}))).await;
+        let (s, _) = app
+            .json(
+                "POST",
+                &format!("/pixelcount/{id}/answer"),
+                Some(json!({"seen": true})),
+            )
+            .await;
         assert_eq!(s, StatusCode::CONFLICT);
     }
 
@@ -411,7 +443,11 @@ mod tests {
     async fn camera_and_current_methods() {
         let app = app().await;
         let (s, v) = app
-            .json("POST", "/pixelcount/start", Some(json!({"nodeId": "lead", "output": 1, "method": "camera"})))
+            .json(
+                "POST",
+                "/pixelcount/start",
+                Some(json!({"nodeId": "lead", "output": 1, "method": "camera"})),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert_eq!(v["plan"]["phases"], 2);
@@ -419,22 +455,42 @@ mod tests {
         assert_eq!(v["codebook"].as_array().unwrap().len(), 0);
         let id = v["runId"].as_str().unwrap().to_string();
         let (s, v) = app
-            .json("POST", &format!("/pixelcount/{id}/result"), Some(json!({"count": 80, "dead": [3]})))
+            .json(
+                "POST",
+                &format!("/pixelcount/{id}/result"),
+                Some(json!({"count": 80, "dead": [3]})),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         assert_eq!(v["configured"], 80);
-        let (s, v) = app.json("POST", &format!("/pixelcount/{id}/apply"), Some(json!({}))).await;
+        let (s, v) = app
+            .json("POST", &format!("/pixelcount/{id}/apply"), Some(json!({})))
+            .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         let show = app.state.store.get();
-        let m = show.node("lead").unwrap().outputs[0].measured_pixels.clone().unwrap();
-        assert_eq!((m.count, m.method.as_str(), m.dead.clone()), (80, "camera", vec![3]));
+        let m = show.node("lead").unwrap().outputs[0]
+            .measured_pixels
+            .clone()
+            .unwrap();
+        assert_eq!(
+            (m.count, m.method.as_str(), m.dead.clone()),
+            (80, "camera", vec![3])
+        );
         assert_eq!(show.prop("a").unwrap().suspect_pixels, vec![3]);
         let (s, _) = app
-            .json("POST", "/pixelcount/start", Some(json!({"nodeId": "lead", "output": 1, "method": "current"})))
+            .json(
+                "POST",
+                "/pixelcount/start",
+                Some(json!({"nodeId": "lead", "output": 1, "method": "current"})),
+            )
             .await;
         assert_eq!(s, StatusCode::BAD_REQUEST);
         let (s, _) = app
-            .json("POST", "/pixelcount/start", Some(json!({"nodeId": "lead", "output": 99})))
+            .json(
+                "POST",
+                "/pixelcount/start",
+                Some(json!({"nodeId": "lead", "output": 99})),
+            )
             .await;
         assert_eq!(s, StatusCode::BAD_REQUEST);
     }

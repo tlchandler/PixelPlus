@@ -1,0 +1,105 @@
+{
+  "_comment": "PixelPlus sensor-node protocol test vectors (docs/ARCHITECTURE.md §7.5, §12.16). Shared by the Rust leader (crates/pixelplus-daemon/src/services/sensornodes.rs tests) and the ESP32 firmware (test/test_protocol). Generated independently in Python (hmac, hashlib, pure-Python RFC 7748 X25519).",
+  "x25519": {
+    "rfc": "RFC 7748 section 6.1",
+    "leaderPrivate": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+    "leaderPublic": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+    "sensorPrivate": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+    "sensorPublic": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+    "shared": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+  },
+  "keyDerivation": {
+    "leaderId": "nmain00001",
+    "sensorId": "sn9c1e2a00",
+    "leaderPublic": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+    "sensorPublic": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+    "shared": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+    "info": "pixelplus-sensor-key-v1\nnmain00001\nsn9c1e2a00\n8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a\nde9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+    "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d"
+  },
+  "adoptProof": {
+    "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+    "leaderId": "nmain00001",
+    "sensorId": "sn9c1e2a00",
+    "proof": "5fa8e51f064534ec73deae109a254f4f513dd94f3de9718740065f354dc196cd"
+  },
+  "datagrams": [
+    {
+      "name": "sevent",
+      "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+      "json": "{\"t\":\"sevent\",\"id\":\"sn9c1e2a00\",\"input\":\"pir1\",\"state\":1,\"ms\":123456,\"lb\":\"b7d1c0de\"}",
+      "boot": "e5f00d01",
+      "seq": 7,
+      "packet": "{\"t\":\"sevent\",\"id\":\"sn9c1e2a00\",\"input\":\"pir1\",\"state\":1,\"ms\":123456,\"lb\":\"b7d1c0de\",\"bt\":\"e5f00d01\",\"sq\":7,\"mac\":\"5aa059a765c4da0fe2e7881dde01ff6129b4e99d7069ee4f81d6830496d1853b\"}"
+    },
+    {
+      "name": "sstatus",
+      "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+      "json": "{\"t\":\"sstatus\",\"id\":\"sn9c1e2a00\",\"rssi\":-61,\"uptime\":86400,\"ver\":\"0.1.0\",\"cfg\":\"\",\"inputs\":{\"btn1\":1,\"pir1\":0},\"amps\":{\"ina1\":3.21},\"volts\":{\"ina1\":12.05}}",
+      "boot": "e5f00d01",
+      "seq": 8,
+      "packet": "{\"t\":\"sstatus\",\"id\":\"sn9c1e2a00\",\"rssi\":-61,\"uptime\":86400,\"ver\":\"0.1.0\",\"cfg\":\"\",\"inputs\":{\"btn1\":1,\"pir1\":0},\"amps\":{\"ina1\":3.21},\"volts\":{\"ina1\":12.05},\"bt\":\"e5f00d01\",\"sq\":8,\"mac\":\"e2e913c414418b067c891bfeab80cafac028423987443ddbdc6265c4ba4fd3e7\"}"
+    },
+    {
+      "name": "sack",
+      "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+      "json": "{\"t\":\"sack\",\"id\":\"sn9c1e2a00\",\"ack\":7,\"sb\":\"e5f00d01\",\"ok\":true,\"lb\":\"b7d1c0de\",\"now\":1796083200,\"cfg\":\"3f2a9c1d\"}",
+      "boot": "b7d1c0de",
+      "seq": 42,
+      "packet": "{\"t\":\"sack\",\"id\":\"sn9c1e2a00\",\"ack\":7,\"sb\":\"e5f00d01\",\"ok\":true,\"lb\":\"b7d1c0de\",\"now\":1796083200,\"cfg\":\"3f2a9c1d\",\"bt\":\"b7d1c0de\",\"sq\":42,\"mac\":\"02a93f19b9537f3ace7a21d89d5fcbdc00a5a0fee0df3b2c43ac37b3e16f3eeb\"}"
+    },
+    {
+      "name": "scmd",
+      "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+      "json": "{\"t\":\"scmd\",\"id\":\"sn9c1e2a00\",\"cmd\":\"identify\"}",
+      "boot": "b7d1c0de",
+      "seq": 43,
+      "packet": "{\"t\":\"scmd\",\"id\":\"sn9c1e2a00\",\"cmd\":\"identify\",\"bt\":\"b7d1c0de\",\"sq\":43,\"mac\":\"fad3e9b207cd852d438d5b55b4ed36cc4e26e1df7732319c7b29d1eebfc3b50a\"}"
+    }
+  ],
+  "requests": [
+    {
+      "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+      "sender": "sn9c1e2a00",
+      "method": "GET",
+      "path": "/api/v1/cluster/sensor-config/sn9c1e2a00",
+      "ts": 1796083200,
+      "nonce": "0123456789abcdef0123456789abcdef",
+      "body": "",
+      "header": "v1 sn9c1e2a00 1796083200 0123456789abcdef0123456789abcdef 88472a55d8d378d34cd78aebcfe00960396a5f855f8a32b0420a7cc7a805448d"
+    },
+    {
+      "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+      "sender": "nmain00001",
+      "method": "POST",
+      "path": "/release",
+      "ts": 1796083260,
+      "nonce": "fedcba9876543210fedcba9876543210",
+      "body": "{\"leaderId\":\"nmain00001\"}",
+      "header": "v1 nmain00001 1796083260 fedcba9876543210fedcba9876543210 eee2a9b26b1ae0dce43d2f0d4a5cee2e4c9bc8a24a1ff668da53dd3571117d1c"
+    }
+  ],
+  "reply": {
+    "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+    "nonce": "0123456789abcdef0123456789abcdef",
+    "body": "{\"version\":\"3f2a9c1d\",\"inputs\":[{\"id\":\"pir1\",\"pin\":4,\"kind\":\"motion\",\"activeLow\":false,\"debounceMs\":30,\"holdMs\":0}],\"statusEverySec\":10}",
+    "what": "c99bc15fa84b31c271d11312c85ca23635193b0ad161aa06f9d494fb175bac1b",
+    "mac": "837b3a8d348aa3ef3226d2c7108cf60ccfb2eaed60ab7defd2a5c0b1c0b4652e"
+  },
+  "timeProof": {
+    "key": "7b8101026207edce5fd1255f3fa781b80b6c560cc0908416d605f3f47e81b32d",
+    "now": 1796083200,
+    "nonce": "0123456789abcdef0123456789abcdef",
+    "header": "1796083200 fb0b9d4301981eb61af7146b0072deeb69b9ddc622f29c0cfaf5f7b6ebd95f0a"
+  },
+  "sensorIds": [
+    {
+      "mac": "24:6F:28:9C:1E:2A",
+      "id": "sn289c1e2a"
+    },
+    {
+      "mac": "a0:b7:65:00:00:01",
+      "id": "sn65000001"
+    }
+  ]
+}

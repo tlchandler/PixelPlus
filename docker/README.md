@@ -26,7 +26,20 @@ docker compose -f docker/docker-compose.yml --profile games up -d  # + games sid
   `GET /api/v1/public/health` (no sign-in needed; answers `{"ok": true, "version": ..., "role": ...}`),
   which monitoring tools can use too.
 * Settings that belong to the host (Wi-Fi, hostname, time zone, reboot, updates, SSH) are
-  greyed out in the web UI: change them on the host / by pulling a new image.
+  greyed out in the web UI: change them on the host / by pulling a new image
+  (`docker compose pull && docker compose up -d`; signed over-the-air updates are for the
+  Pi images and packages).
+* **Remote access** (song requests from the street, games, managing the show while away):
+  the daemon serves a **public-only port** on `127.0.0.1:8081` (`PIXELPLUS_PUBLIC_PORT`;
+  host networking makes it the host's loopback) with just the request page, its API and
+  the games controller. Point a tunnel there, never at port 80:
+  * Cloudflare Tunnel: create a tunnel in the Zero Trust dashboard, add a public hostname
+    → `http://localhost:8081`, then `TUNNEL_TOKEN=… docker compose --profile tunnel up -d`.
+  * Tailscale: install it on the host, then `tailscale funnel --bg --https=8443 http://127.0.0.1:8081`
+    (public page) and, for managing the show from your own devices, `tailscale serve --bg
+    --https=443 http://127.0.0.1:80` (tailnet only; set a PixelPlus password first).
+  * Add the tunnel's host name under Settings → Security → Other names only if it serves the
+    admin pages. PixelPlus refuses admin calls through a local proxy while no password is set.
 * Build locally: `docker build -f docker/Dockerfile -t pixelplus .`
   (`--build-arg VARIANT=slim` leaves out TTS and games).
 

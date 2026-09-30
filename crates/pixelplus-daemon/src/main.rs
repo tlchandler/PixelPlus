@@ -4,6 +4,7 @@ mod api;
 mod cluster;
 mod config;
 mod events;
+mod listeners;
 mod node;
 mod player;
 mod services;
@@ -68,12 +69,31 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding HTTP port {addr}"))?;
     tracing::info!("Web interface on http://{addr}");
-    axum::serve(
+
+    // Extra listeners (listeners.rs): HTTPS for phones (F1) and the
+    // public-only listener for tunnels (F14). They bind lazily and retry,
+    // so a busy or privileged port never stops the daemon.
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let https = tokio::spawn(listeners::serve_https(
+        state.clone(),
+        app.clone(),
+        stop_rx.clone(),
+    ));
+    let public = tokio::spawn(listeners::serve_public(state.clone(), stop_rx));
+
+    let served = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    .await;
+    let _ = stop_tx.send(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let _ = https.await;
+        let _ = public.await;
+    })
+    .await;
+    served?;
     tracing::info!("PixelPlus stopped");
     Ok(())
 }

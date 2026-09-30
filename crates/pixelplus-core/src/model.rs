@@ -1689,6 +1689,10 @@ pub struct SensorInput {
     pub debounce_ms: u32,
     #[serde(default)]
     pub hold_ms: u32,
+    /// `kind: current` (INA219/INA226 on the node's I²C bus, `pin` = its
+    /// 7-bit address): shunt resistance in milliohms (WS6 addition).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shunt_milliohms: Option<f32>,
 }
 
 fn default_debounce() -> u32 {

@@ -6,6 +6,7 @@
 //   PIXELPLUS_E2E_URL=http://127.0.0.1:18080 pnpm vitest run src/lib/api/contract.test.ts
 import { describe, expect, it } from 'vitest';
 import { MockServer } from '$lib/mock/server';
+import { ENDPOINTS as FEATURE_ENDPOINTS } from './contract-endpoints';
 
 const BASE = process.env.PIXELPLUS_E2E_URL?.replace(/\/$/, '');
 
@@ -244,7 +245,7 @@ describe.skipIf(!BASE)('daemon JSON matches the UI contract', () => {
 		return r.json();
 	};
 
-	for (const p of ENDPOINTS) {
+	for (const p of [...ENDPOINTS, ...FEATURE_ENDPOINTS]) {
 		it(`GET ${p}`, async () => {
 			const [m, r] = await Promise.all([fromMock(p), fromDaemon(p)]);
 			const path = p.split('?')[0];

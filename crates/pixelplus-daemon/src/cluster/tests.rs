@@ -1128,3 +1128,352 @@ async fn adoption_rules_skew_and_replay() {
         let _ = std::fs::remove_dir_all(&n.dir);
     }
 }
+
+/// F10: a dead follower is replaced in one step (the new hardware takes over
+/// its id, wiring and slices; the old key is revoked; the old hardware shows
+/// up as retired and can be released), then the dead *leader* is replaced
+/// from its transfer file and the follower moves over by itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn replacing_a_dead_follower_and_a_dead_leader() {
+    let (lp, p1, pr, lp2) = (
+        free_udp_pair(),
+        free_udp_pair(),
+        free_udp_pair(),
+        free_udp_pair(),
+    );
+    let leader = spawn_node(LocalRole::Leader, lp, vec![p1, pr]).await;
+    let f1 = spawn_node(LocalRole::Unconfigured, p1, vec![lp]).await;
+    let repl = spawn_node(LocalRole::Unconfigured, pr, vec![lp, lp2]).await;
+    let (f1_id, r_id, leader_id) = (f1.id(), repl.id(), leader.id());
+    let http = test_client();
+
+    // A show with a prop on the follower and a sequence.
+    let fseq = leader.dir.join("sequences/s1.fseq");
+    write_fseq(&fseq, 150, 40);
+    let hash = pixelplus_core::fseq::sha256_file(&fseq).unwrap();
+    eventually("f1 discovered", Duration::from_secs(5), || {
+        leader
+            .cluster
+            .discovered()
+            .iter()
+            .any(|n| n.id == f1_id)
+            .then_some(())
+    })
+    .await;
+    let r = http
+        .post(leader.url("/nodes/adopt"))
+        .json(&serde_json::json!({ "id": f1_id, "name": "Garage" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let old_key = f1.state.identity().cluster_key.unwrap();
+    let f1_id2 = f1_id.clone();
+    leader
+        .state
+        .store
+        .update(move |s| {
+            s.sequences.push(Sequence {
+                generated: Default::default(),
+                tags: Default::default(),
+                id: "s1".into(),
+                name: "Wizards".into(),
+                file: "sequences/s1.fseq".into(),
+                duration_ms: 1000,
+                frame_ms: 25,
+                channel_count: 150,
+                media_id: None,
+                xlights_name: None,
+                thumbnail: None,
+                hash,
+            });
+            s.props = vec![prop("b", 20, 30, vec![seg(&f1_id2, 2, 0, 20, 0)])];
+            Ok(())
+        })
+        .await
+        .unwrap();
+    eventually("f1 synced", Duration::from_secs(8), || {
+        let s = f1.state.store.get();
+        (s.props.len() == 1 && f1.dir.join("sequences/s1.ppseq").exists()).then_some(())
+    })
+    .await;
+    let props_before = leader.state.store.get().props.clone();
+
+    // A fresh controller can't take over an id unasked (it's not our leader's call).
+    // (TOFU applies, so this is only refused once it is set up; see below.)
+
+    // The follower dies.
+    f1.cluster.shutdown();
+    eventually("f1 offline", Duration::from_secs(8), || {
+        leader
+            .cluster
+            .nodes_status()
+            .iter()
+            .any(|s| s.id == f1_id && !s.online)
+            .then_some(())
+    })
+    .await;
+    eventually("replacement discovered", Duration::from_secs(5), || {
+        leader
+            .cluster
+            .discovered()
+            .iter()
+            .any(|n| n.id == r_id)
+            .then_some(())
+    })
+    .await;
+    // Not the leader itself, not an unknown candidate.
+    let r = http
+        .post(leader.url(&format!("/nodes/{leader_id}/replace")))
+        .json(&serde_json::json!({ "candidateId": r_id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    let r = http
+        .post(leader.url(&format!("/nodes/{f1_id}/replace")))
+        .json(&serde_json::json!({ "candidateId": "nobody1234" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+
+    // Replace with…
+    let r = http
+        .post(leader.url(&format!("/nodes/{f1_id}/replace")))
+        .json(&serde_json::json!({ "candidateId": r_id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let node: Node = r.json().await.unwrap();
+    assert_eq!(
+        (node.id.as_str(), node.name.as_str()),
+        (f1_id.as_str(), "Garage")
+    );
+    assert_eq!(node.hardware_history.len(), 1);
+    assert_eq!(node.hardware_history[0].reason, "replaced");
+    // The new hardware *is* the old controller now.
+    let ri = repl.state.identity();
+    assert_eq!(ri.id, f1_id);
+    assert_eq!(ri.role, LocalRole::Follower);
+    assert_eq!(ri.leader_id.as_deref(), Some(leader_id.as_str()));
+    let new_key = ri.cluster_key.unwrap();
+    assert_ne!(new_key, old_key);
+    assert_eq!(
+        leader.cluster.shared.keys.lock().followers.get(&f1_id),
+        Some(&new_key)
+    );
+    // Wiring untouched, and the replacement syncs the same props and slice.
+    assert_eq!(leader.state.store.get().props, props_before);
+    eventually("replacement synced", Duration::from_secs(10), || {
+        let s = repl.state.store.get();
+        let st = leader.cluster.nodes_status();
+        (s.props.len() == 1
+            && repl.dir.join("sequences/s1.ppseq").exists()
+            && st
+                .iter()
+                .any(|s| s.id == f1_id && s.online && s.sync_state == SyncState::Synced))
+        .then_some(())
+    })
+    .await;
+    // The old key is revoked: the old hardware can't fetch anything.
+    let url = leader.url(&format!("/cluster/manifest/{f1_id}"));
+    let r = http
+        .get(&url)
+        .header(sig::AUTH_HEADER, signed(&old_key, &f1_id, "GET", &url, b""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+    let r = http
+        .get(&url)
+        .header(sig::AUTH_HEADER, signed(&new_key, &f1_id, "GET", &url, b""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    // Once set up, the replacement refuses to take over yet another id.
+    let r = http
+        .post(repl.url("/cluster/adopt"))
+        .json(&serde_json::json!({
+            "leaderId": "stranger01", "leaderUrl": "http://127.0.0.1:9",
+            "dh": sig::dh_offer().unwrap().public_hex, "assumeId": "victim1234"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 409);
+    assert_eq!(repl.state.identity().id, f1_id);
+
+    // The old hardware comes back (unauthenticated beacon from another
+    // address, still claiming our leader): it is listed as retired, not as
+    // the replacement.
+    let old_beacon = {
+        let mut b = discovery::build_beacon(&f1.state, &f1.cluster.shared, vec![]);
+        b.http = f1.http;
+        b
+    };
+    let sock = tokio::net::UdpSocket::bind("127.0.0.2:0").await.unwrap();
+    let bytes = proto::encode(&proto::Msg::Beacon(old_beacon.clone()), None);
+    let retired = eventually_async("retired listed", Duration::from_secs(5), || {
+        let (sock, bytes, leader) = (&sock, &bytes, &leader);
+        let f1_id = f1_id.clone();
+        async move {
+            sock.send_to(bytes, ("127.0.0.1", lp)).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            leader
+                .cluster
+                .discovered()
+                .into_iter()
+                .find(|n| n.id == f1_id && n.retired.is_some())
+        }
+    })
+    .await;
+    assert_eq!(retired.retired.unwrap().name, "Garage");
+    assert!(
+        leader
+            .cluster
+            .nodes_status()
+            .iter()
+            .any(|s| s.id == f1_id && s.online),
+        "the replacement stays the member"
+    );
+    // "Release it": the old hardware forgets us and starts over.
+    leader
+        .cluster
+        .shared
+        .retired
+        .lock()
+        .get_mut(&f1_id)
+        .unwrap()
+        .addr = SocketAddr::from(([127, 0, 0, 1], p1));
+    let r = http
+        .post(leader.url(&format!("/nodes/{f1_id}/release-retired")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let fi = f1.state.identity();
+    assert_eq!(fi.role, LocalRole::Unconfigured);
+    assert_ne!(fi.id, f1_id);
+    assert!(fi.cluster_key.is_none());
+
+    // ---- The leader dies; a new Pi restores it from the transfer file. ----
+    let r = http
+        .post(leader.url("/system/transfer/export"))
+        .json(&serde_json::json!({ "passphrase": "short" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400, "passphrases have at least 10 characters");
+    let r: serde_json::Value = http
+        .post(leader.url("/system/transfer/export"))
+        .json(&serde_json::json!({ "passphrase": "mistletoe-and-wine" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let dl = format!(
+        "http://127.0.0.1:{}{}",
+        leader.http,
+        r["url"].as_str().unwrap()
+    );
+    let resp = http.get(&dl).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.headers()[reqwest::header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .ends_with(".ppxfer\""));
+    let file = resp.bytes().await.unwrap().to_vec();
+    assert!(file.starts_with(crate::services::snapshots::transfer::MAGIC));
+    // The link works once.
+    assert_eq!(http.get(&dl).send().await.unwrap().status(), 404);
+    leader.cluster.shutdown();
+
+    let l2 = spawn_node(LocalRole::Unconfigured, lp2, vec![pr]).await;
+    let restore = |pass: &str| {
+        let (ct, body) = crate::api::testkit::multipart_body(&[
+            crate::api::testkit::Part {
+                name: "passphrase",
+                filename: None,
+                data: pass.as_bytes().to_vec(),
+            },
+            crate::api::testkit::Part {
+                name: "transfer",
+                filename: Some("show.ppxfer"),
+                data: file.clone(),
+            },
+        ]);
+        http.post(l2.url("/system/setup"))
+            .header(reqwest::header::CONTENT_TYPE, ct)
+            .body(body)
+            .send()
+    };
+    let r = restore("wrong-passphrase").await.unwrap();
+    assert_eq!(r.status(), 400);
+    assert_eq!(
+        r.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+        "wrong_passphrase"
+    );
+    assert_eq!(l2.state.identity().role, LocalRole::Unconfigured);
+    let r = restore("mistletoe-and-wine").await.unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    let li = l2.state.identity();
+    assert_eq!(
+        (li.id.as_str(), li.role),
+        (leader_id.as_str(), LocalRole::Leader)
+    );
+    let s2 = l2.state.store.get();
+    assert_eq!(s2.props, props_before);
+    assert!(l2.dir.join("sequences/s1.fseq").exists());
+    assert_eq!(
+        l2.cluster.shared.keys.lock().followers.get(&f1_id),
+        Some(&new_key),
+        "the followers' keys came along"
+    );
+    let me = s2.node(&leader_id).unwrap();
+    assert_eq!(
+        me.hardware_history.last().unwrap().reason,
+        "replaced from a transfer file"
+    );
+    // A second restore is refused (it is set up now).
+    assert_eq!(restore("mistletoe-and-wine").await.unwrap().status(), 409);
+    // The follower follows the new hardware by itself (authenticated beacon
+    // from a new address → new leader URL) and stays in sync.
+    let want = format!(":{}", l2.http);
+    eventually(
+        "follower moved to the new leader",
+        Duration::from_secs(10),
+        || {
+            let url = repl.state.identity().leader_url.unwrap_or_default();
+            let st = l2.cluster.nodes_status();
+            (url.ends_with(&want) && st.iter().any(|s| s.id == f1_id && s.online)).then_some(())
+        },
+    )
+    .await;
+
+    for n in [&leader, &f1, &repl, &l2] {
+        n.cluster.shutdown();
+        let _ = std::fs::remove_dir_all(&n.dir);
+    }
+}
+
+async fn eventually_async<T, F, Fut>(what: &str, timeout: Duration, mut f: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<T>>,
+{
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(v) = f().await {
+            return v;
+        }
+        if Instant::now() > deadline {
+            panic!("timed out waiting for: {what}");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}

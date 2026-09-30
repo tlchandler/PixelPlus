@@ -18,6 +18,35 @@
 #   hosts                       point /etc/hosts' 127.0.1.1 line at the current hostname
 #                               (pixelplusd changes the hostname itself via hostnamed)
 #
+# Signed updates (F15; docs/ARCHITECTURE.md 12.13). Packages are minisign-signed; every
+# verb re-verifies with the keys in /usr/share/pixelplus/keys (root-owned), so a
+# compromised pixelplus user can't get unsigned code installed:
+#   update-stage:<version>      take pixelplus_<version>_<arch>.deb (+ .minisig) that
+#                               pixelplusd put in /var/lib/pixelplus/updates/incoming, verify
+#                               it, keep it in /var/cache/pixelplus/staged, and make sure the
+#                               installed version is in /var/cache/pixelplus/rollback
+#   update-commit:<version>     install the staged package (only newer than installed),
+#                               then the health gate: the new daemon must write
+#                               /run/pixelplus/healthy.json with that version and answer
+#                               /api/v1/public/health within 180 s, else the previous
+#                               package is reinstalled
+#   update-rollback             reinstall the newest kept package older than the installed one
+#   update-verify               finish an interrupted commit (boot / power loss / timer)
+#   update-channel:<stable|beta>  switch the apt source's suite
+#
+# Remote access (F14; docs/ARCHITECTURE.md 12.12). Secrets come from 0600 files pixelplusd
+# writes in /var/lib/pixelplus/remote/ (never argv) and are deleted after use:
+#   tailscale-install           add pkgs.tailscale.com's signed repository, install tailscale
+#   tailscale-up                join a tailnet (auth key file, or a login link shown in the UI)
+#   tailscale-serve:<on|off>    https://<host>.<tailnet>.ts.net -> the admin UI (tailnet only)
+#   tailscale-funnel:<on|off>   https://<host>.<tailnet>.ts.net:8443 -> the PUBLIC-only port
+#   tailscale-down              stop serve/funnel and disconnect
+#   cloudflared-install         add pkg.cloudflare.com's signed repository, install cloudflared
+#   cloudflared-quick:<on|off>  temporary https://<random>.trycloudflare.com -> PUBLIC-only port
+#   cloudflared-token           run the named tunnel with the token file (hostnames are set
+#                               in the Cloudflare dashboard)
+#   cloudflared-stop            stop and disable both tunnels, delete the token
+#
 # Progress/result is written to /run/pixelplus/helper-<verb>.json for the UI to poll:
 #   {"verb": "...", "state": "running|ok|failed", "message": "...", "updatedAt": <unix>}
 # /run/pixelplus is writable by the pixelplus user, so the file is written in a root-only
@@ -29,6 +58,20 @@ readonly PRIVATE_DIR="${PIXELPLUS_HELPER_PRIVATE_DIR:-/run/pixelplus-helper}"
 readonly FIRSTBOOT="${PIXELPLUS_FIRSTBOOT:-/usr/lib/pixelplus/firstboot/firstboot.py}"
 readonly HOSTS_FILE="${PIXELPLUS_HOSTS_FILE:-/etc/hosts}"
 readonly APT_GET="${PIXELPLUS_APT_GET:-apt-get}"
+readonly DATA_DIR="${PIXELPLUS_HELPER_DATA_DIR:-/var/lib/pixelplus}"
+readonly UPDATE_CACHE="${PIXELPLUS_UPDATE_CACHE:-/var/cache/pixelplus}"
+readonly HELPER_STATE="${PIXELPLUS_HELPER_STATE:-/var/lib/pixelplus-helper}"
+readonly KEYS_DIR="${PIXELPLUS_KEYS_DIR:-/usr/share/pixelplus/keys}"
+readonly MINISIGN="${PIXELPLUS_MINISIGN:-minisign}"
+readonly DPKG="${PIXELPLUS_DPKG:-dpkg}"
+readonly DPKG_DEB="${PIXELPLUS_DPKG_DEB:-dpkg-deb}"
+readonly SYSTEMCTL="${PIXELPLUS_SYSTEMCTL:-systemctl}"
+readonly SYSTEMD_RUN="${PIXELPLUS_SYSTEMD_RUN:-systemd-run}"
+readonly TAILSCALE="${PIXELPLUS_TAILSCALE:-tailscale}"
+readonly CURL="${PIXELPLUS_CURL:-curl}"
+readonly ETC_DIR="${PIXELPLUS_ETC_DIR:-/etc/pixelplus}"
+readonly HEALTH_TIMEOUT="${PIXELPLUS_HEALTH_TIMEOUT:-180}"
+readonly MAX_PACKAGE=$((512 * 1024 * 1024))
 
 instance="${1:-}"
 IFS=':' read -r verb arg1 arg2 extra <<<"${instance}"
@@ -57,6 +100,169 @@ fail() {
 }
 
 valid_token() { [[ "$1" =~ ^[A-Za-z0-9._-]{1,32}$ ]]; }
+valid_version() { [[ "$1" =~ ^[0-9][A-Za-z0-9.+~-]{0,63}$ ]]; }
+on_off() { [[ "$1" =~ ^(on|off)$ ]] || fail "expected on or off"; [[ -z "${arg2:-}" ]] || fail "too many arguments"; }
+
+deb_arch() { echo "${PIXELPLUS_ARCH:-$("${DPKG}" --print-architecture)}"; }
+installed_version() { "${PIXELPLUS_DPKG_QUERY:-dpkg-query}" -W -f='${Version}' pixelplus 2>/dev/null || true; }
+
+os_codename() {
+    sed -n 's/^VERSION_CODENAME=//p' "${PIXELPLUS_OS_RELEASE:-/etc/os-release}" 2>/dev/null | tr -d "\"'" | head -n1
+}
+
+# PIXELPLUS_HTTP_PORT / PIXELPLUS_PUBLIC_PORT from /etc/default/pixelplus (digits only).
+conf_port() {
+    local name="$1" def="$2" v
+    v="$(sed -n "s/^[[:space:]]*${name}=\([0-9]\{1,5\}\)[[:space:]]*$/\1/p" "${PIXELPLUS_DEFAULTS:-/etc/default/pixelplus}" 2>/dev/null | tail -n1)"
+    echo "${v:-${def}}"
+}
+http_port() { conf_port PIXELPLUS_HTTP_PORT 80; }
+public_port() { conf_port PIXELPLUS_PUBLIC_PORT 8081; }
+
+# Copy a file the pixelplus user controls into a root-only place: never through
+# a symlink, only a plain file, at most $3 bytes. What was copied is verified after.
+safe_copy() {
+    local src="$1" dst="$2" max="$3" size
+    [[ -f "${src}" && ! -L "${src}" ]] || return 1
+    head -c "$((max + 1))" -- "${src}" >"${dst}" || return 1
+    chmod 0600 "${dst}"
+    size="$(stat -c %s "${dst}")"
+    ((size > 0 && size <= max)) || { rm -f "${dst}"; return 1; }
+}
+
+# minisign signature by one of the release keys in $KEYS_DIR.
+verify_signature() {
+    local file="$1" sig="$2" key
+    command -v "${MINISIGN}" >/dev/null 2>&1 || { echo "minisign is not installed" >&2; return 1; }
+    [[ -f "${sig}" && ! -L "${sig}" ]] || return 1
+    for key in "${KEYS_DIR}"/*.pub; do
+        [[ -f "${key}" ]] || continue
+        grep -q '^RW' "${key}" || continue
+        if "${MINISIGN}" -V -q -p "${key}" -m "${file}" -x "${sig}" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+check_package() {
+    local file="$1" ver="$2" arch="$3"
+    [[ "$("${DPKG_DEB}" -f "${file}" Package 2>/dev/null)" == pixelplus ]] &&
+        [[ "$("${DPKG_DEB}" -f "${file}" Version 2>/dev/null)" == "${ver}" ]] &&
+        [[ "$("${DPKG_DEB}" -f "${file}" Architecture 2>/dev/null)" == "${arch}" ]]
+}
+
+dpkg_install() {
+    local file="$1"; shift
+    DEBIAN_FRONTEND=noninteractive "${DPKG}" -i --force-confdef --force-confold "$@" "${file}"
+}
+
+# The installed version must be in rollback/ before anything changes.
+keep_rollback_copy() {
+    local cur="$1" arch="$2" dst tmpd
+    dst="${UPDATE_CACHE}/rollback/pixelplus_${cur}_${arch}.deb"
+    [[ -f "${dst}" ]] && return 0
+    tmpd="$(mktemp -d)"
+    if (cd "${tmpd}" && "${APT_GET}" download -q "pixelplus=${cur}" >/dev/null 2>&1) ||
+        (command -v dpkg-repack >/dev/null 2>&1 && cd "${tmpd}" && dpkg-repack pixelplus >/dev/null 2>&1); then
+        local f
+        f="$(find "${tmpd}" -maxdepth 1 -name 'pixelplus_*.deb' | head -n1)"
+        if [[ -n "${f}" ]]; then
+            install -m 0600 "${f}" "${dst}"
+            rm -rf "${tmpd}"
+            return 0
+        fi
+    fi
+    rm -rf "${tmpd}"
+    return 1
+}
+
+# Newest kept version older than $1.
+previous_version() {
+    local cur="$1" arch="$2" best="" f v
+    for f in "${UPDATE_CACHE}"/rollback/pixelplus_*_"${arch}".deb; do
+        [[ -f "${f}" ]] || continue
+        v="${f##*/pixelplus_}"
+        v="${v%_"${arch}".deb}"
+        valid_version "${v}" || continue
+        if [[ -z "${cur}" ]] || "${DPKG}" --compare-versions "${v}" lt "${cur}"; then
+            if [[ -z "${best}" ]] || "${DPKG}" --compare-versions "${v}" gt "${best}"; then
+                best="${v}"
+            fi
+        fi
+    done
+    echo "${best}"
+}
+
+# Keep the three newest kept versions.
+prune_rollback() {
+    local arch vers keep
+    arch="$(deb_arch)"
+    mapfile -t vers < <(for f in "${UPDATE_CACHE}"/rollback/pixelplus_*_"${arch}".deb; do
+        [[ -f "${f}" ]] || continue; v="${f##*/pixelplus_}"; echo "${v%_"${arch}".deb}"; done |
+        sort -V -r)
+    keep=3
+    for v in "${vers[@]:${keep}}"; do
+        rm -f "${UPDATE_CACHE}/rollback/pixelplus_${v}_${arch}.deb" "${UPDATE_CACHE}/rollback/pixelplus_${v}_${arch}.deb.minisig"
+    done
+}
+
+health_ok() {
+    if [[ -n "${PIXELPLUS_HEALTH_CMD:-}" ]]; then
+        "${PIXELPLUS_HEALTH_CMD}"
+        return
+    fi
+    local url="${PIXELPLUS_HEALTH_URL:-http://127.0.0.1:$(http_port)/api/v1/public/health}"
+    /usr/bin/python3 - "${url}" <<'PY' >/dev/null 2>&1
+import json, sys, urllib.request
+with urllib.request.urlopen(sys.argv[1], timeout=5) as r:
+    sys.exit(0 if json.load(r).get("ok") is True else 1)
+PY
+}
+
+# The daemon of version $1 says it is healthy (engine, output, cluster up) and
+# answers HTTP, within $HEALTH_TIMEOUT seconds of the install.
+wait_healthy() {
+    local want="$1" deadline=$((SECONDS + HEALTH_TIMEOUT)) f="${STATUS_DIR}/healthy.json"
+    while ((SECONDS < deadline)); do
+        if [[ -f "${f}" && ! -L "${f}" && "${f}" -nt "${HELPER_STATE}/commit-start" ]] &&
+            grep -q "\"version\":\"${want}\"" "${f}" && health_ok; then
+            return 0
+        fi
+        sleep "${PIXELPLUS_HEALTH_POLL:-3}"
+    done
+    return 1
+}
+
+# /run/pixelplus/update-result.json for pixelplusd (history, alert, snapshot restore).
+write_result() {
+    local from="$1" to="$2" ok="$3" msg="$4" kind="${5:-update}" tmp
+    [[ -d "${PRIVATE_DIR}" ]] || mkdir -m 0700 "${PRIVATE_DIR}"
+    msg="${msg//\\/\\\\}"; msg="${msg//\"/\\\"}"
+    tmp="$(mktemp "${PRIVATE_DIR}/update-result.XXXXXX")"
+    printf '{"from":"%s","to":"%s","ok":%s,"kind":"%s","message":"%s","at":%s}\n' \
+        "${from}" "${to}" "${ok}" "${kind}" "${msg}" "$(date +%s)" >"${tmp}"
+    chmod 0644 "${tmp}"
+    mv -fT "${tmp}" "${STATUS_DIR}/update-result.json" || rm -f "${tmp}"
+}
+
+# The new version failed: reinstall the kept previous one, report, exit.
+go_back() {
+    local prev="$1" failed="$2" why="$3" arch
+    arch="$(deb_arch)"
+    local pkg="${UPDATE_CACHE}/rollback/pixelplus_${prev}_${arch}.deb"
+    status running "PixelPlus ${failed}: ${why}; going back to ${prev}"
+    touch "${HELPER_STATE}/commit-start"
+    if [[ -n "${prev}" && -f "${pkg}" ]] && dpkg_install "${pkg}" --force-downgrade; then
+        rm -f "${HELPER_STATE}/pending-verify"
+        wait_healthy "${prev}" || true
+        write_result "${prev}" "${failed}" false "PixelPlus ${failed} ${why} and was rolled back to ${prev}"
+        fail "Update to ${failed} failed (${why}); rolled back to ${prev}"
+    fi
+    rm -f "${HELPER_STATE}/pending-verify"
+    write_result "${prev}" "${failed}" false "PixelPlus ${failed} ${why}; going back to ${prev} failed too"
+    fail "Update to ${failed} failed (${why}) and ${prev} couldn't be reinstalled"
+}
 
 [[ -n "${extra}" ]] && { verb="invalid"; fail "too many arguments"; }
 valid_token "${verb:-}" || { verb="invalid"; fail "missing or invalid verb"; }
@@ -142,6 +348,283 @@ hosts)
             >/etc/cloud/cloud.cfg.d/99-pixelplus-hostname.cfg
     fi
     status ok "/etc/hosts points at ${name}"
+    ;;
+update-stage)
+    valid_version "${arg1:-}" || fail "invalid version"
+    [[ -z "${arg2:-}" ]] || fail "update-stage takes one argument"
+    ver="${arg1}"
+    arch="$(deb_arch)"
+    name="pixelplus_${ver}_${arch}.deb"
+    status running "Checking PixelPlus ${ver}"
+    install -d -m 0755 "${UPDATE_CACHE}"
+    install -d -m 0700 "${UPDATE_CACHE}/staged" "${UPDATE_CACHE}/rollback"
+    tmp="${UPDATE_CACHE}/staged/.incoming.$$"
+    trap 'rm -f "${tmp}" "${tmp}.minisig"' EXIT
+    safe_copy "${DATA_DIR}/updates/incoming/${name}" "${tmp}" "${MAX_PACKAGE}" ||
+        fail "The package for ${ver} isn't there (or isn't a plain file)"
+    safe_copy "${DATA_DIR}/updates/incoming/${name}.minisig" "${tmp}.minisig" 4096 ||
+        fail "The signature for ${ver} is missing"
+    verify_signature "${tmp}" "${tmp}.minisig" ||
+        fail "The package for ${ver} isn't signed by a PixelPlus release key; not installed"
+    check_package "${tmp}" "${ver}" "${arch}" || fail "The package doesn't contain PixelPlus ${ver} for ${arch}"
+    cur="$(installed_version)"
+    if [[ -n "${cur}" ]] && ! "${DPKG}" --compare-versions "${ver}" gt "${cur}"; then
+        fail "${ver} isn't newer than the installed ${cur}"
+    fi
+    size="$(stat -c %s "${tmp}")"
+    free="$(df -P -B1 "${UPDATE_CACHE}" | awk 'NR==2 {print $4}')"
+    ((free > 2 * size + 100 * 1024 * 1024)) || fail "Not enough free space for the update"
+    if [[ -n "${cur}" ]]; then
+        keep_rollback_copy "${cur}" "${arch}" ||
+            fail "Can't keep a copy of the installed ${cur} to go back to; not updating"
+    fi
+    find "${UPDATE_CACHE}/staged" -maxdepth 1 -type f -name 'pixelplus_*' -delete
+    mv -f "${tmp}.minisig" "${UPDATE_CACHE}/staged/${name}.minisig"
+    mv -f "${tmp}" "${UPDATE_CACHE}/staged/${name}"
+    trap - EXIT
+    status ok "PixelPlus ${ver} is ready to install"
+    ;;
+update-commit)
+    valid_version "${arg1:-}" || fail "invalid version"
+    [[ -z "${arg2:-}" ]] || fail "update-commit takes one argument"
+    ver="${arg1}"
+    arch="$(deb_arch)"
+    name="pixelplus_${ver}_${arch}.deb"
+    pkg="${UPDATE_CACHE}/staged/${name}"
+    [[ -f "${pkg}" && ! -L "${pkg}" ]] || fail "PixelPlus ${ver} isn't prepared (stage it first)"
+    verify_signature "${pkg}" "${pkg}.minisig" || fail "The staged package's signature doesn't match"
+    cur="$(installed_version)"
+    if [[ -n "${cur}" ]] && ! "${DPKG}" --compare-versions "${ver}" gt "${cur}"; then
+        fail "${ver} isn't newer than the installed ${cur}"
+    fi
+    install -d -m 0700 "${HELPER_STATE}"
+    printf 'from=%s\nto=%s\narch=%s\n' "${cur}" "${ver}" "${arch}" >"${HELPER_STATE}/pending-verify"
+    touch "${HELPER_STATE}/commit-start"
+    sync
+    # A late second check in case this run is killed while waiting (power is fine:
+    # pixelplus-update-verify.service runs at boot while pending-verify exists).
+    "${SYSTEMD_RUN}" --on-active=6min --unit="pixelplus-update-verify-late-$$" \
+        /usr/lib/pixelplus/pixelplus-helper update-verify >/dev/null 2>&1 || true
+    status running "Installing PixelPlus ${ver}"
+    if ! dpkg_install "${pkg}"; then
+        go_back "${cur}" "${ver}" "installing it failed"
+    fi
+    install -m 0600 "${pkg}" "${UPDATE_CACHE}/rollback/${name}"
+    install -m 0600 "${pkg}.minisig" "${UPDATE_CACHE}/rollback/${name}.minisig"
+    prune_rollback
+    rm -f "${pkg}" "${pkg}.minisig"
+    status running "Checking that PixelPlus ${ver} runs"
+    if wait_healthy "${ver}"; then
+        rm -f "${HELPER_STATE}/pending-verify"
+        write_result "${cur}" "${ver}" true "Updated to ${ver}"
+        status ok "Updated to PixelPlus ${ver}"
+    else
+        go_back "${cur}" "${ver}" "it didn't start properly"
+    fi
+    ;;
+update-rollback)
+    [[ -z "${arg1:-}" ]] || fail "update-rollback takes no arguments"
+    cur="$(installed_version)"
+    arch="$(deb_arch)"
+    prev="$(previous_version "${cur}" "${arch}")"
+    [[ -n "${prev}" ]] || fail "There's no earlier PixelPlus version kept on this controller"
+    status running "Going back to PixelPlus ${prev}"
+    touch "${HELPER_STATE}/commit-start" 2>/dev/null || { install -d -m 0700 "${HELPER_STATE}"; touch "${HELPER_STATE}/commit-start"; }
+    dpkg_install "${UPDATE_CACHE}/rollback/pixelplus_${prev}_${arch}.deb" --force-downgrade ||
+        fail "Reinstalling ${prev} failed"
+    wait_healthy "${prev}" || true
+    write_result "${cur}" "${prev}" true "Went back to ${prev}" rollback
+    status ok "Back to PixelPlus ${prev}"
+    ;;
+update-verify)
+    [[ -z "${arg1:-}" ]] || fail "update-verify takes no arguments"
+    pending="${HELPER_STATE}/pending-verify"
+    if [[ ! -f "${pending}" ]]; then
+        status ok "No update to check"
+        exit 0
+    fi
+    from="$(sed -n 's/^from=//p' "${pending}")"
+    to="$(sed -n 's/^to=//p' "${pending}")"
+    valid_version "${to}" || { rm -f "${pending}"; fail "damaged pending-verify"; }
+    # dpkg interrupted (power loss): finish what it was doing first.
+    if [[ -n "$("${DPKG}" --audit 2>/dev/null)" ]]; then
+        DEBIAN_FRONTEND=noninteractive "${DPKG}" --configure -a --force-confdef --force-confold || true
+    fi
+    cur="$(installed_version)"
+    status running "Checking that PixelPlus ${to} runs"
+    if [[ "${cur}" == "${to}" ]] && wait_healthy "${to}"; then
+        rm -f "${pending}"
+        write_result "${from}" "${to}" true "Updated to ${to}"
+        status ok "PixelPlus ${to} is running"
+    elif [[ -n "${from}" ]]; then
+        go_back "${from}" "${to}" "it didn't start properly after a restart"
+    else
+        rm -f "${pending}"
+        fail "The update to ${to} didn't finish"
+    fi
+    ;;
+update-channel)
+    [[ "${arg1:-}" =~ ^(stable|beta)$ ]] || fail "channel must be stable or beta"
+    [[ -z "${arg2:-}" ]] || fail "update-channel takes one argument"
+    list="${PIXELPLUS_APT_LIST:-/etc/apt/sources.list.d/pixelplus.list}"
+    if [[ -f "${list}" && ! -L "${list}" ]]; then
+        sed -i -E "s#^(deb .*[[:space:]])(stable|beta)([[:space:]]+main)#\1${arg1}\3#" "${list}"
+        status ok "apt now follows the ${arg1} channel"
+    else
+        status ok "No PixelPlus apt source here (signed updates follow the channel by themselves)"
+    fi
+    ;;
+tailscale-install)
+    [[ -z "${arg1:-}" ]] || fail "tailscale-install takes no arguments"
+    status running "Installing Tailscale"
+    codename="$(os_codename)"
+    [[ "${codename}" =~ ^[a-z]{3,16}$ ]] || fail "Unknown Debian release"
+    base="https://pkgs.tailscale.com/stable/debian"
+    "${CURL}" -fsSL "${base}/${codename}.noarmor.gpg" -o /usr/share/keyrings/tailscale-archive-keyring.gpg.tmp ||
+        fail "Couldn't download Tailscale's signing key (no internet?)"
+    mv -f /usr/share/keyrings/tailscale-archive-keyring.gpg.tmp /usr/share/keyrings/tailscale-archive-keyring.gpg
+    printf 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] %s %s main\n' "${base}" "${codename}" \
+        >/etc/apt/sources.list.d/tailscale.list
+    export DEBIAN_FRONTEND=noninteractive
+    "${APT_GET}" update -q || fail "apt-get update failed"
+    "${APT_GET}" install -y -q tailscale || fail "Installing Tailscale failed"
+    "${SYSTEMCTL}" enable --now tailscaled.service || true
+    status ok "Tailscale installed"
+    ;;
+tailscale-up)
+    [[ -z "${arg1:-}" ]] || fail "tailscale-up takes no arguments"
+    command -v "${TAILSCALE}" >/dev/null 2>&1 || fail "Tailscale isn't installed"
+    host="$(hostnamectl --static 2>/dev/null || hostname)"
+    [[ "${host}" =~ ^[A-Za-z0-9-]{1,63}$ ]] || fail "unexpected hostname '${host}'"
+    keyfile="${DATA_DIR}/remote/tailscale.authkey"
+    if [[ -e "${keyfile}" || -L "${keyfile}" ]]; then
+        [[ -d "${PRIVATE_DIR}" ]] || mkdir -m 0700 "${PRIVATE_DIR}"
+        key="${PRIVATE_DIR}/tailscale.authkey"
+        rm -f "${key}"
+        safe_copy "${keyfile}" "${key}" 200 || { rm -f "${keyfile}"; fail "The auth key file isn't usable"; }
+        rm -f "${keyfile}"
+        grep -Eq '^tskey-[A-Za-z0-9_-]{8,190}$' "${key}" || { rm -f "${key}"; fail "That isn't a Tailscale auth key"; }
+        status running "Joining the tailnet"
+        if timeout 90 "${TAILSCALE}" up --hostname="${host}" --accept-dns=false --auth-key="file:${key}"; then
+            rm -f "${key}"
+            status ok "Connected to Tailscale"
+        else
+            rm -f "${key}"
+            fail "Tailscale didn't accept the auth key"
+        fi
+    else
+        status running "Starting the Tailscale login"
+        # `tailscale up` waits for the login; run it on its own so the link can be shown.
+        "${SYSTEMCTL}" stop pixelplus-tailscale-login.service >/dev/null 2>&1 || true
+        "${SYSTEMD_RUN}" --unit=pixelplus-tailscale-login --collect \
+            "$(command -v "${TAILSCALE}")" up --hostname="${host}" --accept-dns=false --timeout=15m >/dev/null 2>&1 ||
+            fail "Couldn't start the Tailscale login"
+        for _ in $(seq 1 40); do
+            st="$("${TAILSCALE}" status --json 2>/dev/null || true)"
+            if grep -q '"BackendState": *"Running"' <<<"${st}"; then
+                status ok "Connected to Tailscale"
+                exit 0
+            fi
+            url="$(grep -oE '"AuthURL": *"https://login\.tailscale\.com/[A-Za-z0-9/_-]+"' <<<"${st}" | grep -oE 'https://[^"]+' || true)"
+            if [[ -n "${url}" ]]; then
+                status ok "Open ${url} to connect this controller"
+                exit 0
+            fi
+            sleep 0.5
+        done
+        fail "Tailscale didn't offer a login link; is tailscaled running?"
+    fi
+    ;;
+tailscale-serve)
+    on_off "${arg1:-}"
+    command -v "${TAILSCALE}" >/dev/null 2>&1 || fail "Tailscale isn't installed"
+    if [[ "${arg1}" == on ]]; then
+        status running "Setting up https://…ts.net for the admin pages"
+        if ! out="$("${TAILSCALE}" serve --bg --https=443 "http://127.0.0.1:$(http_port)" 2>&1)"; then
+            if grep -qiE 'https|cert' <<<"${out}"; then
+                fail "Turn on MagicDNS and HTTPS certificates in the Tailscale admin console (DNS page), then try again"
+            fi
+            fail "tailscale serve failed: ${out}"
+        fi
+        status ok "The admin pages are on your tailnet"
+    else
+        "${TAILSCALE}" serve --https=443 off >/dev/null 2>&1 || true
+        status ok "The admin pages are off the tailnet"
+    fi
+    ;;
+tailscale-funnel)
+    on_off "${arg1:-}"
+    command -v "${TAILSCALE}" >/dev/null 2>&1 || fail "Tailscale isn't installed"
+    if [[ "${arg1}" == on ]]; then
+        status running "Publishing the song request page"
+        # Only the public-only listener: the admin never goes through Funnel.
+        out="$("${TAILSCALE}" funnel --bg --https=8443 "http://127.0.0.1:$(public_port)" 2>&1)" ||
+            fail "tailscale funnel failed (is Funnel allowed in the tailnet's access controls?): ${out}"
+        status ok "The song request page is public"
+    else
+        "${TAILSCALE}" funnel --https=8443 off >/dev/null 2>&1 || true
+        status ok "The song request page is no longer public"
+    fi
+    ;;
+tailscale-down)
+    [[ -z "${arg1:-}" ]] || fail "tailscale-down takes no arguments"
+    command -v "${TAILSCALE}" >/dev/null 2>&1 || { status ok "Tailscale isn't installed"; exit 0; }
+    "${TAILSCALE}" funnel --https=8443 off >/dev/null 2>&1 || true
+    "${TAILSCALE}" serve --https=443 off >/dev/null 2>&1 || true
+    "${SYSTEMCTL}" stop pixelplus-tailscale-login.service >/dev/null 2>&1 || true
+    "${TAILSCALE}" down || fail "tailscale down failed"
+    status ok "Disconnected from Tailscale"
+    ;;
+cloudflared-install)
+    [[ -z "${arg1:-}" ]] || fail "cloudflared-install takes no arguments"
+    status running "Installing cloudflared"
+    "${CURL}" -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg.tmp ||
+        fail "Couldn't download Cloudflare's signing key (no internet?)"
+    mv -f /usr/share/keyrings/cloudflare-main.gpg.tmp /usr/share/keyrings/cloudflare-main.gpg
+    printf 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main\n' \
+        >/etc/apt/sources.list.d/cloudflared.list
+    export DEBIAN_FRONTEND=noninteractive
+    "${APT_GET}" update -q || fail "apt-get update failed"
+    "${APT_GET}" install -y -q cloudflared || fail "Installing cloudflared failed"
+    status ok "cloudflared installed"
+    ;;
+cloudflared-quick)
+    on_off "${arg1:-}"
+    if [[ "${arg1}" == on ]]; then
+        status running "Starting a temporary public link"
+        "${SYSTEMCTL}" restart pixelplus-cloudflared-quick.service || fail "Couldn't start the quick tunnel"
+        status ok "Temporary public link started"
+    else
+        "${SYSTEMCTL}" stop pixelplus-cloudflared-quick.service || true
+        status ok "Temporary public link stopped"
+    fi
+    ;;
+cloudflared-token)
+    [[ -z "${arg1:-}" ]] || fail "cloudflared-token takes no arguments"
+    src="${DATA_DIR}/remote/cloudflared.token"
+    install -d -m 0755 "${ETC_DIR}"
+    tmp="${ETC_DIR}/.cloudflared.token.$$"
+    safe_copy "${src}" "${tmp}" 4096 || { rm -f "${src}" "${tmp}"; fail "The tunnel token file isn't usable"; }
+    rm -f "${src}"
+    token="$(tr -d '\r\n' <"${tmp}")"
+    rm -f "${tmp}"
+    [[ "${token}" =~ ^[A-Za-z0-9=+/_.-]{40,4096}$ ]] || fail "That isn't a Cloudflare tunnel token"
+    # EnvironmentFile read by systemd as root: the token never appears on a command line.
+    umask 077
+    printf 'TUNNEL_TOKEN=%s\n' "${token}" >"${ETC_DIR}/cloudflared.env.tmp"
+    chmod 0600 "${ETC_DIR}/cloudflared.env.tmp"
+    mv -f "${ETC_DIR}/cloudflared.env.tmp" "${ETC_DIR}/cloudflared.env"
+    status running "Starting the Cloudflare tunnel"
+    "${SYSTEMCTL}" enable pixelplus-cloudflared.service >/dev/null 2>&1 || true
+    "${SYSTEMCTL}" restart pixelplus-cloudflared.service || fail "The tunnel didn't start (check the token)"
+    status ok "Cloudflare tunnel running"
+    ;;
+cloudflared-stop)
+    [[ -z "${arg1:-}" ]] || fail "cloudflared-stop takes no arguments"
+    "${SYSTEMCTL}" disable --now pixelplus-cloudflared.service >/dev/null 2>&1 || true
+    "${SYSTEMCTL}" stop pixelplus-cloudflared-quick.service >/dev/null 2>&1 || true
+    rm -f "${ETC_DIR}/cloudflared.env" "${DATA_DIR}/remote/cloudflared.token"
+    status ok "Cloudflare tunnels stopped"
     ;;
 *)
     fail "unknown verb '${verb}'"
