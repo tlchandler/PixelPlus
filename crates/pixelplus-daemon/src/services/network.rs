@@ -1,14 +1,22 @@
-//! Network settings through NetworkManager (`nmcli`) and `hostnamectl`.
+//! Network settings through NetworkManager (`nmcli`) and hostnamed
+//! (`hostnamectl`), both allowed for the `pixelplus` service user by polkit;
+//! the Wi-Fi country (regulatory domain) is set by the root helper.
 //!
 //! Changes are validated first, then applied in the background so the HTTP
 //! response reaches the browser before Wi-Fi drops. Progress and failures
 //! are reported as toasts.
+//!
+//! The setup-hotspot watchdog (image/netwatch, root) publishes its state in
+//! `/run/pixelplus/netwatch.json`; it is returned as `netwatch`.
 
+use super::platform::{self, HelperOpts, HelperState, HelperVerb};
 use super::system::{have, hostname, in_docker, nmcli_fields, quality_to_dbm, run};
 use crate::api::{ApiError, ApiResult};
-use crate::events::{EventBus, ToastKind};
+use crate::events::ToastKind;
+use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -62,6 +70,58 @@ pub struct NetworkConfig {
     /// Read-only: false when this machine's network can't be managed (Docker, PC).
     #[serde(default = "yes")]
     pub managed: bool,
+    /// Read-only: setup-hotspot watchdog status (None when netwatch isn't running here).
+    #[serde(default, skip_deserializing)]
+    pub netwatch: Option<NetwatchStatus>,
+}
+
+/// Last Wi-Fi network netwatch joined from the setup portal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NetwatchJoined {
+    #[serde(default)]
+    pub ssid: String,
+    #[serde(default)]
+    pub ips: Vec<String>,
+    /// Unix seconds.
+    #[serde(default)]
+    pub at: Option<i64>,
+}
+
+/// `/run/pixelplus/netwatch.json`, written by image/netwatch/netwatch.py.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NetwatchStatus {
+    /// waiting | online | hotspot | connecting
+    pub state: String,
+    #[serde(default)]
+    pub hotspot_ssid: Option<String>,
+    #[serde(default)]
+    pub hotspot_secured: bool,
+    #[serde(default)]
+    pub portal_url: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub last_joined: Option<NetwatchJoined>,
+    /// Unix seconds.
+    #[serde(default)]
+    pub updated_at: Option<i64>,
+}
+
+/// Path of the netwatch status file (`PIXELPLUS_NETWATCH_STATUS` overrides, as in netwatch.py).
+pub fn netwatch_path() -> std::path::PathBuf {
+    std::env::var_os("PIXELPLUS_NETWATCH_STATUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| platform::run_dir().join("netwatch.json"))
+}
+
+/// Read the netwatch status (None when missing or unreadable).
+pub fn read_netwatch(path: &Path) -> Option<NetwatchStatus> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut st: NetwatchStatus = serde_json::from_str(&text).ok()?;
+    st.state = st.state.to_ascii_lowercase();
+    Some(st)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -219,6 +279,7 @@ pub async fn read_config() -> NetworkConfig {
     let mut cfg = NetworkConfig {
         hostname: hostname(),
         managed: managed(),
+        netwatch: read_netwatch(&netwatch_path()),
         ..Default::default()
     };
     if !cfg.managed {
@@ -318,7 +379,8 @@ pub async fn scan() -> ApiResult<Vec<WifiNetwork>> {
 // ---------------------------------------------------------------------------
 
 /// Validate, then apply in the background. Returns the config as it will be.
-pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkConfig> {
+pub async fn apply(new: NetworkConfig, state: AppState) -> ApiResult<NetworkConfig> {
+    let events = state.events.clone();
     validate(&new)?;
     if !managed() {
         return Err(ApiError::unavailable(
@@ -329,68 +391,28 @@ pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkCon
     let mut result = new.clone();
     result.wifi.psk = None;
     result.managed = true;
+    result.netwatch = current.netwatch.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(700)).await;
         let mut problems: Vec<String> = Vec::new();
         if new.hostname != current.hostname {
-            match run(
-                "hostnamectl",
-                &["set-hostname", &new.hostname],
-                Duration::from_secs(10),
-            )
-            .await
-            {
-                Ok(o) if o.success => {
-                    // Keep /etc/hosts resolving the new name (sudo warnings otherwise).
-                    if let Ok(hosts) = std::fs::read_to_string("/etc/hosts") {
-                        let old = &current.hostname;
-                        let updated: String = hosts
-                            .lines()
-                            .map(|l| {
-                                if l.starts_with("127.0.1.1") {
-                                    format!("127.0.1.1\t{}", new.hostname)
-                                } else if !old.is_empty()
-                                    && l.split_whitespace().skip(1).any(|w| w == old)
-                                {
-                                    l.replace(old.as_str(), &new.hostname)
-                                } else {
-                                    l.to_string()
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        let _ = std::fs::write("/etc/hosts", updated + "\n");
-                    }
-                    let _ = run(
-                        "systemctl",
-                        &["try-restart", "avahi-daemon"],
-                        Duration::from_secs(10),
-                    )
-                    .await;
-                }
-                Ok(o) => problems.push(format!(
-                    "the name couldn't be changed ({})",
-                    o.stderr.trim()
-                )),
-                Err(e) => problems.push(format!("the name couldn't be changed ({e})")),
+            if let Err(e) = platform::set_hostname(&state, &new.hostname).await {
+                problems.push(format!("the name couldn't be changed ({e})"));
             }
         }
         if !new.wifi.country.is_empty()
             && !new.wifi.country.eq_ignore_ascii_case(&current.wifi.country)
         {
             let cc = new.wifi.country.to_ascii_uppercase();
-            let ok = if have("raspi-config") {
-                run(
-                    "raspi-config",
-                    &["nonint", "do_wifi_country", &cc],
-                    Duration::from_secs(20),
-                )
-                .await
-            } else {
-                run("iw", &["reg", "set", &cc], Duration::from_secs(10)).await
+            let res = match platform::run_helper(&state, HelperVerb::WifiCountry(cc.clone()), HelperOpts { quiet: true }).await {
+                Ok(job) => {
+                    let s = job.wait(Duration::from_secs(60)).await;
+                    (s.state == HelperState::Ok).then_some(()).ok_or(s.message)
+                }
+                Err(e) => Err(e.message),
             };
-            if !matches!(ok, Ok(ref o) if o.success) {
-                problems.push("the Wi-Fi country couldn't be set".into());
+            if let Err(e) = res {
+                problems.push(format!("the Wi-Fi country couldn't be set to {cc} ({e})"));
             }
         }
         // Ethernet before Wi-Fi: Wi-Fi changes may cut us off.
@@ -494,6 +516,39 @@ mod tests {
             managed: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn netwatch_status() {
+        let dir = std::env::temp_dir().join(format!("pp-nw-{}", pixelplus_core::model::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("netwatch.json");
+        assert!(read_netwatch(&p).is_none());
+        // Exactly what image/netwatch/netwatch.py writes.
+        std::fs::write(
+            &p,
+            r#"{"state": "hotspot", "hotspotSsid": "PixelPlus-1A2B", "hotspotSecured": false, "portalUrl": "http://10.42.0.1/", "lastError": "Wrong password for \"Home\"", "lastJoined": null, "updatedAt": 1790000000}"#,
+        )
+        .unwrap();
+        let s = read_netwatch(&p).unwrap();
+        assert_eq!(s.state, "hotspot");
+        assert_eq!(s.hotspot_ssid.as_deref(), Some("PixelPlus-1A2B"));
+        assert_eq!(s.portal_url.as_deref(), Some("http://10.42.0.1/"));
+        assert!(s.last_error.unwrap().contains("Home"));
+        std::fs::write(
+            &p,
+            r#"{"state": "online", "hotspotSsid": null, "hotspotSecured": true, "portalUrl": null, "lastError": null, "lastJoined": {"ssid": "Home", "ips": ["192.168.1.5"], "at": 1790000000}, "updatedAt": 1790000001}"#,
+        )
+        .unwrap();
+        let s = read_netwatch(&p).unwrap();
+        assert_eq!(s.last_joined.unwrap().ips, vec!["192.168.1.5"]);
+        // The UI's PUT echoes the config back; netwatch is read-only.
+        let c: NetworkConfig = serde_json::from_str(
+            r#"{"hostname":"x","netwatch":{"state":"hotspot"}}"#,
+        )
+        .unwrap();
+        assert!(c.netwatch.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
