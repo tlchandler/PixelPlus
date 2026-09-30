@@ -238,7 +238,9 @@ mod tests {
     #[test]
     fn boards_without_outputs() {
         assert_eq!(OutputLayout::for_board(BoardKind::BarePi).output_count(), 0);
-        assert!(OutputLayout::for_board(BoardKind::Virtual).gpio_pins().is_empty());
+        assert!(OutputLayout::for_board(BoardKind::Virtual)
+            .gpio_pins()
+            .is_empty());
     }
 
     #[test]

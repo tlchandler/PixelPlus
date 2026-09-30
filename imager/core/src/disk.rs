@@ -25,7 +25,10 @@ pub fn read_mbr<D: Read + Seek>(dev: &mut D) -> io::Result<Vec<Partition>> {
     dev.seek(SeekFrom::Start(0))?;
     dev.read_exact(&mut mbr)?;
     if mbr[510] != 0x55 || mbr[511] != 0xAA {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "no MBR boot signature (not a Raspberry Pi image?)"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "no MBR boot signature (not a Raspberry Pi image?)",
+        ));
     }
     let mut parts = Vec::new();
     for i in 0..4 {
@@ -34,7 +37,12 @@ pub fn read_mbr<D: Read + Seek>(dev: &mut D) -> io::Result<Vec<Partition>> {
         let lba = u32::from_le_bytes([e[8], e[9], e[10], e[11]]) as u64;
         let count = u32::from_le_bytes([e[12], e[13], e[14], e[15]]) as u64;
         if kind != 0 && count != 0 {
-            parts.push(Partition { index: i + 1, kind, start: lba * SECTOR, len: count * SECTOR });
+            parts.push(Partition {
+                index: i + 1,
+                kind,
+                start: lba * SECTOR,
+                len: count * SECTOR,
+            });
         }
     }
     Ok(parts)
@@ -42,7 +50,10 @@ pub fn read_mbr<D: Read + Seek>(dev: &mut D) -> io::Result<Vec<Partition>> {
 
 /// First FAT partition (types 0x0b/0x0c FAT32, 0x0e/0x06/0x04/0x01 FAT16/12).
 pub fn boot_partition(parts: &[Partition]) -> Option<Partition> {
-    parts.iter().copied().find(|p| matches!(p.kind, 0x0b | 0x0c | 0x0e | 0x06 | 0x04 | 0x01))
+    parts
+        .iter()
+        .copied()
+        .find(|p| matches!(p.kind, 0x0b | 0x0c | 0x0e | 0x06 | 0x04 | 0x01))
 }
 
 /// A window `[start, start+len)` of an underlying stream.
@@ -56,7 +67,12 @@ pub struct Slice<T> {
 impl<T: Seek> Slice<T> {
     pub fn new(mut inner: T, start: u64, len: u64) -> io::Result<Self> {
         inner.seek(SeekFrom::Start(start))?;
-        Ok(Slice { inner, start, len, pos: 0 })
+        Ok(Slice {
+            inner,
+            start,
+            len,
+            pos: 0,
+        })
     }
     pub fn into_inner(self) -> T {
         self.inner
@@ -82,7 +98,10 @@ impl<T: Write + Seek> Write for Slice<T> {
         let left = self.len.saturating_sub(self.pos);
         let n = (buf.len() as u64).min(left) as usize;
         if n == 0 && !buf.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::WriteZero, "write past end of partition"));
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "write past end of partition",
+            ));
         }
         self.inner.seek(SeekFrom::Start(self.start + self.pos))?;
         let w = self.inner.write(&buf[..n])?;
@@ -102,7 +121,10 @@ impl<T> Seek for Slice<T> {
             SeekFrom::Current(d) => self.pos as i128 + d as i128,
         };
         if new < 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "seek before start"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before start",
+            ));
         }
         self.pos = new as u64;
         Ok(self.pos)
@@ -124,7 +146,14 @@ pub struct Aligned<T: Read + Write + Seek> {
 impl<T: Read + Write + Seek> Aligned<T> {
     pub fn new(inner: T, block: u64) -> Self {
         assert!(block >= SECTOR && block.is_power_of_two());
-        Aligned { inner, block, buf: vec![0; block as usize], cached: None, dirty: false, pos: 0 }
+        Aligned {
+            inner,
+            block,
+            buf: vec![0; block as usize],
+            cached: None,
+            dirty: false,
+            pos: 0,
+        }
     }
 
     fn load(&mut self, idx: u64) -> io::Result<()> {
@@ -204,7 +233,10 @@ impl<T: Read + Write + Seek> Seek for Aligned<T> {
             SeekFrom::Current(d) => (self.pos as i64 + d).max(0) as u64,
             SeekFrom::End(_) => {
                 // Device size is known to the caller; not needed by fatfs through Slice.
-                return Err(io::Error::new(io::ErrorKind::Unsupported, "SeekFrom::End on raw device"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "SeekFrom::End on raw device",
+                ));
             }
         };
         Ok(self.pos)
@@ -224,7 +256,10 @@ pub struct Injected {
 /// Write `pixelplus.txt` (rendered from `settings`) into the FAT boot partition of
 /// `dev`, which is a whole disk or a whole `.img` file. The existing file on the
 /// partition is used as the template so its comments match the image version.
-pub fn inject_settings<D: Read + Write + Seek>(dev: D, settings: &ImagerSettings) -> io::Result<Injected> {
+pub fn inject_settings<D: Read + Write + Seek>(
+    dev: D,
+    settings: &ImagerSettings,
+) -> io::Result<Injected> {
     let mut dev = dev;
     let parts = read_mbr(&mut dev)?;
     let part = boot_partition(&parts)
@@ -245,7 +280,11 @@ pub fn inject_settings<D: Read + Write + Seek>(dev: D, settings: &ImagerSettings
             }
         }
     }
-    let template = if used_existing { existing.as_str() } else { TEMPLATE };
+    let template = if used_existing {
+        existing.as_str()
+    } else {
+        TEMPLATE
+    };
     let text = render_into(template, settings);
 
     let mut f = root.create_file(SETTINGS_FILE)?;
@@ -255,7 +294,11 @@ pub fn inject_settings<D: Read + Write + Seek>(dev: D, settings: &ImagerSettings
     drop(f);
     drop(root);
     fs.unmount()?;
-    Ok(Injected { partition: part, used_existing_template: used_existing, bytes: text.len() })
+    Ok(Injected {
+        partition: part,
+        used_existing_template: used_existing,
+        bytes: text.len(),
+    })
 }
 
 /// Read `pixelplus.txt` back from an image or disk (used by verification and tests).
@@ -308,15 +351,23 @@ pub(crate) mod testimg {
             let mut part = Slice::new(&mut cur, boot_start, boot_len).unwrap();
             fatfs::format_volume(
                 &mut part,
-                fatfs::FormatVolumeOptions::new().fat_type(fatfs::FatType::Fat32).volume_label(*b"bootfs     "),
+                fatfs::FormatVolumeOptions::new()
+                    .fat_type(fatfs::FatType::Fat32)
+                    .volume_label(*b"bootfs     "),
             )
             .unwrap();
             let fs = fatfs::FileSystem::new(part, fatfs::FsOptions::new()).unwrap();
             {
                 let root = fs.root_dir();
-                root.create_file("config.txt").unwrap().write_all(b"arm_64bit=1\n").unwrap();
+                root.create_file("config.txt")
+                    .unwrap()
+                    .write_all(b"arm_64bit=1\n")
+                    .unwrap();
                 if let Some(t) = with_template {
-                    root.create_file(SETTINGS_FILE).unwrap().write_all(t.as_bytes()).unwrap();
+                    root.create_file(SETTINGS_FILE)
+                        .unwrap()
+                        .write_all(t.as_bytes())
+                        .unwrap();
                 }
             }
             fs.unmount().unwrap();
@@ -357,7 +408,9 @@ mod tests {
         let r = inject_settings(Cursor::new(&mut img), &settings()).unwrap();
         assert!(r.used_existing_template);
         let text = read_settings_file(Cursor::new(&mut img)).unwrap().unwrap();
-        assert!(text.starts_with("# custom\nwifi_ssid=Home\nhostname=pixelplus-porch\nboard=auto\n"));
+        assert!(
+            text.starts_with("# custom\nwifi_ssid=Home\nhostname=pixelplus-porch\nboard=auto\n")
+        );
         assert!(text.contains("\nwifi_password=hunter22!\n"));
         // other files untouched, image size untouched
         assert_eq!(img.len(), (45 * 1024 * 1024) as usize);

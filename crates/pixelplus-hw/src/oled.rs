@@ -29,7 +29,10 @@ pub struct Canvas {
 impl std::fmt::Debug for Canvas {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Canvas")
-            .field("lit_pixels", &self.buf.iter().map(|b| b.count_ones()).sum::<u32>())
+            .field(
+                "lit_pixels",
+                &self.buf.iter().map(|b| b.count_ones()).sum::<u32>(),
+            )
             .finish()
     }
 }
@@ -195,7 +198,11 @@ impl StatusScreen {
     pub fn render(&self, canvas: &mut Canvas) {
         canvas.clear();
         canvas.fill_rect(0, 0, WIDTH as i32, CELL_H as i32 + 1, true);
-        let title = if self.name.trim().is_empty() { "PixelPlus" } else { self.name.trim() };
+        let title = if self.name.trim().is_empty() {
+            "PixelPlus"
+        } else {
+            self.name.trim()
+        };
         canvas.text(2, 1, &ellipsize(title, COLUMNS - 1), 1, false);
 
         let state = ellipsize(&self.state.to_uppercase(), COLUMNS / 2);
@@ -284,7 +291,14 @@ impl<B: I2cBus> Ssd1306<B> {
 
     /// Push the whole canvas to the panel.
     pub fn flush(&mut self, canvas: &Canvas) -> Result<()> {
-        self.commands(&[0x21, 0x00, (WIDTH - 1) as u8, 0x22, 0x00, (HEIGHT / 8 - 1) as u8])?;
+        self.commands(&[
+            0x21,
+            0x00,
+            (WIDTH - 1) as u8,
+            0x22,
+            0x00,
+            (HEIGHT / 8 - 1) as u8,
+        ])?;
         let mut msg = Vec::with_capacity(DATA_CHUNK + 1);
         for chunk in canvas.as_bytes().chunks(DATA_CHUNK) {
             msg.clear();
@@ -342,9 +356,15 @@ mod tests {
         assert_eq!(ellipsize("hello", 10), "hello");
         assert_eq!(ellipsize("hello world", 7), "hello..");
         assert_eq!(ellipsize("abc", 2), "ab");
-        assert_eq!(wrap("Wizards in Winter by TSO", 12, 2), vec!["Wizards in", "Winter by.."]);
+        assert_eq!(
+            wrap("Wizards in Winter by TSO", 12, 2),
+            vec!["Wizards in", "Winter by.."]
+        );
         assert_eq!(wrap("short", 12, 2), vec!["short"]);
-        assert_eq!(wrap("abcdefghijklmnop", 5, 3), vec!["abcde", "fghij", "klm.."]);
+        assert_eq!(
+            wrap("abcdefghijklmnop", 5, 3),
+            vec!["abcde", "fghij", "klm.."]
+        );
         assert!(wrap("", 5, 2).is_empty());
     }
 

@@ -203,7 +203,9 @@ pub fn config_txt(board: BoardKind, soc: DpiSoc, geometry: &DpiGeometry) -> Resu
             geometry.refresh_hz()
         );
         if soc == DpiSoc::Bcm2712 {
-            s.push_str("# Uses the RP1 DPI block; keep the default dtoverlay=vc4-kms-v3d for HDMI.\n");
+            s.push_str(
+                "# Uses the RP1 DPI block; keep the default dtoverlay=vc4-kms-v3d for HDMI.\n",
+            );
         } else {
             s.push_str("# Needs the KMS display stack: keep dtoverlay=vc4-kms-v3d (Raspberry Pi OS default).\n");
         }
@@ -239,8 +241,14 @@ mod tests {
             ("Raspberry Pi 400 Rev 1.0\0", Some(DpiSoc::Bcm2711)),
             ("Raspberry Pi 5 Model B Rev 1.0", Some(DpiSoc::Bcm2712)),
             ("Raspberry Pi 500 Rev 1.0", Some(DpiSoc::Bcm2712)),
-            ("Raspberry Pi Compute Module 5 Rev 1.0", Some(DpiSoc::Bcm2712)),
-            ("Raspberry Pi Compute Module 4 Rev 1.1", Some(DpiSoc::Bcm2711)),
+            (
+                "Raspberry Pi Compute Module 5 Rev 1.0",
+                Some(DpiSoc::Bcm2712),
+            ),
+            (
+                "Raspberry Pi Compute Module 4 Rev 1.1",
+                Some(DpiSoc::Bcm2711),
+            ),
             ("Raspberry Pi Zero 2 W Rev 1.0", Some(DpiSoc::Bcm283x)),
             ("Raspberry Pi 3 Model B Plus Rev 1.3", Some(DpiSoc::Bcm283x)),
             ("Generic x86 PC", None),
@@ -275,7 +283,10 @@ mod tests {
     fn difftxlarge_pi5_fragment() {
         let g = DpiGeometry::for_pixels(1600).unwrap();
         let s = config_txt(BoardKind::Difftxlarge, DpiSoc::Bcm2712, &g).unwrap();
-        assert!(s.contains("dtoverlay=pixelplus-dpi-pi5,vactive=1607"), "{s}");
+        assert!(
+            s.contains("dtoverlay=pixelplus-dpi-pi5,vactive=1607"),
+            "{s}"
+        );
         assert!(s.contains("gpio=4-23,25-27=op,dl"));
         assert!(s.contains("dtoverlay=i2c-rtc,ds3231"));
         assert!(s.contains("usb_max_current_enable=1"));
@@ -301,7 +312,10 @@ mod tests {
     #[test]
     fn overlay_parameters_only_when_changed() {
         let mut g = DpiGeometry::for_pixels(100).unwrap();
-        assert_eq!(overlay_line(DpiSoc::Bcm2711, &g), "dtoverlay=pixelplus-dpi,vactive=107");
+        assert_eq!(
+            overlay_line(DpiSoc::Bcm2711, &g),
+            "dtoverlay=pixelplus-dpi,vactive=107"
+        );
         g.h_front_porch = 16;
         assert_eq!(
             overlay_line(DpiSoc::Bcm2711, &g),

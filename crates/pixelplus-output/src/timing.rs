@@ -470,7 +470,11 @@ mod tests {
         assert!((g.line_ns() - 30_625.0).abs() < 0.01);
         assert!(g.reset_ns() >= RESET_MIN_NS);
         assert_eq!(g.vactive(), 807);
-        assert!(g.refresh_hz() > 40.0 && g.refresh_hz() < 40.5, "{}", g.refresh_hz());
+        assert!(
+            g.refresh_hz() > 40.0 && g.refresh_hz() < 40.5,
+            "{}",
+            g.refresh_hz()
+        );
         let big = DpiGeometry::for_pixels(1600).unwrap();
         assert!(big.refresh_hz() > 20.0 && big.refresh_hz() < 20.5);
     }
@@ -508,9 +512,15 @@ mod tests {
 
     #[test]
     fn from_mode_rejects_wrong_width_and_garbage() {
-        assert!(DpiGeometry::from_mode(PIXEL_CLOCK_HZ, 800, 824, 896, 992, 480, 483, 493, 500).is_err());
-        assert!(DpiGeometry::from_mode(PIXEL_CLOCK_HZ, 1152, 1100, 1160, 1176, 20, 21, 22, 23).is_err());
-        assert!(DpiGeometry::from_mode(PIXEL_CLOCK_HZ, 1152, 1160, 1168, 1176, 5, 6, 7, 8).is_err());
+        assert!(
+            DpiGeometry::from_mode(PIXEL_CLOCK_HZ, 800, 824, 896, 992, 480, 483, 493, 500).is_err()
+        );
+        assert!(
+            DpiGeometry::from_mode(PIXEL_CLOCK_HZ, 1152, 1100, 1160, 1176, 20, 21, 22, 23).is_err()
+        );
+        assert!(
+            DpiGeometry::from_mode(PIXEL_CLOCK_HZ, 1152, 1160, 1168, 1176, 5, 6, 7, 8).is_err()
+        );
     }
 
     #[test]

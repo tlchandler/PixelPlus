@@ -82,7 +82,8 @@ mod tests {
             Err(OutputError::NotRunning)
         ));
         out.start().unwrap();
-        out.write_frame(&OutputFrameRef::new(vec![&px, &px])).unwrap();
+        out.write_frame(&OutputFrameRef::new(vec![&px, &px]))
+            .unwrap();
         assert!(out.write_frame(&OutputFrameRef::new(vec![&px; 3])).is_err());
         let s = out.stats();
         assert_eq!((s.frames, s.errors, s.running), (1, 1, true));

@@ -10,7 +10,9 @@
 //! (incremental) encodes.
 
 use pixelplus_core::model::BoardKind;
-use pixelplus_output::{BufferState, DpiGeometry, FrameBufferMut, OutputFrameRef, OutputLayout, WsEncoder};
+use pixelplus_output::{
+    BufferState, DpiGeometry, FrameBufferMut, OutputFrameRef, OutputLayout, WsEncoder,
+};
 use std::time::Instant;
 
 fn bench(board: BoardKind, pixels: u32) -> Result<(), pixelplus_output::OutputError> {

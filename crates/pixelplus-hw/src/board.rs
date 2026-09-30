@@ -21,7 +21,10 @@ use std::path::Path;
 pub const KNOWN_ADDRESSES: [u8; 6] = [0x3C, 0x40, 0x48, 0x49, 0x50, 0x68];
 
 /// Paths that hold the Raspberry Pi model string.
-pub const MODEL_PATHS: [&str; 2] = ["/proc/device-tree/model", "/sys/firmware/devicetree/base/model"];
+pub const MODEL_PATHS: [&str; 2] = [
+    "/proc/device-tree/model",
+    "/sys/firmware/devicetree/base/model",
+];
 
 /// Raspberry Pi product family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -87,7 +90,10 @@ impl PiFamily {
 
     /// `true` if the model has the 3.5 mm analog audio jack.
     pub fn has_analog_audio(self) -> bool {
-        matches!(self, PiFamily::Pi1 | PiFamily::Pi2 | PiFamily::Pi3 | PiFamily::Pi4)
+        matches!(
+            self,
+            PiFamily::Pi1 | PiFamily::Pi2 | PiFamily::Pi3 | PiFamily::Pi4
+        )
     }
 
     /// `true` for models PixelPlus supports as pixel controllers.
@@ -197,9 +203,9 @@ pub fn board_warnings(board: BoardKind, rev: Option<&str>) -> Vec<String> {
              patch lead with pins 4 and 5 swapped at one end (a 4/5-swapped patch lead)."
                 .to_string(),
         ),
-        BoardKind::Diffsmart => w.push(
-            "diffsmart: set switch SW1 to PI so the Pi drives the four outputs.".to_string(),
-        ),
+        BoardKind::Diffsmart => {
+            w.push("diffsmart: set switch SW1 to PI so the Pi drives the four outputs.".to_string())
+        }
         _ => {}
     }
     w
@@ -223,7 +229,11 @@ fn from_fpp(cape: &str, version: &str, present: &[u8]) -> Option<(BoardKind, Opt
         )),
         "difftxlarge" => Some((
             BoardKind::Difftxlarge,
-            Some(if version == "1.0" { "A".into() } else { version.to_string() }),
+            Some(if version == "1.0" {
+                "A".into()
+            } else {
+                version.to_string()
+            }),
         )),
         "diffsmart" => Some((BoardKind::Diffsmart, None)),
         _ => None,
@@ -287,7 +297,12 @@ pub fn classify(eeprom: Option<&EepromContents>, present: &[u8]) -> BoardDetecti
     if let Some(board) = d.board {
         d.warnings.extend(board_warnings(board, d.rev.as_deref()));
         let expected: &[(u8, &str)] = match board {
-            BoardKind::Difftxlarge => &[(0x40, "INA226 power monitor"), (0x48, "LM75B"), (0x49, "LM75B"), (0x68, "DS3231 RTC")],
+            BoardKind::Difftxlarge => &[
+                (0x40, "INA226 power monitor"),
+                (0x48, "LM75B"),
+                (0x49, "LM75B"),
+                (0x68, "DS3231 RTC"),
+            ],
             BoardKind::Diffsmart => &[(0x48, "LM75B"), (0x49, "LM75B")],
             _ => &[],
         };
@@ -352,14 +367,21 @@ mod tests {
         assert!(PiFamily::Pi5.is_rp1() && !PiFamily::Pi4.is_rp1());
         assert!(!PiFamily::Pi5.has_analog_audio());
         assert!(PiFamily::Zero2W.is_supported() && !PiFamily::Zero.is_supported());
-        assert_eq!(PiInfo::from_model("Raspberry Pi 4 Model B Rev 1.5\0").model, "Raspberry Pi 4 Model B Rev 1.5");
+        assert_eq!(
+            PiInfo::from_model("Raspberry Pi 4 Model B Rev 1.5\0").model,
+            "Raspberry Pi 4 Model B Rev 1.5"
+        );
     }
 
     #[test]
     fn pi_info_from_fake_root() {
         let root = std::env::temp_dir().join(format!("pixelplus-model-{}", std::process::id()));
         std::fs::create_dir_all(root.join("proc/device-tree")).unwrap();
-        std::fs::write(root.join("proc/device-tree/model"), b"Raspberry Pi 5 Model B Rev 1.0\0").unwrap();
+        std::fs::write(
+            root.join("proc/device-tree/model"),
+            b"Raspberry Pi 5 Model B Rev 1.0\0",
+        )
+        .unwrap();
         let info = read_pi_info_in(&root).unwrap();
         assert_eq!(info.family, PiFamily::Pi5);
         let empty = std::env::temp_dir().join(format!("pixelplus-nomodel-{}", std::process::id()));
@@ -369,9 +391,18 @@ mod tests {
 
     #[test]
     fn heuristics() {
-        assert_eq!(suggest_from_devices(&[0x40, 0x48, 0x49, 0x50, 0x68]), Some(BoardKind::Difftxlarge));
-        assert_eq!(suggest_from_devices(&[0x48, 0x49, 0x50]), Some(BoardKind::Diffsmart));
-        assert_eq!(suggest_from_devices(&[0x48, 0x49]), Some(BoardKind::Diffsmart));
+        assert_eq!(
+            suggest_from_devices(&[0x40, 0x48, 0x49, 0x50, 0x68]),
+            Some(BoardKind::Difftxlarge)
+        );
+        assert_eq!(
+            suggest_from_devices(&[0x48, 0x49, 0x50]),
+            Some(BoardKind::Diffsmart)
+        );
+        assert_eq!(
+            suggest_from_devices(&[0x48, 0x49]),
+            Some(BoardKind::Diffsmart)
+        );
         assert_eq!(suggest_from_devices(&[0x50]), Some(BoardKind::Difftx));
         assert_eq!(suggest_from_devices(&[]), None);
         assert_eq!(suggest_from_devices(&[0x50, 0x3C, 0x68]), None);
@@ -389,12 +420,19 @@ mod tests {
         let d = classify(Some(&EepromContents::Ppx1 { record: rec }), &[0x50]);
         assert_eq!(d.board, Some(BoardKind::Difftx));
         assert_eq!(d.source, DetectionSource::Eeprom);
-        assert!(d.warnings.iter().any(|w| w.contains("4/5-swapped")), "{:?}", d.warnings);
+        assert!(
+            d.warnings.iter().any(|w| w.contains("4/5-swapped")),
+            "{:?}",
+            d.warnings
+        );
     }
 
     #[test]
     fn blank_eeprom_gives_suggestion_only() {
-        let d = classify(Some(&EepromContents::Blank), &[0x40, 0x48, 0x49, 0x50, 0x68]);
+        let d = classify(
+            Some(&EepromContents::Blank),
+            &[0x40, 0x48, 0x49, 0x50, 0x68],
+        );
         assert_eq!(d.board, None);
         assert_eq!(d.source, DetectionSource::None);
         assert_eq!(d.suggested, Some(BoardKind::Difftxlarge));
@@ -408,7 +446,10 @@ mod tests {
             serial: "2026".into(),
         };
         let d = classify(Some(&fpp("difftx", "1.1")), &[0x50]);
-        assert_eq!((d.board, d.rev.as_deref()), (Some(BoardKind::Difftx), Some("E")));
+        assert_eq!(
+            (d.board, d.rev.as_deref()),
+            (Some(BoardKind::Difftx), Some("E"))
+        );
         assert_eq!(d.source, DetectionSource::FppEeprom);
         let d = classify(Some(&fpp("difftx", "1.0")), &[0x50]);
         assert!(d.warnings.iter().any(|w| w.contains("rev D")));
@@ -416,8 +457,14 @@ mod tests {
         assert_eq!(d.board, Some(BoardKind::Diffsmart));
         assert!(d.warnings.iter().any(|w| w.contains("SW1")));
         let d = classify(Some(&fpp("difftxlarge", "1.0")), &[0x50]);
-        assert_eq!((d.board, d.rev.as_deref()), (Some(BoardKind::Difftxlarge), Some("A")));
-        assert!(d.warnings.iter().any(|w| w.contains("0x40")), "missing INA226 flagged");
+        assert_eq!(
+            (d.board, d.rev.as_deref()),
+            (Some(BoardKind::Difftxlarge), Some("A"))
+        );
+        assert!(
+            d.warnings.iter().any(|w| w.contains("0x40")),
+            "missing INA226 flagged"
+        );
         let d = classify(Some(&fpp("k8-pi", "1.0")), &[0x50]);
         assert_eq!(d.board, None);
     }

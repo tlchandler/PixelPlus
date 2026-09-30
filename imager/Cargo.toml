@@ -16,3 +16,7 @@ rust-version = "1.80"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Decompression/hashing are unbearably slow unoptimised (tests stream several MB).
+[profile.dev.package."*"]
+opt-level = 2

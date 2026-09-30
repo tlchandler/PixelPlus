@@ -28,7 +28,9 @@ impl SimHandle {
     fn lock(&self) -> MutexGuard<'_, SimSnapshot> {
         // A poisoned lock only means a writer panicked mid-copy; the data is
         // still plain bytes, so keep serving it.
-        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Copy of the last frame.
@@ -118,7 +120,9 @@ impl SimOutput {
         let g = *verifier.encoder.geometry();
         let (w, h) = (g.hactive() as usize, g.vactive() as usize);
         let mut fb = FrameBufferMut::new(&mut verifier.words, w, h, w)?;
-        let report = verifier.encoder.encode(frame, &mut fb, &mut verifier.state)?;
+        let report = verifier
+            .encoder
+            .encode(frame, &mut fb, &mut verifier.state)?;
         let fb = FrameBufferRef::new(&verifier.words, w, h, w)?;
         let decoded = verifier.decoder.decode(&fb)?;
         let outcome = decoded.verify(frame, g.pixels_per_output as usize);
@@ -225,7 +229,10 @@ mod tests {
         let long = vec![7u8; 3 * 12];
         sim.write_frame(&OutputFrameRef::new(vec![&long])).unwrap();
         let stats = sim.stats();
-        assert_eq!((stats.frames, stats.truncated_frames, stats.errors), (3, 1, 0));
+        assert_eq!(
+            (stats.frames, stats.truncated_frames, stats.errors),
+            (3, 1, 0)
+        );
         assert_eq!(stats.max_pixels_per_output, Some(10));
     }
 }

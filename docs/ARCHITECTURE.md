@@ -116,7 +116,10 @@ does the same from the CLI.
 All boards drive WS281x (800 kHz) via the Pi's DPI peripheral in 24-bit mode clocked
 at 38.4 MHz (see `crates/pixelplus-output/DESIGN.md`). PixelPlus has **no artificial
 pixel limits**. Practical limit per output ≈ 1600 px at 20 fps / 800 px at 40 fps.
-Implementation is original (FPP's DPIPixels is CC-BY-ND and must not be copied).
+Implementation is original (FPP's DPIPixels is CC-BY-ND and must not be copied); see
+`crates/pixelplus-output/DESIGN.md`. The maximum string length is fixed at boot by the DPI overlay's
+vertical size: the daemon sizes it from the longest configured string (`DpiGeometry::for_pixels`),
+regenerates the config.txt fragment and asks the user to reboot (health check + banner in the UI).
 
 ---
 
@@ -408,7 +411,7 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `POST /system/reboot`, `/system/shutdown`, `/system/restart-service` | |
 | `GET /system/logs?lines=500` | text |
 | `GET/PUT /system/network` | {hostname, wifi:{ssid, psk?, country}, ethernet:{dhcp, address?, gateway?, dns?}}; `GET /system/network/scan` → [{ssid, signal, secure}] |
-| `GET /system/sensors` | [{id, label, kind:"temperature"|"voltage"|"current"|"power", value, unit, warn?, crit?}] |
+| `GET /system/sensors` | [{id, label, kind:"temperature"|"voltage"|"current"|"power", value, unit, warn?, crit?}]; ids: cpuTemp, driverTemp, powerTemp, enclosureTemp, inputVoltage, inputCurrent, inputPower. For voltage sensors warn/crit are minimums, otherwise maximums |
 | `GET /system/sensors/history?minutes=60` | {series: {id: [[t,v]...]}} |
 | `POST /system/eeprom` | {board, rev} write EEPROM |
 | `GET /system/update`, `POST /system/update` | check / apply updates (apt repo) |

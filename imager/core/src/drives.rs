@@ -30,7 +30,9 @@ pub struct Drive {
 }
 
 fn allow_large() -> bool {
-    std::env::var("PIXELPLUS_IMAGER_ALLOW_LARGE").map(|v| v == "1").unwrap_or(false)
+    std::env::var("PIXELPLUS_IMAGER_ALLOW_LARGE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 fn size_ok(size: u64) -> bool {
@@ -46,7 +48,17 @@ pub fn human_size(b: u64) -> String {
     }
 }
 
-const SYSTEM_MOUNTS: &[&str] = &["/", "/boot", "/boot/efi", "/boot/firmware", "/usr", "/var", "/home", "/efi", "[SWAP]"];
+const SYSTEM_MOUNTS: &[&str] = &[
+    "/",
+    "/boot",
+    "/boot/efi",
+    "/boot/firmware",
+    "/usr",
+    "/var",
+    "/home",
+    "/efi",
+    "[SWAP]",
+];
 
 // ---------------------------------------------------------------------------
 // Linux: lsblk -J -b -o NAME,PATH,SIZE,RM,HOTPLUG,TRAN,MODEL,VENDOR,TYPE,RO,MOUNTPOINT
@@ -116,14 +128,18 @@ pub fn parse_lsblk(json: &str) -> Result<Vec<Drive>, serde_json::Error> {
             continue;
         }
         let tran = d.tran.clone().unwrap_or_default().to_lowercase();
-        let removable = jbool(&d.rm) || jbool(&d.hotplug) || matches!(tran.as_str(), "usb" | "mmc" | "sd");
+        let removable =
+            jbool(&d.rm) || jbool(&d.hotplug) || matches!(tran.as_str(), "usb" | "mmc" | "sd");
         // mmcblk0 on a Pi / laptop SD slot: removable media but may be the boot disk -> mount check below
         if !removable || d.name.starts_with("loop") || d.name.starts_with("zram") {
             continue;
         }
         let mut mounts = Vec::new();
         lsblk_mounts(&d, &mut mounts);
-        if mounts.iter().any(|m| SYSTEM_MOUNTS.contains(&m.as_str()) || m.starts_with("/snap")) {
+        if mounts
+            .iter()
+            .any(|m| SYSTEM_MOUNTS.contains(&m.as_str()) || m.starts_with("/snap"))
+        {
             continue;
         }
         let size = jnum(&d.size);
@@ -137,12 +153,20 @@ pub fn parse_lsblk(json: &str) -> Result<Vec<Drive>, serde_json::Error> {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        let label = if label.is_empty() { format!("{} drive", tran.to_uppercase()) } else { label };
+        let label = if label.is_empty() {
+            format!("{} drive", tran.to_uppercase())
+        } else {
+            label
+        };
         drives.push(Drive {
             device: d.path.clone().unwrap_or_else(|| format!("/dev/{}", d.name)),
             name: format!("{label} ({})", human_size(size)),
             size,
-            bus: if tran.is_empty() { "removable".into() } else { tran },
+            bus: if tran.is_empty() {
+                "removable".into()
+            } else {
+                tran
+            },
             mountpoints: mounts,
             too_small: size < MIN_SIZE,
         });
@@ -194,12 +218,18 @@ pub struct DuInfo {
     pub virtual_or_physical: String,
 }
 
-pub fn parse_diskutil_list(plist_xml: &[u8]) -> Result<Vec<(String, u64, Vec<String>)>, plist::Error> {
+pub fn parse_diskutil_list(
+    plist_xml: &[u8],
+) -> Result<Vec<(String, u64, Vec<String>)>, plist::Error> {
     let l: DuList = plist::from_bytes(plist_xml)?;
     Ok(l.all_disks_and_partitions
         .into_iter()
         .map(|d| {
-            let mut m: Vec<String> = d.partitions.iter().filter_map(|p| p.mount_point.clone()).collect();
+            let mut m: Vec<String> = d
+                .partitions
+                .iter()
+                .filter_map(|p| p.mount_point.clone())
+                .collect();
             if let Some(mp) = d.mount_point {
                 m.push(mp);
             }
@@ -213,17 +243,25 @@ pub fn parse_diskutil_info(plist_xml: &[u8]) -> Result<DuInfo, plist::Error> {
 }
 
 pub fn mac_drive(id: &str, size: u64, mounts: Vec<String>, info: &DuInfo) -> Option<Drive> {
-    let system_mount = mounts.iter().any(|m| m == "/" || m.starts_with("/System/Volumes"));
+    let system_mount = mounts
+        .iter()
+        .any(|m| m == "/" || m.starts_with("/System/Volumes"));
     if info.os_internal_media || system_mount || id == "disk0" || !info.writable_media {
         return None;
     }
-    if info.virtual_or_physical == "Virtual" || !(info.removable_media || info.ejectable || !info.internal) {
+    if info.virtual_or_physical == "Virtual"
+        || !(info.removable_media || info.ejectable || !info.internal)
+    {
         return None;
     }
     if !size_ok(size) {
         return None;
     }
-    let name = if info.media_name.trim().is_empty() { "External drive".to_string() } else { info.media_name.trim().to_string() };
+    let name = if info.media_name.trim().is_empty() {
+        "External drive".to_string()
+    } else {
+        info.media_name.trim().to_string()
+    };
     Some(Drive {
         device: format!("/dev/r{id}"),
         name: format!("{name} ({})", human_size(size)),
@@ -273,18 +311,29 @@ pub fn parse_windows(json: &str) -> Result<Vec<Drive>, serde_json::Error> {
         return Ok(vec![]);
     }
     // ConvertTo-Json emits a bare object for a single disk
-    let disks: Vec<WinDisk> = if t.starts_with('[') { serde_json::from_str(t)? } else { vec![serde_json::from_str(t)?] };
+    let disks: Vec<WinDisk> = if t.starts_with('[') {
+        serde_json::from_str(t)?
+    } else {
+        vec![serde_json::from_str(t)?]
+    };
     let mut out = Vec::new();
     for d in disks {
         let bus = d.bus_type.to_lowercase();
-        if d.is_boot || d.is_system || d.is_read_only || !matches!(bus.as_str(), "usb" | "sd" | "mmc") {
+        if d.is_boot
+            || d.is_system
+            || d.is_read_only
+            || !matches!(bus.as_str(), "usb" | "sd" | "mmc")
+        {
             continue;
         }
         if !size_ok(d.size) {
             continue;
         }
         let letters = match d.letters {
-            Some(serde_json::Value::Array(a)) => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+            Some(serde_json::Value::Array(a)) => a
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
             Some(serde_json::Value::String(s)) => vec![s],
             _ => vec![],
         };
@@ -316,13 +365,27 @@ pub enum ListError {
 #[cfg(target_os = "linux")]
 pub fn list() -> Result<Vec<Drive>, ListError> {
     let out = std::process::Command::new("lsblk")
-        .args(["-J", "-b", "-o", "NAME,PATH,SIZE,RM,HOTPLUG,TRAN,MODEL,VENDOR,TYPE,RO,MOUNTPOINT"])
+        .args([
+            "-J",
+            "-b",
+            "-o",
+            "NAME,PATH,SIZE,RM,HOTPLUG,TRAN,MODEL,VENDOR,TYPE,RO,MOUNTPOINT",
+        ])
         .output()
-        .map_err(|e| ListError::Tool { tool: "lsblk", err: e.to_string() })?;
+        .map_err(|e| ListError::Tool {
+            tool: "lsblk",
+            err: e.to_string(),
+        })?;
     if !out.status.success() {
-        return Err(ListError::Tool { tool: "lsblk", err: String::from_utf8_lossy(&out.stderr).into() });
+        return Err(ListError::Tool {
+            tool: "lsblk",
+            err: String::from_utf8_lossy(&out.stderr).into(),
+        });
     }
-    parse_lsblk(&String::from_utf8_lossy(&out.stdout)).map_err(|e| ListError::Parse { tool: "lsblk", err: e.to_string() })
+    parse_lsblk(&String::from_utf8_lossy(&out.stdout)).map_err(|e| ListError::Parse {
+        tool: "lsblk",
+        err: e.to_string(),
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -331,18 +394,32 @@ pub fn list() -> Result<Vec<Drive>, ListError> {
         let o = std::process::Command::new("/usr/sbin/diskutil")
             .args(args)
             .output()
-            .map_err(|e| ListError::Tool { tool: "diskutil", err: e.to_string() })?;
+            .map_err(|e| ListError::Tool {
+                tool: "diskutil",
+                err: e.to_string(),
+            })?;
         if !o.status.success() {
-            return Err(ListError::Tool { tool: "diskutil", err: String::from_utf8_lossy(&o.stderr).into() });
+            return Err(ListError::Tool {
+                tool: "diskutil",
+                err: String::from_utf8_lossy(&o.stderr).into(),
+            });
         }
         Ok(o.stdout)
     };
-    let list = parse_diskutil_list(&run(&["list", "-plist", "external", "physical"])?)
-        .map_err(|e| ListError::Parse { tool: "diskutil", err: e.to_string() })?;
+    let list =
+        parse_diskutil_list(&run(&["list", "-plist", "external", "physical"])?).map_err(|e| {
+            ListError::Parse {
+                tool: "diskutil",
+                err: e.to_string(),
+            }
+        })?;
     let mut drives = Vec::new();
     for (id, size, mounts) in list {
-        let info = parse_diskutil_info(&run(&["info", "-plist", &id])?)
-            .map_err(|e| ListError::Parse { tool: "diskutil", err: e.to_string() })?;
+        let info =
+            parse_diskutil_info(&run(&["info", "-plist", &id])?).map_err(|e| ListError::Parse {
+                tool: "diskutil",
+                err: e.to_string(),
+            })?;
         if let Some(d) = mac_drive(&id, size, mounts, &info) {
             drives.push(d);
         }
@@ -355,14 +432,30 @@ pub fn list() -> Result<Vec<Drive>, ListError> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let out = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_PS])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            WINDOWS_PS,
+        ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map_err(|e| ListError::Tool { tool: "powershell", err: e.to_string() })?;
+        .map_err(|e| ListError::Tool {
+            tool: "powershell",
+            err: e.to_string(),
+        })?;
     if !out.status.success() {
-        return Err(ListError::Tool { tool: "powershell", err: String::from_utf8_lossy(&out.stderr).into() });
+        return Err(ListError::Tool {
+            tool: "powershell",
+            err: String::from_utf8_lossy(&out.stderr).into(),
+        });
     }
-    parse_windows(&String::from_utf8_lossy(&out.stdout)).map_err(|e| ListError::Parse { tool: "powershell", err: e.to_string() })
+    parse_windows(&String::from_utf8_lossy(&out.stdout)).map_err(|e| ListError::Parse {
+        tool: "powershell",
+        err: e.to_string(),
+    })
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]

@@ -384,7 +384,11 @@ mod tests {
     #[test]
     fn latched_round_trip_all_60() {
         let data: Vec<Vec<u8>> = (0..60)
-            .map(|o| (0..(o % 7 + 1) * 3).map(|i| (o * 13 + i * 29) as u8).collect())
+            .map(|o| {
+                (0..(o % 7 + 1) * 3)
+                    .map(|i| (o * 13 + i * 29) as u8)
+                    .collect()
+            })
             .collect();
         let frame = OutputFrameRef::new(data.iter().map(Vec::as_slice).collect());
         let dec = round_trip(BoardKind::Difftxlarge, &frame, 8);

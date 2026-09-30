@@ -24,12 +24,16 @@ pub struct OpenDevice {
     _locks: Vec<win::VolumeLock>,
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn run(cmd: &str, args: &[&str]) -> io::Result<()> {
     let st = std::process::Command::new(cmd).args(args).status()?;
     if st.success() {
         Ok(())
     } else {
-        Err(io::Error::other(format!("{cmd} {} failed ({st})", args.join(" "))))
+        Err(io::Error::other(format!(
+            "{cmd} {} failed ({st})",
+            args.join(" ")
+        )))
     }
 }
 
@@ -49,10 +53,19 @@ pub fn open(drive: &Drive) -> io::Result<OpenDevice> {
         .write(true)
         .custom_flags(libc::O_EXCL | libc::O_CLOEXEC)
         .open(&drive.device)
-        .map_err(|e| io::Error::new(e.kind(), format!("cannot open {}: {e} (is it still mounted?)", drive.device)))?;
+        .map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("cannot open {}: {e} (is it still mounted?)", drive.device),
+            )
+        })?;
     let size = file.seek(SeekFrom::End(0))?;
     file.seek(SeekFrom::Start(0))?;
-    Ok(OpenDevice { file, size, block: 4096 })
+    Ok(OpenDevice {
+        file,
+        size,
+        block: 4096,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -92,9 +105,19 @@ fn whole_disk(dev: &str) -> String {
 
 #[cfg(target_os = "macos")]
 pub fn open(drive: &Drive) -> io::Result<OpenDevice> {
-    run("/usr/sbin/diskutil", &["unmountDisk", &whole_disk(&drive.device)])?;
-    let file = std::fs::OpenOptions::new().read(true).write(true).open(&drive.device)?;
-    Ok(OpenDevice { file, size: drive.size, block: 4096 })
+    run(
+        "/usr/sbin/diskutil",
+        &["unmountDisk", &whole_disk(&drive.device)],
+    )?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&drive.device)?;
+    Ok(OpenDevice {
+        file,
+        size: drive.size,
+        block: 4096,
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -117,7 +140,9 @@ mod win {
     use std::io;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
     use windows_sys::Win32::System::Ioctl::{FSCTL_DISMOUNT_VOLUME, FSCTL_LOCK_VOLUME};
     use windows_sys::Win32::System::IO::DeviceIoControl;
 
@@ -173,7 +198,10 @@ mod win {
         while let Err(e) = ioctl(&h, FSCTL_LOCK_VOLUME) {
             tries += 1;
             if tries > 10 {
-                return Err(io::Error::new(e.kind(), format!("cannot lock {letter}: close any window showing the card ({e})")));
+                return Err(io::Error::new(
+                    e.kind(),
+                    format!("cannot lock {letter}: close any window showing the card ({e})"),
+                ));
             }
             std::thread::sleep(std::time::Duration::from_millis(300));
         }
@@ -185,7 +213,9 @@ mod win {
 #[cfg(windows)]
 pub fn open(drive: &Drive) -> io::Result<OpenDevice> {
     use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_WRITE_THROUGH, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_WRITE_THROUGH, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
     let mut locks = Vec::new();
     for l in &drive.mountpoints {
         locks.push(win::lock_volume(l)?);
@@ -196,7 +226,12 @@ pub fn open(drive: &Drive) -> io::Result<OpenDevice> {
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_WRITE_THROUGH)
         .open(&drive.device)?;
-    Ok(OpenDevice { file, size: drive.size, block: 4096, _locks: locks })
+    Ok(OpenDevice {
+        file,
+        size: drive.size,
+        block: 4096,
+        _locks: locks,
+    })
 }
 
 #[cfg(windows)]
@@ -213,7 +248,9 @@ pub fn finish(dev: OpenDevice, _drive: &Drive) -> io::Result<()> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn open(_drive: &Drive) -> io::Result<OpenDevice> {
-    Err(io::Error::other("raw disk writing is not supported on this OS"))
+    Err(io::Error::other(
+        "raw disk writing is not supported on this OS",
+    ))
 }
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn drop_caches(_dev: &OpenDevice) -> io::Result<()> {

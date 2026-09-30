@@ -44,10 +44,14 @@ fn find_pinctrl() -> Option<PathBuf> {
             .find(|p| p.is_file())
     });
     from_path.or_else(|| {
-        ["/usr/bin/pinctrl", "/usr/sbin/pinctrl", "/usr/local/bin/pinctrl"]
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| p.is_file())
+        [
+            "/usr/bin/pinctrl",
+            "/usr/sbin/pinctrl",
+            "/usr/local/bin/pinctrl",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
     })
 }
 
@@ -85,7 +89,9 @@ impl PinMux {
     pub fn set_dpi(&self, pins: &[u8]) -> Result<()> {
         check_pins(pins)?;
         match &self.method {
-            PinMuxMethod::Pinctrl(path) => run_pinctrl(path, pins, &[self.soc.dpi_function(), "pd"]),
+            PinMuxMethod::Pinctrl(path) => {
+                run_pinctrl(path, pins, &[self.soc.dpi_function(), "pd"])
+            }
             PinMuxMethod::GpioMem => GpioMem::open()?.set_dpi(self.soc, pins),
         }
     }
@@ -263,14 +269,20 @@ mod tests {
 
     #[test]
     fn refuses_non_dpi_pins() {
-        let mux = PinMux::with_method(DpiSoc::Bcm2711, PinMuxMethod::Pinctrl("/nonexistent".into()));
+        let mux = PinMux::with_method(
+            DpiSoc::Bcm2711,
+            PinMuxMethod::Pinctrl("/nonexistent".into()),
+        );
         assert!(matches!(mux.set_dpi(&[2, 3]), Err(OutputError::PinMux(_))));
         assert!(matches!(mux.set_idle(&[28]), Err(OutputError::PinMux(_))));
     }
 
     #[test]
     fn missing_program_is_an_error_not_a_panic() {
-        let mux = PinMux::with_method(DpiSoc::Bcm2711, PinMuxMethod::Pinctrl("/nonexistent/pinctrl".into()));
+        let mux = PinMux::with_method(
+            DpiSoc::Bcm2711,
+            PinMuxMethod::Pinctrl("/nonexistent/pinctrl".into()),
+        );
         assert!(mux.set_idle(&[4, 5]).is_err());
     }
 
@@ -280,7 +292,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("log");
         let script = dir.join("pinctrl");
-        std::fs::write(&script, format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display())).unwrap();
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"$@\" >> {}\n", log.display()),
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         // A concurrently forking test thread can briefly hold the script open

@@ -26,14 +26,17 @@ impl<'a> OutputFrameRef<'a> {
         let mut offset = 0usize;
         for (i, &count) in pixel_counts.iter().enumerate() {
             let len = count as usize * 3;
-            let end = offset.checked_add(len).filter(|&e| e <= data.len()).ok_or_else(|| {
-                OutputError::InvalidFrame(format!(
-                    "output {} needs bytes {offset}..{} but the frame has {}",
-                    i + 1,
-                    offset.saturating_add(len),
-                    data.len()
-                ))
-            })?;
+            let end = offset
+                .checked_add(len)
+                .filter(|&e| e <= data.len())
+                .ok_or_else(|| {
+                    OutputError::InvalidFrame(format!(
+                        "output {} needs bytes {offset}..{} but the frame has {}",
+                        i + 1,
+                        offset.saturating_add(len),
+                        data.len()
+                    ))
+                })?;
             outputs.push(&data[offset..end]);
             offset = end;
         }

@@ -37,7 +37,9 @@ pub struct RtcTime {
 fn from_bcd(b: u8, max: u8, what: &str) -> Result<u8> {
     let (hi, lo) = (b >> 4, b & 0x0F);
     if hi > 9 || lo > 9 {
-        return Err(HwError::InvalidData(format!("RTC {what} register 0x{b:02x} is not BCD")));
+        return Err(HwError::InvalidData(format!(
+            "RTC {what} register 0x{b:02x} is not BCD"
+        )));
     }
     let v = hi * 10 + lo;
     if v > max {
@@ -58,7 +60,9 @@ pub fn decode_time(r: &[u8; 7]) -> Result<NaiveDateTime> {
         // 12-hour mode: bit 5 = PM.
         let h12 = from_bcd(r[2] & 0x1F, 12, "hours")?;
         if h12 == 0 {
-            return Err(HwError::InvalidData("RTC 12-hour clock reads hour 0".into()));
+            return Err(HwError::InvalidData(
+                "RTC 12-hour clock reads hour 0".into(),
+            ));
         }
         (h12 % 12) + if r[2] & 0x20 != 0 { 12 } else { 0 }
     } else {
@@ -161,7 +165,11 @@ mod tests {
 
     #[test]
     fn encode_decode_round_trip() {
-        for t in [dt(2026, 12, 24, 23, 59, 58), dt(2000, 1, 1, 0, 0, 0), dt(2150, 2, 28, 12, 30, 5)] {
+        for t in [
+            dt(2026, 12, 24, 23, 59, 58),
+            dt(2000, 1, 1, 0, 0, 0),
+            dt(2150, 2, 28, 12, 30, 5),
+        ] {
             assert_eq!(decode_time(&encode_time(&t).unwrap()).unwrap(), t);
         }
         assert!(encode_time(&dt(1999, 1, 1, 0, 0, 0)).is_err());

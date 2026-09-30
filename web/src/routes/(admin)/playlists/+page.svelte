@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { Playlist, PlaylistItem, Show } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
@@ -53,8 +54,10 @@
 	});
 	$effect(() => {
 		const p = show?.playlists.find((x) => x.id === selectedId);
-		if (p && (draft?.id !== p.id || saveState === 'saved')) draft = structuredClone($state.snapshot(p) as Playlist);
-		if (!p) draft = null;
+		untrack(() => {
+			if (p && (draft?.id !== p.id || saveState === 'saved')) draft = structuredClone($state.snapshot(p) as Playlist);
+			if (!p) draft = null;
+		});
 	});
 
 	function queueSave() {

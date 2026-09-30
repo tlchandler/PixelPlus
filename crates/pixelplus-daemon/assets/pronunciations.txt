@@ -1,0 +1,155 @@
+# ============================================================================
+#  Pronunciation fixes for the DJ voices
+# ============================================================================
+#  Format:   word or phrase = replacement
+#    * A plain replacement is a sound-alike spelling:     TSO = T S O
+#    * A replacement between slashes is exact IPA sounds:  Noel = /noʊˈɛl/
+#  Matching is whole-word. Entries containing a capital letter are
+#  case-sensitive (so "LED" doesn't change "she led the way"); all-lowercase
+#  entries match any case. Longer phrases are matched first.
+#  Comment lines start with "# " (hash + space).
+#
+#  Every entry here was found by running the word through both voices and
+#  checking the result. Only add words the voices get WRONG - anything listed
+#  here overrides the voice's normal (usually correct) pronunciation.
+#  Test a word with:   ./say nick "Here is Tchaikovsky."
+# ============================================================================
+
+# --- Christmas words & carols -----------------------------------------------
+Noel = /noʊˈɛl/
+The First Noel = /ðə fˈɜːst noʊˈɛl/
+Joyeux Noel = /ʒwɑjˈʌ noʊˈɛl/
+Joyeux Noël = /ʒwɑjˈʌ noʊˈɛl/
+Noël = /noʊˈɛl/
+Pere Noel = /pˈɛɹ noʊˈɛl/
+Père Noël = /pˈɛɹ noʊˈɛl/
+Papa Noel = /pˈɑpə noʊˈɛl/
+Yuletide = /jˈuːltˌaɪd/
+Emmanuel = /ɪmˈænjuːˌɛl/
+Whoville = /hˈuːvɪl/
+Cindy Lou Who = /sˈɪndi lˈuː hˈuː/
+Adeste Fideles = /ɑdˈɛsteɪ fidˈeɪleɪs/
+Gloria in Excelsis Deo = /ɡlˈɔɹiə ɪn ɛkʃˈɛlsɪs dˈeɪoʊ/
+In Excelsis Deo = /ɪn ɛkʃˈɛlsɪs dˈeɪoʊ/
+Ave Maria = /ˈɑveɪ mɑɹˈiə/
+Gesu Bambino = /dʒeɪzˈuː bɑmbˈinoʊ/
+Il est ne = /ˌil ɛ nˈeɪ/
+Il est né = /ˌil ɛ nˈeɪ/
+O Tannenbaum = /ˈoʊ tˈɑnənbˌaʊm/
+Tannenbaum = /tˈɑnənbˌaʊm/
+Stille Nacht = /ʃtˈɪlə nˈɑxt/
+fa la la la la = /fˈɑ lɑ lɑ lɑ lˈɑ/
+Weihnachtsmann = /vˈaɪnɑxtsmɑn/
+La Befana = /lɑ beɪfˈɑnə/
+Tomte = /tˈɔmtə/
+Julebukk = /jˈuləbʊk/
+St. Nick = Saint Nick
+St. Nicholas = Saint Nicholas
+St. Lucia = Saint Lucia
+St. Stephen = Saint Stephen
+Xmas = Christmas
+
+# --- Other holidays ----------------------------------------------------------
+Chanukah = /hˈɑnəkə/
+Kwanzaa = /kwˈɑnzə/
+Mele Kalikimaka = /mˈɛleɪ kəlˌikimˈɑkə/
+
+# --- Spanish / Italian greetings & food --------------------------------------
+Feliz Navidad = /fəlˈiz nˌɑvidˈɑd/
+Navidad = /nˌɑvidˈɑd/
+Feliz = /fəlˈiz/
+Prospero Año Nuevo = /pɹˈɔspɛɹoʊ ˈɑnjoʊ nwˈeɪvoʊ/
+Prospero Ano Nuevo = /pɹˈɔspɛɹoʊ ˈɑnjoʊ nwˈeɪvoʊ/
+Año Nuevo = /ˈɑnjoʊ nwˈeɪvoʊ/
+Ano Nuevo = /ˈɑnjoʊ nwˈeɪvoʊ/
+Las Posadas = /lɑs poʊsˈɑdɑs/
+farolitos = /fɑɹoʊlˈitoʊs/
+piñata = /pinjˈɑtə/
+pinata = /pinjˈɑtə/
+jalapeño = /hˌɑləpˈeɪnjoʊ/
+jalapeno = /hˌɑləpˈeɪnjoʊ/
+Buon Natale = /bwˈɔn nɑtˈɑleɪ/
+Feliciano = /fəlˌisiˈɑnoʊ/
+
+# --- Artists & composers -----------------------------------------------------
+Tchaikovsky = /tʃaɪkˈɔfski/
+Beyoncé = /biˈjɑnseɪ/
+Beyonce = /biˈjɑnseɪ/
+Bocelli = /boʊtʃˈɛli/
+Michael Bublé = /mˈaɪkəl buːblˈeɪ/
+Michael Buble = /mˈaɪkəl buːblˈeɪ/
+Bublé = /buːblˈeɪ/
+Buble = /buːblˈeɪ/
+Celine Dion = /seɪlˈin diˈɔn/
+Céline Dion = /seɪlˈin diˈɔn/
+Enya = /ˈɛnjə/
+Sia = /sˈiːə/
+Guaraldi = /ɡwəɹˈɑldi/
+Idina Menzel = /ɪdˈinə mˈɛnzəl/
+TSO = T S O
+Wham! = Wham
+
+# --- Light show & radio tech -------------------------------------------------
+FPP = F P P
+LEDs = L E Dees
+LED = L E D
+DMX = D M X
+HOA = H O A
+WS2811 = W S twenty-eight eleven
+WS2812 = W S twenty-eight twelve
+xLights = X Lights
+MPH = miles per hour
+mph = miles per hour
+p.m. = P M
+a.m. = A M
+
+# --- Abbreviations -----------------------------------------------------------
+# (write things out in full when you can - these catch the common ones)
+No. = number
+#1 = number one
+Mon. = Monday
+Tue. = Tuesday
+Tues. = Tuesday
+Wed. = Wednesday
+Thu. = Thursday
+Thurs. = Thursday
+Fri. = Friday
+Sat. = Saturday
+Sun. = Sunday
+Jan. = January
+Feb. = February
+Aug. = August
+Sept. = September
+Oct. = October
+Nov. = November
+Dec. = December
+approx. = approximately
+hrs. = hours
+mins. = minutes
+min. = minutes
+vs. = versus
+w/ = with
+& = and
+
+# ----------------------------------------------------------------------------
+#  Checked and already pronounced correctly - no entry needed:
+#  Christmas, Christmas Eve, Santa Claus, Mrs. Claus, Kris Kringle, Rudolph,
+#  Dasher, Dancer, Prancer, Vixen, Comet, Cupid, Donner, Blitzen, reindeer,
+#  sleigh, sleigh bells, elves, Frosty, the Grinch, Ebenezer Scrooge, Tiny Tim,
+#  Krampus, Hanukkah, menorah, dreidel, Hogmanay, Boxing Day, Auld Lang Syne,
+#  New Year's Eve, Sinterklaas, Advent, Epiphany, Nativity, Bethlehem, the Magi,
+#  myrrh, frankincense, Messiah, Hallelujah, cherubim, seraphim, Gabriel,
+#  creche, wassail, mistletoe, poinsettia, eggnog, gingerbread, figgy pudding,
+#  chestnuts, tinsel, garland, wreath, stockings, ornaments, nougat, cinnamon,
+#  nutmeg, caramel, s'mores, hot cocoa, hors d'oeuvres, tamales, luminaria,
+#  mañana, Deck the Halls, Silent Night, O Holy Night, Carol of the Bells,
+#  Away in a Manger, Coventry Carol, Jingle Bell Rock, Good King Wenceslas,
+#  The Nutcracker, Sugar Plum Fairy, Wizards in Winter, Sarajevo,
+#  Mannheim Steamroller, Trans-Siberian Orchestra, Pentatonix, Mariah Carey,
+#  Bing Crosby, Burl Ives, Brenda Lee, Nat King Cole, Josh Groban, Kelly
+#  Clarkson, Andy Williams, Perry Como, Johnny Mathis, Dean Martin, Gene Autry,
+#  Bobby Helms, Darlene Love, Dolly Parton, Elvis Presley, Kenny G, Handel,
+#  José, Dr. Seuss, Clark Griswold, Home Alone, Polar Express, megatree,
+#  pixels, RGB, Raspberry Pi, Falcon Player, cul-de-sac, Wednesday, February,
+#  library, genre, 88.7 FM, 5:30 PM, December 25th
+# ----------------------------------------------------------------------------

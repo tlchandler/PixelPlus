@@ -205,7 +205,9 @@ Xeon 2.1 GHz, one core): **60 × 1600 LEDs: 0.96 ms per frame** steady state
 1.5–1.8 GHz is roughly 4–6× slower per core and write-combined memory costs
 more than cached memory, so expect ~5–10 ms on a Pi 4 and ~10–15 ms on a Pi 3 /
 Zero 2 W — comfortably inside the 25 ms (40 fps) / 50 ms (20 fps) budget.
-Measure on hardware with the same example.
+Measure on hardware with the same example. (The whole test-suite, including
+the full 60 × 1600 round trip, also passes for `aarch64-unknown-linux-gnu`
+under qemu-user.)
 
 ## 9. Device tree overlay and boot configuration
 
@@ -220,8 +222,7 @@ an overlay parameter (`vactive=`, `hfp=`, `clock-frequency=` …).
   it), but nothing reaches the header until `pixelplusd` switches exactly the
   board's pins to the DPI function (`pinmux`): GPIO4–7 for difftx/diffsmart,
   GPIO4–23 + 25–27 for difftxlarge. Only the pins a board needs are claimed,
-  which the task of "prefer claiming only needed pins" requires, and no
-  garbage is ever clocked into pixels.
+  and no garbage is ever clocked into pixels.
 * On stop — and whenever the daemon is not running — the pins are GPIO
   outputs driven low with pull-downs: the WS281x idle state.
 * `config.txt` adds `gpio=4-7=op,dl` (or `4-23,25-27`) so the firmware holds

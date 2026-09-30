@@ -46,7 +46,10 @@ fn describe_pins(pins: &[u8]) -> String {
     if pins.is_empty() {
         return "none".into();
     }
-    pins.iter().map(|p| format!("GPIO{p}")).collect::<Vec<_>>().join(", ")
+    pins.iter()
+        .map(|p| format!("GPIO{p}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A debounced button transition.
@@ -262,7 +265,10 @@ mod tests {
         let err = check_trigger_pin(BoardKind::Difftxlarge, 17).unwrap_err();
         assert!(err.to_string().contains("GPIO24"));
         assert!(check_trigger_pin(BoardKind::Diffsmart, 5).is_err());
-        assert!(check_trigger_pin(BoardKind::Virtual, 5).unwrap_err().to_string().contains("none"));
+        assert!(check_trigger_pin(BoardKind::Virtual, 5)
+            .unwrap_err()
+            .to_string()
+            .contains("none"));
     }
 
     #[test]

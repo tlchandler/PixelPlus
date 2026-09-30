@@ -92,7 +92,10 @@ impl std::str::FromStr for BackendKind {
 /// `Sim` returns a plain in-memory [`SimOutput`] (use
 /// [`SimOutput::handle`] via [`SimOutput`] directly if you need the preview
 /// handle). `Dpi` on a non-Linux platform returns an error.
-pub fn create_backend(kind: BackendKind, board: pixelplus_core::model::BoardKind) -> Result<Box<dyn PixelOutput>> {
+pub fn create_backend(
+    kind: BackendKind,
+    board: pixelplus_core::model::BoardKind,
+) -> Result<Box<dyn PixelOutput>> {
     let outputs = board.output_count();
     match kind {
         BackendKind::None => Ok(Box::new(NullOutput::with_outputs(outputs))),

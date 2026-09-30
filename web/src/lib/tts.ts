@@ -30,8 +30,14 @@ export async function renderSpeech(show: Show, lines: DjLine[], speed: number, o
 	if (!(await tts.isBrowserTtsSupported()))
 		throw new Error('This browser can’t render voices. Try a recent Chrome, Edge or Safari on a computer.');
 	return tts.renderDialog(
-		lines.map((l) => ({ voice: show.djVoices.find((v) => v.id === l.voice) ?? l.voice, text: l.text, pauseMs: l.pauseMs, energy: l.energy })),
-		{ speed, onProgress, pronunciations: show.pronunciations } as any
+		lines.map((l) => ({ voice: l.voice, text: l.text, pauseMs: l.pauseMs, energy: l.energy })),
+		{
+			speed,
+			onProgress,
+			voices: show.djVoices,
+			pronunciations: show.pronunciations,
+			loudnessLufs: show.settings.audio.targetLufs
+		}
 	);
 }
 

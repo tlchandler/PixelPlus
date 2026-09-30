@@ -65,14 +65,22 @@ mod tests {
 
     #[test]
     fn simulated_boards_detect_as_themselves() {
-        for board in [BoardKind::Difftx, BoardKind::Diffsmart, BoardKind::Difftxlarge] {
+        for board in [
+            BoardKind::Difftx,
+            BoardKind::Diffsmart,
+            BoardKind::Difftxlarge,
+        ] {
             let bus = mock_board_bus(board, "A", true);
             let mut eeprom = I2cEeprom::new(bus, EEPROM_ADDR);
             let contents = eeprom::read_contents(&mut eeprom).unwrap();
             let mut bus = eeprom.into_inner();
             let d = crate::board::classify(Some(&contents), &crate::board::probe_known(&mut bus));
             assert_eq!(d.board, Some(board));
-            assert!(d.warnings.iter().all(|w| !w.contains("did not answer")), "{:?}", d.warnings);
+            assert!(
+                d.warnings.iter().all(|w| !w.contains("did not answer")),
+                "{:?}",
+                d.warnings
+            );
             // Unprogrammed: suggestion only.
             let mut blank = mock_board_bus(board, "A", false);
             let d = detect(&mut blank, None);
@@ -86,6 +94,15 @@ mod tests {
         let mut hub = SensorHub::new(BoardKind::Difftxlarge, Some(Box::new(bus)))
             .with_root(std::env::temp_dir().join("pixelplus-no-sysfs"));
         let ids: Vec<String> = hub.read_all().into_iter().map(|s| s.id).collect();
-        assert_eq!(ids, ["driverTemp", "powerTemp", "inputVoltage", "inputCurrent", "inputPower"]);
+        assert_eq!(
+            ids,
+            [
+                "driverTemp",
+                "powerTemp",
+                "inputVoltage",
+                "inputCurrent",
+                "inputPower"
+            ]
+        );
     }
 }

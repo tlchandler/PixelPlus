@@ -37,7 +37,10 @@ fn main() -> ExitCode {
             }
         },
         Some("customize") if args.len() == 3 => {
-            let s: ImagerSettings = match std::fs::read_to_string(&args[2]).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string())) {
+            let s: ImagerSettings = match std::fs::read_to_string(&args[2])
+                .map_err(|e| e.to_string())
+                .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+            {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -65,7 +68,8 @@ fn main() -> ExitCode {
 
 /// Shared with the GUI binary's `--helper` mode.
 pub fn run_write(job_path: &str, progress_file: Option<&str>) -> ExitCode {
-    let mut sink = progress_file.and_then(|p| OpenOptions::new().create(true).append(true).open(p).ok());
+    let mut sink =
+        progress_file.and_then(|p| OpenOptions::new().create(true).append(true).open(p).ok());
     let mut emit = |p: &Progress| {
         let line = serde_json::to_string(p).unwrap();
         println!("{line}");
@@ -74,10 +78,16 @@ pub fn run_write(job_path: &str, progress_file: Option<&str>) -> ExitCode {
             let _ = f.flush();
         }
     };
-    let job: WriteJob = match std::fs::read_to_string(job_path).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string())) {
+    let job: WriteJob = match std::fs::read_to_string(job_path)
+        .map_err(|e| e.to_string())
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+    {
         Ok(j) => j,
         Err(e) => {
-            emit(&Progress::msg(Phase::Error, format!("cannot read job: {e}")));
+            emit(&Progress::msg(
+                Phase::Error,
+                format!("cannot read job: {e}"),
+            ));
             return ExitCode::FAILURE;
         }
     };

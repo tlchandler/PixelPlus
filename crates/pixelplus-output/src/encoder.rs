@@ -85,7 +85,12 @@ impl<'a> FrameBufferMut<'a> {
     }
 
     /// Wrap a byte mapping (e.g. an mmapped DRM dumb buffer). `pitch` is in bytes.
-    pub fn from_bytes(bytes: &'a mut [u8], width: usize, height: usize, pitch: usize) -> Result<Self> {
+    pub fn from_bytes(
+        bytes: &'a mut [u8],
+        width: usize,
+        height: usize,
+        pitch: usize,
+    ) -> Result<Self> {
         if pitch % 4 != 0 {
             return Err(OutputError::InvalidFrame(format!(
                 "framebuffer pitch {pitch} is not a multiple of 4 bytes"
@@ -473,7 +478,11 @@ impl WsEncoder {
         match self.layout.mode() {
             OutputMode::Direct => {
                 let lane = lanes.first().copied().unwrap_or(EMPTY_LANE_LINE);
-                for (bit, px) in line.chunks_exact_mut(ppb).enumerate().take(BITS_PER_LED as usize) {
+                for (bit, px) in line
+                    .chunks_exact_mut(ppb)
+                    .enumerate()
+                    .take(BITS_PER_LED as usize)
+                {
                     px[..t0h].fill(lane.mask);
                     px[t0h..t1h].fill(lane.words[bit]);
                     if full {
@@ -482,7 +491,11 @@ impl WsEncoder {
                 }
             }
             OutputMode::Latched => {
-                for (bit, px) in line.chunks_exact_mut(ppb).enumerate().take(BITS_PER_LED as usize) {
+                for (bit, px) in line
+                    .chunks_exact_mut(ppb)
+                    .enumerate()
+                    .take(BITS_PER_LED as usize)
+                {
                     for (tables, lane) in self.lanes.iter().zip(lanes) {
                         let s = tables.slot;
                         write_slot(&mut px[s..s + 4], lane.mask, tables.le);
@@ -616,7 +629,9 @@ mod tests {
             .unwrap();
         assert!(!r.full_rewrite);
         assert_eq!((r.data_lines, r.lines_written), (1, 8));
-        let fresh = enc.encode_to_vec(&OutputFrameRef::new(vec![&short])).unwrap();
+        let fresh = enc
+            .encode_to_vec(&OutputFrameRef::new(vec![&short]))
+            .unwrap();
         assert_eq!(words, fresh, "incremental result must equal a fresh encode");
     }
 
@@ -632,7 +647,11 @@ mod tests {
         let mut small = vec![0u32; 10];
         let mut fb = FrameBufferMut::new(&mut small, 5, 2, 5).unwrap();
         assert!(enc
-            .encode(&OutputFrameRef::new(vec![&a]), &mut fb, &mut BufferState::new())
+            .encode(
+                &OutputFrameRef::new(vec![&a]),
+                &mut fb,
+                &mut BufferState::new()
+            )
             .is_err());
         assert!(FrameBufferMut::new(&mut small, 5, 3, 5).is_err());
         assert!(FrameBufferMut::new(&mut small, 6, 1, 5).is_err());
@@ -647,7 +666,9 @@ mod tests {
         let h = enc.geometry().vactive() as usize;
         let mut words = vec![0u32; w * h];
         let mut fb = FrameBufferMut::new(&mut words, w, h, w).unwrap();
-        let r = enc.encode(&frame, &mut fb, &mut BufferState::new()).unwrap();
+        let r = enc
+            .encode(&frame, &mut fb, &mut BufferState::new())
+            .unwrap();
         assert_eq!(r.truncated_outputs, 1);
         assert_eq!(r.data_lines, 2);
     }

@@ -81,7 +81,10 @@ impl Ppx1Record {
         }
         let rev_ok = !self.rev.is_empty()
             && self.rev.len() <= 8
-            && self.rev.chars().all(|c| c.is_ascii_alphanumeric() || c == '.');
+            && self
+                .rev
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.');
         if !rev_ok {
             return Err(HwError::InvalidArgument(format!(
                 "revision `{}` must be 1-8 letters/digits (e.g. E)",
@@ -132,7 +135,9 @@ pub fn encode(record: &Ppx1Record, capacity: usize) -> Result<Vec<u8>> {
     record.validate()?;
     let json = serde_json::to_vec(record)
         .map_err(|e| HwError::InvalidData(format!("serialising EEPROM record: {e}")))?;
-    let max = capacity.saturating_sub(HEADER_LEN).min(usize::from(u16::MAX));
+    let max = capacity
+        .saturating_sub(HEADER_LEN)
+        .min(usize::from(u16::MAX));
     if json.len() > max {
         return Err(HwError::InvalidArgument(format!(
             "EEPROM record is {} bytes; at most {max} fit",
@@ -274,7 +279,10 @@ pub fn read_contents(store: &mut dyn EepromStore) -> Result<EepromContents> {
     let len = usize::from(u16::from_le_bytes([header[4], header[5]]));
     if HEADER_LEN + len > store.size() {
         return Ok(EepromContents::Corrupt {
-            reason: format!("payload length {len} exceeds the {}-byte EEPROM", store.size()),
+            reason: format!(
+                "payload length {len} exceeds the {}-byte EEPROM",
+                store.size()
+            ),
         });
     }
     let mut image = vec![0u8; HEADER_LEN + len];
@@ -394,7 +402,10 @@ impl SysfsEeprom {
             }
             std::fs::write(&new_device, format!("24c256 0x{addr:02x}\n")).map_err(|e| {
                 HwError::io(
-                    format!("registering the EEPROM via {} (run as root)", new_device.display()),
+                    format!(
+                        "registering the EEPROM via {} (run as root)",
+                        new_device.display()
+                    ),
                     e,
                 )
             })?;
@@ -451,7 +462,12 @@ impl EepromStore for SysfsEeprom {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .open(&self.path)
-            .map_err(|e| HwError::io(format!("opening {} for writing (run as root)", self.path.display()), e))?;
+            .map_err(|e| {
+                HwError::io(
+                    format!("opening {} for writing (run as root)", self.path.display()),
+                    e,
+                )
+            })?;
         f.seek(SeekFrom::Start(offset as u64))
             .and_then(|_| f.write_all(data))
             .and_then(|_| f.flush())
@@ -583,10 +599,16 @@ mod tests {
     fn corruption_detected() {
         let mut e = MemoryEeprom::with_record(&record()).unwrap();
         e.data[12] ^= 0x20;
-        assert!(matches!(read_contents(&mut e).unwrap(), EepromContents::Corrupt { .. }));
+        assert!(matches!(
+            read_contents(&mut e).unwrap(),
+            EepromContents::Corrupt { .. }
+        ));
         let mut e = MemoryEeprom::blank();
         e.data[..6].copy_from_slice(b"PPX1\xff\xff");
-        assert!(matches!(read_contents(&mut e).unwrap(), EepromContents::Corrupt { .. }));
+        assert!(matches!(
+            read_contents(&mut e).unwrap(),
+            EepromContents::Corrupt { .. }
+        ));
         // Valid CRC over invalid JSON.
         let json = b"{not json";
         let mut img = b"PPX1".to_vec();
@@ -611,13 +633,20 @@ mod tests {
         img.extend(field("20260929121046", 16));
         img.extend(field("2", 6));
         match decode(&img) {
-            EepromContents::Fpp { cape, version, serial } => {
+            EepromContents::Fpp {
+                cape,
+                version,
+                serial,
+            } => {
                 assert_eq!((cape.as_str(), version.as_str()), ("difftx", "1.0"));
                 assert_eq!(serial, "20260929121046");
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(decode(b"garbage!garbage!"), EepromContents::Unknown { .. }));
+        assert!(matches!(
+            decode(b"garbage!garbage!"),
+            EepromContents::Unknown { .. }
+        ));
     }
 
     #[test]
@@ -647,7 +676,10 @@ mod tests {
         let bus = MockI2c::new().with(EEPROM_ADDR, MockByteRegisters::new(AT24C256_SIZE, 2, 0xFF));
         let mut e = I2cEeprom::new(bus, EEPROM_ADDR);
         write_record(&mut e, &record()).unwrap();
-        assert!(matches!(read_contents(&mut e).unwrap(), EepromContents::Ppx1 { .. }));
+        assert!(matches!(
+            read_contents(&mut e).unwrap(),
+            EepromContents::Ppx1 { .. }
+        ));
         let bus = e.into_inner();
         let dev = bus.device::<MockByteRegisters>(EEPROM_ADDR).unwrap();
         let len = encode(&record(), AT24C256_SIZE).unwrap().len();
@@ -671,7 +703,10 @@ mod tests {
         let mut e = SysfsEeprom::open_in(&root, 1, 0x50).unwrap();
         assert_eq!(e.size(), 4096);
         write_record(&mut e, &record()).unwrap();
-        assert!(matches!(read_contents(&mut e).unwrap(), EepromContents::Ppx1 { .. }));
+        assert!(matches!(
+            read_contents(&mut e).unwrap(),
+            EepromContents::Ppx1 { .. }
+        ));
         assert!(SysfsEeprom::open_in(&root, 3, 0x50).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -138,7 +138,13 @@ fn specs(board: BoardKind) -> Vec<Spec> {
         BoardKind::Difftxlarge => {
             v.push(temp("driverTemp", "Driver temperature", 0x48, 60.0, 75.0));
             // The board's own OVER TEMP comparator trips at ~65.4 °C.
-            v.push(temp("powerTemp", "Power section temperature", 0x49, 55.0, 65.0));
+            v.push(temp(
+                "powerTemp",
+                "Power section temperature",
+                0x49,
+                55.0,
+                65.0,
+            ));
             v.push(Spec {
                 id: "inputVoltage",
                 label: "12 V input",
@@ -166,8 +172,20 @@ fn specs(board: BoardKind) -> Vec<Spec> {
         }
         BoardKind::Diffsmart => {
             // 0x48 sits in the hot corner between the FET bank and the main fuse.
-            v.push(temp("powerTemp", "Power section temperature", 0x48, 60.0, 75.0));
-            v.push(temp("enclosureTemp", "Enclosure temperature", 0x49, 50.0, 60.0));
+            v.push(temp(
+                "powerTemp",
+                "Power section temperature",
+                0x48,
+                60.0,
+                75.0,
+            ));
+            v.push(temp(
+                "enclosureTemp",
+                "Enclosure temperature",
+                0x49,
+                50.0,
+                60.0,
+            ));
         }
         _ => {}
     }
@@ -297,23 +315,25 @@ impl SensorHub {
 fn read_number(path: &Path) -> Result<f64> {
     let s = std::fs::read_to_string(path)
         .map_err(|e| HwError::io(format!("reading {}", path.display()), e))?;
-    s.trim()
-        .parse::<f64>()
-        .map_err(|_| HwError::InvalidData(format!("{}: `{}` is not a number", path.display(), s.trim())))
+    s.trim().parse::<f64>().map_err(|_| {
+        HwError::InvalidData(format!(
+            "{}: `{}` is not a number",
+            path.display(),
+            s.trim()
+        ))
+    })
 }
 
 /// The hwmon directory of the kernel driver bound to `bus`-`addr`, if any.
 pub fn hwmon_for(root: &Path, bus: u8, addr: u8) -> Option<PathBuf> {
     let want = format!("{bus}-{addr:04x}");
     let dir = std::fs::read_dir(root.join("sys/class/hwmon")).ok()?;
-    dir.filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| {
-            std::fs::read_link(p.join("device"))
-                .ok()
-                .and_then(|l| l.file_name().map(|n| n.to_string_lossy() == want))
-                .unwrap_or(false)
-        })
+    dir.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
+        std::fs::read_link(p.join("device"))
+            .ok()
+            .and_then(|l| l.file_name().map(|n| n.to_string_lossy() == want))
+            .unwrap_or(false)
+    })
 }
 
 fn read_u16(bus: &mut dyn I2cBus, addr: u8, reg: u8) -> Result<u16> {
@@ -361,7 +381,8 @@ mod tests {
     use crate::i2c::{MockI2c, MockWordRegisters};
 
     fn fake_root(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("pixelplus-sensors-{tag}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("pixelplus-sensors-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("sys/class/thermal/thermal_zone0")).unwrap();
         std::fs::write(root.join("sys/class/thermal/thermal_zone0/temp"), "48312\n").unwrap();
@@ -377,7 +398,11 @@ mod tests {
             .with(0x49, MockWordRegisters::lm75(-2.25));
         let mut hub = SensorHub::new(BoardKind::Difftxlarge, Some(Box::new(bus))).with_root(&root);
         let s = hub.read_all();
-        let get = |id: &str| s.iter().find(|x| x.id == id).unwrap_or_else(|| panic!("{id}: {s:?}"));
+        let get = |id: &str| {
+            s.iter()
+                .find(|x| x.id == id)
+                .unwrap_or_else(|| panic!("{id}: {s:?}"))
+        };
         assert_eq!(get("cpuTemp").value, 48.312);
         assert_eq!(get("driverTemp").value, 35.5);
         assert_eq!(get("driverTemp").label, "Driver temperature");
@@ -397,7 +422,10 @@ mod tests {
         let mut bus = MockI2c::new().with(0x40, MockWordRegisters::ina226(12.0, 0.0));
         configure_ina226(&mut bus, 0x40).unwrap();
         let dev = bus.device::<MockWordRegisters>(0x40).unwrap();
-        assert_eq!(dev.written, vec![(0x00, INA226_CONFIG), (0x05, INA226_CALIBRATION)]);
+        assert_eq!(
+            dev.written,
+            vec![(0x00, INA226_CONFIG), (0x05, INA226_CALIBRATION)]
+        );
         let mut wrong = MockI2c::new().with(0x40, MockWordRegisters::lm75(20.0));
         assert!(configure_ina226(&mut wrong, 0x40).is_err());
     }
@@ -407,7 +435,11 @@ mod tests {
         let root = fake_root("hwmon");
         let hw = root.join("sys/class/hwmon/hwmon3");
         std::fs::create_dir_all(&hw).unwrap();
-        std::os::unix::fs::symlink("../../../devices/platform/soc/fe804000.i2c/i2c-1/1-0048", hw.join("device")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../../devices/platform/soc/fe804000.i2c/i2c-1/1-0048",
+            hw.join("device"),
+        )
+        .unwrap();
         std::fs::write(hw.join("temp1_input"), "41125\n").unwrap();
         let hw = root.join("sys/class/hwmon/hwmon4");
         std::fs::create_dir_all(&hw).unwrap();
@@ -426,7 +458,8 @@ mod tests {
     #[test]
     fn missing_sensors_are_skipped() {
         let root = std::env::temp_dir().join("pixelplus-sensors-none-at-all");
-        let mut hub = SensorHub::new(BoardKind::Difftxlarge, Some(Box::new(MockI2c::new()))).with_root(root);
+        let mut hub =
+            SensorHub::new(BoardKind::Difftxlarge, Some(Box::new(MockI2c::new()))).with_root(root);
         assert!(hub.read_all().is_empty());
         assert_eq!(hub.board(), BoardKind::Difftxlarge);
     }

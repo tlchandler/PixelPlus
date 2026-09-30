@@ -26,5 +26,5 @@ export default ts.config(
 			'svelte/prefer-svelte-reactivity': 'off'
 		}
 	},
-	{ ignores: ['build/', '.svelte-kit/', 'node_modules/', 'test-results/', 'src/lib/tts-browser/'] }
+	{ ignores: ['build/', '.svelte-kit/', 'node_modules/', 'test-results/'] }
 );

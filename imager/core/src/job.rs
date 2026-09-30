@@ -6,11 +6,11 @@ use std::sync::atomic::AtomicBool;
 
 use serde::{Deserialize, Serialize};
 
+use crate::device;
 use crate::disk::{inject_settings, Aligned};
 use crate::drives::{self, Drive};
 use crate::settings::ImagerSettings;
 use crate::write::{self, Phase, Progress, WriteError};
-use crate::device;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,16 +55,28 @@ pub fn find_drive(device: &str) -> Result<Drive, JobError> {
         .ok_or_else(|| JobError::NotAllowed(device.to_string()))
 }
 
-pub fn run(job: &WriteJob, progress: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<(), JobError> {
+pub fn run(
+    job: &WriteJob,
+    progress: &mut dyn FnMut(Progress),
+    cancel: &AtomicBool,
+) -> Result<(), JobError> {
     let errs = job.settings.validate();
     if !errs.is_empty() {
-        return Err(JobError::Settings(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(" ")));
+        return Err(JobError::Settings(
+            errs.iter()
+                .map(|e| e.message.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+        ));
     }
     let drive = find_drive(&job.device)?;
     if drive.too_small {
         return Err(JobError::TooSmall(drives::human_size(drive.size)));
     }
-    progress(Progress::msg(Phase::Prepare, format!("Preparing {}", drive.name)));
+    progress(Progress::msg(
+        Phase::Prepare,
+        format!("Preparing {}", drive.name),
+    ));
     let mut dev = device::open(&drive)?;
     let out = write::write_image(
         &job.image,
@@ -79,7 +91,10 @@ pub fn run(job: &WriteJob, progress: &mut dyn FnMut(Progress), cancel: &AtomicBo
         device::drop_caches(&dev)?;
         write::verify(&mut dev.file, out.bytes, &out.sha256, progress, cancel)?;
     }
-    progress(Progress::msg(Phase::Customize, "Saving your settings (pixelplus.txt)"));
+    progress(Progress::msg(
+        Phase::Customize,
+        "Saving your settings (pixelplus.txt)",
+    ));
     {
         let aligned = Aligned::new(&mut dev.file, dev.block);
         inject_settings(aligned, &job.settings)?;
@@ -93,9 +108,17 @@ pub fn run(job: &WriteJob, progress: &mut dyn FnMut(Progress), cancel: &AtomicBo
 pub fn customize_image_file(path: &Path, settings: &ImagerSettings) -> Result<(), JobError> {
     let errs = settings.validate();
     if !errs.is_empty() {
-        return Err(JobError::Settings(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join(" ")));
+        return Err(JobError::Settings(
+            errs.iter()
+                .map(|e| e.message.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+        ));
     }
-    let mut f = std::fs::OpenOptions::new().read(true).write(true).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
     inject_settings(&mut f, settings)?;
     f.flush()?;
     f.sync_all()?;

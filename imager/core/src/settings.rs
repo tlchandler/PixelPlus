@@ -41,14 +41,18 @@ pub struct FieldError {
 }
 
 fn fe(field: &'static str, message: impl Into<String>) -> FieldError {
-    FieldError { field, message: message.into() }
+    FieldError {
+        field,
+        message: message.into(),
+    }
 }
 
 pub fn valid_hostname(h: &str) -> bool {
     let b = h.as_bytes();
     !b.is_empty()
         && b.len() <= 63
-        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
         && b[0] != b'-'
         && b[b.len() - 1] != b'-'
 }
@@ -62,7 +66,11 @@ impl ImagerSettings {
     /// Normalise user input (trim, lower-case the hostname, upper-case the country).
     pub fn normalized(&self) -> ImagerSettings {
         let mut s = self.clone();
-        s.hostname = s.hostname.trim().trim_end_matches(".local").to_ascii_lowercase();
+        s.hostname = s
+            .hostname
+            .trim()
+            .trim_end_matches(".local")
+            .to_ascii_lowercase();
         s.wifi_country = s.wifi_country.trim().to_ascii_uppercase();
         s.timezone = s.timezone.trim().to_string();
         s.ssh_key = s.ssh_key.trim().to_string();
@@ -77,45 +85,67 @@ impl ImagerSettings {
             errs.push(fe("wifiSsid", "A Wi-Fi name can be at most 32 bytes."));
         }
         if s.wifi_ssid.chars().any(|c| (c as u32) < 32) {
-            errs.push(fe("wifiSsid", "The Wi-Fi name contains invalid characters."));
+            errs.push(fe(
+                "wifiSsid",
+                "The Wi-Fi name contains invalid characters.",
+            ));
         }
         if !s.wifi_password.is_empty() {
             if s.wifi_ssid.is_empty() {
                 errs.push(fe("wifiPassword", "Enter the Wi-Fi name first."));
             } else if !valid_psk(&s.wifi_password) {
-                errs.push(fe("wifiPassword", "Wi-Fi passwords are 8 to 63 characters."));
+                errs.push(fe(
+                    "wifiPassword",
+                    "Wi-Fi passwords are 8 to 63 characters.",
+                ));
             }
         }
-        if !s.wifi_country.is_empty()
-            && !(s.wifi_country.len() == 2 && s.wifi_country.bytes().all(|c| c.is_ascii_uppercase()))
-        {
+        let country_ok =
+            s.wifi_country.len() == 2 && s.wifi_country.bytes().all(|c| c.is_ascii_uppercase());
+        if !s.wifi_country.is_empty() && !country_ok {
             errs.push(fe("wifiCountry", "Choose a country."));
         }
         if !s.wifi_ssid.is_empty() && s.wifi_country.is_empty() {
             errs.push(fe("wifiCountry", "Wi-Fi needs the country it is used in."));
         }
         if !s.hostname.is_empty() && !valid_hostname(&s.hostname) {
-            errs.push(fe("hostname", "Use letters, numbers and dashes (not at the start or end)."));
+            errs.push(fe(
+                "hostname",
+                "Use letters, numbers and dashes (not at the start or end).",
+            ));
         }
         if !s.timezone.is_empty()
             && (s.timezone.contains("..")
-                || !s.timezone.chars().all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c)))
+                || !s
+                    .timezone
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c)))
         {
             errs.push(fe("timezone", "Not a valid time zone."));
         }
         if !s.ui_password.is_empty() && s.ui_password.chars().count() < 4 {
             errs.push(fe("uiPassword", "Use at least 4 characters."));
         }
-        if !s.ssh_password.is_empty() && (s.ssh_password.len() < 8 || s.ssh_password.contains(':')) {
+        if !s.ssh_password.is_empty() && (s.ssh_password.len() < 8 || s.ssh_password.contains(':'))
+        {
             errs.push(fe("sshPassword", "Use at least 8 characters (no ':')."));
         }
         if s.ssh && s.ssh_password.is_empty() && s.ssh_key.is_empty() {
-            errs.push(fe("sshPassword", "Set a password or a key, or turn SSH off."));
+            errs.push(fe(
+                "sshPassword",
+                "Set a password or a key, or turn SSH off.",
+            ));
         }
         if !s.ssh_key.is_empty() {
-            let ok = ["ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-", "sk-ssh-ed25519@openssh.com ", "sk-ecdsa-sha2-"]
-                .iter()
-                .any(|p| s.ssh_key.starts_with(p));
+            let ok = [
+                "ssh-ed25519 ",
+                "ssh-rsa ",
+                "ecdsa-sha2-",
+                "sk-ssh-ed25519@openssh.com ",
+                "sk-ecdsa-sha2-",
+            ]
+            .iter()
+            .any(|p| s.ssh_key.starts_with(p));
             if !ok || s.ssh_key.contains('\n') {
                 errs.push(fe("sshKey", "Paste a public key (ssh-ed25519 AAAA...)."));
             }
@@ -177,7 +207,11 @@ fn line_key(line: &str) -> Option<String> {
 /// file's line endings). Keys missing from the template are appended at the end.
 pub fn render_into(template: &str, settings: &ImagerSettings) -> String {
     let template = template.strip_prefix('\u{feff}').unwrap_or(template);
-    let nl = if template.contains("\r\n") { "\r\n" } else { "\n" };
+    let nl = if template.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let values = settings.values();
     let mut done = vec![false; values.len()];
     let mut out: Vec<String> = Vec::new();
@@ -190,13 +224,22 @@ pub fn render_into(template: &str, settings: &ImagerSettings) -> String {
                 }
                 done[i] = true;
                 let prefix = &line[..line.find('=').unwrap()];
-                out.push(format!("{}={}", prefix.trim_end(), quote_if_needed(&values[i].1)));
+                out.push(format!(
+                    "{}={}",
+                    prefix.trim_end(),
+                    quote_if_needed(&values[i].1)
+                ));
                 continue;
             }
         }
         out.push(line.to_string());
     }
-    let missing: Vec<_> = values.iter().zip(done.iter()).filter(|(_, d)| !**d).map(|(v, _)| v).collect();
+    let missing: Vec<_> = values
+        .iter()
+        .zip(done.iter())
+        .filter(|(_, d)| !**d)
+        .map(|(v, _)| v)
+        .collect();
     if !missing.is_empty() {
         out.push(String::new());
         out.push("# Added by PixelPlus Imager".to_string());
@@ -264,13 +307,19 @@ mod tests {
     #[test]
     fn golden_file_matches() {
         let rendered = render_into(TEMPLATE, &golden_settings());
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/tests/fixtures/imager-rendered.txt");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../image/tests/fixtures/imager-rendered.txt"
+        );
         if std::env::var_os("UPDATE_GOLDEN").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
             std::fs::write(path, &rendered).unwrap();
         }
         let golden = std::fs::read_to_string(path).expect("golden file (run with UPDATE_GOLDEN=1)");
-        assert_eq!(rendered, golden, "re-run with UPDATE_GOLDEN=1 if the template changed on purpose");
+        assert_eq!(
+            rendered, golden,
+            "re-run with UPDATE_GOLDEN=1 if the template changed on purpose"
+        );
     }
 
     #[test]
@@ -278,7 +327,12 @@ mod tests {
         let out = render_into(TEMPLATE, &golden_settings());
         assert_eq!(out.lines().count(), TEMPLATE.lines().count());
         let vals = parse_values(&out);
-        let get = |k: &str| vals.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone()).unwrap();
+        let get = |k: &str| {
+            vals.iter()
+                .find(|(kk, _)| kk == k)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
         assert_eq!(get("wifi_password"), "  pa ss#word  ");
         assert_eq!(get("hostname"), "pixelplus-garage");
         assert_eq!(get("wifi_country"), "US");
@@ -289,7 +343,11 @@ mod tests {
     #[test]
     fn crlf_and_missing_keys() {
         let t = "# hi\r\nwifi_ssid=\r\n";
-        let s = ImagerSettings { wifi_ssid: "A".into(), hostname: "x".into(), ..Default::default() };
+        let s = ImagerSettings {
+            wifi_ssid: "A".into(),
+            hostname: "x".into(),
+            ..Default::default()
+        };
         let out = render_into(t, &s);
         assert!(out.starts_with("# hi\r\nwifi_ssid=A\r\n"));
         assert!(out.contains("\r\nhostname=x\r\n"));
@@ -307,7 +365,10 @@ mod tests {
             ..Default::default()
         };
         let fields: Vec<_> = bad.validate().iter().map(|e| e.field).collect();
-        assert_eq!(fields, vec!["wifiPassword", "wifiCountry", "hostname", "sshPassword"]);
+        assert_eq!(
+            fields,
+            vec!["wifiPassword", "wifiCountry", "hostname", "sshPassword"]
+        );
         assert!(valid_hostname("pixelplus-1"));
         assert!(!valid_hostname("Pixel"));
     }

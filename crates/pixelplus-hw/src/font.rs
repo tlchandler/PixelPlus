@@ -128,7 +128,10 @@ mod tests {
         assert_eq!(glyph(' '), [0; 5]);
         for c in '!'..='~' {
             assert!(glyph(c).iter().any(|&col| col != 0), "{c:?} is blank");
-            assert!(glyph(c).iter().all(|&col| col & 0x80 == 0), "{c:?} uses row 8");
+            assert!(
+                glyph(c).iter().all(|&col| col & 0x80 == 0),
+                "{c:?} uses row 8"
+            );
         }
         assert_eq!(glyph('€'), glyph('?'));
         assert_eq!(glyph('°'), DEGREE);

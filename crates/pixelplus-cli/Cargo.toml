@@ -1,5 +1,6 @@
 [package]
 name = "pixelplus-cli"
+description = "pixelplus: PixelPlus admin and bring-up CLI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,11 +8,21 @@ repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "pixelplus"
+path = "src/main.rs"
+
 [dependencies]
+pixelplus-core.workspace = true
+pixelplus-output.workspace = true
+pixelplus-hw.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 anyhow.workspace = true
-tracing.workspace = true
-rand.workspace = true
 chrono.workspace = true
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+anstream = "1"
+anstyle = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

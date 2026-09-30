@@ -49,7 +49,11 @@ fn random_frame(rng: &mut Rng, outputs: usize, max_pixels: usize) -> OutputFrame
 #[test]
 fn random_frames_round_trip_on_every_board() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-    for board in [BoardKind::Difftx, BoardKind::Diffsmart, BoardKind::Difftxlarge] {
+    for board in [
+        BoardKind::Difftx,
+        BoardKind::Diffsmart,
+        BoardKind::Difftxlarge,
+    ] {
         let layout = OutputLayout::for_board(board);
         let geometry = DpiGeometry::for_pixels(20).unwrap();
         let mut sim = SimOutput::verifying(layout.clone(), geometry).unwrap();
@@ -74,33 +78,44 @@ fn double_buffered_incremental_encoding_matches_fresh_encode() {
     let enc = WsEncoder::new(layout.clone(), geometry).unwrap();
     let (w, h) = (geometry.hactive() as usize, geometry.vactive() as usize);
     let stride = w + 16; // DRM pitch is often padded
-    let mut bufs = [vec![0x5555_5555u32; stride * h], vec![0xAAAA_AAAAu32; stride * h]];
+    let mut bufs = [
+        vec![0x5555_5555u32; stride * h],
+        vec![0xAAAA_AAAAu32; stride * h],
+    ];
     let mut states = [BufferState::new(), BufferState::new()];
     for i in 0..20 {
         let frame = random_frame(&mut rng, 60, 12);
         let k = i % 2;
         let mut fb = FrameBufferMut::new(&mut bufs[k], w, h, stride).unwrap();
-        enc.encode(&frame.as_frame_ref(), &mut fb, &mut states[k]).unwrap();
+        enc.encode(&frame.as_frame_ref(), &mut fb, &mut states[k])
+            .unwrap();
         let fb = FrameBufferRef::new(&bufs[k], w, h, stride).unwrap();
-        let decoded = WsDecoder::new(layout.clone(), geometry).decode(&fb).unwrap();
+        let decoded = WsDecoder::new(layout.clone(), geometry)
+            .decode(&fb)
+            .unwrap();
         decoded.verify(&frame.as_frame_ref(), 12).unwrap();
     }
 }
 
 #[test]
 fn pipeline_output_decodes_to_wire_order() {
-    let configs: Vec<OutputConfig> = [ColorOrder::GRB, ColorOrder::BGR, ColorOrder::RGB, ColorOrder::BRG]
-        .into_iter()
-        .enumerate()
-        .map(|(i, order)| OutputConfig {
-            index: i as u32 + 1,
-            color_order: order,
-            brightness: 100,
-            gamma: 1.0,
-            enabled: true,
-            ..OutputConfig::default()
-        })
-        .collect();
+    let configs: Vec<OutputConfig> = [
+        ColorOrder::GRB,
+        ColorOrder::BGR,
+        ColorOrder::RGB,
+        ColorOrder::BRG,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, order)| OutputConfig {
+        index: i as u32 + 1,
+        color_order: order,
+        brightness: 100,
+        gamma: 1.0,
+        enabled: true,
+        ..OutputConfig::default()
+    })
+    .collect();
     let pipeline = PixelPipeline::new(&configs);
     let red = [255u8, 0, 0, 10, 20, 30];
     let input = OutputFrameRef::new(vec![&red; 4]);

@@ -131,7 +131,8 @@ impl TestPattern {
                     }
                 }
                 TestPattern::RgbCycle => {
-                    const STEPS: [[u8; 3]; 4] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]];
+                    const STEPS: [[u8; 3]; 4] =
+                        [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]];
                     fill_color(bytes, STEPS[(step % 4) as usize]);
                 }
                 TestPattern::Scope { pattern } => pattern.fill(o, bytes),
@@ -200,7 +201,10 @@ mod tests {
             assert_eq!(ScopePattern::from_name(p.name()), Some(p));
             assert!(!p.describe().is_empty());
         }
-        assert!(TestPattern::Scope { pattern: ScopePattern::Ones }.is_wire_level());
+        assert!(TestPattern::Scope {
+            pattern: ScopePattern::Ones
+        }
+        .is_wire_level());
         assert!(!TestPattern::RgbCycle.is_wire_level());
     }
 }

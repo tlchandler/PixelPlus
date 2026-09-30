@@ -23,11 +23,11 @@ use crate::pi_config::DpiSoc;
 use crate::pinmux::PinMux;
 use crate::timing::DpiGeometry;
 use drm::buffer::{Buffer as _, DrmFourcc};
-use drm::Device as _;
 use drm::control::{
     connector, crtc, dumbbuffer::DumbBuffer, framebuffer, Device as ControlDevice, Event, Mode,
     ModeTypeFlags, PageFlipFlags,
 };
+use drm::Device as _;
 use pixelplus_core::model::BoardKind;
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
@@ -224,7 +224,11 @@ impl Runtime {
         }
     }
 
-    fn present(&mut self, frame: &OutputFrameRef<'_>, timeout: Duration) -> Result<(Duration, bool)> {
+    fn present(
+        &mut self,
+        frame: &OutputFrameRef<'_>,
+        timeout: Duration,
+    ) -> Result<(Duration, bool)> {
         let waited = self.wait_flip(timeout)?;
         let back = (self.front + 1) % self.buffers.len();
         let g = self.geometry();
@@ -481,7 +485,9 @@ impl PixelOutput for DpiOutput {
             .present(&black.as_frame_ref(), timeout)
             .and_then(|_| rt.wait_flip(timeout));
         match blanked {
-            Ok(_) => std::thread::sleep(Duration::from_nanos(g.frame_ns() as u64) + Duration::from_millis(2)),
+            Ok(_) => std::thread::sleep(
+                Duration::from_nanos(g.frame_ns() as u64) + Duration::from_millis(2),
+            ),
             Err(e) => tracing::warn!("could not blank pixel outputs before stopping: {e}"),
         }
         rt.teardown();

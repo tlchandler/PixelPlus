@@ -4,7 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const GITHUB_RELEASES: &str = "https://api.github.com/repos/tlchandler/PixelPlus/releases?per_page=10";
+pub const GITHUB_RELEASES: &str =
+    "https://api.github.com/repos/tlchandler/PixelPlus/releases?per_page=10";
 pub const REPO_ASSET: &str = "pixelplus-imager.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,13 +67,24 @@ pub fn parse_github_releases(json: &str) -> Result<Vec<ReleaseRef>, serde_json::
         .map(|r| {
             let version = r.tag_name.trim_start_matches('v').to_string();
             let published = r.published_at.clone().unwrap_or_default();
-            let repo_json_url = r.assets.iter().find(|a| a.name == REPO_ASSET).map(|a| a.browser_download_url.clone());
+            let repo_json_url = r
+                .assets
+                .iter()
+                .find(|a| a.name == REPO_ASSET)
+                .map(|a| a.browser_download_url.clone());
             let images = r
                 .assets
                 .iter()
                 .filter(|a| a.name.starts_with("pixelplus-") && a.name.ends_with("-arm64.img.xz"))
                 .map(|a| OsImage {
-                    name: format!("PixelPlus {version} ({})", if a.name.contains("bookworm") { "Bookworm" } else { "Trixie" }),
+                    name: format!(
+                        "PixelPlus {version} ({})",
+                        if a.name.contains("bookworm") {
+                            "Bookworm"
+                        } else {
+                            "Trixie"
+                        }
+                    ),
                     description: r.name.clone().unwrap_or_default(),
                     url: a.browser_download_url.clone(),
                     release_date: published.get(..10).unwrap_or("").to_string(),
@@ -85,7 +97,13 @@ pub fn parse_github_releases(json: &str) -> Result<Vec<ReleaseRef>, serde_json::
                     recommended: !a.name.contains("bookworm"),
                 })
                 .collect();
-            ReleaseRef { version, prerelease: r.prerelease, published, repo_json_url, images }
+            ReleaseRef {
+                version,
+                prerelease: r.prerelease,
+                published,
+                repo_json_url,
+                images,
+            }
         })
         .collect())
 }
@@ -116,7 +134,11 @@ struct RepoEntry {
 }
 
 /// Parse `pixelplus-imager.json` (Raspberry Pi Imager format) into images.
-pub fn parse_repo_json(json: &str, version: &str, prerelease: bool) -> Result<Vec<OsImage>, serde_json::Error> {
+pub fn parse_repo_json(
+    json: &str,
+    version: &str,
+    prerelease: bool,
+) -> Result<Vec<OsImage>, serde_json::Error> {
     let r: RepoJson = serde_json::from_str(json)?;
     Ok(r.os_list
         .into_iter()
@@ -155,7 +177,10 @@ mod tests {
         assert_eq!(r.len(), 2);
         assert!(r[0].prerelease);
         assert_eq!(r[1].version, "1.0.0");
-        assert_eq!(r[1].repo_json_url.as_deref(), Some("https://x/pixelplus-imager.json"));
+        assert_eq!(
+            r[1].repo_json_url.as_deref(),
+            Some("https://x/pixelplus-imager.json")
+        );
         assert_eq!(r[1].images.len(), 2);
         assert!(r[1].images[0].recommended);
         assert_eq!(r[1].images[0].release_date, "2026-10-20");

@@ -36,10 +36,20 @@ pub struct Progress {
 
 impl Progress {
     pub fn new(phase: Phase, bytes: u64, total: Option<u64>) -> Self {
-        Progress { phase, bytes, total, message: None }
+        Progress {
+            phase,
+            bytes,
+            total,
+            message: None,
+        }
     }
     pub fn msg(phase: Phase, m: impl Into<String>) -> Self {
-        Progress { phase, bytes: 0, total: None, message: Some(m.into()) }
+        Progress {
+            phase,
+            bytes: 0,
+            total: None,
+            message: Some(m.into()),
+        }
     }
 }
 
@@ -49,7 +59,9 @@ pub enum WriteError {
     Io(#[from] io::Error),
     #[error("the image is corrupt: {0}")]
     Decompress(String),
-    #[error("the downloaded image does not match its checksum (expected {expected}, got {actual})")]
+    #[error(
+        "the downloaded image does not match its checksum (expected {expected}, got {actual})"
+    )]
     ImageChecksum { expected: String, actual: String },
     #[error("verification failed: the card returned different data at around {offset} bytes. The card may be faulty or counterfeit.")]
     Verify { offset: u64 },
@@ -96,11 +108,14 @@ impl<W: Write> DeviceSink<'_, W> {
             return Ok(());
         }
         if self.cancel.load(Ordering::Relaxed) {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+            return Err(io::Error::other("cancelled"));
         }
         if let Some(limit) = self.limit {
             if self.written + self.buf.len() as u64 > limit {
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "image larger than device"));
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "image larger than device",
+                ));
             }
         }
         self.hash.update(&self.buf);
@@ -163,7 +178,10 @@ pub fn write_image<W: Write + Seek>(
     };
     if let (Some(t), Some(d)) = (total, device_size) {
         if t > d {
-            return Err(WriteError::TooSmall { image: t, device: d });
+            return Err(WriteError::TooSmall {
+                image: t,
+                device: d,
+            });
         }
     }
     dev.seek(SeekFrom::Start(0))?;
@@ -184,26 +202,34 @@ pub fn write_image<W: Write + Seek>(
             lzma_rs::error::Error::IoError(io) => io,
             other => io::Error::new(io::ErrorKind::InvalidData, format!("{other:?}")),
         }),
-    };
+    }
+    .and_then(|()| sink.flush_buf(true));
     match res {
         Ok(()) => {}
         Err(e) if cancel.load(Ordering::Relaxed) => {
             let _ = e;
             return Err(WriteError::Cancelled);
         }
-        Err(e) if e.kind() == io::ErrorKind::InvalidData => return Err(WriteError::Decompress(e.to_string())),
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            return Err(WriteError::Decompress(e.to_string()))
+        }
         Err(e) if e.kind() == io::ErrorKind::WriteZero && device_size.is_some() => {
-            return Err(WriteError::TooSmall { image: sink.written, device: device_size.unwrap_or(0) })
+            return Err(WriteError::TooSmall {
+                image: sink.written,
+                device: device_size.unwrap_or(0),
+            })
         }
         Err(e) => return Err(e.into()),
     }
-    sink.flush_buf(true)?;
     let bytes = sink.written;
     let sha = hex(&sink.hash.finalize());
     sink.dev.flush()?;
     if let Some(exp) = extract_sha256 {
         if !exp.eq_ignore_ascii_case(&sha) {
-            return Err(WriteError::ImageChecksum { expected: exp.to_string(), actual: sha });
+            return Err(WriteError::ImageChecksum {
+                expected: exp.to_string(),
+                actual: sha,
+            });
         }
     }
     Ok(WriteOutcome { bytes, sha256: sha })
@@ -236,7 +262,9 @@ pub fn verify<R: Read + Seek>(
             }
         }
         if got < want {
-            return Err(WriteError::Verify { offset: done + got as u64 });
+            return Err(WriteError::Verify {
+                offset: done + got as u64,
+            });
         }
         hash.update(&buf[..want]);
         done += want as u64;
@@ -304,14 +332,39 @@ mod tests {
         (0..len).map(|i| ((i * 7 + i / 4093) % 251) as u8).collect()
     }
 
-    fn run(data: &[u8], compressed: bool, dev_size: Option<u64>) -> (Result<WriteOutcome, WriteError>, Vec<u8>, Vec<Progress>) {
+    fn run(
+        data: &[u8],
+        compressed: bool,
+        dev_size: Option<u64>,
+    ) -> (Result<WriteOutcome, WriteError>, Vec<u8>, Vec<Progress>) {
         let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join(if compressed { "x.img.xz" } else { "x.img" });
-        std::fs::write(&p, if compressed { xz_of(data) } else { data.to_vec() }).unwrap();
-        let mut dev = Cursor::new(vec![0u8; dev_size.unwrap_or(data.len() as u64 + 8192) as usize]);
+        let p = dir
+            .path()
+            .join(if compressed { "x.img.xz" } else { "x.img" });
+        std::fs::write(
+            &p,
+            if compressed {
+                xz_of(data)
+            } else {
+                data.to_vec()
+            },
+        )
+        .unwrap();
+        let mut dev = Cursor::new(vec![
+            0u8;
+            dev_size.unwrap_or(data.len() as u64 + 8192) as usize
+        ]);
         let mut events = Vec::new();
         let cancel = AtomicBool::new(false);
-        let r = write_image(&p, &mut dev, dev_size, Some(data.len() as u64), None, &mut |e| events.push(e), &cancel);
+        let r = write_image(
+            &p,
+            &mut dev,
+            dev_size,
+            Some(data.len() as u64),
+            None,
+            &mut |e| events.push(e),
+            &cancel,
+        );
         (r, dev.into_inner(), events)
     }
 
@@ -325,7 +378,14 @@ mod tests {
             assert_eq!(&dev[..data.len()], &data[..]);
             assert_eq!(events.last().unwrap().bytes, data.len() as u64);
             let cancel = AtomicBool::new(false);
-            verify(&mut Cursor::new(&dev), out.bytes, &out.sha256, &mut |_| {}, &cancel).unwrap();
+            verify(
+                &mut Cursor::new(&dev),
+                out.bytes,
+                &out.sha256,
+                &mut |_| {},
+                &cancel,
+            )
+            .unwrap();
         }
     }
 
@@ -338,7 +398,14 @@ mod tests {
         assert_eq!(&dev[..data.len()], &data[..]);
         assert!(dev[data.len()..data.len() + 412].iter().all(|b| *b == 0));
         let cancel = AtomicBool::new(false);
-        verify(&mut Cursor::new(&dev), out.bytes, &out.sha256, &mut |_| {}, &cancel).unwrap();
+        verify(
+            &mut Cursor::new(&dev),
+            out.bytes,
+            &out.sha256,
+            &mut |_| {},
+            &cancel,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -348,7 +415,14 @@ mod tests {
         let out = r.unwrap();
         dev[1_000_000] ^= 0xFF;
         let cancel = AtomicBool::new(false);
-        let e = verify(&mut Cursor::new(&dev), out.bytes, &out.sha256, &mut |_| {}, &cancel).unwrap_err();
+        let e = verify(
+            &mut Cursor::new(&dev),
+            out.bytes,
+            &out.sha256,
+            &mut |_| {},
+            &cancel,
+        )
+        .unwrap_err();
         assert!(matches!(e, WriteError::Verify { .. }));
     }
 
@@ -363,8 +437,20 @@ mod tests {
         std::fs::write(&p, xz_of(&data)).unwrap();
         let mut dev = Cursor::new(vec![0u8; 1024 * 1024]);
         let cancel = AtomicBool::new(false);
-        let r = write_image(&p, &mut dev, Some(1024 * 1024), None, None, &mut |_| {}, &cancel);
-        assert!(matches!(r, Err(WriteError::TooSmall { .. })), "{:?}", r.err());
+        let r = write_image(
+            &p,
+            &mut dev,
+            Some(1024 * 1024),
+            None,
+            None,
+            &mut |_| {},
+            &cancel,
+        );
+        assert!(
+            matches!(r, Err(WriteError::TooSmall { .. })),
+            "{:?}",
+            r.err()
+        );
     }
 
     #[test]
@@ -375,7 +461,15 @@ mod tests {
         std::fs::write(&p, &data).unwrap();
         let mut dev = Cursor::new(vec![0u8; data.len()]);
         let cancel = AtomicBool::new(false);
-        let r = write_image(&p, &mut dev, None, None, Some(&"0".repeat(64)), &mut |_| {}, &cancel);
+        let r = write_image(
+            &p,
+            &mut dev,
+            None,
+            None,
+            Some(&"0".repeat(64)),
+            &mut |_| {},
+            &cancel,
+        );
         assert!(matches!(r, Err(WriteError::ImageChecksum { .. })));
     }
 
@@ -387,7 +481,15 @@ mod tests {
         std::fs::write(&p, &data).unwrap();
         let mut dev = Cursor::new(vec![0u8; data.len()]);
         let cancel = AtomicBool::new(false);
-        let r = write_image(&p, &mut dev, None, None, None, &mut |_| cancel.store(true, Ordering::Relaxed), &cancel);
+        let r = write_image(
+            &p,
+            &mut dev,
+            None,
+            None,
+            None,
+            &mut |_| cancel.store(true, Ordering::Relaxed),
+            &cancel,
+        );
         assert!(matches!(r, Err(WriteError::Cancelled)));
     }
 

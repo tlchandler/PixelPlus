@@ -48,7 +48,7 @@ impl<T: I2cBus + ?Sized> I2cBus for Box<T> {
 }
 
 fn check_addr(addr: u8) -> Result<()> {
-    if addr > 0x77 || addr < 0x03 {
+    if !(0x03..=0x77).contains(&addr) {
         return Err(HwError::InvalidArgument(format!(
             "0x{addr:02x} is not a valid 7-bit I2C device address"
         )));
@@ -348,7 +348,12 @@ impl MockWordRegisters {
     /// An LM75B reading `celsius`.
     pub fn lm75(celsius: f64) -> Self {
         let raw = ((celsius / 0.125).round() as i16) << 5;
-        Self::new(&[(0x00, raw as u16), (0x01, 0x0000), (0x02, 0x4B00), (0x03, 0x5000)])
+        Self::new(&[
+            (0x00, raw as u16),
+            (0x01, 0x0000),
+            (0x02, 0x4B00),
+            (0x03, 0x5000),
+        ])
     }
 
     /// An INA226 on a 10 mΩ shunt measuring `volts` and `amps` (power-on
@@ -378,7 +383,8 @@ impl MockWordRegisters {
         let bus = i64::from(*self.regs.get(&0x02).unwrap_or(&0));
         let current = (shunt * cal) / 2048;
         let power = (current.abs() * bus) / 20_000;
-        self.regs.insert(0x04, current.clamp(-32768, 32767) as i16 as u16);
+        self.regs
+            .insert(0x04, current.clamp(-32768, 32767) as i16 as u16);
         self.regs.insert(0x03, power.clamp(0, 65535) as u16);
     }
 }
@@ -455,7 +461,10 @@ mod tests {
         let mut out = [0u8; 3];
         bus.write_read(0x50, &[0x00, 0x10], &mut out).unwrap();
         assert_eq!(out, [1, 2, 3]);
-        assert_eq!(bus.device::<MockByteRegisters>(0x50).unwrap().data_writes, 1);
+        assert_eq!(
+            bus.device::<MockByteRegisters>(0x50).unwrap().data_writes,
+            1
+        );
         assert!(bus.device::<MockRecorder>(0x50).is_none());
         assert_eq!(bus.addresses(), vec![0x50]);
     }

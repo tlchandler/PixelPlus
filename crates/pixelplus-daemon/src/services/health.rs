@@ -1,0 +1,402 @@
+//! Pre-show health check. Runs automatically 15 minutes before each scheduled
+//! show (and on demand with `POST /health/run`); a failing check raises an
+//! alert.
+
+use super::system::{disk_space, have, in_docker, run};
+use crate::state::AppState;
+use parking_lot::Mutex;
+use pixelplus_core::model::{MediaKind, PlaylistItem, Show};
+use pixelplus_hw::{SensorKind, SensorStatus};
+use serde::Serialize;
+use std::time::Duration;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    Ok,
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Check {
+    pub id: String,
+    pub label: String,
+    pub status: Status,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthReport {
+    pub ok: bool,
+    pub ran_at: String,
+    pub checks: Vec<Check>,
+}
+
+#[derive(Default)]
+pub struct HealthState {
+    last: Mutex<Option<HealthReport>>,
+    /// Start time (RFC 3339) of the show we last checked automatically.
+    checked_show: Mutex<Option<String>>,
+}
+
+impl HealthState {
+    pub fn last(&self) -> Option<HealthReport> {
+        self.last.lock().clone()
+    }
+}
+
+fn check(id: &str, label: &str, status: Status, detail: impl Into<String>) -> Check {
+    Check { id: id.into(), label: label.into(), status, detail: detail.into() }
+}
+
+fn list_names(names: &[String]) -> String {
+    match names.len() {
+        0 => String::new(),
+        1..=3 => names.join(", "),
+        n => format!("{} and {} more", names[..3].join(", "), n - 3),
+    }
+}
+
+/// Checks that only depend on the show and the data directory (pure-ish, testable).
+pub fn content_checks(show: &Show, data_dir: &std::path::Path) -> Vec<Check> {
+    let mut out = Vec::new();
+    // Sequences used by playlists.
+    let mut missing_seq = Vec::new();
+    let mut missing_file = Vec::new();
+    let mut no_audio = Vec::new();
+    let mut missing_audio = Vec::new();
+    let mut unrendered = Vec::new();
+    let mut used = 0;
+    for pl in &show.playlists {
+        let used_in_schedule = show.schedule.entries.iter().any(|e| e.enabled && e.playlist_id == pl.id);
+        if !used_in_schedule && !show.schedule.entries.is_empty() {
+            continue;
+        }
+        for item in pl.intro.iter().chain(&pl.items).chain(&pl.outro) {
+            match item {
+                PlaylistItem::Sequence { sequence_id, .. } => {
+                    used += 1;
+                    match show.sequence(sequence_id) {
+                        None => missing_seq.push(format!("{} (in {})", sequence_id, pl.name)),
+                        Some(s) => {
+                            if !data_dir.join(&s.file).is_file() {
+                                missing_file.push(s.name.clone());
+                            }
+                            match s.media_id.as_deref().map(|id| show.media_item(id)) {
+                                None => no_audio.push(s.name.clone()),
+                                Some(None) => missing_audio.push(s.name.clone()),
+                                Some(Some(m)) if !data_dir.join(&m.file).is_file() => missing_audio.push(s.name.clone()),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                PlaylistItem::Dj { dj_clip_id, .. } => match show.dj_clip(dj_clip_id) {
+                    Some(c) if !c.dynamic => {
+                        let ok = c
+                            .media_id
+                            .as_deref()
+                            .and_then(|id| show.media_item(id))
+                            .is_some_and(|m| m.kind == MediaKind::Dj && data_dir.join(&m.file).is_file());
+                        if !ok {
+                            unrendered.push(c.name.clone());
+                        }
+                    }
+                    Some(_) => {}
+                    None => missing_seq.push(format!("DJ clip {} (in {})", dj_clip_id, pl.name)),
+                },
+                _ => {}
+            }
+        }
+    }
+    let mut seq_status = Status::Ok;
+    let mut details = Vec::new();
+    if !missing_seq.is_empty() {
+        seq_status = Status::Fail;
+        details.push(format!("Playlists point at deleted items: {}", list_names(&missing_seq)));
+    }
+    if !missing_file.is_empty() {
+        seq_status = Status::Fail;
+        details.push(format!("Sequence files are missing for {} (upload them again)", list_names(&missing_file)));
+    }
+    if !missing_audio.is_empty() {
+        seq_status = Status::Fail;
+        details.push(format!("Audio files are missing for {}", list_names(&missing_audio)));
+    }
+    if !no_audio.is_empty() {
+        seq_status = seq_status.max(Status::Warn);
+        details.push(format!("No audio linked to {} (they'll play silently)", list_names(&no_audio)));
+    }
+    if !unrendered.is_empty() {
+        seq_status = seq_status.max(Status::Warn);
+        details.push(format!("DJ clips not rendered yet: {}", list_names(&unrendered)));
+    }
+    out.push(check(
+        "sequences",
+        "Sequences & audio",
+        seq_status,
+        if details.is_empty() {
+            if used == 0 {
+                "No sequences in the scheduled playlists yet".to_string()
+            } else {
+                format!("All {used} scheduled sequences have their files and audio")
+            }
+        } else {
+            details.join(". ")
+        },
+    ));
+    // Wiring.
+    let unwired: Vec<String> = show.props.iter().filter(|p| p.segments.is_empty()).map(|p| p.name.clone()).collect();
+    out.push(if unwired.is_empty() {
+        check("wiring", "Prop wiring", Status::Ok, if show.props.is_empty() { "No props yet".to_string() } else { format!("All {} props are wired to a port", show.props.len()) })
+    } else {
+        check("wiring", "Prop wiring", Status::Warn, format!("{} not wired to any port", list_names(&unwired)))
+    });
+    // Schedule.
+    let issues = pixelplus_core::schedule::validate(&show.schedule);
+    out.push(if !show.schedule.enabled {
+        check("schedule", "Schedule", Status::Warn, "The schedule is turned off, so shows won't start by themselves")
+    } else if !issues.is_empty() {
+        check("schedule", "Schedule", Status::Warn, issues.iter().map(|i| i.message.clone()).collect::<Vec<_>>().join(". "))
+    } else {
+        let next = pixelplus_core::schedule::schedule_timezone(&show.schedule).ok().and_then(|tz| {
+            let now = chrono::Utc::now().with_timezone(&tz);
+            pixelplus_core::schedule::active_at(&show.schedule, now)
+                .map(|o| format!("\"{}\" is on now until {}", o.name, o.end.format("%-I:%M %p")))
+                .or_else(|| {
+                    pixelplus_core::schedule::next_show(&show.schedule, now)
+                        .map(|o| format!("Next show: \"{}\" {}", o.name, o.start.format("%a %b %-d at %-I:%M %p")))
+                })
+        });
+        check("schedule", "Schedule", Status::Ok, next.unwrap_or_else(|| "No upcoming shows".into()))
+    });
+    out
+}
+
+async fn host_checks(state: &AppState) -> Vec<Check> {
+    let mut out = Vec::new();
+    // Controllers (followers) from the cluster's `nodes` status.
+    let nodes = state
+        .services
+        .snapshot_for_new_client()
+        .into_iter()
+        .find(|(k, _)| *k == "nodes")
+        .map(|(_, v)| v);
+    let show = state.store.get();
+    let followers: Vec<_> = show.nodes.iter().filter(|n| n.role == pixelplus_core::model::NodeRole::Follower && n.adopted).collect();
+    if followers.is_empty() {
+        out.push(check("followers", "Controllers", Status::Ok, "This controller runs the whole show"));
+    } else {
+        let status_of = |id: &str| nodes.as_ref().and_then(|v| v.as_array()).and_then(|a| a.iter().find(|n| n["id"] == id)).cloned();
+        let mut offline = Vec::new();
+        let mut syncing = Vec::new();
+        for f in &followers {
+            match status_of(&f.id) {
+                Some(s) if s["online"].as_bool() == Some(false) => offline.push(f.name.clone()),
+                Some(s) if s["syncState"].as_str() == Some("syncing") => syncing.push(f.name.clone()),
+                Some(_) => {}
+                None => offline.push(f.name.clone()),
+            }
+        }
+        out.push(if !offline.is_empty() {
+            check("followers", "Controllers", Status::Fail, format!("Offline: {}", list_names(&offline)))
+        } else if !syncing.is_empty() {
+            check("followers", "Controllers", Status::Warn, format!("Still receiving files: {}", list_names(&syncing)))
+        } else {
+            check("followers", "Controllers", Status::Ok, format!("All {} controllers online and in sync", followers.len() + 1))
+        });
+    }
+    // Disk.
+    if let Some((free, _)) = disk_space(&state.config.data_dir) {
+        let mb = free / (1024 * 1024);
+        out.push(if mb < 100 {
+            check("disk", "Storage", Status::Fail, format!("Only {mb} MB free. Delete unused sequences or snapshots."))
+        } else if mb < 500 {
+            check("disk", "Storage", Status::Warn, format!("{mb} MB free. Getting full."))
+        } else {
+            check("disk", "Storage", Status::Ok, format!("{:.1} GB free", mb as f64 / 1024.0))
+        });
+    }
+    // Sensors.
+    let readings = state.services.sensors.latest();
+    let temps: Vec<_> = readings.iter().filter(|r| r.sensor.kind == SensorKind::Temperature).collect();
+    if let Some(hot) = temps.iter().max_by(|a, b| a.sensor.value.total_cmp(&b.sensor.value)) {
+        let st = temps.iter().map(|r| r.status).max().unwrap_or(SensorStatus::Ok);
+        let limit = show.settings.alerts.rules.temp_c as f64;
+        let status = match st {
+            SensorStatus::Crit => Status::Fail,
+            SensorStatus::Warn => Status::Warn,
+            SensorStatus::Ok if hot.sensor.value > limit => Status::Warn,
+            SensorStatus::Ok => Status::Ok,
+        };
+        out.push(check("temp", "Temperatures", status, format!("Highest {:.0} °C ({})", hot.sensor.value, hot.sensor.label)));
+    }
+    if let Some(v) = readings.iter().find(|r| r.sensor.kind == SensorKind::Voltage) {
+        let min = show.settings.alerts.rules.voltage_min as f64;
+        let status = match v.status {
+            SensorStatus::Crit => Status::Fail,
+            SensorStatus::Warn => Status::Warn,
+            SensorStatus::Ok if v.sensor.value < min => Status::Warn,
+            _ => Status::Ok,
+        };
+        out.push(check("power", "12 V supply", status, format!("{:.2} V at the transmitter", v.sensor.value)));
+    }
+    // Audio device.
+    out.push(audio_check(&show.settings.audio.device).await);
+    // Player / output.
+    out.push(match state.services.player.get() {
+        None => check("output", "Light output", Status::Fail, "The player isn't running"),
+        Some(p) => {
+            let st = p.status();
+            match st.error {
+                Some(e) => check("output", "Light output", Status::Fail, e),
+                None => check("output", "Light output", Status::Ok, "Ready"),
+            }
+        }
+    });
+    // Clock.
+    out.push(clock_check(state).await);
+    out
+}
+
+async fn audio_check(device: &str) -> Check {
+    if !have("aplay") {
+        return if in_docker() {
+            check("audio", "Audio output", Status::Warn, "No sound card in this container; audio won't play")
+        } else {
+            check("audio", "Audio output", Status::Warn, "Audio tools (alsa-utils) aren't installed")
+        };
+    }
+    let cards = std::fs::read_to_string("/proc/asound/cards").unwrap_or_default();
+    if cards.trim().is_empty() || cards.contains("no soundcards") {
+        return check("audio", "Audio output", Status::Fail, "No audio device found. Plug in the USB sound card or enable the headphone jack.");
+    }
+    if device == "default" || device.is_empty() {
+        return check("audio", "Audio output", Status::Ok, "System default output");
+    }
+    match run("aplay", &["-L"], Duration::from_secs(5)).await {
+        Ok(o) if o.stdout.lines().any(|l| l.trim() == device) => check("audio", "Audio output", Status::Ok, format!("{device} is connected")),
+        Ok(_) => check("audio", "Audio output", Status::Fail, format!("The chosen audio output ({device}) isn't connected")),
+        Err(e) => check("audio", "Audio output", Status::Warn, e),
+    }
+}
+
+async fn clock_check(state: &AppState) -> Check {
+    if have("timedatectl") {
+        if let Ok(o) = run("timedatectl", &["show", "-p", "NTPSynchronized", "--value"], Duration::from_secs(5)).await {
+            if o.stdout.trim() == "yes" {
+                return check("clock", "Clock", Status::Ok, "Synchronized with internet time");
+            }
+        }
+    }
+    let (board, _) = super::system::effective_board(state);
+    if board == pixelplus_core::model::BoardKind::Difftxlarge {
+        return check("clock", "Clock", Status::Ok, "Kept by the board's real-time clock");
+    }
+    if in_docker() || !cfg!(target_os = "linux") {
+        return check("clock", "Clock", Status::Ok, "Using the computer's clock");
+    }
+    check("clock", "Clock", Status::Warn, "Not synchronized with internet time; show times may be off")
+}
+
+/// Run every check, store the report, alert on failure.
+pub async fn run_checks(state: &AppState, alert: bool) -> HealthReport {
+    let show = state.store.get();
+    let data_dir = state.config.data_dir.clone();
+    let mut checks = host_checks(state).await;
+    let content = tokio::task::spawn_blocking(move || content_checks(&show, &data_dir)).await.unwrap_or_default();
+    checks.extend(content);
+    let ok = !checks.iter().any(|c| c.status == Status::Fail);
+    let report = HealthReport {
+        ok,
+        ran_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        checks,
+    };
+    *state.services.health.last.lock() = Some(report.clone());
+    if !ok && alert {
+        let failed: Vec<String> = report
+            .checks
+            .iter()
+            .filter(|c| c.status == Status::Fail)
+            .map(|c| format!("{}: {}", c.label, c.detail))
+            .collect();
+        super::alerts::raise(state, "health", super::alerts::Severity::Warning, "Pre-show check failed", &failed.join("\n")).await;
+    }
+    report
+}
+
+/// Check 15 minutes before each scheduled show.
+pub fn start(state: &AppState) {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            tick.tick().await;
+            let show = state.store.get();
+            let Ok(tz) = pixelplus_core::schedule::schedule_timezone(&show.schedule) else { continue };
+            let now = chrono::Utc::now().with_timezone(&tz);
+            let Some(next) = pixelplus_core::schedule::next_show(&show.schedule, now) else { continue };
+            let until = next.start.signed_duration_since(now);
+            if until <= chrono::Duration::minutes(15) && until > chrono::Duration::zero() {
+                let key = next.start.to_rfc3339();
+                let already = state.services.health.checked_show.lock().as_deref() == Some(key.as_str());
+                if !already {
+                    *state.services.health.checked_show.lock() = Some(key);
+                    tracing::info!("Running the pre-show check for \"{}\"", next.name);
+                    run_checks(&state, true).await;
+                }
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pixelplus_core::model::*;
+
+    #[test]
+    fn content_problems_are_found() {
+        let dir = std::env::temp_dir().join(format!("pp-health-{}", new_id()));
+        std::fs::create_dir_all(dir.join("sequences")).unwrap();
+        std::fs::write(dir.join("sequences/a.fseq"), b"x").unwrap();
+        let mut s = Show::default();
+        let seq = |id: &str| Sequence {
+            id: id.into(),
+            name: id.to_uppercase(),
+            file: format!("sequences/{id}.fseq"),
+            duration_ms: 1,
+            frame_ms: 50,
+            channel_count: 3,
+            media_id: None,
+            xlights_name: None,
+            thumbnail: None,
+            hash: String::new(),
+        };
+        s.sequences = vec![seq("a"), seq("b")];
+        s.playlists.push(Playlist {
+            id: "p".into(),
+            name: "Main".into(),
+            items: vec![
+                PlaylistItem::Sequence { id: "1".into(), sequence_id: "a".into() },
+                PlaylistItem::Sequence { id: "2".into(), sequence_id: "b".into() },
+            ],
+            intro: vec![],
+            outro: vec![],
+            shuffle: false,
+            repeat: true,
+            crossfade_ms: 0,
+        });
+        let checks = content_checks(&s, &dir);
+        let seqs = checks.iter().find(|c| c.id == "sequences").unwrap();
+        assert_eq!(seqs.status, Status::Fail);
+        assert!(seqs.detail.contains("missing for B"), "{}", seqs.detail);
+        assert!(seqs.detail.contains("No audio"), "{}", seqs.detail);
+        let sched = checks.iter().find(|c| c.id == "schedule").unwrap();
+        assert_eq!(sched.status, Status::Warn);
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
