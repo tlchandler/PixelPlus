@@ -87,22 +87,40 @@ pub fn source_id(seq: &Sequence, fseq_path: &Path) -> Option<String> {
 /// The slice key for a source and mapping.
 pub fn slice_key(source_id: &str, mapping_hash: &str) -> String {
     let mut h = Sha256::new();
-    h.update(format!("ppsq-v{}|{source_id}|{mapping_hash}", pixelplus_core::ppseq::VERSION));
+    h.update(format!(
+        "ppsq-v{}|{source_id}|{mapping_hash}",
+        pixelplus_core::ppseq::VERSION
+    ));
     pixelplus_core::fseq::to_hex(&h.finalize())[..40].to_string()
 }
 
 /// Ids used in file names must be plain.
 pub fn safe_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Describe the slice for (`node_id`, `seq_id`) in the current show.
-pub fn job(show: &Show, data_dir: &Path, node_id: &str, seq_id: &str) -> Result<SliceJob, SliceError> {
-    let map = NodeMap::build(show, node_id).map_err(|_| SliceError::UnknownNode(node_id.to_string()))?;
+pub fn job(
+    show: &Show,
+    data_dir: &Path,
+    node_id: &str,
+    seq_id: &str,
+) -> Result<SliceJob, SliceError> {
+    let map =
+        NodeMap::build(show, node_id).map_err(|_| SliceError::UnknownNode(node_id.to_string()))?;
     job_with_map(show, data_dir, Arc::new(map), seq_id)
 }
 
-fn job_with_map(show: &Show, data_dir: &Path, map: Arc<NodeMap>, seq_id: &str) -> Result<SliceJob, SliceError> {
+fn job_with_map(
+    show: &Show,
+    data_dir: &Path,
+    map: Arc<NodeMap>,
+    seq_id: &str,
+) -> Result<SliceJob, SliceError> {
     let seq = show
         .sequence(seq_id)
         .ok_or_else(|| SliceError::UnknownSequence(seq_id.to_string()))?;
@@ -129,7 +147,9 @@ pub fn all_jobs(show: &Show, data_dir: &Path) -> Vec<SliceJob> {
         .iter()
         .filter(|n| n.role == pixelplus_core::model::NodeRole::Follower && n.adopted)
     {
-        let Ok(map) = NodeMap::build(show, &node.id) else { continue };
+        let Ok(map) = NodeMap::build(show, &node.id) else {
+            continue;
+        };
         let map = Arc::new(map);
         for seq in &show.sequences {
             if let Ok(job) = job_with_map(show, data_dir, map.clone(), &seq.id) {
@@ -164,7 +184,11 @@ impl SliceCache {
     }
 
     fn slot(&self, key: &str) -> Slot {
-        self.slots.lock().entry(key.to_string()).or_default().clone()
+        self.slots
+            .lock()
+            .entry(key.to_string())
+            .or_default()
+            .clone()
     }
 
     /// Return the slice, generating it first if needed. Concurrent callers for
@@ -182,7 +206,8 @@ impl SliceCache {
         let meta = tokio::task::spawn_blocking(move || -> Result<SliceMeta, SliceError> {
             if !path.exists() {
                 if let Some(dir) = path.parent() {
-                    std::fs::create_dir_all(dir).map_err(|e| SliceError::Generate(e.to_string()))?;
+                    std::fs::create_dir_all(dir)
+                        .map_err(|e| SliceError::Generate(e.to_string()))?;
                 }
                 if !job.fseq.exists() {
                     return Err(SliceError::MissingFile(job.fseq.display().to_string()));
@@ -197,9 +222,17 @@ impl SliceCache {
                     started.elapsed()
                 );
             }
-            let bytes = std::fs::metadata(&path).map_err(|e| SliceError::Generate(e.to_string()))?.len();
-            let sha256 = pixelplus_core::fseq::sha256_file(&path).map_err(|e| SliceError::Generate(e.to_string()))?;
-            Ok(SliceMeta { key, path, bytes, sha256 })
+            let bytes = std::fs::metadata(&path)
+                .map_err(|e| SliceError::Generate(e.to_string()))?
+                .len();
+            let sha256 = pixelplus_core::fseq::sha256_file(&path)
+                .map_err(|e| SliceError::Generate(e.to_string()))?;
+            Ok(SliceMeta {
+                key,
+                path,
+                bytes,
+                sha256,
+            })
         })
         .await
         .map_err(|e| SliceError::Generate(e.to_string()))??;
@@ -209,7 +242,11 @@ impl SliceCache {
 
     /// Like [`ensure`](Self::ensure) but gives up waiting after `wait`
     /// (generation continues in the background). `Ok(None)` = not ready yet.
-    pub async fn ensure_within(&self, job: SliceJob, wait: Duration) -> Result<Option<SliceMeta>, SliceError> {
+    pub async fn ensure_within(
+        &self,
+        job: SliceJob,
+        wait: Duration,
+    ) -> Result<Option<SliceMeta>, SliceError> {
         let this = self.clone();
         let task = tokio::spawn(async move { this.ensure(job).await });
         match tokio::time::timeout(wait, task).await {
@@ -225,7 +262,9 @@ impl SliceCache {
         let keys: HashSet<&str> = jobs.iter().map(|j| j.key.as_str()).collect();
         self.slots.lock().retain(|k, _| keys.contains(k.as_str()));
         let mut removed = 0;
-        let Ok(nodes) = std::fs::read_dir(&self.root) else { return 0 };
+        let Ok(nodes) = std::fs::read_dir(&self.root) else {
+            return 0;
+        };
         for node_dir in nodes.flatten() {
             let dir = node_dir.path();
             if !dir.is_dir() {
@@ -329,10 +368,19 @@ mod tests {
     fn missing_files_and_unknown_ids() {
         let dir = tempdir();
         let mut show = with_sequence(&dir);
-        assert!(matches!(job(&show, &dir, "nope", "s1"), Err(SliceError::UnknownNode(_))));
-        assert!(matches!(job(&show, &dir, "f1", "nope"), Err(SliceError::UnknownSequence(_))));
+        assert!(matches!(
+            job(&show, &dir, "nope", "s1"),
+            Err(SliceError::UnknownNode(_))
+        ));
+        assert!(matches!(
+            job(&show, &dir, "f1", "nope"),
+            Err(SliceError::UnknownSequence(_))
+        ));
         show.sequences[0].file = "sequences/gone.fseq".into();
-        assert!(matches!(job(&show, &dir, "f1", "s1"), Err(SliceError::MissingFile(_))));
+        assert!(matches!(
+            job(&show, &dir, "f1", "s1"),
+            Err(SliceError::MissingFile(_))
+        ));
         assert!(all_jobs(&show, &dir).is_empty());
         std::fs::remove_dir_all(dir).ok();
     }
@@ -348,10 +396,16 @@ mod tests {
         let a = cache.ensure(jobs[0].clone()).await.unwrap();
         let b = cache.ensure(jobs[0].clone()).await.unwrap();
         assert_eq!(a, b);
-        assert_eq!(a.sha256, pixelplus_core::fseq::sha256_file(&a.path).unwrap());
+        assert_eq!(
+            a.sha256,
+            pixelplus_core::fseq::sha256_file(&a.path).unwrap()
+        );
         let f = pixelplus_core::ppseq::PpseqFile::open(&a.path).unwrap();
         assert_eq!(f.frame_count(), 50);
-        assert_eq!(f.header().source_sha256_hex(), pixelplus_core::fseq::sha256_file(dir.join("sequences/s1.fseq")).unwrap());
+        assert_eq!(
+            f.header().source_sha256_hex(),
+            pixelplus_core::fseq::sha256_file(dir.join("sequences/s1.fseq")).unwrap()
+        );
 
         // Concurrent requests for the other slice share one generation.
         let (x, y) = tokio::join!(cache.ensure(jobs[1].clone()), cache.ensure(jobs[1].clone()));
@@ -369,7 +423,11 @@ mod tests {
 
         // A cache that lost its memory (restart) finds files on disk again.
         let cache2 = SliceCache::new(dir.join("cluster/slices"));
-        let again = cache2.ensure_within(jobs2[0].clone(), Duration::from_secs(5)).await.unwrap().unwrap();
+        let again = cache2
+            .ensure_within(jobs2[0].clone(), Duration::from_secs(5))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(again, new_f1);
         std::fs::remove_dir_all(dir).ok();
     }

@@ -3,8 +3,8 @@
 
 use super::proto::{self, FileProgress, Msg, Ping, Pong, SyncState};
 use super::{
-    log_warning, net, sleep_or_stop, ClusterCommand, ClusterEvent, CommandResult, DiscoveredNode, NodeStatus, Peer,
-    Shared, KEY_HEADER,
+    log_warning, net, sleep_or_stop, ClusterCommand, ClusterEvent, CommandResult, DiscoveredNode,
+    NodeStatus, Peer, Shared, KEY_HEADER,
 };
 use crate::api::{ApiError, ApiResult};
 use crate::node::LocalRole;
@@ -44,13 +44,15 @@ pub fn fit_outputs(outputs: &[OutputConfig], board: BoardKind) -> Vec<OutputConf
     board
         .default_outputs()
         .into_iter()
-        .map(|default| match outputs.iter().find(|o| o.index == default.index) {
-            Some(o) => OutputConfig {
-                label: default.label.clone(),
-                ..o.clone()
+        .map(
+            |default| match outputs.iter().find(|o| o.index == default.index) {
+                Some(o) => OutputConfig {
+                    label: default.label.clone(),
+                    ..o.clone()
+                },
+                None => default,
             },
-            None => default,
-        })
+        )
         .collect()
 }
 
@@ -78,12 +80,18 @@ pub async fn ensure_self_node(state: &AppState) -> anyhow::Result<()> {
             && n.outputs.len() == board.output_count()
     };
     let show = state.store.get();
-    let others_lead = show.nodes.iter().any(|n| n.id != identity.id && n.role == NodeRole::Leader);
+    let others_lead = show
+        .nodes
+        .iter()
+        .any(|n| n.id != identity.id && n.role == NodeRole::Leader);
     if show.node(&identity.id).is_some_and(desired) && !others_lead {
         return Ok(());
     }
     let my_id = identity.id.clone();
-    let default_name = identity.name.clone().unwrap_or_else(|| net::title_case(&hostname));
+    let default_name = identity
+        .name
+        .clone()
+        .unwrap_or_else(|| net::title_case(&hostname));
     state
         .store
         .update(move |s| {
@@ -220,8 +228,15 @@ fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus
             .map(|n| n.name.clone())
             .or(identity.name.clone())
             .unwrap_or_else(|| net::title_case(&hostname)),
-        role: if follower { NodeRole::Follower } else { NodeRole::Leader },
-        adopted: node.map(|n| n.adopted).unwrap_or(identity.role == LocalRole::Leader) || identity.leader_id.is_some(),
+        role: if follower {
+            NodeRole::Follower
+        } else {
+            NodeRole::Leader
+        },
+        adopted: node
+            .map(|n| n.adopted)
+            .unwrap_or(identity.role == LocalRole::Leader)
+            || identity.leader_id.is_some(),
         online: true,
         last_seen: Some(rfc3339(chrono::Utc::now())),
         board,
@@ -229,7 +244,10 @@ fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus
             Some(r) => r.sync_offset_ms,
             None => Some(0.0),
         },
-        sync_state: report.as_ref().map(|r| r.state).unwrap_or(SyncState::Synced),
+        sync_state: report
+            .as_ref()
+            .map(|r| r.state)
+            .unwrap_or(SyncState::Synced),
         files: report.as_ref().map(|r| r.files).unwrap_or_default(),
         ip: net::interfaces().ips.first().map(|i| i.to_string()),
         version: Some(super::VERSION.to_string()),
@@ -239,7 +257,13 @@ fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus
     }
 }
 
-fn follower_status(show: &Show, node: &Node, peer: Option<&Peer>, my_id: &str, sh: &Shared) -> NodeStatus {
+fn follower_status(
+    show: &Show,
+    node: &Node,
+    peer: Option<&Peer>,
+    my_id: &str,
+    sh: &Shared,
+) -> NodeStatus {
     let m = member(peer, my_id);
     let online = m.is_some_and(|p| p.last_seen.elapsed() < sh.settings.offline_after);
     let report = m.and_then(|p| p.beacon.report.clone()).unwrap_or_default();
@@ -252,11 +276,17 @@ fn follower_status(show: &Show, node: &Node, peer: Option<&Peer>, my_id: &str, s
     };
     let problem = match peer {
         _ if !node.adopted => None,
-        Some(p) if m.is_none() && p.last_seen.elapsed() < sh.settings.offline_after => Some(match &p.beacon.adopted_by {
-            None => "It forgot this leader; adopting it again…".to_string(),
-            Some(other) if other != my_id => "It is controlled by another show leader.".to_string(),
-            Some(_) => "Its cluster key does not match; release it and adopt it again.".to_string(),
-        }),
+        Some(p) if m.is_none() && p.last_seen.elapsed() < sh.settings.offline_after => {
+            Some(match &p.beacon.adopted_by {
+                None => "It forgot this leader; adopting it again…".to_string(),
+                Some(other) if other != my_id => {
+                    "It is controlled by another show leader.".to_string()
+                }
+                Some(_) => {
+                    "Its cluster key does not match; release it and adopt it again.".to_string()
+                }
+            })
+        }
         _ if online => report.problem.clone(),
         _ => None,
     };
@@ -270,10 +300,17 @@ fn follower_status(show: &Show, node: &Node, peer: Option<&Peer>, my_id: &str, s
         board: node.board,
         sync_offset_ms: online.then_some(report.sync_offset_ms).flatten(),
         sync_state,
-        files: if online { report.files } else { FileProgress::default() },
+        files: if online {
+            report.files
+        } else {
+            FileProgress::default()
+        },
         ip: peer.map(|p| p.addr.ip().to_string()),
         version: peer.map(|p| p.beacon.ver.clone()),
-        pi_model: node.pi_model.clone().or_else(|| peer.and_then(|p| p.beacon.pi.clone())),
+        pi_model: node
+            .pi_model
+            .clone()
+            .or_else(|| peer.and_then(|p| p.beacon.pi.clone())),
         hostname: node.hostname.clone(),
         problem,
     }
@@ -309,7 +346,11 @@ pub(crate) fn nodes_status(state: &AppState, sh: &Shared) -> Vec<NodeStatus> {
                     last_seen: Some(rfc3339(leader.seen_at)),
                     board: leader.beacon.board,
                     sync_offset_ms: Some(0.0),
-                    sync_state: if online { SyncState::Synced } else { SyncState::Offline },
+                    sync_state: if online {
+                        SyncState::Synced
+                    } else {
+                        SyncState::Offline
+                    },
                     files: FileProgress::default(),
                     ip: Some(leader.addr.ip().to_string()),
                     version: Some(leader.beacon.ver.clone()),
@@ -332,7 +373,9 @@ pub(crate) fn discovered(state: &AppState, sh: &Shared) -> Vec<DiscoveredNode> {
         .filter(|p| p.last_seen.elapsed() < DISCOVERY_FRESH)
         .filter(|p| p.beacon.role != LocalRole::Leader)
         .filter(|p| !show.node(&p.beacon.id).is_some_and(|n| n.adopted))
-        .filter(|p| p.beacon.adopted_by.as_deref() != Some(identity.id.as_str()) || !p.authenticated)
+        .filter(|p| {
+            p.beacon.adopted_by.as_deref() != Some(identity.id.as_str()) || !p.authenticated
+        })
         .map(|p| DiscoveredNode {
             id: p.beacon.id.clone(),
             name: p.beacon.name.clone(),
@@ -405,7 +448,9 @@ pub fn validate_node_name(name: &str) -> ApiResult<()> {
         return Err(ApiError::bad_request("Please give the controller a name."));
     }
     if name.chars().count() > 120 {
-        return Err(ApiError::bad_request("That name is too long (120 characters max)."));
+        return Err(ApiError::bad_request(
+            "That name is too long (120 characters max).",
+        ));
     }
     Ok(())
 }
@@ -446,7 +491,10 @@ async fn call_adopt(sh: &Shared, peer: &Peer, call: &AdoptCall) -> ApiResult<Ado
         })?;
     if !resp.status().is_success() {
         let msg = error_message(resp).await;
-        return Err(ApiError::conflict(format!("{} declined: {msg}", peer.beacon.name)));
+        return Err(ApiError::conflict(format!(
+            "{} declined: {msg}",
+            peer.beacon.name
+        )));
     }
     resp.json::<AdoptReply>()
         .await
@@ -463,7 +511,13 @@ fn short_err(e: &reqwest::Error) -> String {
     }
 }
 
-fn adopt_call_for(state: &AppState, sh: &Shared, peer: &Peer, force: bool, name: Option<String>) -> anyhow::Result<AdoptCall> {
+fn adopt_call_for(
+    state: &AppState,
+    sh: &Shared,
+    peer: &Peer,
+    force: bool,
+    name: Option<String>,
+) -> anyhow::Result<AdoptCall> {
     let key = ensure_cluster_key(state)?;
     let ip = net::local_ip_towards(peer.addr.ip())
         .or_else(|| net::interfaces().ips.first().copied())
@@ -480,11 +534,15 @@ fn adopt_call_for(state: &AppState, sh: &Shared, peer: &Peer, force: bool, name:
 /// Adopt a discovered controller and add it to the show.
 pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResult<Node> {
     if !is_leader(state) {
-        return Err(ApiError::conflict("Only the show leader can adopt controllers."));
+        return Err(ApiError::conflict(
+            "Only the show leader can adopt controllers.",
+        ));
     }
     let my_id = state.identity().id;
     if req.id == my_id {
-        return Err(ApiError::bad_request("This controller is the leader itself."));
+        return Err(ApiError::bad_request(
+            "This controller is the leader itself.",
+        ));
     }
     if let Some(n) = &req.name {
         validate_node_name(n)?;
@@ -495,10 +553,14 @@ pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResul
             .node(ph)
             .ok_or_else(|| ApiError::not_found("The controller to replace"))?;
         if node.role == NodeRole::Leader {
-            return Err(ApiError::bad_request("The show leader cannot be replaced by a follower."));
+            return Err(ApiError::bad_request(
+                "The show leader cannot be replaced by a follower.",
+            ));
         }
         if ph != &req.id && show.node(&req.id).is_some() {
-            return Err(ApiError::conflict("That controller is already part of the show."));
+            return Err(ApiError::conflict(
+                "That controller is already part of the show.",
+            ));
         }
     }
     let peer = sh
@@ -520,10 +582,13 @@ pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResul
             peer.beacon.name
         )));
     }
-    let call = adopt_call_for(state, sh, &peer, req.force, req.name.clone()).map_err(ApiError::internal)?;
+    let call = adopt_call_for(state, sh, &peer, req.force, req.name.clone())
+        .map_err(ApiError::internal)?;
     let reply = call_adopt(sh, &peer, &call).await?;
     if reply.id != req.id {
-        return Err(ApiError::conflict("A different controller answered at that address; try again."));
+        return Err(ApiError::conflict(
+            "A different controller answered at that address; try again.",
+        ));
     }
 
     let name = req
@@ -599,26 +664,51 @@ pub struct ReleaseResult {
 /// Tell a follower to forget this leader (best effort).
 pub(crate) async fn call_release(state: &AppState, sh: &Shared, node_id: &str) -> bool {
     let my_id = state.identity().id;
-    let Some(key) = state.identity().cluster_key else { return false };
-    let Some(peer) = member(sh.peers.read().get(node_id), &my_id).cloned() else { return false };
+    let Some(key) = state.identity().cluster_key else {
+        return false;
+    };
+    let Some(peer) = member(sh.peers.read().get(node_id), &my_id).cloned() else {
+        return false;
+    };
     let url = format!("{}/api/v1/cluster/release", peer.http_base());
-    match sh.http.post(&url).header(KEY_HEADER, key).timeout(Duration::from_secs(4)).send().await {
+    match sh
+        .http
+        .post(&url)
+        .header(KEY_HEADER, key)
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await
+    {
         Ok(r) if r.status().is_success() => true,
         Ok(r) => {
-            tracing::warn!("{} refused release: {}", peer.beacon.name, error_message(r).await);
+            tracing::warn!(
+                "{} refused release: {}",
+                peer.beacon.name,
+                error_message(r).await
+            );
             false
         }
         Err(e) => {
-            tracing::warn!("could not tell {} to forget this leader: {e}", peer.beacon.name);
+            tracing::warn!(
+                "could not tell {} to forget this leader: {e}",
+                peer.beacon.name
+            );
             false
         }
     }
 }
 
 /// Release a follower; optionally remove it (and its wiring) from the show.
-pub async fn release(state: &AppState, sh: &Shared, node_id: &str, remove: bool) -> ApiResult<ReleaseResult> {
+pub async fn release(
+    state: &AppState,
+    sh: &Shared,
+    node_id: &str,
+    remove: bool,
+) -> ApiResult<ReleaseResult> {
     let show = state.store.get();
-    let node = show.node(node_id).ok_or_else(|| ApiError::not_found("That controller"))?;
+    let node = show
+        .node(node_id)
+        .ok_or_else(|| ApiError::not_found("That controller"))?;
     if node.role == NodeRole::Leader {
         return Err(ApiError::bad_request("The show leader cannot be released."));
     }
@@ -647,10 +737,16 @@ pub async fn release(state: &AppState, sh: &Shared, node_id: &str, remove: bool)
 // Commands & overlays
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn send_command(sh: &Shared, node_id: Option<&str>, mut cmd: ClusterCommand) -> Vec<CommandResult> {
+pub(crate) async fn send_command(
+    sh: &Shared,
+    node_id: Option<&str>,
+    mut cmd: ClusterCommand,
+) -> Vec<CommandResult> {
     let Some(state) = sh.app() else { return vec![] };
     let identity = state.identity();
-    let Some(key) = identity.cluster_key.clone() else { return vec![] };
+    let Some(key) = identity.cluster_key.clone() else {
+        return vec![];
+    };
     let show = state.store.get();
     cmd.stamp(&show.props);
     let targets: Vec<(String, Option<Peer>)> = {
@@ -672,7 +768,11 @@ pub(crate) async fn send_command(sh: &Shared, node_id: Option<&str>, mut cmd: Cl
         let cmd = cmd.clone();
         async move {
             let Some(peer) = peer else {
-                return CommandResult { node_id: id, ok: false, error: Some("offline".into()) };
+                return CommandResult {
+                    node_id: id,
+                    ok: false,
+                    error: Some("offline".into()),
+                };
             };
             let url = format!("{}/api/v1/cluster/command", peer.http_base());
             let r = sh
@@ -684,9 +784,21 @@ pub(crate) async fn send_command(sh: &Shared, node_id: Option<&str>, mut cmd: Cl
                 .send()
                 .await;
             match r {
-                Ok(r) if r.status().is_success() => CommandResult { node_id: id, ok: true, error: None },
-                Ok(r) => CommandResult { node_id: id, ok: false, error: Some(error_message(r).await) },
-                Err(e) => CommandResult { node_id: id, ok: false, error: Some(short_err(&e)) },
+                Ok(r) if r.status().is_success() => CommandResult {
+                    node_id: id,
+                    ok: true,
+                    error: None,
+                },
+                Ok(r) => CommandResult {
+                    node_id: id,
+                    ok: false,
+                    error: Some(error_message(r).await),
+                },
+                Err(e) => CommandResult {
+                    node_id: id,
+                    ok: false,
+                    error: Some(short_err(&e)),
+                },
             }
         }
     });
@@ -704,7 +816,9 @@ pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
         return 0;
     };
     let show = state.store.get();
-    let Some(prop) = show.prop(prop_id) else { return 0 };
+    let Some(prop) = show.prop(prop_id) else {
+        return 0;
+    };
     let mut nodes: Vec<&str> = prop
         .segments
         .iter()
@@ -727,12 +841,17 @@ pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
     let peers = sh.peers.read();
     let mut sent = 0;
     for id in nodes {
-        let Some(peer) = member(peers.get(id), &identity.id) else { continue };
+        let Some(peer) = member(peers.get(id), &identity.id) else {
+            continue;
+        };
         let port = match peer.beacon.overlay {
             0 => peer.addr.port().wrapping_add(1),
             p => p,
         };
-        if sock.try_send_to(&packet, SocketAddr::new(peer.addr.ip(), port)).is_ok() {
+        if sock
+            .try_send_to(&packet, SocketAddr::new(peer.addr.ip(), port))
+            .is_ok()
+        {
             sent += 1;
         }
     }
@@ -755,7 +874,8 @@ pub(crate) async fn on_ping(state: &AppState, sh: &Shared, ping: Ping, src: Sock
         t1,
         boot: sh.boot.clone(),
     });
-    sh.send_json(&pong, identity.cluster_key.as_deref(), &[src]).await;
+    sh.send_json(&pong, identity.cluster_key.as_deref(), &[src])
+        .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -803,7 +923,11 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
     {
         let mut health = sh.health.lock();
         health.retain(|id, _| show.node(id).is_some());
-        for node in show.nodes.iter().filter(|n| n.role == NodeRole::Follower && n.adopted) {
+        for node in show
+            .nodes
+            .iter()
+            .filter(|n| n.role == NodeRole::Follower && n.adopted)
+        {
             let peer = peers.get(&node.id);
             let m = member(peer, &identity.id);
             let online = m.is_some_and(|p| p.last_seen.elapsed() < sh.settings.offline_after);
@@ -812,19 +936,32 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                 (Some(false), true) => {
                     h.online = Some(true);
                     tracing::info!("{} is back online", node.name);
-                    state.events.toast(crate::events::ToastKind::Success, format!("{} is back online", node.name));
-                    sh.emit(ClusterEvent::NodeOnline { node_id: node.id.clone(), name: node.name.clone() });
+                    state.events.toast(
+                        crate::events::ToastKind::Success,
+                        format!("{} is back online", node.name),
+                    );
+                    sh.emit(ClusterEvent::NodeOnline {
+                        node_id: node.id.clone(),
+                        name: node.name.clone(),
+                    });
                 }
                 (None, true) => h.online = Some(true),
                 (Some(true), false) => {
                     h.online = Some(false);
                     let last = peer.map(|p| rfc3339(p.seen_at));
                     log_warning(state, format!("{} went offline", node.name));
-                    sh.emit(ClusterEvent::NodeOffline { node_id: node.id.clone(), name: node.name.clone(), last_seen: last });
+                    sh.emit(ClusterEvent::NodeOffline {
+                        node_id: node.id.clone(),
+                        name: node.name.clone(),
+                        last_seen: last,
+                    });
                 }
                 (None, false) if past_grace => {
                     h.online = Some(false);
-                    log_warning(state, format!("{} has not checked in since PixelPlus started", node.name));
+                    log_warning(
+                        state,
+                        format!("{} has not checked in since PixelPlus started", node.name),
+                    );
                     sh.emit(ClusterEvent::NodeOffline {
                         node_id: node.id.clone(),
                         name: node.name.clone(),
@@ -834,15 +971,25 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                 _ => {}
             }
             // Problems reported by the follower.
-            let problem = m.filter(|_| online).and_then(|p| p.beacon.report.as_ref()).and_then(|r| r.problem.clone());
+            let problem = m
+                .filter(|_| online)
+                .and_then(|p| p.beacon.report.as_ref())
+                .and_then(|r| r.problem.clone());
             if problem != h.problem {
                 if let Some(msg) = &problem {
                     log_warning(state, format!("{}: {msg}", node.name));
-                    sh.emit(ClusterEvent::SyncProblem { node_id: node.id.clone(), name: node.name.clone(), message: msg.clone() });
+                    sh.emit(ClusterEvent::SyncProblem {
+                        node_id: node.id.clone(),
+                        name: node.name.clone(),
+                        message: msg.clone(),
+                    });
                 }
                 h.problem = problem;
             }
-            let Some(peer) = peer.filter(|p| p.last_seen.elapsed() < sh.settings.offline_after) else { continue };
+            let Some(peer) = peer.filter(|p| p.last_seen.elapsed() < sh.settings.offline_after)
+            else {
+                continue;
+            };
             match peer.beacon.adopted_by.as_deref() {
                 // It lost its settings (reset, new SD card with the same id…): adopt it again.
                 None if peer.beacon.role != LocalRole::Leader => {
@@ -854,18 +1001,34 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                 Some(other) if other != identity.id => {
                     if !h.warned_foreign {
                         h.warned_foreign = true;
-                        log_warning(state, format!("{} is now controlled by another show leader", node.name));
+                        log_warning(
+                            state,
+                            format!("{} is now controlled by another show leader", node.name),
+                        );
                     }
                 }
                 _ => h.warned_foreign = false,
             }
             if let Some(m) = m {
                 let b = &m.beacon;
-                if (!b.hostname.is_empty() && b.hostname != node.hostname) || b.pi != node.pi_model || b.board_rev != node.board_rev {
-                    facts.push((node.id.clone(), b.hostname.clone(), b.pi.clone(), b.board_rev.clone()));
+                if (!b.hostname.is_empty() && b.hostname != node.hostname)
+                    || b.pi != node.pi_model
+                    || b.board_rev != node.board_rev
+                {
+                    facts.push((
+                        node.id.clone(),
+                        b.hostname.clone(),
+                        b.pi.clone(),
+                        b.board_rev.clone(),
+                    ));
                 }
                 if b.board != node.board && !h.warned_foreign {
-                    tracing::warn!("{} reports board {:?} but is configured as {:?}", node.name, b.board, node.board);
+                    tracing::warn!(
+                        "{} reports board {:?} but is configured as {:?}",
+                        node.name,
+                        b.board,
+                        node.board
+                    );
                 }
             }
         }
@@ -874,7 +1037,9 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
         let sh2 = sh.clone();
         let state2 = state.clone();
         tokio::spawn(async move {
-            let Ok(call) = adopt_call_for(&state2, &sh2, &peer, false, None) else { return };
+            let Ok(call) = adopt_call_for(&state2, &sh2, &peer, false, None) else {
+                return;
+            };
             match call_adopt(&sh2, &peer, &call).await {
                 Ok(_) => tracing::info!("re-adopted {}", peer.beacon.name),
                 Err(e) => tracing::warn!("re-adopting {} failed: {}", peer.beacon.name, e.message),
@@ -930,7 +1095,12 @@ pub(crate) fn significant_change(old: &PlayerStatus, old_at: Instant, new: &Play
     (new.pos_ms as i64 - expected).abs() > 150
 }
 
-pub(crate) fn build_sync(state: &AppState, sh: &Shared, status: &PlayerStatus, received: Instant) -> SyncPacket {
+pub(crate) fn build_sync(
+    state: &AppState,
+    sh: &Shared,
+    status: &PlayerStatus,
+    received: Instant,
+) -> SyncPacket {
     let identity = state.identity();
     let show = state.store.get();
     let extras = sh.extras.lock().clone();
@@ -938,7 +1108,11 @@ pub(crate) fn build_sync(state: &AppState, sh: &Shared, status: &PlayerStatus, r
         (Some(item), _) if item.kind == "effect" => show
             .effect(&item.id)
             .cloned()
-            .or_else(|| pixelplus_core::effects::builtin_presets().into_iter().find(|e| e.id == item.id))
+            .or_else(|| {
+                pixelplus_core::effects::builtin_presets()
+                    .into_iter()
+                    .find(|e| e.id == item.id)
+            })
             .or(extras.effect.clone()),
         (_, PlayerState::Effect) => extras.effect.clone(),
         _ => None,
@@ -1026,7 +1200,8 @@ async fn sync_loop(state: AppState, sh: Arc<Shared>) {
         if dests.is_empty() || identity.cluster_key.is_none() {
             continue;
         }
-        sh.send_json(&Msg::Sync(packet), identity.cluster_key.as_deref(), &dests).await;
+        sh.send_json(&Msg::Sync(packet), identity.cluster_key.as_deref(), &dests)
+            .await;
     }
 }
 
@@ -1046,9 +1221,10 @@ async fn slice_worker(state: AppState, sh: Arc<Shared>) {
         if is_leader(&state) {
             let show = state.store.get();
             let data_dir = state.config.data_dir.clone();
-            let jobs = tokio::task::spawn_blocking(move || super::slices::all_jobs(&show, &data_dir))
-                .await
-                .unwrap_or_default();
+            let jobs =
+                tokio::task::spawn_blocking(move || super::slices::all_jobs(&show, &data_dir))
+                    .await
+                    .unwrap_or_default();
             for job in &jobs {
                 if *stop.borrow() {
                     return;
@@ -1058,11 +1234,16 @@ async fn slice_worker(state: AppState, sh: Arc<Shared>) {
                 }
                 if let Err(e) = sh.slices.ensure(job.clone()).await {
                     failed.insert(job.key.clone());
-                    log_warning(&state, format!("Could not prepare sequence data for a controller: {e}"));
+                    log_warning(
+                        &state,
+                        format!("Could not prepare sequence data for a controller: {e}"),
+                    );
                 }
             }
             let cache = sh.slices.clone();
-            let removed = tokio::task::spawn_blocking(move || cache.cleanup(&jobs)).await.unwrap_or(0);
+            let removed = tokio::task::spawn_blocking(move || cache.cleanup(&jobs))
+                .await
+                .unwrap_or(0);
             if removed > 0 {
                 tracing::debug!("removed {removed} stale slices");
             }
@@ -1120,7 +1301,11 @@ mod tests {
         let at = Instant::now();
         let base = PlayerStatus {
             state: PlayerState::Playing,
-            item: Some(ItemRef { kind: "sequence".into(), id: "s".into(), name: "S".into() }),
+            item: Some(ItemRef {
+                kind: "sequence".into(),
+                id: "s".into(),
+                name: "S".into(),
+            }),
             pos_ms: 1000,
             duration_ms: 60_000,
             brightness: 100,
@@ -1145,7 +1330,12 @@ mod tests {
     #[test]
     fn position_extrapolates_only_while_playing() {
         let at = Instant::now() - Duration::from_millis(500);
-        let mut s = PlayerStatus { state: PlayerState::Playing, pos_ms: 1000, duration_ms: 1200, ..Default::default() };
+        let mut s = PlayerStatus {
+            state: PlayerState::Playing,
+            pos_ms: 1000,
+            duration_ms: 1200,
+            ..Default::default()
+        };
         assert_eq!(position_now(&s, at), 1200, "clamped to the duration");
         s.duration_ms = 0;
         assert!(position_now(&s, at) >= 1500);

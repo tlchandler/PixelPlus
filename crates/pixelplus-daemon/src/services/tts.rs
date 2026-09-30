@@ -400,9 +400,11 @@ mod tests {
 
     #[test]
     fn render_body_resolves_voices_and_placeholders() {
-        let mut show = Show::default();
-        show.name = "Chandler Lights".into();
-        show.dj_voices = super::super::seed::builtin_voices();
+        let show = Show {
+            name: "Chandler Lights".into(),
+            dj_voices: super::super::seed::builtin_voices(),
+            ..Default::default()
+        };
         let lines = vec![
             json!({"voice": "nick", "text": "Welcome to {showName}!", "pauseMs": 0}),
             json!({"voice": "af_sky", "text": "Up next: {nextSong}", "pauseMs": 300}),

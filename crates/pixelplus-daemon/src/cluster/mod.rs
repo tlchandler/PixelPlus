@@ -92,7 +92,8 @@ pub struct ClusterSettings {
 impl ClusterSettings {
     pub fn from_config(config: &crate::config::Config) -> Self {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-        let off = |k: &str| env(k).is_some_and(|v| matches!(v.trim(), "0" | "false" | "off" | "no"));
+        let off =
+            |k: &str| env(k).is_some_and(|v| matches!(v.trim(), "0" | "false" | "off" | "no"));
         let port = config.cluster_port;
         ClusterSettings {
             port,
@@ -150,9 +151,17 @@ pub enum ClusterEvent {
     #[serde(rename_all = "camelCase")]
     NodeOnline { node_id: String, name: String },
     #[serde(rename_all = "camelCase")]
-    NodeOffline { node_id: String, name: String, last_seen: Option<String> },
+    NodeOffline {
+        node_id: String,
+        name: String,
+        last_seen: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
-    SyncProblem { node_id: String, name: String, message: String },
+    SyncProblem {
+        node_id: String,
+        name: String,
+        message: String,
+    },
 }
 
 /// One entry of `GET /nodes` status and the `nodes` WebSocket message.
@@ -200,17 +209,37 @@ pub struct DiscoveredNode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClusterCommand {
-    TestStart { test: TestRequest },
+    TestStart {
+        test: TestRequest,
+    },
     TestStop,
-    Blackout { on: bool },
+    Blackout {
+        on: bool,
+    },
     /// Show a look now (runs as an effect test on the follower).
-    Effect { effect: EffectPreset },
+    Effect {
+        effect: EffectPreset,
+    },
     #[serde(rename_all = "camelCase")]
-    OverlayEnable { prop_id: String, enabled: bool },
+    OverlayEnable {
+        prop_id: String,
+        enabled: bool,
+    },
     #[serde(rename_all = "camelCase")]
-    OverlayText { prop_id: String, text: String, color: String, #[serde(default)] scroll: bool, duration_ms: u64 },
+    OverlayText {
+        prop_id: String,
+        text: String,
+        color: String,
+        #[serde(default)]
+        scroll: bool,
+        duration_ms: u64,
+    },
     #[serde(rename_all = "camelCase")]
-    OverlayQr { prop_id: String, url: String, duration_ms: u64 },
+    OverlayQr {
+        prop_id: String,
+        url: String,
+        duration_ms: u64,
+    },
     /// Re-fetch the manifest and slices now.
     Refresh,
 }
@@ -346,7 +375,9 @@ impl Shared {
 
     /// Send a JSON datagram on the cluster socket (best effort).
     pub async fn send_json(&self, msg: &proto::Msg, key: Option<&str>, dests: &[SocketAddr]) {
-        let Some(sock) = self.socket.get() else { return };
+        let Some(sock) = self.socket.get() else {
+            return;
+        };
         let bytes = proto::encode(msg, key);
         if bytes.len() > proto::MAX_JSON_PACKET {
             tracing::warn!("cluster packet too large ({} bytes), not sent", bytes.len());
@@ -363,7 +394,10 @@ impl Shared {
     pub async fn static_peers(&self) -> Vec<SocketAddr> {
         let mut out = Vec::new();
         for p in &self.settings.peers {
-            let with_port = if p.parse::<SocketAddr>().is_ok() || p.rsplit_once(':').is_some_and(|(h, port)| !h.contains(':') && port.parse::<u16>().is_ok()) {
+            let with_port = if p.parse::<SocketAddr>().is_ok()
+                || p.rsplit_once(':')
+                    .is_some_and(|(h, port)| !h.contains(':') && port.parse::<u16>().is_ok())
+            {
                 p.clone()
             } else {
                 format!("{p}:{}", self.settings.port)
@@ -434,7 +468,11 @@ impl ClusterHandle {
 
     /// Leader: send a command to one follower (`Some(id)`) or all adopted,
     /// online followers (`None`), in parallel. Effects are stamped here.
-    pub async fn send_command(&self, node_id: Option<&str>, cmd: ClusterCommand) -> Vec<CommandResult> {
+    pub async fn send_command(
+        &self,
+        node_id: Option<&str>,
+        cmd: ClusterCommand,
+    ) -> Vec<CommandResult> {
         leader::send_command(&self.shared, node_id, cmd).await
     }
 
@@ -493,7 +531,9 @@ pub(crate) fn log_warning(state: &AppState, message: impl Into<String>) {
 
 /// Forward a command to the local player, if it is running.
 pub(crate) async fn to_player(state: &AppState, cmd: PlayerCmd) -> bool {
-    let Some(player) = state.services.player.get() else { return false };
+    let Some(player) = state.services.player.get() else {
+        return false;
+    };
     matches!(
         tokio::time::timeout(Duration::from_millis(200), player.send(cmd)).await,
         Ok(Ok(()))
@@ -514,7 +554,10 @@ pub async fn start(state: &AppState) -> anyhow::Result<ClusterHandle> {
 }
 
 /// [`start`] with explicit settings (tests, custom ports).
-pub async fn start_with(state: &AppState, settings: ClusterSettings) -> anyhow::Result<ClusterHandle> {
+pub async fn start_with(
+    state: &AppState,
+    settings: ClusterSettings,
+) -> anyhow::Result<ClusterHandle> {
     let cluster_dir = state.config.data_dir.join("cluster");
     std::fs::create_dir_all(&cluster_dir)?;
     // Warm the hardware facts off the async runtime (I²C probing).
@@ -550,7 +593,9 @@ pub async fn start_with(state: &AppState, settings: ClusterSettings) -> anyhow::
         cluster_dir,
         settings,
     });
-    let handle = ClusterHandle { shared: shared.clone() };
+    let handle = ClusterHandle {
+        shared: shared.clone(),
+    };
     let _ = state.services.cluster.set(handle.clone());
 
     follower::load_local_state(state, &shared);

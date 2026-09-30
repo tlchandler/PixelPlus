@@ -13,7 +13,9 @@ pub struct Interfaces {
 
 pub fn interfaces() -> Interfaces {
     let mut out = Interfaces::default();
-    let Ok(list) = if_addrs::get_if_addrs() else { return out };
+    let Ok(list) = if_addrs::get_if_addrs() else {
+        return out;
+    };
     for iface in list {
         if iface.is_loopback() {
             continue;
@@ -104,12 +106,18 @@ mod tests {
 
     #[test]
     fn urls() {
-        assert_eq!(http_url("10.0.0.2".parse().unwrap(), 80), "http://10.0.0.2:80");
+        assert_eq!(
+            http_url("10.0.0.2".parse().unwrap(), 80),
+            "http://10.0.0.2:80"
+        );
         assert_eq!(http_url("::1".parse().unwrap(), 8080), "http://[::1]:8080");
     }
 
     #[test]
     fn loopback_route() {
-        assert_eq!(local_ip_towards("127.0.0.1".parse().unwrap()), Some("127.0.0.1".parse().unwrap()));
+        assert_eq!(
+            local_ip_towards("127.0.0.1".parse().unwrap()),
+            Some("127.0.0.1".parse().unwrap())
+        );
     }
 }

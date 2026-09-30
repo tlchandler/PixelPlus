@@ -72,19 +72,26 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> anyhow::Result<()>
 }
 
 fn slice_path(state: &AppState, seq_id: &str) -> PathBuf {
-    state.config.data_dir.join(manifest::follower_slice_file(seq_id))
+    state
+        .config
+        .data_dir
+        .join(manifest::follower_slice_file(seq_id))
 }
 
 /// Restore what the follower knew before a restart.
 pub(crate) fn load_local_state(state: &AppState, sh: &Shared) {
-    let Some(m) = read_json::<NodeManifest>(&manifest_path(sh)) else { return };
+    let Some(m) = read_json::<NodeManifest>(&manifest_path(sh)) else {
+        return;
+    };
     let index: SliceIndex = read_json(&index_path(sh)).unwrap_or_default();
     let mut f = sh.follower.lock();
     f.manifest_version = m.show_version;
     f.local_sequences = m
         .sequences
         .iter()
-        .filter(|s| index.get(&s.id).is_some_and(|l| l.key == s.hash) && slice_path(state, &s.id).exists())
+        .filter(|s| {
+            index.get(&s.id).is_some_and(|l| l.key == s.hash) && slice_path(state, &s.id).exists()
+        })
         .map(|s| s.id.clone())
         .collect();
     let pending = m.sequences.len() - f.local_sequences.len();
@@ -101,7 +108,10 @@ pub(crate) fn spawn(state: &AppState, sh: &Arc<Shared>) {
 
 fn is_follower_with_leader(state: &AppState) -> bool {
     let i = state.identity();
-    i.role == LocalRole::Follower && i.leader_id.is_some() && i.leader_url.is_some() && i.cluster_key.is_some()
+    i.role == LocalRole::Follower
+        && i.leader_id.is_some()
+        && i.leader_url.is_some()
+        && i.cluster_key.is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +155,11 @@ pub(crate) fn leader_addr(state: &AppState, sh: &Shared) -> Option<SocketAddr> {
         return Some(a);
     }
     let url = state.identity().leader_url?;
-    let host = reqwest::Url::parse(&url).ok()?.host_str()?.trim_matches(['[', ']']).to_string();
+    let host = reqwest::Url::parse(&url)
+        .ok()?
+        .host_str()?
+        .trim_matches(['[', ']'])
+        .to_string();
     let ip: std::net::IpAddr = host.parse().ok()?;
     Some(SocketAddr::new(ip, sh.settings.port))
 }
@@ -181,8 +195,16 @@ pub(crate) fn on_leader_beacon(state: &AppState, sh: &Shared, b: &proto::Beacon,
     }
     // Follow the leader to a new address (DHCP renumbering, moved to Wi-Fi…).
     let identity = state.identity();
-    let Some(url) = identity.leader_url.as_deref().and_then(|u| reqwest::Url::parse(u).ok()) else { return };
-    let host_ip: Option<std::net::IpAddr> = url.host_str().and_then(|h| h.trim_matches(['[', ']']).parse().ok());
+    let Some(url) = identity
+        .leader_url
+        .as_deref()
+        .and_then(|u| reqwest::Url::parse(u).ok())
+    else {
+        return;
+    };
+    let host_ip: Option<std::net::IpAddr> = url
+        .host_str()
+        .and_then(|h| h.trim_matches(['[', ']']).parse().ok());
     let port_ok = url.port_or_known_default() == Some(b.http);
     let host_ok = host_ip.is_some_and(|ip| ip == src.ip() || b.ips.contains(&ip));
     if !(port_ok && host_ok) {
@@ -198,7 +220,8 @@ pub(crate) fn on_leader_beacon(state: &AppState, sh: &Shared, b: &proto::Beacon,
 pub(crate) fn on_pong(state: &AppState, sh: &Shared, p: Pong, src: SocketAddr) {
     let t2 = sh.now_ms();
     let identity = state.identity();
-    if identity.role != LocalRole::Follower || identity.leader_id.as_deref() != Some(p.id.as_str()) {
+    if identity.role != LocalRole::Follower || identity.leader_id.as_deref() != Some(p.id.as_str())
+    {
         return;
     }
     leader_boot(sh, &p.boot);
@@ -225,7 +248,9 @@ pub fn localize_sync(mut p: SyncPacket, offset_ms: Option<f64>, local_now_ms: f6
 
 pub(crate) async fn on_sync(state: &AppState, sh: &Shared, p: SyncPacket, src: SocketAddr) {
     let identity = state.identity();
-    if identity.role != LocalRole::Follower || identity.leader_id.as_deref() != Some(p.leader.as_str()) {
+    if identity.role != LocalRole::Follower
+        || identity.leader_id.as_deref() != Some(p.leader.as_str())
+    {
         return;
     }
     let local_now = sh.now_ms();
@@ -243,7 +268,10 @@ pub(crate) async fn on_sync(state: &AppState, sh: &Shared, p: SyncPacket, src: S
             (Some(item), PlayerState::Playing | PlayerState::Paused)
                 if item.kind == "sequence" && !f.local_sequences.contains(&item.id) =>
             {
-                Some(format!("“{}” is not downloaded yet, so it plays dark here", item.name))
+                Some(format!(
+                    "“{}” is not downloaded yet, so it plays dark here",
+                    item.name
+                ))
             }
             _ => None,
         };
@@ -260,11 +288,22 @@ pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]
     if identity.role != LocalRole::Follower {
         return;
     }
-    let Some(key) = identity.cluster_key.as_deref() else { return };
-    let Some(frame) = proto::decode_overlay(data, key) else { return };
-    let Some(prop) = state.store.get().prop(&frame.prop_id).cloned() else { return };
+    let Some(key) = identity.cluster_key.as_deref() else {
+        return;
+    };
+    let Some(frame) = proto::decode_overlay(data, key) else {
+        return;
+    };
+    let Some(prop) = state.store.get().prop(&frame.prop_id).cloned() else {
+        return;
+    };
     if frame.rgb.len() != prop.pixel_count as usize * 3 {
-        tracing::debug!("overlay for {} has {} bytes, expected {}", prop.name, frame.rgb.len(), prop.pixel_count * 3);
+        tracing::debug!(
+            "overlay for {} has {} bytes, expected {}",
+            prop.name,
+            frame.rgb.len(),
+            prop.pixel_count * 3
+        );
         return;
     }
     {
@@ -276,7 +315,8 @@ pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]
                 return; // duplicate or late
             }
         }
-        f.overlay_frames.insert(frame.prop_id.clone(), frame.frame_no);
+        f.overlay_frames
+            .insert(frame.prop_id.clone(), frame.frame_no);
     }
     to_player(
         state,
@@ -298,7 +338,8 @@ async fn ping_loop(state: AppState, sh: Arc<Shared>) {
                     id: identity.id.clone(),
                     t0: sh.now_ms(),
                 });
-                sh.send_json(&ping, identity.cluster_key.as_deref(), &[dest]).await;
+                sh.send_json(&ping, identity.cluster_key.as_deref(), &[dest])
+                    .await;
             }
         }
         if sleep_or_stop(&mut stop, sh.settings.ping_interval).await {
@@ -312,7 +353,9 @@ async fn ping_loop(state: AppState, sh: Arc<Shared>) {
 // ---------------------------------------------------------------------------
 
 fn valid_key(k: &str) -> bool {
-    (16..=256).contains(&k.len()) && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    (16..=256).contains(&k.len())
+        && k.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 fn validate_call(call: &AdoptCall) -> ApiResult<()> {
@@ -322,8 +365,12 @@ fn validate_call(call: &AdoptCall) -> ApiResult<()> {
     if !valid_key(&call.cluster_key) {
         return Err(ApiError::bad_request("Invalid cluster key."));
     }
-    let url = reqwest::Url::parse(&call.leader_url).map_err(|_| ApiError::bad_request("Invalid leader address."))?;
-    if call.leader_url.len() > 256 || !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+    let url = reqwest::Url::parse(&call.leader_url)
+        .map_err(|_| ApiError::bad_request("Invalid leader address."))?;
+    if call.leader_url.len() > 256
+        || !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+    {
         return Err(ApiError::bad_request("Invalid leader address."));
     }
     if let Some(n) = &call.name {
@@ -341,7 +388,12 @@ fn leader_label(sh: &Shared, leader_id: &str) -> String {
 }
 
 /// `POST /cluster/adopt`.
-pub async fn handle_adopt(state: &AppState, sh: &Shared, headers: &HeaderMap, call: AdoptCall) -> ApiResult<AdoptReply> {
+pub async fn handle_adopt(
+    state: &AppState,
+    sh: &Shared,
+    headers: &HeaderMap,
+    call: AdoptCall,
+) -> ApiResult<AdoptReply> {
     validate_call(&call)?;
     let identity = state.identity();
     if call.leader_id == identity.id {
@@ -374,7 +426,11 @@ pub async fn handle_adopt(state: &AppState, sh: &Shared, headers: &HeaderMap, ca
                 )));
             }
             if !same && !has_key {
-                tracing::warn!("taken over from silent leader {:?} by {}", identity.leader_id, call.leader_id);
+                tracing::warn!(
+                    "taken over from silent leader {:?} by {}",
+                    identity.leader_id,
+                    call.leader_id
+                );
             }
         }
         LocalRole::Leader => {
@@ -419,13 +475,21 @@ pub async fn handle_adopt(state: &AppState, sh: &Shared, headers: &HeaderMap, ca
     sh.manifest_trigger.notify_one();
     let hostname = net::hostname();
     let (board, board_rev) = net::local_board(state);
-    tracing::info!("adopted by leader {} at {}", call.leader_id, call.leader_url);
-    state
-        .events
-        .toast(crate::events::ToastKind::Success, "This controller was adopted by the show leader");
+    tracing::info!(
+        "adopted by leader {} at {}",
+        call.leader_id,
+        call.leader_url
+    );
+    state.events.toast(
+        crate::events::ToastKind::Success,
+        "This controller was adopted by the show leader",
+    );
     Ok(AdoptReply {
         id: identity.id.clone(),
-        name: identity.name.clone().unwrap_or_else(|| net::title_case(&hostname)),
+        name: identity
+            .name
+            .clone()
+            .unwrap_or_else(|| net::title_case(&hostname)),
         hostname,
         board,
         board_rev,
@@ -441,7 +505,10 @@ fn own_node(state: &AppState) -> Node {
     let existing = state.store.get().node(&identity.id).cloned();
     Node {
         id: identity.id.clone(),
-        name: identity.name.clone().unwrap_or_else(|| net::title_case(&hostname)),
+        name: identity
+            .name
+            .clone()
+            .unwrap_or_else(|| net::title_case(&hostname)),
         hostname,
         role: NodeRole::Follower,
         board,
@@ -495,9 +562,10 @@ pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
     };
     to_player(state, PlayerCmd::Sync(blank)).await;
     tracing::info!("released by the leader; waiting to be adopted");
-    state
-        .events
-        .toast(crate::events::ToastKind::Info, "This controller was released by its show leader");
+    state.events.toast(
+        crate::events::ToastKind::Info,
+        "This controller was released by its show leader",
+    );
     Ok(())
 }
 
@@ -533,15 +601,39 @@ pub async fn handle_command(state: &AppState, sh: &Shared, cmd: ClusterCommand) 
         ClusterCommand::TestStop => player.send(PlayerCmd::TestStop).await,
         ClusterCommand::Blackout { on } => player.send(PlayerCmd::Blackout(on)).await,
         ClusterCommand::OverlayEnable { prop_id, enabled } => {
-            player.send(PlayerCmd::Overlay(OverlayCmd::Enable { prop_id, enabled })).await
-        }
-        ClusterCommand::OverlayText { prop_id, text, color, scroll, duration_ms } => {
             player
-                .send(PlayerCmd::Overlay(OverlayCmd::Text { prop_id, text, color, scroll, duration_ms }))
+                .send(PlayerCmd::Overlay(OverlayCmd::Enable { prop_id, enabled }))
                 .await
         }
-        ClusterCommand::OverlayQr { prop_id, url, duration_ms } => {
-            player.send(PlayerCmd::Overlay(OverlayCmd::Qr { prop_id, url, duration_ms })).await
+        ClusterCommand::OverlayText {
+            prop_id,
+            text,
+            color,
+            scroll,
+            duration_ms,
+        } => {
+            player
+                .send(PlayerCmd::Overlay(OverlayCmd::Text {
+                    prop_id,
+                    text,
+                    color,
+                    scroll,
+                    duration_ms,
+                }))
+                .await
+        }
+        ClusterCommand::OverlayQr {
+            prop_id,
+            url,
+            duration_ms,
+        } => {
+            player
+                .send(PlayerCmd::Overlay(OverlayCmd::Qr {
+                    prop_id,
+                    url,
+                    duration_ms,
+                }))
+                .await
         }
         ClusterCommand::Refresh => Ok(()),
     }
@@ -615,7 +707,9 @@ async fn fetch_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<NodeMan
         .map_err(|e| anyhow::anyhow!("cannot reach the show leader at {url} ({e})"))?;
     match resp.status().as_u16() {
         200 => {}
-        401 | 403 => anyhow::bail!("the show leader rejected this controller's key; adopt it again"),
+        401 | 403 => {
+            anyhow::bail!("the show leader rejected this controller's key; adopt it again")
+        }
         404 => anyhow::bail!("the show leader no longer lists this controller"),
         _ => anyhow::bail!("the show leader answered: {}", error_message(resp).await),
     }
@@ -628,10 +722,17 @@ async fn fetch_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<NodeMan
 
 /// Install the follower show for `manifest` with the `available` sequences,
 /// unless we meanwhile left that leader.
-async fn install(state: &AppState, sh: &Shared, m: &NodeManifest, available: &HashSet<String>) -> anyhow::Result<bool> {
+async fn install(
+    state: &AppState,
+    sh: &Shared,
+    m: &NodeManifest,
+    available: &HashSet<String>,
+) -> anyhow::Result<bool> {
     let _guard = sh.install_lock.lock().await;
     let identity = state.identity();
-    if identity.role != LocalRole::Follower || identity.leader_id.as_deref() != Some(m.leader_id.as_str()) {
+    if identity.role != LocalRole::Follower
+        || identity.leader_id.as_deref() != Some(m.leader_id.as_str())
+    {
         anyhow::bail!("no longer following that leader");
     }
     let current = state.store.get();
@@ -654,10 +755,17 @@ async fn sync_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<()> {
     let mut available: HashSet<String> = m
         .sequences
         .iter()
-        .filter(|s| index.get(&s.id).is_some_and(|l| l.key == s.hash) && slice_path(state, &s.id).exists())
+        .filter(|s| {
+            index.get(&s.id).is_some_and(|l| l.key == s.hash) && slice_path(state, &s.id).exists()
+        })
         .map(|s| s.id.clone())
         .collect();
-    let pending: Vec<ManifestSequence> = m.sequences.iter().filter(|s| !available.contains(&s.id)).cloned().collect();
+    let pending: Vec<ManifestSequence> = m
+        .sequences
+        .iter()
+        .filter(|s| !available.contains(&s.id))
+        .cloned()
+        .collect();
     let set_progress = |available: &HashSet<String>| {
         let mut f = sh.follower.lock();
         f.local_sequences = available.clone();
@@ -683,10 +791,13 @@ async fn sync_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<()> {
                 set_progress(&available);
             }
             Err(FetchError::NotReady) => {
-                first_error.get_or_insert_with(|| anyhow::anyhow!("waiting for the leader to prepare “{}”", s.name));
+                first_error.get_or_insert_with(|| {
+                    anyhow::anyhow!("waiting for the leader to prepare “{}”", s.name)
+                });
             }
             Err(FetchError::Other(e)) => {
-                first_error.get_or_insert_with(|| anyhow::anyhow!("downloading “{}” failed: {e}", s.name));
+                first_error
+                    .get_or_insert_with(|| anyhow::anyhow!("downloading “{}” failed: {e}", s.name));
             }
         }
     }
@@ -703,7 +814,11 @@ async fn sync_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<()> {
         tracing::info!("removed {removed} sequence slices no longer in the show");
     }
     if install(state, sh, &m, &available).await? {
-        tracing::info!("{} of {} sequences ready", available.len(), m.sequences.len());
+        tracing::info!(
+            "{} of {} sequences ready",
+            available.len(),
+            m.sequences.len()
+        );
     }
     match first_error {
         Some(e) => Err(e),
@@ -713,7 +828,9 @@ async fn sync_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<()> {
 
 /// Delete `.ppseq` slices (and partial downloads) whose id is not wanted.
 pub fn remove_unreferenced(dir: &Path, wanted: &HashSet<String>) -> usize {
-    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
     let mut removed = 0;
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
@@ -731,7 +848,11 @@ pub fn remove_unreferenced(dir: &Path, wanted: &HashSet<String>) -> usize {
 
 /// Download one slice (resuming a partial download of the same key), verify
 /// its sha256 and structure, and move it into place.
-pub(crate) async fn download_slice(state: &AppState, sh: &Shared, s: &ManifestSequence) -> Result<LocalSlice, FetchError> {
+pub(crate) async fn download_slice(
+    state: &AppState,
+    sh: &Shared,
+    s: &ManifestSequence,
+) -> Result<LocalSlice, FetchError> {
     let other = |e: &dyn std::fmt::Display| FetchError::Other(e.to_string());
     let identity = state.identity();
     let (Some(url), Some(key)) = (identity.leader_url.clone(), identity.cluster_key.clone()) else {
@@ -744,24 +865,37 @@ pub(crate) async fn download_slice(state: &AppState, sh: &Shared, s: &ManifestSe
     let part = final_path.with_extension("ppseq.part");
     let part_key = final_path.with_extension("ppseq.part.key");
     if let Some(dir) = final_path.parent() {
-        tokio::fs::create_dir_all(dir).await.map_err(|e| other(&e))?;
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|e| other(&e))?;
     }
     let etag = format!("\"{}\"", s.hash);
     let mut offset = 0u64;
-    let resumable = tokio::fs::read_to_string(&part_key).await.ok().as_deref() == Some(s.hash.as_str());
+    let resumable =
+        tokio::fs::read_to_string(&part_key).await.ok().as_deref() == Some(s.hash.as_str());
     if resumable {
-        offset = tokio::fs::metadata(&part).await.map(|m| m.len()).unwrap_or(0);
+        offset = tokio::fs::metadata(&part)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
     } else {
         let _ = tokio::fs::remove_file(&part).await;
-        tokio::fs::write(&part_key, &s.hash).await.map_err(|e| other(&e))?;
+        tokio::fs::write(&part_key, &s.hash)
+            .await
+            .map_err(|e| other(&e))?;
     }
 
     let mut req = sh
         .http
-        .get(format!("{url}/api/v1/cluster/slice/{}/{}", identity.id, s.id))
+        .get(format!(
+            "{url}/api/v1/cluster/slice/{}/{}",
+            identity.id, s.id
+        ))
         .header(KEY_HEADER, &key);
     if offset > 0 {
-        req = req.header("range", format!("bytes={offset}-")).header("if-range", &etag);
+        req = req
+            .header("range", format!("bytes={offset}-"))
+            .header("if-range", &etag);
     }
     let mut resp = req.send().await.map_err(|e| other(&e))?;
     match resp.status().as_u16() {
@@ -781,7 +915,9 @@ pub(crate) async fn download_slice(state: &AppState, sh: &Shared, s: &ManifestSe
         416 => {
             // Our partial file is longer than the slice: start over next time.
             let _ = tokio::fs::remove_file(&part).await;
-            return Err(FetchError::Other("partial download was invalid; restarting".into()));
+            return Err(FetchError::Other(
+                "partial download was invalid; restarting".into(),
+            ));
         }
         503 => return Err(FetchError::NotReady),
         _ => return Err(FetchError::Other(error_message(resp).await)),
@@ -796,10 +932,14 @@ pub(crate) async fn download_slice(state: &AppState, sh: &Shared, s: &ManifestSe
         // The leader's slice changed since we read the manifest.
         let _ = tokio::fs::remove_file(&part).await;
         sh.manifest_trigger.notify_one();
-        return Err(FetchError::Other("the sequence changed on the leader; retrying".into()));
+        return Err(FetchError::Other(
+            "the sequence changed on the leader; retrying".into(),
+        ));
     }
     let Some(expected_sha) = header("x-pixelplus-sha256") else {
-        return Err(FetchError::Other("the leader did not send a checksum".into()));
+        return Err(FetchError::Other(
+            "the leader did not send a checksum".into(),
+        ));
     };
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
@@ -810,7 +950,9 @@ pub(crate) async fn download_slice(state: &AppState, sh: &Shared, s: &ManifestSe
         .map_err(|e| other(&e))?;
     if offset > 0 {
         use tokio::io::AsyncSeekExt;
-        file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|e| other(&e))?;
+        file.seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|e| other(&e))?;
     }
     loop {
         match resp.chunk().await {
@@ -837,7 +979,10 @@ pub(crate) async fn download_slice(state: &AppState, sh: &Shared, s: &ManifestSe
         }
         let f = pixelplus_core::ppseq::PpseqFile::open(&part2).map_err(|e| e.to_string())?;
         if expected_len != 0 && f.frame_bytes() as u32 != expected_len {
-            return Err(format!("slice frame size {} ≠ expected {expected_len}", f.frame_bytes()));
+            return Err(format!(
+                "slice frame size {} ≠ expected {expected_len}",
+                f.frame_bytes()
+            ));
         }
         Ok((sha, bytes))
     })
@@ -851,7 +996,9 @@ pub(crate) async fn download_slice(state: &AppState, sh: &Shared, s: &ManifestSe
             return Err(FetchError::Other(e));
         }
     };
-    tokio::fs::rename(&part, &final_path).await.map_err(|e| other(&e))?;
+    tokio::fs::rename(&part, &final_path)
+        .await
+        .map_err(|e| other(&e))?;
     let _ = tokio::fs::remove_file(&part_key).await;
     Ok(LocalSlice {
         key: s.hash.clone(),
@@ -870,7 +1017,11 @@ mod tests {
             leader: "l".into(),
             show_version: 1,
             state,
-            item: Some(ItemRef { kind: "sequence".into(), id: "s".into(), name: "S".into() }),
+            item: Some(ItemRef {
+                kind: "sequence".into(),
+                id: "s".into(),
+                name: "S".into(),
+            }),
             pos_ms: pos,
             sent_at_ms: sent,
             effect: None,
@@ -884,12 +1035,20 @@ mod tests {
     fn localize_accounts_for_transit_time() {
         // Leader clock = local + 10_000. Sent at leader 20_000 (= local 10_000),
         // received at local 10_004: the leader has moved on by 4 ms.
-        let p = localize_sync(pkt(PlayerState::Playing, 5_000, 20_000), Some(10_000.0), 10_004.0);
+        let p = localize_sync(
+            pkt(PlayerState::Playing, 5_000, 20_000),
+            Some(10_000.0),
+            10_004.0,
+        );
         assert_eq!(p.pos_ms, 5_004);
         assert_eq!(p.sent_at_ms, 10_004);
 
         // Paused: position frozen.
-        let p = localize_sync(pkt(PlayerState::Paused, 5_000, 20_000), Some(10_000.0), 10_004.0);
+        let p = localize_sync(
+            pkt(PlayerState::Paused, 5_000, 20_000),
+            Some(10_000.0),
+            10_004.0,
+        );
         assert_eq!(p.pos_ms, 5_000);
 
         // No clock estimate yet: assume zero transit.
@@ -926,16 +1085,27 @@ mod tests {
 
     #[test]
     fn unreferenced_slices_are_removed() {
-        let dir = std::env::temp_dir().join(format!("pp-unref-{}", pixelplus_core::model::new_id()));
+        let dir =
+            std::env::temp_dir().join(format!("pp-unref-{}", pixelplus_core::model::new_id()));
         std::fs::create_dir_all(&dir).unwrap();
-        for f in ["keep.ppseq", "gone.ppseq", "gone.ppseq.part", "gone.ppseq.part.key", "song.fseq", "keep.ppseq.part"] {
+        for f in [
+            "keep.ppseq",
+            "gone.ppseq",
+            "gone.ppseq.part",
+            "gone.ppseq.part.key",
+            "song.fseq",
+            "keep.ppseq.part",
+        ] {
             std::fs::write(dir.join(f), b"x").unwrap();
         }
         let wanted = HashSet::from(["keep".to_string()]);
         assert_eq!(remove_unreferenced(&dir, &wanted), 3);
         assert!(dir.join("keep.ppseq").exists());
         assert!(dir.join("keep.ppseq.part").exists());
-        assert!(dir.join("song.fseq").exists(), "leader-style files are never touched");
+        assert!(
+            dir.join("song.fseq").exists(),
+            "leader-style files are never touched"
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 }

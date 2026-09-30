@@ -20,7 +20,10 @@ pub fn routes() -> Router<AppState> {
         .route("/nodes", get(list).post(create))
         .route("/nodes/discovered", get(discovered))
         .route("/nodes/adopt", post(adopt))
-        .route("/nodes/{id}", get(get_one).put(update).patch(update).delete(delete))
+        .route(
+            "/nodes/{id}",
+            get(get_one).put(update).patch(update).delete(delete),
+        )
         .route("/nodes/{id}/outputs/{index}", put(update_output))
         .route("/nodes/{id}/release", post(release))
         .route("/nodes/{id}/resync", post(resync))
@@ -32,7 +35,11 @@ fn with_status(node: &Node, status: Option<&NodeStatus>) -> Value {
     if let (Value::Object(map), Some(s)) = (&mut v, status) {
         if let Ok(Value::Object(st)) = serde_json::to_value(s) {
             for (k, val) in st {
-                if !matches!(k.as_str(), "name" | "role" | "board" | "adopted" | "hostname") || !map.contains_key(&k) {
+                if !matches!(
+                    k.as_str(),
+                    "name" | "role" | "board" | "adopted" | "hostname"
+                ) || !map.contains_key(&k)
+                {
                     map.insert(k, val);
                 }
             }
@@ -63,7 +70,9 @@ async fn list(State(state): State<AppState>) -> Json<Vec<Value>> {
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let show = state.store.get();
-    let node = show.node(&id).ok_or_else(|| ApiError::not_found("That controller"))?;
+    let node = show
+        .node(&id)
+        .ok_or_else(|| ApiError::not_found("That controller"))?;
     let st = statuses(&state);
     Ok(Json(with_status(node, st.iter().find(|s| s.id == id))))
 }
@@ -76,11 +85,16 @@ fn require_leader(state: &AppState) -> ApiResult<()> {
     if state.identity().role == LocalRole::Leader {
         Ok(())
     } else {
-        Err(ApiError::conflict("Controllers are managed on the show leader."))
+        Err(ApiError::conflict(
+            "Controllers are managed on the show leader.",
+        ))
     }
 }
 
-async fn adopt(State(state): State<AppState>, Json(req): Json<AdoptRequest>) -> ApiResult<Json<Node>> {
+async fn adopt(
+    State(state): State<AppState>,
+    Json(req): Json<AdoptRequest>,
+) -> ApiResult<Json<Node>> {
     let cluster = handle(&state)?;
     let node = leader::adopt(&state, &cluster.shared, req).await?;
     Ok(Json(node))
@@ -102,16 +116,25 @@ async fn release(
     require_leader(&state)?;
     let cluster = handle(&state)?;
     let remove = body.map(|b| b.0.remove).unwrap_or(false);
-    Ok(Json(leader::release(&state, &cluster.shared, &id, remove).await?))
+    Ok(Json(
+        leader::release(&state, &cluster.shared, &id, remove).await?,
+    ))
 }
 
-async fn resync(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Vec<CommandResult>>> {
+async fn resync(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<CommandResult>>> {
     require_leader(&state)?;
     let cluster = handle(&state)?;
     if state.store.get().node(&id).is_none() {
         return Err(ApiError::not_found("That controller"));
     }
-    Ok(Json(cluster.send_command(Some(&id), ClusterCommand::Refresh).await))
+    Ok(Json(
+        cluster
+            .send_command(Some(&id), ClusterCommand::Refresh)
+            .await,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +154,10 @@ struct CreateBody {
 
 /// Create a placeholder follower (plan the wiring before the hardware
 /// arrives); adopt the real controller later with `replaces`.
-async fn create(State(state): State<AppState>, Json(body): Json<CreateBody>) -> ApiResult<Json<Node>> {
+async fn create(
+    State(state): State<AppState>,
+    Json(body): Json<CreateBody>,
+) -> ApiResult<Json<Node>> {
     require_leader(&state)?;
     leader::validate_node_name(&body.name)?;
     let node = Node {
@@ -176,29 +202,42 @@ pub fn validate_outputs(node: &mut Node) -> ApiResult<()> {
 
 fn validate_output(o: &mut OutputConfig, index: u32, board: BoardKind) -> ApiResult<()> {
     if o.index != index {
-        return Err(ApiError::bad_request(format!("Output {} is out of order (expected {index}).", o.index)));
+        return Err(ApiError::bad_request(format!(
+            "Output {} is out of order (expected {index}).",
+            o.index
+        )));
     }
     if o.brightness > 100 {
         return Err(ApiError::bad_request("Brightness is a percentage (0–100)."));
     }
     if !o.gamma.is_finite() || !(0.1..=5.0).contains(&o.gamma) {
-        return Err(ApiError::bad_request("Gamma must be between 0.1 and 5 (1.0 = none, 2.2 typical)."));
+        return Err(ApiError::bad_request(
+            "Gamma must be between 0.1 and 5 (1.0 = none, 2.2 typical).",
+        ));
     }
     let label = o.label.trim();
     if label.is_empty() {
         o.label = board.output_label(index as usize);
     } else if label.chars().count() > 40 {
-        return Err(ApiError::bad_request("Output labels are limited to 40 characters."));
+        return Err(ApiError::bad_request(
+            "Output labels are limited to 40 characters.",
+        ));
     } else {
         o.label = label.to_string();
     }
     Ok(())
 }
 
-async fn update(State(state): State<AppState>, Path(id): Path<String>, Json(patch): Json<Value>) -> ApiResult<Json<Node>> {
+async fn update(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(patch): Json<Value>,
+) -> ApiResult<Json<Node>> {
     require_leader(&state)?;
     if !patch.is_object() {
-        return Err(ApiError::bad_request("Send the fields to change as a JSON object."));
+        return Err(ApiError::bad_request(
+            "Send the fields to change as a JSON object.",
+        ));
     }
     let (node, _) = state
         .store
@@ -232,13 +271,23 @@ async fn update(State(state): State<AppState>, Path(id): Path<String>, Json(patc
             node.last_seen = old.last_seen.clone();
             node.name = node.name.trim().to_string();
             leader::validate_node_name(&node.name)?;
-            if node.notes.as_deref().is_some_and(|n| n.chars().count() > 2000) {
-                return Err(ApiError::bad_request("Notes are limited to 2000 characters."));
+            if node
+                .notes
+                .as_deref()
+                .is_some_and(|n| n.chars().count() > 2000)
+            {
+                return Err(ApiError::bad_request(
+                    "Notes are limited to 2000 characters.",
+                ));
             }
             validate_outputs(&mut node)?;
             // Wiring must still fit the (possibly smaller) board.
             let outputs = node.outputs.len() as u32;
-            if show.props.iter().any(|p| p.segments.iter().any(|s| s.node_id == id && s.output > outputs)) {
+            if show.props.iter().any(|p| {
+                p.segments
+                    .iter()
+                    .any(|s| s.node_id == id && s.output > outputs)
+            }) {
                 return Err(ApiError::conflict(
                     "Some props are wired to outputs this board does not have; move them first.",
                 ));
@@ -257,7 +306,9 @@ async fn update_output(
 ) -> ApiResult<Json<OutputConfig>> {
     require_leader(&state)?;
     if !patch.is_object() {
-        return Err(ApiError::bad_request("Send the output settings as a JSON object."));
+        return Err(ApiError::bad_request(
+            "Send the output settings as a JSON object.",
+        ));
     }
     let (out, _) = state
         .store
@@ -298,13 +349,22 @@ async fn delete(
     Query(q): Query<DeleteQuery>,
 ) -> ApiResult<Json<Value>> {
     require_leader(&state)?;
-    let force = q.force.as_deref().is_some_and(|f| matches!(f, "1" | "true" | "yes"));
+    let force = q
+        .force
+        .as_deref()
+        .is_some_and(|f| matches!(f, "1" | "true" | "yes"));
     let show = state.store.get();
-    let node = show.node(&id).ok_or_else(|| ApiError::not_found("That controller"))?;
+    let node = show
+        .node(&id)
+        .ok_or_else(|| ApiError::not_found("That controller"))?;
     if node.role == NodeRole::Leader || id == state.identity().id {
         return Err(ApiError::bad_request("The show leader cannot be removed."));
     }
-    let props = show.props.iter().filter(|p| p.segments.iter().any(|s| s.node_id == id)).count();
+    let props = show
+        .props
+        .iter()
+        .filter(|p| p.segments.iter().any(|s| s.node_id == id))
+        .count();
     let receivers = show.receivers.iter().filter(|r| r.node_id == id).count();
     if (props > 0 || receivers > 0) && !force {
         let mut what = Vec::new();
@@ -312,7 +372,10 @@ async fn delete(
             what.push(format!("{props} prop{}", if props == 1 { "" } else { "s" }));
         }
         if receivers > 0 {
-            what.push(format!("{receivers} receiver{}", if receivers == 1 { "" } else { "s" }));
+            what.push(format!(
+                "{receivers} receiver{}",
+                if receivers == 1 { "" } else { "s" }
+            ));
         }
         return Err(ApiError::conflict(format!(
             "{} {} wired to {}. Removing it also removes that wiring (the props themselves stay).",
@@ -335,7 +398,9 @@ async fn delete(
             Ok(())
         })
         .await?;
-    Ok(Json(json!({ "ok": true, "released": reached, "props": props, "receivers": receivers })))
+    Ok(Json(
+        json!({ "ok": true, "released": reached, "props": props, "receivers": receivers }),
+    ))
 }
 
 #[cfg(test)]

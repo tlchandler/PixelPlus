@@ -78,7 +78,12 @@ pub enum ManifestError {
 ///
 /// Sequences without a readable `.fseq` on the leader are left out (the follower
 /// could not get a slice for them anyway).
-pub fn build(show: &Show, leader_id: &str, node_id: &str, data_dir: &Path) -> Result<NodeManifest, ManifestError> {
+pub fn build(
+    show: &Show,
+    leader_id: &str,
+    node_id: &str,
+    data_dir: &Path,
+) -> Result<NodeManifest, ManifestError> {
     let node = show
         .node(node_id)
         .ok_or_else(|| ManifestError::UnknownNode(node_id.to_string()))?;
@@ -145,7 +150,12 @@ pub fn build(show: &Show, leader_id: &str, node_id: &str, data_dir: &Path) -> Re
         node,
         props,
         prop_groups,
-        receivers: show.receivers.iter().filter(|r| r.node_id == node_id).cloned().collect(),
+        receivers: show
+            .receivers
+            .iter()
+            .filter(|r| r.node_id == node_id)
+            .cloned()
+            .collect(),
         effects,
         sequences,
         settings: ManifestSettings {
@@ -166,7 +176,11 @@ pub fn follower_slice_file(seq_id: &str) -> String {
 /// `available` holds ids of sequences whose slice is on disk and verified; only
 /// those are listed so the player never tries to open a missing file.
 /// `current` supplies what stays local: the password and the version counter.
-pub fn follower_show(manifest: &NodeManifest, available: &HashMap<String, bool>, current: &Show) -> Show {
+pub fn follower_show(
+    manifest: &NodeManifest,
+    available: &HashMap<String, bool>,
+    current: &Show,
+) -> Show {
     let mut node = manifest.node.clone();
     node.role = NodeRole::Follower;
     node.adopted = true;
@@ -299,7 +313,12 @@ pub(crate) mod tests {
             prop("a", 10, 0, vec![seg("leader", 1, 0, 10, 0)]),
             prop("b", 20, 30, vec![seg("f1", 2, 0, 20, 0)]),
             // Split across two followers.
-            prop("c", 10, 90, vec![seg("f1", 1, 0, 4, 0), seg("f2", 3, 5, 6, 4)]),
+            prop(
+                "c",
+                10,
+                90,
+                vec![seg("f1", 1, 0, 4, 0), seg("f2", 3, 5, 6, 4)],
+            ),
         ];
         s.prop_groups = vec![PropGroup {
             id: "g".into(),
@@ -322,7 +341,10 @@ pub(crate) mod tests {
             name: "Wash".into(),
             effect: EffectKind::Colorwash,
             params: Default::default(),
-            target: Target { all: true, ..Default::default() },
+            target: Target {
+                all: true,
+                ..Default::default()
+            },
         }];
         s
     }
@@ -334,7 +356,10 @@ pub(crate) mod tests {
         let m = build(&show, "leader", "f1", &dir).unwrap();
         let ids: Vec<_> = m.props.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, ["b", "c"]);
-        assert!(m.props.iter().all(|p| p.segments.iter().all(|s| s.node_id == "f1")));
+        assert!(m
+            .props
+            .iter()
+            .all(|p| p.segments.iter().all(|s| s.node_id == "f1")));
         assert_eq!(m.props[1].segments.len(), 1);
         assert_eq!(m.prop_groups[0].prop_ids, ["b", "c"]);
         assert_eq!(m.receivers.len(), 1);
@@ -355,15 +380,24 @@ pub(crate) mod tests {
         let mut expected = show.effects[0].clone();
         stamp_world_bounds(&mut expected, &show.props);
         assert_eq!(m.effects[0], expected);
-        assert_ne!(m.effects[0], show.effects[0], "stamping adds the world bounds");
+        assert_ne!(
+            m.effects[0], show.effects[0],
+            "stamping adds the world bounds"
+        );
     }
 
     #[test]
     fn manifest_rejects_leader_and_unknown_nodes() {
         let show = three_node_show();
         let dir = std::env::temp_dir();
-        assert!(matches!(build(&show, "leader", "leader", &dir), Err(ManifestError::NotFollower(_))));
-        assert!(matches!(build(&show, "leader", "zz", &dir), Err(ManifestError::UnknownNode(_))));
+        assert!(matches!(
+            build(&show, "leader", "leader", &dir),
+            Err(ManifestError::NotFollower(_))
+        ));
+        assert!(matches!(
+            build(&show, "leader", "zz", &dir),
+            Err(ManifestError::UnknownNode(_))
+        ));
     }
 
     #[test]

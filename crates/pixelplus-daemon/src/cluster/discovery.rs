@@ -32,7 +32,11 @@ async fn bind(sh: &Shared, port: u16) -> std::io::Result<UdpSocket> {
 /// Bind (retrying every 5 s while the port is busy), then receive forever.
 async fn bind_and_receive(state: AppState, sh: Arc<Shared>, overlay: bool) {
     let mut stop = sh.stop_rx();
-    let port = if overlay { sh.settings.overlay_port } else { sh.settings.port };
+    let port = if overlay {
+        sh.settings.overlay_port
+    } else {
+        sh.settings.port
+    };
     let what = if overlay { "overlay" } else { "cluster" };
     let mut warned = false;
     let sock = loop {
@@ -55,7 +59,11 @@ async fn bind_and_receive(state: AppState, sh: Arc<Shared>, overlay: bool) {
     if warned {
         tracing::info!("{what} port UDP {port} is open now");
     }
-    let slot = if overlay { &sh.overlay_socket } else { &sh.socket };
+    let slot = if overlay {
+        &sh.overlay_socket
+    } else {
+        &sh.socket
+    };
     let _ = slot.set(sock.clone());
 
     let mut buf = vec![0u8; 65_536];
@@ -177,7 +185,11 @@ pub(crate) fn build_beacon(state: &AppState, sh: &Shared, ips: Vec<std::net::IpA
         LocalRole::Leader => (None, show.version, None),
         LocalRole::Follower => {
             let r = follower::report(state, sh);
-            (identity.leader_id.clone(), r.manifest_version, Some(r).filter(|_| identity.leader_id.is_some()))
+            (
+                identity.leader_id.clone(),
+                r.manifest_version,
+                Some(r).filter(|_| identity.leader_id.is_some()),
+            )
         }
         LocalRole::Unconfigured => (None, 0, None),
     };
@@ -217,7 +229,12 @@ async fn beacon_loop(state: AppState, sh: Arc<Shared>) {
         }
         dests.sort();
         dests.dedup();
-        sh.send_json(&Msg::Beacon(beacon), identity.cluster_key.as_deref(), &dests).await;
+        sh.send_json(
+            &Msg::Beacon(beacon),
+            identity.cluster_key.as_deref(),
+            &dests,
+        )
+        .await;
         if sleep_or_stop(&mut stop, sh.settings.beacon_interval).await {
             return;
         }
@@ -268,7 +285,14 @@ async fn mdns_loop(state: AppState, sh: Arc<Shared>) {
             }
             let host = format!("{hostname}.local.");
             let props: std::collections::HashMap<String, String> = txt.iter().cloned().collect();
-            match mdns_sd::ServiceInfo::new(MDNS_TYPE, &instance, &host, "", sh.settings.http_port, props) {
+            match mdns_sd::ServiceInfo::new(
+                MDNS_TYPE,
+                &instance,
+                &host,
+                "",
+                sh.settings.http_port,
+                props,
+            ) {
                 Ok(info) => match daemon.register(info.enable_addr_auto()) {
                     Ok(()) => registered = Some((fullname, txt)),
                     Err(e) => tracing::warn!("mDNS registration failed: {e}"),

@@ -57,7 +57,9 @@ fn require_leader(state: &AppState) -> ApiResult<()> {
     if state.identity().role == LocalRole::Leader {
         Ok(())
     } else {
-        Err(ApiError::conflict("This controller is not the show leader."))
+        Err(ApiError::conflict(
+            "This controller is not the show leader.",
+        ))
     }
 }
 
@@ -81,13 +83,15 @@ async fn get_manifest(
     let show = state.store.get();
     let leader_id = state.identity().id;
     let data_dir = state.config.data_dir.clone();
-    let m = tokio::task::spawn_blocking(move || manifest::build(&show, &leader_id, &node_id, &data_dir))
-        .await
-        .map_err(ApiError::internal)?
-        .map_err(|e| match e {
-            ManifestError::UnknownNode(_) => ApiError::not_found("That controller"),
-            ManifestError::NotFollower(n) => ApiError::bad_request(format!("{n} is the show leader")),
-        })?;
+    let m = tokio::task::spawn_blocking(move || {
+        manifest::build(&show, &leader_id, &node_id, &data_dir)
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(|e| match e {
+        ManifestError::UnknownNode(_) => ApiError::not_found("That controller"),
+        ManifestError::NotFollower(n) => ApiError::bad_request(format!("{n} is the show leader")),
+    })?;
     Ok(Json(m))
 }
 
@@ -108,7 +112,11 @@ pub fn parse_range(value: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
         (len.saturating_sub(n), len.checked_sub(1)?)
     } else {
         let start: u64 = a.parse().ok()?;
-        let end = if b.is_empty() { len.saturating_sub(1) } else { b.parse::<u64>().ok()?.min(len.saturating_sub(1)) };
+        let end = if b.is_empty() {
+            len.saturating_sub(1)
+        } else {
+            b.parse::<u64>().ok()?.min(len.saturating_sub(1))
+        };
         if start >= len || end < start {
             return Some(Err(()));
         }
@@ -127,18 +135,30 @@ async fn get_slice(
     require_member(&state, &node_id)?;
     let cluster = handle(&state)?;
     let show = state.store.get();
-    let job = slices::job(&show, &state.config.data_dir, &node_id, &seq_id).map_err(|e| match e {
-        SliceError::UnknownNode(_) => ApiError::not_found("That controller"),
-        SliceError::UnknownSequence(_) => ApiError::not_found("That sequence"),
-        SliceError::MissingFile(f) => ApiError::new(StatusCode::GONE, "missing_file", format!("The sequence file {f} is missing on the leader.")),
-        SliceError::Generate(m) => ApiError::internal(m),
-    })?;
+    let job =
+        slices::job(&show, &state.config.data_dir, &node_id, &seq_id).map_err(|e| match e {
+            SliceError::UnknownNode(_) => ApiError::not_found("That controller"),
+            SliceError::UnknownSequence(_) => ApiError::not_found("That sequence"),
+            SliceError::MissingFile(f) => ApiError::new(
+                StatusCode::GONE,
+                "missing_file",
+                format!("The sequence file {f} is missing on the leader."),
+            ),
+            SliceError::Generate(m) => ApiError::internal(m),
+        })?;
     let etag = format!("\"{}\"", job.key);
-    let meta = match cluster.shared.slices.ensure_within(job, Duration::from_secs(10)).await {
+    let meta = match cluster
+        .shared
+        .slices
+        .ensure_within(job, Duration::from_secs(10))
+        .await
+    {
         Ok(Some(m)) => m,
         Ok(None) => {
-            let mut r = ApiError::unavailable("The leader is still preparing this sequence.").into_response();
-            r.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from_static("3"));
+            let mut r = ApiError::unavailable("The leader is still preparing this sequence.")
+                .into_response();
+            r.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("3"));
             return Ok(r);
         }
         Err(e) => return Err(ApiError::internal(e)),
@@ -194,7 +214,8 @@ async fn get_slice(
     if status == StatusCode::PARTIAL_CONTENT {
         b = b.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"));
     }
-    b.body(Body::from_stream(stream)).map_err(ApiError::internal)
+    b.body(Body::from_stream(stream))
+        .map_err(ApiError::internal)
 }
 
 async fn adopt(
@@ -203,10 +224,16 @@ async fn adopt(
     Json(call): Json<AdoptCall>,
 ) -> ApiResult<Json<AdoptReply>> {
     let cluster = handle(&state)?;
-    Ok(Json(follower::handle_adopt(&state, &cluster.shared, &headers, call).await?))
+    Ok(Json(
+        follower::handle_adopt(&state, &cluster.shared, &headers, call).await?,
+    ))
 }
 
-async fn release(State(state): State<AppState>, peer: Peer, headers: HeaderMap) -> ApiResult<Json<Value>> {
+async fn release(
+    State(state): State<AppState>,
+    peer: Peer,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
     // The leader (with the key) or someone signed in to this controller's own
     // UI ("Forget leader") may release it.
     if !super::auth::is_authenticated(&state, &headers, peer.0) {
@@ -232,13 +259,18 @@ async fn command(
 }
 
 /// Diagnostics: this node's cluster view (key or signed-in UI).
-async fn status(State(state): State<AppState>, peer: Peer, headers: HeaderMap) -> ApiResult<Json<Value>> {
+async fn status(
+    State(state): State<AppState>,
+    peer: Peer,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
     if !super::auth::is_authenticated(&state, &headers, peer.0) {
         return Err(ApiError::unauthorized());
     }
     let cluster = handle(&state)?;
     let identity = state.identity();
-    let report = (identity.role == LocalRole::Follower).then(|| follower::report(&state, &cluster.shared));
+    let report =
+        (identity.role == LocalRole::Follower).then(|| follower::report(&state, &cluster.shared));
     Ok(Json(json!({
         "id": identity.id,
         "role": identity.role,

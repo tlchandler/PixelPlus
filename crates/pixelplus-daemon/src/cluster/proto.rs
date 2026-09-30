@@ -185,8 +185,15 @@ pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
         ipad[i] ^= k[i];
         opad[i] ^= k[i];
     }
-    let inner = Sha256::new().chain_update(ipad).chain_update(msg).finalize();
-    Sha256::new().chain_update(opad).chain_update(inner).finalize().into()
+    let inner = Sha256::new()
+        .chain_update(ipad)
+        .chain_update(msg)
+        .finalize();
+    Sha256::new()
+        .chain_update(opad)
+        .chain_update(inner)
+        .finalize()
+        .into()
 }
 
 /// Constant-time equality.
@@ -276,7 +283,12 @@ pub struct OverlayFrame {
 
 /// Encode an overlay frame (always authenticated).
 #[allow(dead_code)] // used by `ClusterHandle::forward_overlay`
-pub fn encode_overlay(prop_id: &str, frame_no: u32, rgb: &[u8], key: &str) -> Result<Vec<u8>, ProtoError> {
+pub fn encode_overlay(
+    prop_id: &str,
+    frame_no: u32,
+    rgb: &[u8],
+    key: &str,
+) -> Result<Vec<u8>, ProtoError> {
     let id = prop_id.as_bytes();
     if id.is_empty() || id.len() > 255 {
         return Err(ProtoError::Malformed("prop id must be 1..255 bytes".into()));
@@ -298,7 +310,10 @@ pub fn encode_overlay(prop_id: &str, frame_no: u32, rgb: &[u8], key: &str) -> Re
 
 /// Decode an overlay frame; `None` unless well-formed *and* authenticated.
 pub fn decode_overlay(bytes: &[u8], key: &str) -> Option<OverlayFrame> {
-    if bytes.len() > MAX_OVERLAY_PACKET || bytes.len() < 2 + 1 + 4 + MAC_LEN || bytes[0] != OVERLAY_MAGIC {
+    if bytes.len() > MAX_OVERLAY_PACKET
+        || bytes.len() < 2 + 1 + 4 + MAC_LEN
+        || bytes[0] != OVERLAY_MAGIC
+    {
         return None;
     }
     let (body, mac) = bytes.split_at(bytes.len() - MAC_LEN);
@@ -316,7 +331,11 @@ pub fn decode_overlay(bytes: &[u8], key: &str) -> Option<OverlayFrame> {
     if rgb.len() % 3 != 0 {
         return None;
     }
-    Some(OverlayFrame { prop_id, frame_no, rgb })
+    Some(OverlayFrame {
+        prop_id,
+        frame_no,
+        rgb,
+    })
 }
 
 #[cfg(test)]
@@ -332,7 +351,10 @@ mod tests {
             "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
         );
         // Keys longer than the block size are hashed first (RFC 4231 case 6).
-        let mac = hmac_sha256(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First");
+        let mac = hmac_sha256(
+            &[0xaa; 131],
+            b"Test Using Larger Than Block-Size Key - Hash Key First",
+        );
         assert_eq!(
             pixelplus_core::fseq::to_hex(&mac),
             "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
@@ -437,7 +459,14 @@ mod tests {
         let bytes = encode_overlay("prop1", 42, &rgb, "k").unwrap();
         assert_eq!(bytes[0], b'O');
         let f = decode_overlay(&bytes, "k").unwrap();
-        assert_eq!(f, OverlayFrame { prop_id: "prop1".into(), frame_no: 42, rgb });
+        assert_eq!(
+            f,
+            OverlayFrame {
+                prop_id: "prop1".into(),
+                frame_no: 42,
+                rgb
+            }
+        );
         assert!(decode_overlay(&bytes, "wrong").is_none());
         let mut bad = bytes.clone();
         bad[10] ^= 1;
