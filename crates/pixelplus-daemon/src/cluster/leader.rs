@@ -1250,6 +1250,13 @@ pub struct ReleaseResult {
 /// Tell a follower to forget this leader (best effort).
 /// Also forgets the follower's key (it is worthless from now on).
 pub(crate) async fn call_release(state: &AppState, sh: &Shared, node_id: &str) -> bool {
+    // It announces "no leader" right after; the caller removes / un-adopts it a
+    // moment later. Until then the health check must not "re-adopt" it.
+    sh.health
+        .lock()
+        .entry(node_id.to_string())
+        .or_default()
+        .last_readopt = Some(Instant::now());
     let reached = send_release(state, sh, node_id).await;
     sh.update_keys(|k| {
         k.followers.remove(node_id);

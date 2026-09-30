@@ -235,7 +235,7 @@ async fn edit_tag(
         .pop()
         .ok_or_else(|| ApiError::bad_request("Which tag?"))?;
     let new = match &b.name {
-        Some(n) => smartlist::normalize_tags(&[n.clone()])
+        Some(n) => smartlist::normalize_tags(std::slice::from_ref(n))
             .pop()
             .ok_or_else(|| ApiError::bad_request("Give the tag a name."))?,
         None => old.clone(),

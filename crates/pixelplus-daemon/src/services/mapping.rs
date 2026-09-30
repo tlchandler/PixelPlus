@@ -490,7 +490,9 @@ fn seg_mut<'a>(show: &'a mut Show, r: &SegRef) -> ApiResult<&'a mut PropSegment>
 
 /// No two segments overlap on one output.
 pub fn check_overlaps(show: &Show) -> ApiResult<()> {
-    let mut by_out: HashMap<(&str, u32), Vec<(u32, u32, &str)>> = HashMap::new();
+    /// (start, end, prop name) of each segment on one output.
+    type Spans<'a> = Vec<(u32, u32, &'a str)>;
+    let mut by_out: HashMap<(&str, u32), Spans> = HashMap::new();
     for p in &show.props {
         for s in &p.segments {
             by_out

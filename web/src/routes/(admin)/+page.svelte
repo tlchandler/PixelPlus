@@ -16,6 +16,7 @@
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import PowerBadge from '$lib/components/power/PowerBadge.svelte';
+	import SeasonChip from '$lib/components/dashboard/SeasonChip.svelte';
 	import {
 		Play,
 		Pause,
@@ -154,7 +155,10 @@
 			<div class="eyebrow">
 				{new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(now)}
 			</div>
-			<h1>{show?.name ?? 'Your show'}</h1>
+			<div class="row title-row">
+				<h1>{show?.name ?? 'Your show'}</h1>
+				<SeasonChip />
+			</div>
 			{#if show}
 				<p class="status-line">{tonight}</p>
 				<p class="faint small stats">
@@ -551,6 +555,10 @@
 		background: rgba(245, 165, 36, 0.12);
 		border-color: rgba(255, 255, 255, 0.1);
 		color: #f5a524;
+	}
+	.title-row {
+		gap: 10px;
+		flex-wrap: wrap;
 	}
 	.stage-badge .off {
 		background: #d6363c;

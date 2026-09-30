@@ -235,6 +235,8 @@ enum CoreCmd {
     },
     /// Show-derived context computed off the output thread.
     Context(Box<EngineContext>),
+    /// Measured supply currents (group id, A) from sensor nodes (F20).
+    Measured(Vec<(String, f32)>),
     Shutdown,
 }
 
@@ -483,6 +485,13 @@ async fn context_task(state: AppState, core: Sender<CoreCmd>) {
             r = show_rx.changed() => if r.is_err() { break },
             _ = tick.tick() => {
                 let id = state.identity();
+                // Measured supply currents (F20 sensors) every tick.
+                if id.role != LocalRole::Follower {
+                    let m = super::limiter::measured(&state, &state.store.get(), &id.id);
+                    if !m.is_empty() && core.send(CoreCmd::Measured(m)).is_err() {
+                        break;
+                    }
+                }
                 let key = (id.id.clone(), id.role, state.store.get().version);
                 if last_key.as_ref() == Some(&key) && last_full.elapsed() < CONTEXT_EVERY {
                     continue;
@@ -1415,6 +1424,11 @@ impl Core {
                 self.dj_rendered.insert(clip_id, path);
             }
             CoreCmd::Context(ctx) => self.set_context(*ctx),
+            CoreCmd::Measured(m) => {
+                for (group, amps) in m {
+                    self.limiter.feedback(&group, amps);
+                }
+            }
             CoreCmd::Shutdown => {}
         }
     }

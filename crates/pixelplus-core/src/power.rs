@@ -870,6 +870,10 @@ struct GroupState {
     /// Current drawn in the last frame.
     now_act: f32,
     need: f32,
+    /// Slow (5 s) average of the estimated current drawn, for measured feedback.
+    est_slow: f32,
+    /// Measured / estimated current (F20 sensor feedback; 1 = trust the estimate).
+    correction: f32,
 }
 
 /// The per-node power limiter (F12): per-output scale factors from the
@@ -935,6 +939,8 @@ impl Limiter {
                 ema_act: 0.0,
                 now_act: 0.0,
                 need: 1.0,
+                est_slow: 0.0,
+                correction: 1.0,
             })
             .collect();
         Limiter {
@@ -990,7 +996,8 @@ impl Limiter {
                 .members
                 .iter()
                 .map(|&m| self.raw.get(m).copied().unwrap_or(0.0))
-                .sum();
+                .sum::<f32>()
+                * g.correction;
             g.need = if g.tau_ms <= 0.0 {
                 // Supplies: this frame's current must fit.
                 (g.budget / i_raw.max(1e-4)).min(1.0)
@@ -1036,6 +1043,8 @@ impl Limiter {
                     }
                 })
                 .sum();
+            g.est_slow += (act - g.est_slow) * (dt / 5_000.0).min(1.0);
+            let act = act * g.correction;
             g.now_act = act;
             g.ema_act += (act - g.ema_act) * k;
         }
@@ -1043,6 +1052,21 @@ impl Limiter {
             self.seconds_limited += f64::from(dt) / 1000.0;
         }
         &self.scale
+    }
+
+    /// Measured current of group `group_id` (a sensor on a supply, F20): the
+    /// ratio to the estimate (averaged over 5 s) slowly corrects the estimate
+    /// of that group, within ×0.5…×2 (the mA/pixel model is ±20 %). Ignored
+    /// while little is lit.
+    pub fn feedback(&mut self, group_id: &str, measured_a: f32) {
+        let Some(g) = self.groups.iter_mut().find(|g| g.id == group_id) else {
+            return;
+        };
+        if !(measured_a.is_finite() && measured_a >= 0.0) || g.est_slow < 0.3 {
+            return;
+        }
+        let ratio = (measured_a / g.est_slow).clamp(0.5, 2.0);
+        g.correction += (ratio - g.correction) * 0.3;
     }
 
     /// Scale output `index` (0-based) is (or, in `warn` mode, would be) drawn at.
@@ -1797,5 +1821,35 @@ mod tests {
         assert!(json.get("perSupply").is_none() && json.get("limited").is_none());
         assert_eq!(group_label(&s, "port:r1:2"), "Garage port 2");
         assert_eq!(group_label(&s, "bus:zz"), "a receiver (main fuse)");
+    }
+
+    #[test]
+    fn measured_current_corrects_the_estimate() {
+        // The estimate says 6 A against a 7 A supply (no limiting), but the
+        // sensor measures 30 % more: after a few readings the limiter dims.
+        let mut l = Limiter::new(&budget(vec![group("s", 7.0, 0, vec![1])], LimiterMode::Limit));
+        for _ in 0..(6 * 40) {
+            l.step(&[6.0], 25.0);
+        }
+        assert_eq!(l.scale(0), 1.0);
+        for _ in 0..40 {
+            // The real current is 1.3 × what the estimate says is drawn
+            // (a sensor node reports about every second here).
+            let drawn = 6.0 * l.scale(0);
+            l.feedback("s", 1.3 * drawn);
+            for _ in 0..40 {
+                l.step(&[6.0], 25.0);
+            }
+        }
+        let s = l.scale(0);
+        assert!((s - 7.0 / 7.8).abs() < 0.03, "{s}");
+        // Readings with little lit, unknown groups and garbage change nothing.
+        l.feedback("nope", 1.0);
+        l.feedback("s", f32::NAN);
+        let mut quiet = Limiter::new(&budget(vec![group("s", 7.0, 0, vec![1])], LimiterMode::Limit));
+        quiet.step(&[0.1], 25.0);
+        quiet.feedback("s", 50.0);
+        quiet.step(&[6.0], 25.0);
+        assert_eq!(quiet.scale(0), 1.0);
     }
 }

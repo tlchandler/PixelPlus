@@ -108,6 +108,25 @@ pub fn budget_for(
     }
 }
 
+/// Measured currents (A) of this node's supplies that have a current sensor
+/// (`PowerSupply.sensor`, a sensor node's `current` input, F20), keyed by
+/// limiter group id. Only supplies whose outputs are all on this node: a
+/// supply spanning nodes is split, and one reading can't be.
+pub fn measured(state: &crate::state::AppState, show: &Show, node_id: &str) -> Vec<(String, f32)> {
+    show.power_supplies
+        .iter()
+        .filter_map(|s| {
+            let sensor = s.sensor.as_ref()?;
+            let outs = pixelplus_core::power::supply_outputs(show, s);
+            if outs.is_empty() || outs.iter().any(|(n, _)| n != node_id) {
+                return None;
+            }
+            let a = crate::services::sensornodes::amps(state, sensor)?;
+            Some((format!("supply:{}", s.id), a as f32))
+        })
+        .collect()
+}
+
 /// Props the active season profile keeps dark (F8). The same on both roles:
 /// a follower's local show carries the leader's mask as its active profile.
 pub fn disabled_props(show: &Show) -> Vec<String> {
@@ -255,6 +274,14 @@ impl EngineLimiter {
             with_live(&self.node_id, |l| l.node = node);
         }
         ended
+    }
+
+    /// Measured current of a group (F20 sensor on a supply): corrects the
+    /// estimate slowly (see `power::Limiter::feedback`).
+    pub fn feedback(&mut self, group_id: &str, amps: f32) {
+        if let Some(l) = self.limiter.as_mut() {
+            l.feedback(group_id, amps);
+        }
     }
 
     /// `PlayerStatus.power` (None while the limiter is off).
