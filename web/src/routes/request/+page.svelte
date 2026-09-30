@@ -14,6 +14,8 @@
 	let sending = $state<string | null>(null);
 	let sent = $state<{ name: string; position: number } | null>(null);
 	let ready = $state(false);
+	/** Song requests are turned off on this controller (Settings → Features). */
+	let unavailable = $state(false);
 
 	try {
 		name = localStorage.getItem('pp-req-name') ?? '';
@@ -25,7 +27,14 @@
 		try {
 			data = await api.publicRequests();
 			error = '';
+			unavailable = false;
 		} catch (e) {
+			if (e instanceof ApiError && e.code === 'feature_disabled') {
+				unavailable = true;
+				data = null;
+				error = '';
+				return;
+			}
 			error = e instanceof Error ? e.message : 'Can’t reach the show right now';
 		}
 	}
@@ -92,7 +101,13 @@
 		{/if}
 	</header>
 
-	{#if !ready || (!data && !error)}
+	{#if unavailable}
+		<div class="closed">
+			<Clock size={26} />
+			<h2>Song requests aren’t available here</h2>
+			<p>This light show doesn’t take requests. Enjoy the lights!</p>
+		</div>
+	{:else if !ready || (!data && !error)}
 		<div class="loading" aria-busy="true">
 			{#each Array(5) as _, i (i)}<div class="sk"></div>{/each}
 		</div>

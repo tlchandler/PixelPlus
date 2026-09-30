@@ -15,6 +15,7 @@
 	import WiringEditor from './WiringEditor.svelte';
 	import FaultFinder from './FaultFinder.svelte';
 	import PropPowerLive from '$lib/components/power/PropPowerLive.svelte';
+	import { isEnabled } from '$lib/features';
 	import { Cable, Info, Zap, FlaskConical, Search, Trash2, Square, Copy } from '@lucide/svelte';
 
 	let {
@@ -402,7 +403,7 @@
 				{#if !draft.segments.length}
 					<p class="faint small">Wire this prop to a port to see how much of the receiver’s fuse it uses.</p>
 				{/if}
-				{#if draft.segments.length}<PropPowerLive prop={draft} />{/if}
+				{#if draft.segments.length && isEnabled('power')}<PropPowerLive prop={draft} />{/if}
 				{#each myWarnings as w (w)}
 					<div class="notice warn small">
 						<Zap size={16} />
@@ -446,14 +447,14 @@
 					><Square size={14} /> Stop test</button
 				>
 			{/if}
-			<div class="ff card">
-				<span class="icon-tile accent"><Search size={20} /></span>
-				<div class="grow">
-					<strong>Find a faulty pixel</strong>
-					<div class="faint small">A few yes/no questions pinpoint the first bad pixel.</div>
-				</div>
-				<button class="btn" onclick={() => (faultOpen = true)}>Start</button>
-			</div>
+			{#if isEnabled('faultFinder')}<div class="ff card">
+					<span class="icon-tile accent"><Search size={20} /></span>
+					<div class="grow">
+						<strong>Find a faulty pixel</strong>
+						<div class="faint small">A few yes/no questions pinpoint the first bad pixel.</div>
+					</div>
+					<button class="btn" onclick={() => (faultOpen = true)}>Start</button>
+				</div>{/if}
 		{/if}
 	{/if}
 </Drawer>

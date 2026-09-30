@@ -38,6 +38,7 @@
 	} from '@lucide/svelte';
 	// WS4 (F6/F7): camera mapping entry and the pixel-count check.
 	import PixelCount from '$lib/components/props/PixelCount.svelte';
+	import { isEnabled } from '$lib/features';
 	import { fly } from 'svelte/transition';
 
 	const show = $derived(app.show);
@@ -301,7 +302,7 @@
 			: 'Everything in your display'}
 	>
 		{#snippet actions()}
-			<a class="btn ghost" href="/map"><Camera size={16} /> Map my yard</a>
+			{#if isEnabled('mapYard')}<a class="btn ghost" href="/map"><Camera size={16} /> Map my yard</a>{/if}
 			<button class="btn" onclick={() => (importOpen = true)}><FileUp size={16} /> Import from xLights</button
 			>
 			<button class="btn primary" onclick={() => (addOpen = true)}><Plus size={16} /> Add prop</button>
@@ -498,7 +499,7 @@
 							>{p.segments.length ? shortChain(p) : 'Not wired'}</span
 						>
 						<span class="c-pw num small faint">{propPower(p).peak.toFixed(1)} A</span>
-						{#if p.segments.length}
+						{#if p.segments.length && isEnabled('pixelCount')}
 							<button
 								class="btn ghost icon sm"
 								onclick={() => checkCount(p)}

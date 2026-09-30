@@ -29,6 +29,9 @@
 	import { parseLogs, dayLabel } from '$lib/util/logs';
 	import { countryName, fmtTemp, tempUnitOf, tempValue, fToC } from '$lib/util/units';
 	import QrCode from '$lib/components/viz/QrCode.svelte';
+	import FeatureOff from '$lib/components/ui/FeatureOff.svelte';
+	import { FEATURES, disabledOf, hrefEnabled, isEnabled } from '$lib/features';
+	import type { FeatureId } from '$lib/api/types';
 	import {
 		Wifi,
 		Volume2,
@@ -83,8 +86,16 @@
 		| 'updates'
 		| 'hardware'
 		| 'logs';
-	/** `device`: settings for this controller only (the rest apply to the whole show). */
-	const sections: { id: Sec; label: string; icon: typeof Wifi; desc: string; device?: boolean }[] = [
+	/** `device`: settings for this controller only (the rest apply to the whole show).
+	 *  `feature`: hidden while that feature is off (Settings → Features). */
+	const sections: {
+		id: Sec;
+		label: string;
+		icon: typeof Wifi;
+		desc: string;
+		device?: boolean;
+		feature?: FeatureId;
+	}[] = [
 		{ id: 'general', label: 'General', icon: SlidersHorizontal, desc: 'Units and appearance' },
 		{
 			id: 'network',
@@ -99,9 +110,27 @@
 			icon: Volume2,
 			desc: 'Speakers, volume, leveling, lights-to-sound timing'
 		},
-		{ id: 'alerts', label: 'Alerts', icon: Bell, desc: 'A message when something needs you' },
-		{ id: 'mqtt', label: 'Home Assistant', icon: House, desc: 'Control the show from your smart home' },
-		{ id: 'requests', label: 'Song requests', icon: Hand, desc: 'Visitors pick songs · radio · yard sign' },
+		{
+			id: 'alerts',
+			label: 'Alerts',
+			icon: Bell,
+			desc: 'A message when something needs you',
+			feature: 'alerts'
+		},
+		{
+			id: 'mqtt',
+			label: 'Home Assistant',
+			icon: House,
+			desc: 'Control the show from your smart home',
+			feature: 'mqtt'
+		},
+		{
+			id: 'requests',
+			label: 'Song requests',
+			icon: Hand,
+			desc: 'Visitors pick songs · radio · yard sign',
+			feature: 'requests'
+		},
 		{ id: 'security', label: 'Security', icon: ShieldCheck, desc: 'Password and remote access' },
 		{ id: 'snapshots', label: 'Backups', icon: History, desc: 'Go back to any earlier version' },
 		{ id: 'updates', label: 'Updates', icon: Download, desc: 'New versions of PixelPlus', device: true },
@@ -151,6 +180,12 @@
 			desc: 'Channels, auto-update, rollback'
 		}
 	];
+
+	const visibleSections = $derived(sections.filter((x) => !x.feature || isEnabled(x.feature)));
+	const visibleMore = $derived(MORE_PAGES.filter((x) => hrefEnabled(x.href)));
+	const featuresOn = $derived(
+		FEATURES.length - FEATURES.filter((f) => disabledOf(show?.settings).includes(f.id)).length
+	);
 
 	let sec = $state<Sec>('general');
 	/** Phones show the section list first and drill into one section (with a back button). */
@@ -549,7 +584,16 @@
 
 	<div class="layout">
 		<nav class="snav" class:mobile-hidden={mobileOpen} aria-label="Settings sections">
-			{#each sections as x (x.id)}
+			<a class="si feat-link" href="/settings/features">
+				<span class="si-ic"><SlidersHorizontal size={16} /></span>
+				<span class="si-txt"
+					><span class="si-label">Features</span><span class="si-desc"
+						>Choose what appears · {featuresOn} of {FEATURES.length} on</span
+					></span
+				>
+				<ChevronRight size={16} class="si-chev" />
+			</a>
+			{#each visibleSections as x (x.id)}
 				<button
 					class="si"
 					class:on={sec === x.id}
@@ -565,7 +609,7 @@
 			{/each}
 			<!-- Feature-wave settings pages (ARCHITECTURE §12), each owned by its workstream. -->
 			<span class="si-group">More</span>
-			{#each MORE_PAGES as x (x.href)}
+			{#each visibleMore as x (x.href)}
 				<a class="si" href={x.href}>
 					<span class="si-ic"><x.icon size={16} /></span>
 					<span class="si-txt"
@@ -593,6 +637,8 @@
 			{/if}
 			{#if !s || !show}
 				<div class="card card-pad"><Skeleton count={8} h={28} /></div>
+			{:else if secInfo.feature && !isEnabled(secInfo.feature)}
+				<FeatureOff id={secInfo.feature} compact />
 			{:else if sec === 'general'}
 				<section class="card">
 					<div class="card-head"><h2 class="grow">General</h2></div>
@@ -964,28 +1010,28 @@
 								</div>
 							</div>
 						{/if}
-						<div class="setting stack">
-							<div class="text">
-								<div class="title">Where DJ voices are made</div>
-								<div class="desc">
-									Automatic uses this controller when it’s fast enough (Raspberry Pi 4 or 5) and your browser
-									otherwise.
+						{#if isEnabled('dj')}<div class="setting stack">
+								<div class="text">
+									<div class="title">Where DJ voices are made</div>
+									<div class="desc">
+										Automatic uses this controller when it’s fast enough (Raspberry Pi 4 or 5) and your
+										browser otherwise.
+									</div>
 								</div>
-							</div>
-							<div class="control">
-								<Segmented
-									bind:value={s.tts.mode}
-									label="Where DJ voices are made"
-									size="sm"
-									onchange={() => changed('tts')}
-									options={[
-										{ value: 'auto', label: 'Automatic' },
-										{ value: 'device', label: 'Controller' },
-										{ value: 'browser', label: 'Browser' }
-									]}
-								/>
-							</div>
-						</div>
+								<div class="control">
+									<Segmented
+										bind:value={s.tts.mode}
+										label="Where DJ voices are made"
+										size="sm"
+										onchange={() => changed('tts')}
+										options={[
+											{ value: 'auto', label: 'Automatic' },
+											{ value: 'device', label: 'Controller' },
+											{ value: 'browser', label: 'Browser' }
+										]}
+									/>
+								</div>
+							</div>{/if}
 					</div>
 				</section>
 			{:else if sec === 'alerts'}
@@ -1880,6 +1926,16 @@
 	}
 	a.si {
 		text-decoration: none;
+	}
+	/* Settings → Features sits above the sections: it shapes everything below. */
+	.feat-link {
+		margin-bottom: 10px;
+		background: var(--surface);
+		box-shadow: inset 0 0 0 1px var(--border-2);
+		color: var(--text);
+	}
+	.feat-link .si-ic {
+		color: var(--accent-text);
 	}
 	.si-group {
 		margin: 14px 12px 4px;

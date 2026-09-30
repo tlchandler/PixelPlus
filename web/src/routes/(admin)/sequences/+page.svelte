@@ -16,6 +16,7 @@
 	import TagInput from '$lib/components/library/TagInput.svelte';
 	import AnalysisView from '$lib/components/library/AnalysisView.svelte';
 	import AutoShowDialog from '$lib/components/library/AutoShowDialog.svelte';
+	import { isEnabled } from '$lib/features';
 	import { library, type HistoryRow } from '$lib/library/api';
 	import { activeJob, waitJob } from '$lib/library/jobs.svelte';
 	import { allTags, energyGlyph, energyWord, parseTags } from '$lib/library/tags';
@@ -75,6 +76,10 @@
 	let bulkText = $state('');
 	let previewSeq = $state<Sequence | null>(null);
 	let autoFor = $state<Media | null>(null);
+	// Settings → Features: tags, music analysis / auto shows and previews can be turned off.
+	const tagsOn = $derived(isEnabled('smartPlaylists'));
+	const autoOn = $derived(isEnabled('autoShows'));
+	const previewOn = $derived(isEnabled('layout'));
 	let history = $state<Record<string, HistoryRow>>({});
 
 	const tags = $derived(allTags(show));
@@ -84,7 +89,7 @@
 		const needle = q.trim().toLowerCase();
 		return (
 			(!needle || x.name.toLowerCase().includes(needle) || t.some((tag) => tag.includes(needle))) &&
-			tagFilter.every((f) => t.includes(f))
+			(!tagsOn || tagFilter.every((f) => t.includes(f)))
 		);
 	}
 	const seqs = $derived(show?.sequences.filter(matches) ?? []);
@@ -447,7 +452,7 @@
 				aria-label="Search"
 			/>
 		</div>
-		{#if show && (show.sequences.length || show.media.length)}
+		{#if show && tagsOn && (show.sequences.length || show.media.length)}
 			<button
 				class="btn sm"
 				class:primary={selecting}
@@ -459,7 +464,7 @@
 		{/if}
 	</div>
 
-	{#if tags.length}
+	{#if tags.length && tagsOn}
 		<div class="tagbar" role="group" aria-label="Filter by tag">
 			<Tags size={14} />
 			{#each tags as t (t.name)}
@@ -535,7 +540,7 @@
 								>
 								<div class="faint small row wrap" style="gap:6px 10px">
 									<span class="num">{fmtDuration(s.durationMs)}</span>
-									{#if m?.analysis && m.analysis.bpm > 0}<span
+									{#if autoOn && m?.analysis && m.analysis.bpm > 0}<span
 											class="bpm num"
 											title="{energyWord(m.analysis.energy)} · {m.analysis.sections} parts"
 											>{Math.round(m.analysis.bpm)} BPM · {energyGlyph(m.analysis.energy)}</span
@@ -546,15 +551,15 @@
 										>
 									{:else}<span class="nolink"><Link2Off size={12} /> Light-only (no song)</span>{/if}
 									{#if busy}<span class="updating">Updating… {busy.pct}%</span>{/if}
-									<span class="hide-sm"
-										><TagChips
-											tags={s.tags ?? []}
-											{defs}
-											active={tagFilter}
-											onpick={toggleTag}
-											max={3}
-										/></span
-									>
+									{#if tagsOn}<span class="hide-sm"
+											><TagChips
+												tags={s.tags ?? []}
+												{defs}
+												active={tagFilter}
+												onpick={toggleTag}
+												max={3}
+											/></span
+										>{/if}
 								</div>
 							</div>
 							{#if ld}<span
@@ -562,12 +567,12 @@
 									title="Turn on volume leveling (Settings → Audio) to even this out"
 									><Volume2 size={12} /> {ld.label}</span
 								>{/if}
-							<button
-								class="btn sm ghost icon"
-								onclick={() => (previewSeq = s)}
-								aria-label="Preview {s.name} on this device"
-								title="Preview here (lights stay as they are)"><Eye size={15} /></button
-							>
+							{#if previewOn}<button
+									class="btn sm ghost icon"
+									onclick={() => (previewSeq = s)}
+									aria-label="Preview {s.name} on this device"
+									title="Preview here (lights stay as they are)"><Eye size={15} /></button
+								>{/if}
 							<button
 								class="btn sm ghost icon"
 								onclick={() => playerAct(() => api.play({ sequenceId: s.id }))}
@@ -592,9 +597,9 @@
 											>Made by PixelPlus from “{show.media.find((x) => x.id === s.generated?.mediaId)?.name ??
 												'a song'}”. It updates itself when you change your props.</span
 										>
-										<button class="btn sm" onclick={() => regenerate(s, true)} disabled={!!busy}
-											><RefreshCw size={13} /> New moves</button
-										>
+										{#if autoOn}<button class="btn sm" onclick={() => regenerate(s, true)} disabled={!!busy}
+												><RefreshCw size={13} /> New moves</button
+											>{/if}
 									</div>
 								{/if}
 								{#if m}
@@ -614,17 +619,17 @@
 										</div>
 									</div>
 								{/if}
-								{#if m}<AnalysisView media={m} />{/if}
-								<div class="field">
-									<span class="label">Tags</span>
-									<TagInput
-										tags={s.tags ?? []}
-										suggestions={tags.map((t) => t.name)}
-										{defs}
-										label="Add a tag to {s.name}"
-										onchange={(t) => setSeqTags(s, t)}
-									/>
-								</div>
+								{#if m && autoOn}<AnalysisView media={m} />{/if}
+								{#if tagsOn}<div class="field">
+										<span class="label">Tags</span>
+										<TagInput
+											tags={s.tags ?? []}
+											suggestions={tags.map((t) => t.name)}
+											{defs}
+											label="Add a tag to {s.name}"
+											onchange={(t) => setSeqTags(s, t)}
+										/>
+									</div>{/if}
 								<div class="form-grid">
 									<label class="field"
 										><span class="label">Audio</span>
@@ -713,20 +718,20 @@
 									<span class="num">{fmtDuration(m.durationMs)}</span><span
 										>{m.kind === 'song' ? 'Song' : m.kind === 'dj' ? 'DJ clip' : 'Sound effect'}</span
 									>
-									{#if m.analysis && m.analysis.bpm > 0}<span class="bpm num"
+									{#if !autoOn}{:else if m.analysis && m.analysis.bpm > 0}<span class="bpm num"
 											>{Math.round(m.analysis.bpm)} BPM · {energyGlyph(m.analysis.energy)}</span
 										>{:else if activeJob(m.id, 'analysis')}<span class="updating"
 											>Listening for the beat…</span
 										>{/if}
-									<span class="hide-sm"
-										><TagChips
-											tags={m.tags ?? []}
-											{defs}
-											active={tagFilter}
-											onpick={toggleTag}
-											max={3}
-										/></span
-									>
+									{#if tagsOn}<span class="hide-sm"
+											><TagChips
+												tags={m.tags ?? []}
+												{defs}
+												active={tagFilter}
+												onpick={toggleTag}
+												max={3}
+											/></span
+										>{/if}
 									{#if show.sequences.some((s) => s.mediaId === m.id)}<span class="linked"
 											><Link2 size={12} /> {show.sequences.find((s) => s.mediaId === m.id)?.name}</span
 										>{/if}
@@ -736,7 +741,7 @@
 									<Waveform peaks={peaks[m.id] ?? []} progress={audioPos} height={28} />
 								</div>{/if}
 							{#if ld}<span class="badge {ld.cls} hide-sm"><Volume2 size={12} /> {ld.label}</span>{/if}
-							{#if m.kind !== 'sfx'}
+							{#if m.kind !== 'sfx' && autoOn}
 								<button
 									class="btn sm ghost make"
 									onclick={() => (autoFor = m)}
@@ -756,18 +761,18 @@
 						</div>
 						{#if expanded === m.id}
 							<div class="detail media-detail" transition:slide={{ duration: 180 }}>
-								<AnalysisView media={m} />
-								<div class="field">
-									<span class="label">Tags</span>
-									<TagInput
-										tags={m.tags ?? []}
-										suggestions={tags.map((t) => t.name)}
-										{defs}
-										label="Add a tag to {m.name}"
-										onchange={(t) => setMediaTags(m, t)}
-									/>
-								</div>
-								{#if m.kind !== 'sfx' && !show.sequences.some((x) => x.mediaId === m.id)}
+								{#if autoOn}<AnalysisView media={m} />{/if}
+								{#if tagsOn}<div class="field">
+										<span class="label">Tags</span>
+										<TagInput
+											tags={m.tags ?? []}
+											suggestions={tags.map((t) => t.name)}
+											{defs}
+											label="Add a tag to {m.name}"
+											onchange={(t) => setMediaTags(m, t)}
+										/>
+									</div>{/if}
+								{#if autoOn && m.kind !== 'sfx' && !show.sequences.some((x) => x.mediaId === m.id)}
 									<div class="gen">
 										<Sparkles size={15} />
 										<span class="grow small">No light sequence for this song yet.</span>

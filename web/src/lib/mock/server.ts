@@ -32,6 +32,8 @@ import { buildDemoShow, buildEmptyShow, GARAGE, MAIN } from './demo';
 import type { SocketLike } from '$lib/api/socket';
 import { HttpError } from './http';
 import { applyFeatureDemo, registerFeatureRoutes } from './feat';
+import { FEATURES, feature, featureForApi, normalize, setFeature } from '$lib/features';
+import type { FeatureId } from '$lib/api/types';
 
 type Json = any;
 type Handler = (ctx: {
@@ -286,6 +288,18 @@ export class MockServer {
 	}
 
 	async handle(method: string, path: string, body: Json, query: URLSearchParams, form?: FormData) {
+		// Settings → Features: like pixelplusd, a feature that's off answers `feature_disabled`
+		// (404 on public pages, 409 with a friendly message for the admin UI).
+		const f = featureForApi(method, path);
+		if (f && (this.show.settings.features?.disabled ?? []).includes(f)) {
+			if (path.startsWith('/public/'))
+				throw new HttpError(404, 'feature_disabled', 'That page isn’t available.');
+			throw new HttpError(
+				409,
+				'feature_disabled',
+				`${feature(f).name} is turned off on this controller. Turn it on in Settings → Features.`
+			);
+		}
 		for (const [m, re, h] of this.#routes) {
 			if (m !== method) continue;
 			const match = re.exec(path);
@@ -442,6 +456,8 @@ export class MockServer {
 			if (body.board) this.system.board = body.board;
 			if (body.location) this.show.schedule.location = body.location;
 			if (body.password) this.password = body.password;
+			if (body.features && Array.isArray(body.features.disabled))
+				this.show.settings.features = { disabled: normalize(body.features.disabled.map(String)) };
 			if (body.role === 'follower') this.system.leaderName = undefined;
 			this.#bump();
 			return this.system;
@@ -543,6 +559,35 @@ export class MockServer {
 
 		// show
 		r('GET', '/show', () => clone(this.show));
+		// Settings → Features (same answers as pixelplusd's api/features.rs).
+		const featuresState = () => {
+			const disabled = this.show.settings.features?.disabled ?? [];
+			return {
+				features: FEATURES.map((x) => ({
+					id: x.id,
+					name: x.name,
+					group: x.group,
+					requires: x.requires,
+					enabled: !disabled.includes(x.id)
+				})),
+				disabled: [...disabled]
+			};
+		};
+		r('GET', '/features', () => featuresState());
+		r('PUT', '/features', ({ body }) => {
+			const before = this.show.settings.features?.disabled ?? [];
+			let next: string[];
+			if (typeof body.id === 'string' && typeof body.enabled === 'boolean') {
+				if (!FEATURES.some((x) => x.id === body.id))
+					throw new HttpError(400, 'bad_request', `There is no feature called “${body.id}”.`);
+				next = setFeature(before, body.id as FeatureId, body.enabled).disabled;
+			} else if (Array.isArray(body.disabled)) next = normalize(body.disabled.map(String));
+			else throw new HttpError(400, 'bad_request', 'Send either {disabled: [...]} or {id, enabled}.');
+			this.show.settings.features = { disabled: next };
+			this.#bump();
+			const changed = FEATURES.map((x) => x.id).filter((id) => before.includes(id) !== next.includes(id));
+			return { ...featuresState(), changed };
+		});
 		r('PUT', '/show/name', ({ body }) => {
 			this.show.name = String(body.name || this.show.name);
 			this.#bump();

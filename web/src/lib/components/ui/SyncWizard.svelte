@@ -4,6 +4,7 @@
 	import Modal from './Modal.svelte';
 	import Slider from './Slider.svelte';
 	import { app } from '$lib/stores/app.svelte';
+	import { isEnabled } from '$lib/features';
 	import { Play, Square, Minus, Plus, Smartphone, ChevronRight } from '@lucide/svelte';
 
 	/**
@@ -85,25 +86,27 @@
 	subtitle="Match the lights to what the audience hears"
 	{onclose}
 >
-	<a class="measure interactive" href="/calibrate" onclick={onclose}>
-		<span class="mico"><Smartphone size={20} /></span>
-		<span class="grow mtxt">
-			<span class="mtitle">Measure with my phone</span>
-			<span class="faint small">
-				Point your phone at the lights and it sets the delay for you — about 30 seconds.{#if !secure}
-					Needs a secure connection; the page shows how.{/if}
-			</span>
-			{#if lastCal}
+	{#if isEnabled('soundSync')}
+		<a class="measure interactive" href="/calibrate" onclick={onclose}>
+			<span class="mico"><Smartphone size={20} /></span>
+			<span class="grow mtxt">
+				<span class="mtitle">Measure with my phone</span>
 				<span class="faint small">
-					Last measured {new Date(lastCal.measuredAt).toLocaleDateString()}{lastCal.device
-						? ` with ${lastCal.device}`
-						: ''}:
-					{lastCal.appliedDelayMs} ms
+					Point your phone at the lights and it sets the delay for you — about 30 seconds.{#if !secure}
+						Needs a secure connection; the page shows how.{/if}
 				</span>
-			{/if}
-		</span>
-		<ChevronRight size={18} />
-	</a>
+				{#if lastCal}
+					<span class="faint small">
+						Last measured {new Date(lastCal.measuredAt).toLocaleDateString()}{lastCal.device
+							? ` with ${lastCal.device}`
+							: ''}:
+						{lastCal.appliedDelayMs} ms
+					</span>
+				{/if}
+			</span>
+			<ChevronRight size={18} />
+		</a>
+	{/if}
 	<p class="or faint small">or by eye and ear:</p>
 
 	<ol class="steps">

@@ -17,6 +17,7 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import TimeSpecPicker from '$lib/components/schedule/TimeSpecPicker.svelte';
 	import StartExactToggle from '$lib/components/playlist/StartExactToggle.svelte';
+	import { isEnabled } from '$lib/features';
 	import {
 		CalendarDays,
 		List,
@@ -792,11 +793,11 @@
 					<option value="stopNow">Stop right away</option>
 				</select>
 			</div>
-			<StartExactToggle
-				bind:checked={editing.startExact}
-				playlist={app.show?.playlists.find((p) => p.id === editing?.playlistId)}
-				show={app.show}
-			/>
+			{#if isEnabled('countdown') || editing.startExact}<StartExactToggle
+					bind:checked={editing.startExact}
+					playlist={app.show?.playlists.find((p) => p.id === editing?.playlistId)}
+					show={app.show}
+				/>{/if}
 		</div>
 	{/if}
 	{#snippet footer()}

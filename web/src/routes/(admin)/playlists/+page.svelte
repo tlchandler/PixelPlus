@@ -19,6 +19,8 @@
 	import SmartTonight from '$lib/components/library/SmartTonight.svelte';
 	import CountdownItemEditor from '$lib/components/playlist/CountdownItemEditor.svelte';
 	import { newCountdownItem } from '$lib/playlist/countdown';
+	import { feature, isEnabled, itemFeature } from '$lib/features';
+	import FeatureOff from '$lib/components/ui/FeatureOff.svelte';
 	import {
 		Plus,
 		Play,
@@ -52,6 +54,18 @@
 	let target = $state<Section>('items');
 	let libTab = $state<'sequence' | 'dj' | 'effect' | 'media' | 'more'>('sequence');
 	let libQ = $state('');
+	// Settings → Features: item kinds of features that are off can't be added (and are skipped).
+	const djOn = $derived(isEnabled('dj'));
+	const looksOn = $derived(isEnabled('effects'));
+	const smartOn = $derived(isEnabled('smartPlaylists'));
+	$effect(() => {
+		if ((libTab === 'dj' && !djOn) || (libTab === 'effect' && !looksOn)) libTab = 'sequence';
+	});
+	/** The feature that's off for this item, if the show skips it. */
+	const offFor = (it: PlaylistItem) => {
+		const f = itemFeature(it as PlaylistItem & { command?: string });
+		return f && !isEnabled(f) ? f : undefined;
+	};
 	let addOpen = $state(false);
 	let dragOver = $state<Section | null>(null);
 	/** Length of tonight's smart line-up (from the preview). */
@@ -416,7 +430,7 @@
 							args: { text: 'Merry Christmas!', color: '#ff2a2a' }
 						} as Omit<PlaylistItem, 'id'>
 					}
-				];
+				].filter((l) => !offFor(l.item as PlaylistItem));
 		}
 	});
 
@@ -436,8 +450,8 @@
 				label="Library"
 				options={[
 					{ value: 'sequence', label: 'Songs' },
-					{ value: 'dj', label: 'DJ' },
-					{ value: 'effect', label: 'Effects' },
+					...(djOn ? [{ value: 'dj' as const, label: 'DJ' }] : []),
+					...(looksOn ? [{ value: 'effect' as const, label: 'Effects' }] : []),
 					{ value: 'media', label: 'Audio' },
 					{ value: 'more', label: 'More' }
 				]}
@@ -545,11 +559,11 @@
 						>
 					</header>
 					<div class="opts">
-						<label class="opt" title="Pick tonight’s songs by tags, length and history"
-							><Switch checked={!!draft.smart} label="Smart" size="sm" onchange={setSmart} /><Sparkles
-								size={14}
-							/> Smart</label
-						>
+						{#if smartOn}<label class="opt" title="Pick tonight’s songs by tags, length and history"
+								><Switch checked={!!draft.smart} label="Smart" size="sm" onchange={setSmart} /><Sparkles
+									size={14}
+								/> Smart</label
+							>{/if}
 						{#if !draft.smart}
 							<label class="opt"
 								><Switch
@@ -613,7 +627,9 @@
 										>{fmtDuration(list.reduce((n, it) => n + itemInfo(it, show).ms, 0))}</span
 									>{/if}
 							</button>
-							{#if sec.id === 'items' && draft.smart}
+							{#if sec.id === 'items' && draft.smart && !smartOn}
+								<FeatureOff id="smartPlaylists" compact />
+							{:else if sec.id === 'items' && draft.smart}
 								<div class="smart">
 									<p class="faint small smart-intro">
 										Songs are picked every night from your tagged library. Repeat plays a fresh pick each
@@ -631,14 +647,17 @@
 								<ol use:sortable={{ onsort: (f, t) => reorder(sec.id, f, t) }}>
 									{#each list as it, i (it.id)}
 										{@const info = itemInfo(it, show)}
-										<li class="item" data-sort-index={i}>
+										{@const off = offFor(it)}
+										<li class="item" class:skipped={!!off} data-sort-index={i}>
 											<button class="drag-handle" aria-label="Move {info.name} (use arrow keys)"
 												><GripVertical size={16} /></button
 											>
 											<span class="num idx faint">{i + 1}</span>
 											<span class="iicon {info.tone}"><info.icon size={16} /></span>
 											<span class="grow iname"
-												><span class="ellipsis">{info.name}</span><span class="faint tiny">{info.sub}</span
+												><span class="ellipsis">{info.name}</span><span class="faint tiny"
+													>{#if off}<span class="offnote">Skipped · {feature(off).name} is off</span
+														>{:else}{info.sub}{/if}</span
 												></span
 											>
 											{#if it.type === 'effect' || it.type === 'pause'}
@@ -683,7 +702,7 @@
 									}}
 								>
 									{sec.id === 'items'
-										? 'Add songs, DJ clips and effects'
+										? `Add songs${djOn ? ', DJ clips' : ''}${looksOn ? ' and effects' : ''}`
 										: `Optional — add a ${sec.id === 'intro' ? 'welcome message' : 'goodnight message'}`}
 								</button>
 							{/if}
@@ -906,6 +925,18 @@
 		background: var(--surface-2);
 		border: 1px solid var(--border);
 		min-height: 52px;
+	}
+	/* An item the show skips because its feature is off (Settings → Features). */
+	.item.skipped .iicon,
+	.item.skipped .iname > .ellipsis {
+		opacity: 0.55;
+	}
+	.item.skipped {
+		border-style: dashed;
+	}
+	.offnote {
+		color: var(--accent-text);
+		font-weight: 560;
 	}
 	.idx {
 		width: 18px;

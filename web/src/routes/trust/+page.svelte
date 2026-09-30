@@ -24,6 +24,8 @@
 	let status = $state<PublicTls | null>(null);
 	let loading = $state(true);
 	let failed = $state(false);
+	/** Phone trust (HTTPS) is turned off on this controller (Settings → Features). */
+	let off = $state(false);
 	let platform = $state<'android' | 'ios'>('android');
 	let downloaded = $state(false);
 
@@ -37,8 +39,9 @@
 			// Public page: the app shell doesn't boot here, so pick the backend (demo or real).
 			await initBackend();
 			status = await tlsApi.publicStatus();
-		} catch {
-			failed = true;
+		} catch (e) {
+			if ((e as { code?: string })?.code === 'feature_disabled') off = true;
+			else failed = true;
 		} finally {
 			loading = false;
 		}
@@ -82,6 +85,16 @@
 			<p class="muted">You're on a secure connection. Nothing more to do.</p>
 			<a class="btn primary lg" href={next}>Continue <ArrowRight size={18} /></a>
 		</section>
+	{:else if off}
+		<div class="notice warn">
+			<Info size={18} />
+			<div>
+				Secure phone connections are turned off on this controller. Turn on <strong
+					>Phone trust (HTTPS)</strong
+				>
+				in Settings → Features, then open this page again.
+			</div>
+		</div>
 	{:else if failed || !status}
 		<div class="notice warn">
 			<TriangleAlert size={18} />

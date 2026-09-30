@@ -1,14 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { NAV, TABS, isActive } from './nav';
-	import { Ellipsis } from '@lucide/svelte';
+	import { TABS, isActive, visibleNav } from './nav';
+	import { Ellipsis, SlidersHorizontal } from '@lucide/svelte';
 	import { fade, fly } from 'svelte/transition';
 
 	let more = $state(false);
 	let sheet: HTMLDivElement | undefined = $state();
 	let moreBtn: HTMLButtonElement | undefined = $state();
-	const tabs = $derived(TABS.map((h) => NAV.find((n) => n.href === h)!).filter(Boolean));
-	const rest = $derived(NAV.filter((n) => !TABS.includes(n.href)));
+	const nav = $derived(visibleNav());
+	const tabs = $derived(TABS.map((h) => nav.find((n) => n.href === h)!).filter(Boolean));
+	const rest = $derived(nav.filter((n) => !TABS.includes(n.href)));
 	const moreActive = $derived(rest.some((n) => isActive(n.href, page.url.pathname)));
 	const short: Record<string, string> = { '/sequences': 'Sequences' };
 
@@ -71,6 +72,9 @@
 				</a>
 			{/each}
 		</div>
+		<a class="customize" href="/settings/features" onclick={() => close()}
+			><SlidersHorizontal size={16} /> Customize what you see</a
+		>
 	</div>
 {/if}
 
@@ -155,6 +159,22 @@
 		font-weight: 540;
 		text-align: center;
 		background: var(--surface-2);
+	}
+	.customize {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		min-height: 44px;
+		margin-top: 8px;
+		border-radius: 12px;
+		color: var(--text-2);
+		font-size: 13px;
+		font-weight: 560;
+	}
+	.customize:hover {
+		background: var(--surface-2);
+		color: var(--text);
 	}
 	.tile.active {
 		color: var(--accent-text);

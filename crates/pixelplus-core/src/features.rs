@@ -262,9 +262,7 @@ impl FeatureSettings {
         if on {
             let mut todo = vec![id];
             while let Some(f) = todo.pop() {
-                if off.remove(f.as_str()) {
-                    todo.extend_from_slice(f.requires());
-                } else if f == id {
+                if off.remove(f.as_str()) || f == id {
                     todo.extend_from_slice(f.requires());
                 }
             }

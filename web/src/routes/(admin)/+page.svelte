@@ -17,6 +17,7 @@
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import PowerBadge from '$lib/components/power/PowerBadge.svelte';
 	import SeasonChip from '$lib/components/dashboard/SeasonChip.svelte';
+	import { isEnabled } from '$lib/features';
 	import {
 		Play,
 		Pause,
@@ -58,16 +59,17 @@
 			.sensorHistory(60)
 			.then((h) => (history = h))
 			.catch(() => {});
-		api
-			.requests()
-			.then((r) => (requests = r))
-			.catch(() => {});
-		const t = setInterval(() => {
-			now = Date.now();
+		const loadRequests = () => {
+			if (!isEnabled('requests')) return;
 			api
 				.requests()
 				.then((r) => (requests = r))
 				.catch(() => {});
+		};
+		loadRequests();
+		const t = setInterval(() => {
+			now = Date.now();
+			loadRequests();
 		}, 15000);
 		return () => clearInterval(t);
 	});
@@ -147,6 +149,8 @@
 	const warnLogs = $derived(app.logs.filter((l) => l.level === 'warn' || l.level === 'error').slice(0, 3));
 	const canPlay = $derived(!!show?.playlists.some((p) => p.items.length));
 	const totalPixels = $derived(show?.props.reduce((n, p) => n + p.pixelCount, 0) ?? 0);
+	// Settings → Features: cards and links of features that are turned off are left out.
+	const requestsOn = $derived(isEnabled('requests'));
 </script>
 
 <div class="page">
@@ -157,7 +161,7 @@
 			</div>
 			<div class="row title-row">
 				<h1>{show?.name ?? 'Your show'}</h1>
-				<SeasonChip />
+				{#if isEnabled('seasons')}<SeasonChip />{/if}
 			</div>
 			{#if show}
 				<p class="status-line">{tonight}</p>
@@ -169,7 +173,9 @@
 				</p>
 			{/if}
 		</div>
-		{#if show?.props.length}<a class="btn" href="/layout"><Maximize2 size={16} /> Full layout</a>{/if}
+		{#if show?.props.length && isEnabled('layout')}<a class="btn" href="/layout"
+				><Maximize2 size={16} /> Full layout</a
+			>{/if}
 	</header>
 
 	{#if show}<GetReady {show} />{/if}
@@ -200,7 +206,7 @@
 				{:else if st?.state === 'testing'}<span class="testing">TESTING</span>
 				{:else if st?.state === 'effect'}<span class="testing">EFFECT</span>
 				{:else}<span class="idle">IDLE</span>{/if}
-				<PowerBadge />
+				{#if isEnabled('power')}<PowerBadge />{/if}
 			</div>
 		</div>
 		<div class="np">
@@ -285,7 +291,7 @@
 		</div>
 	</section>
 
-	<div class="grid grid-3 row2">
+	<div class="grid row2 {requestsOn ? 'grid-3' : 'grid-2'}">
 		<section class="card next-card">
 			<div class="card-body">
 				<div class="row">
@@ -367,35 +373,35 @@
 			</div>
 		</section>
 
-		<section class="card req-card">
-			<div class="card-body">
-				<div class="row">
-					<span class="icon-tile purple"><Hand size={20} /></span>
-					<div class="grow">
-						<div class="eyebrow">Song requests</div>
-						{#if show?.settings.requests.enabled}
-							<div class="big-num">
-								{requests.length ? plural(requests.length, 'request') + ' waiting' : 'No requests yet'}
-							</div>
-							<div class="muted small">
-								{requests[0]
-									? `Next: ${requests[0].name}${requests[0].requestedBy ? ` for ${requests[0].requestedBy}` : ''}`
-									: 'Visitors can scan the QR code to pick a song'}
-							</div>
-						{:else}
-							<div class="big-num">Off</div>
-							<div class="muted small">Let visitors pick songs from their phones.</div>
-						{/if}
+		{#if requestsOn}<section class="card req-card">
+				<div class="card-body">
+					<div class="row">
+						<span class="icon-tile purple"><Hand size={20} /></span>
+						<div class="grow">
+							<div class="eyebrow">Song requests</div>
+							{#if show?.settings.requests.enabled}
+								<div class="big-num">
+									{requests.length ? plural(requests.length, 'request') + ' waiting' : 'No requests yet'}
+								</div>
+								<div class="muted small">
+									{requests[0]
+										? `Next: ${requests[0].name}${requests[0].requestedBy ? ` for ${requests[0].requestedBy}` : ''}`
+										: 'Visitors can scan the QR code to pick a song'}
+								</div>
+							{:else}
+								<div class="big-num">Off</div>
+								<div class="muted small">Let visitors pick songs from their phones.</div>
+							{/if}
+						</div>
+					</div>
+					<div class="links">
+						<a class="link" href="/settings#requests">Request settings <ChevronRight size={14} /></a>
+						{#if show?.settings.requests.enabled}<a class="link" href="/yard-sign"
+								>Yard sign <ChevronRight size={14} /></a
+							>{/if}
 					</div>
 				</div>
-				<div class="links">
-					<a class="link" href="/settings#requests">Request settings <ChevronRight size={14} /></a>
-					{#if show?.settings.requests.enabled}<a class="link" href="/yard-sign"
-							>Yard sign <ChevronRight size={14} /></a
-						>{/if}
-				</div>
-			</div>
-		</section>
+			</section>{/if}
 	</div>
 
 	<div class="section-title">

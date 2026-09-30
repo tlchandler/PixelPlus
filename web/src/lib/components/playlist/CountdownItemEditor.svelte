@@ -8,6 +8,7 @@
 	`$lib/playlist/countdown` makes a fresh one.
 -->
 <script lang="ts">
+	import { isEnabled } from '$lib/features';
 	import type { CountdownItem } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
@@ -208,46 +209,51 @@
 		/>
 	</div>
 
-	<div class="field">
-		<span class="label">DJ voice</span>
-		<select
-			class="select"
-			value={item.djClipId ?? ''}
-			onchange={(e) => set({ djClipId: (e.target as HTMLSelectElement).value || undefined })}
-		>
-			<option value="">None</option>
-			{#each clips as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
-		</select>
-		{#if item.djClipId}
-			<div class="row between" style="margin-top:6px">
-				<span class="faint small">
-					{(item.djOffsetMs ?? 0) === 0
-						? 'The clip ends exactly at zero.'
-						: `The clip ends ${Math.abs(item.djOffsetMs ?? 0) / 1000} s ${(item.djOffsetMs ?? 0) > 0 ? 'after' : 'before'} zero.`}
-				</span>
-				<label class="row" style="gap:6px">
-					<span class="faint tiny">Offset</span>
-					<input
-						class="input num off"
-						type="number"
-						step="100"
-						min="-10000"
-						max="10000"
-						value={item.djOffsetMs ?? 0}
-						aria-label="Clip offset in milliseconds"
-						onchange={(e) =>
-							set({ djOffsetMs: Math.round(Number((e.target as HTMLInputElement).value) || 0) })}
-					/>
-					<span class="faint tiny">ms</span>
-				</label>
-			</div>
-		{:else}
-			<div class="row between opt" style="margin-top:6px">
-				<span class="faint small">Tick sound every second</span>
-				<Switch label="Tick sound" size="sm" checked={!!item.tick} onchange={(v) => set({ tick: v })} />
-			</div>
-		{/if}
-	</div>
+	{#if isEnabled('dj')}<div class="field">
+			<span class="label">DJ voice</span>
+			<select
+				class="select"
+				value={item.djClipId ?? ''}
+				onchange={(e) => set({ djClipId: (e.target as HTMLSelectElement).value || undefined })}
+			>
+				<option value="">None</option>
+				{#each clips as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+			</select>
+			{#if item.djClipId}
+				<div class="row between" style="margin-top:6px">
+					<span class="faint small">
+						{(item.djOffsetMs ?? 0) === 0
+							? 'The clip ends exactly at zero.'
+							: `The clip ends ${Math.abs(item.djOffsetMs ?? 0) / 1000} s ${(item.djOffsetMs ?? 0) > 0 ? 'after' : 'before'} zero.`}
+					</span>
+					<label class="row" style="gap:6px">
+						<span class="faint tiny">Offset</span>
+						<input
+							class="input num off"
+							type="number"
+							step="100"
+							min="-10000"
+							max="10000"
+							value={item.djOffsetMs ?? 0}
+							aria-label="Clip offset in milliseconds"
+							onchange={(e) =>
+								set({ djOffsetMs: Math.round(Number((e.target as HTMLInputElement).value) || 0) })}
+						/>
+						<span class="faint tiny">ms</span>
+					</label>
+				</div>
+			{:else}
+				<div class="row between opt" style="margin-top:6px">
+					<span class="faint small">Tick sound every second</span>
+					<Switch label="Tick sound" size="sm" checked={!!item.tick} onchange={(v) => set({ tick: v })} />
+				</div>
+			{/if}
+		</div>{:else}
+		<div class="row between opt">
+			<span class="faint small">Tick sound every second</span>
+			<Switch label="Tick sound" size="sm" checked={!!item.tick} onchange={(v) => set({ tick: v })} />
+		</div>
+	{/if}
 
 	<p class="hint faint tiny">
 		<Timer size={12} /> Put the countdown last in the intro and turn on <strong>Start exactly on time</strong> in

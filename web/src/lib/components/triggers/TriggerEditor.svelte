@@ -12,6 +12,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import TimeSpecPicker from '$lib/components/schedule/TimeSpecPicker.svelte';
 	import { sensorsApi } from '$lib/insight/api';
+	import { isEnabled } from '$lib/features';
 
 	let {
 		triggers = $bindable(),
@@ -20,6 +21,10 @@
 	}: { triggers: Trigger[]; show: Show; onchange: () => void } = $props();
 
 	let open = $state<Record<string, boolean>>({});
+	// Settings → Features: sensor inputs and surprises are offered only while they're on
+	// (an existing trigger keeps showing what it's set to).
+	const sensorsOn = $derived(isEnabled('sensors'));
+	const surprisesOn = $derived(isEnabled('surprises'));
 
 	const WHEN: { value: TriggerWhen; label: string }[] = [
 		{ value: 'always', label: 'Any time' },
@@ -178,7 +183,9 @@
 						{onchange}
 						aria-label="Trigger kind"
 					>
-						<option value="sensor">A sensor in the yard</option>
+						{#if sensorsOn || t.kind === 'sensor'}<option value="sensor"
+								>A sensor in the yard{sensorsOn ? '' : ' (turned off)'}</option
+							>{/if}
 						<option value="gpio">A button wired to the controller</option>
 						<option value="http">A link (web request)</option>
 					</select>
@@ -226,7 +233,9 @@
 						onchange={(e) => setType(t.action, e.currentTarget.value as TriggerAction['type'])}
 						aria-label="Action"
 					>
-						<option value="surprise">A surprise over the song</option>
+						{#if surprisesOn || t.action.type === 'surprise'}<option value="surprise"
+								>A surprise over the song{surprisesOn ? '' : ' (turned off)'}</option
+							>{/if}
 						<option value="playPlaylist">Play a playlist</option>
 						<option value="playSequence">Play a sequence</option>
 						<option value="effect">Show a look</option>
@@ -412,7 +421,9 @@
 	{/each}
 
 	<div class="row wrap adds">
-		<button class="btn sm" onclick={() => add('sensor')}><Sparkles size={14} /> Sensor surprise</button>
+		{#if sensorsOn && surprisesOn}<button class="btn sm" onclick={() => add('sensor')}
+				><Sparkles size={14} /> Sensor surprise</button
+			>{/if}
 		<button class="btn sm ghost" onclick={() => add('gpio')}
 			><Plus size={14} /> Button on the controller</button
 		>

@@ -26,8 +26,12 @@
 		Sparkles,
 		TriangleAlert,
 		CircleCheck,
-		ArchiveRestore
+		ArchiveRestore,
+		Layers,
+		SlidersHorizontal
 	} from '@lucide/svelte';
+	import { ESSENTIALS, FEATURES, FEATURE_GROUPS, normalize, presetDisabled, setFeature } from '$lib/features';
+	import type { FeatureId } from '$lib/api/types';
 	import { fly } from 'svelte/transition';
 
 	let step = $state(0);
@@ -68,7 +72,15 @@
 		const mine = loc.timezone;
 		return mine && !list.includes(mine) ? [mine, ...list] : list;
 	})();
-	const steps = ['Welcome', 'Role', 'Board', 'Your show', 'Password', 'Done'];
+	const steps = ['Welcome', 'Role', 'Board', 'Your show', 'Features', 'Password', 'Done'];
+
+	// "What will you use?" (Settings → Features): Essentials by default for a new show.
+	let usePreset = $state<'essentials' | 'everything' | 'custom'>('essentials');
+	let customOff = $state<string[]>(presetDisabled('essentials'));
+	const chosenDisabled = $derived(usePreset === 'custom' ? normalize(customOff) : presetDisabled(usePreset));
+	function toggleCustom(id: FeatureId) {
+		customOff = setFeature(customOff, id, customOff.includes(id)).disabled;
+	}
 
 	function next() {
 		dir = 1;
@@ -107,7 +119,8 @@
 							location: loc.lat || loc.lon ? { ...loc, label: loc.label || undefined } : undefined,
 							timezone: loc.timezone,
 							password: password || undefined,
-							writeEeprom: !detected && writeEeprom
+							writeEeprom: !detected && writeEeprom,
+							features: { disabled: chosenDisabled }
 						}
 			);
 			try {
@@ -120,7 +133,7 @@
 			else {
 				await app.reloadShow();
 				dir = 1;
-				step = 5;
+				step = 6;
 			}
 		} catch (e) {
 			toasts.error('Setup didn’t finish', (e as Error).message);
@@ -153,7 +166,7 @@
 			await app.loadSystem();
 			await app.reloadShow();
 			dir = 1;
-			step = 5;
+			step = 6;
 		} catch (e) {
 			xferError = (e as Error).message;
 		} finally {
@@ -176,9 +189,9 @@
 			<Logo size={30} />
 			<span class="brand">PixelPlus</span>
 			<span class="grow"></span>
-			{#if step > 0 && step < 5}
+			{#if step > 0 && step < 6}
 				<ol class="dots" aria-label="Progress">
-					{#each steps.slice(1, 5) as s, i (s)}<li
+					{#each steps.slice(1, 6) as s, i (s)}<li
 							class:on={step === i + 1}
 							class:done={step > i + 1}
 							aria-current={step === i + 1 ? 'step' : undefined}
@@ -410,6 +423,84 @@
 							>
 						</div>
 					{:else if step === 4}
+						<h1>What will you use?</h1>
+						<p class="lead">
+							PixelPlus can do a lot. Start with what most shows need and keep everything else out of your
+							way.
+						</p>
+						<div class="roles presets" role="radiogroup" aria-label="Features">
+							<button
+								class="role"
+								class:on={usePreset === 'essentials'}
+								role="radio"
+								aria-checked={usePreset === 'essentials'}
+								onclick={() => (usePreset = 'essentials')}
+							>
+								<span class="ri accent"><Sparkles size={22} /></span>
+								<strong>Essentials <span class="badge accent rec">Recommended</span></strong>
+								<span class="muted small"
+									>Props, controllers, sequences, playlists and schedule, plus the tools that help you build
+									and fix your display.</span
+								>
+								{#if usePreset === 'essentials'}<span class="tick"><Check size={14} /></span>{/if}
+							</button>
+							<button
+								class="role"
+								class:on={usePreset === 'everything'}
+								role="radio"
+								aria-checked={usePreset === 'everything'}
+								onclick={() => (usePreset = 'everything')}
+							>
+								<span class="ri blue"><Layers size={22} /></span>
+								<strong>Everything</strong>
+								<span class="muted small"
+									>DJ voices, games, song requests, seasons, sensors, remote access and every other tool.</span
+								>
+								{#if usePreset === 'everything'}<span class="tick"><Check size={14} /></span>{/if}
+							</button>
+							<button
+								class="role wide"
+								class:on={usePreset === 'custom'}
+								role="radio"
+								aria-checked={usePreset === 'custom'}
+								onclick={() => (usePreset = 'custom')}
+							>
+								<span class="row" style="gap:10px"
+									><SlidersHorizontal size={18} /> <strong>Let me choose</strong></span
+								>
+								{#if usePreset === 'custom'}<span class="tick"><Check size={14} /></span>{/if}
+							</button>
+						</div>
+						{#if usePreset === 'custom'}
+							<div class="pick" aria-label="Choose features">
+								{#each FEATURE_GROUPS as g (g.id)}
+									<div class="pick-group">
+										<span class="eyebrow">{g.label}</span>
+										<div class="pick-chips">
+											{#each FEATURES.filter((f) => f.group === g.id) as f (f.id)}
+												<button
+													class="chip"
+													aria-pressed={!chosenDisabled.includes(f.id)}
+													title={f.description}
+													onclick={() => toggleCustom(f.id)}><f.icon size={14} /> {f.name}</button
+												>
+											{/each}
+										</div>
+									</div>
+								{/each}
+							</div>
+						{/if}
+						<p class="faint small">
+							{FEATURES.length - chosenDisabled.length} of {FEATURES.length} features on
+							{usePreset === 'essentials' ? `(${ESSENTIALS.length} tools)` : ''} · You can change this any time
+							in
+							<strong>Settings → Features</strong>.
+						</p>
+						<div class="nav">
+							<button class="btn ghost" onclick={back}><ArrowLeft size={16} /> Back</button>
+							<button class="btn primary" onclick={next}>Continue <ArrowRight size={16} /></button>
+						</div>
+					{:else if step === 5}
 						<div class="ri accent big"><LockKeyhole size={28} /></div>
 						<h1>Add a password?</h1>
 						<p class="lead">
@@ -718,6 +809,33 @@
 	}
 	.role strong {
 		font-size: 16px;
+	}
+	.presets .role.wide {
+		grid-column: 1 / -1;
+		flex-direction: row;
+		align-items: center;
+		padding: 16px 24px;
+	}
+	.rec {
+		margin-left: 6px;
+		vertical-align: 2px;
+	}
+	.pick {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		text-align: left;
+	}
+	.pick-group {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.pick-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
 	}
 	.ri {
 		width: 48px;

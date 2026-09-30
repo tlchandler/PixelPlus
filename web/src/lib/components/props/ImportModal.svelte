@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isEnabled } from '$lib/features';
 	import type { ImportPreview } from '$lib/api/types';
 	import { api } from '$lib/api/client';
 	import { app } from '$lib/stores/app.svelte';
@@ -139,6 +140,12 @@
 				<li>Plug each prop into the port it uses in real life, then save.</li>
 			</ol>
 			<p class="faint small">That’s all — PixelPlus works out the rest when you import.</p>
+			{#if isEnabled('xlightsUpload')}
+				<p class="faint small">
+					Later, xLights can send your sequences straight to PixelPlus: see
+					<a href="/settings/xlights">Settings → xLights</a>.
+				</p>
+			{/if}
 		</details>
 	{:else}
 		<h3 class="eyebrow">Match controllers</h3>

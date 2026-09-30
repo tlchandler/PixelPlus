@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Modal from '$lib/components/ui/Modal.svelte';
-	import { NAV } from './nav';
+	import { visibleNav } from './nav';
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 	const general = [
 		['Space', 'Play / pause the show'],
@@ -21,7 +21,7 @@
 		</section>
 		<section>
 			<h3 class="eyebrow">Go to</h3>
-			{#each NAV as n (n.href)}
+			{#each visibleNav().filter((x) => x.key) as n (n.href)}
 				<div class="sc">
 					<span>{n.label}</span><span class="keys"
 						><span class="kbd">G</span><span class="kbd">{n.key?.toUpperCase()}</span></span

@@ -48,6 +48,8 @@ const ADDED_KEYS: &[&str] = &[
     "/settings/games/maxQueuePerVisitor",
     "/settings/requests/maxPerHour",
     "/settings/requests/perVisitorPerHour",
+    // Feature toggles (Settings → Features): `{disabled: []}` = everything on.
+    "/settings/features",
 ];
 
 /// Every value of `old` is present, unchanged, in `new`; keys only in `new`
@@ -111,6 +113,10 @@ fn show_json_from_head_round_trips_unchanged() {
     assert_eq!(show.format_version, 1);
     assert!(show.profiles.is_empty() && show.sensor_nodes.is_empty());
     assert!(show.settings.https.enabled);
+    // Nothing that was visible before feature toggles is hidden now.
+    assert!(pixelplus_core::features::FeatureId::ALL
+        .iter()
+        .all(|f| show.feature(*f)));
 }
 
 #[test]

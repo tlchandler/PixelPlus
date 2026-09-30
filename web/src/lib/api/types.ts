@@ -654,6 +654,54 @@ export interface ShowSettings {
 	remote?: RemoteSettings;
 	updates?: UpdateSettings;
 	xlights?: XlightsSettings;
+	/** Optional features that are turned off (Settings → Features). Absent = everything on. */
+	features?: FeatureSettings;
+}
+
+/** Ids of the optional features (Rust `FeatureId`, camelCase). */
+export type FeatureId =
+	| 'dj'
+	| 'effects'
+	| 'autoShows'
+	| 'smartPlaylists'
+	| 'countdown'
+	| 'seasons'
+	| 'requests'
+	| 'games'
+	| 'layout'
+	| 'faultFinder'
+	| 'pixelCount'
+	| 'receiverWizard'
+	| 'mapYard'
+	| 'soundSync'
+	| 'phoneTrust'
+	| 'reports'
+	| 'alerts'
+	| 'power'
+	| 'triggers'
+	| 'sensors'
+	| 'surprises'
+	| 'mqtt'
+	| 'remote'
+	| 'xlightsUpload';
+
+export interface FeatureSettings {
+	/** Features that are off, sorted. May hold ids from a newer PixelPlus (kept as they are). */
+	disabled: string[];
+}
+
+/** `GET/PUT /features`. */
+export interface FeaturesState {
+	features: {
+		id: FeatureId;
+		name: string;
+		group: 'show' | 'setup' | 'operations';
+		requires: FeatureId[];
+		enabled: boolean;
+	}[];
+	disabled: string[];
+	/** PUT only: features whose state changed. */
+	changed?: FeatureId[];
 }
 
 // ---------------------------------------------------------------- feature wave settings
@@ -887,6 +935,8 @@ export interface SetupRequest {
 	password?: string;
 	/** Assumed extension: also write the EEPROM when it was blank. */
 	writeEeprom?: boolean;
+	/** "What will you use?" (a Settings → Features preset). */
+	features?: FeatureSettings;
 }
 
 export interface NetworkConfig {

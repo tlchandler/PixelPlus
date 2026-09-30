@@ -12,6 +12,7 @@ import type {
 	WsPayloads
 } from '$lib/api/types';
 import { toasts } from './toasts.svelte';
+import { bindFeatureSource } from '$lib/features';
 
 type PreviewCb = (rgb: Uint8Array, frameNo: number) => void;
 
@@ -256,3 +257,5 @@ class AppState {
 }
 
 export const app = new AppState();
+// Feature toggles (Settings → Features) follow the live show.
+bindFeatureSource(() => app.show);

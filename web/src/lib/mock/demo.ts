@@ -780,7 +780,9 @@ export function buildDemoShow(): Show {
 				volume: 80,
 				crop: [8, 32, 256, 224],
 				maxQueuePerVisitor: 3
-			}
+			},
+			// The demo shows everything PixelPlus can do (Settings → Features: all on).
+			features: { disabled: [] }
 		}
 	};
 	return show;
@@ -824,7 +826,9 @@ export function buildEmptyShow(): Show {
 				maxPerHour: 60
 			},
 			triggers: [],
-			games: { ...demo.settings.games, enabled: false, matrixPropId: undefined, publicUrl: '' }
+			games: { ...demo.settings.games, enabled: false, matrixPropId: undefined, publicUrl: '' },
+			// Everything on, so every empty state can be seen (the wizard's own default is Essentials).
+			features: { disabled: [] }
 		}
 	};
 }

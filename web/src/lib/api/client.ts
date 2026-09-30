@@ -175,6 +175,11 @@ export const api = {
 	renameShow: (name: string) => put<T.Show>('/show/name', { name }),
 	saveSettings: (s: Partial<T.ShowSettings> | Record<string, unknown>) =>
 		put<T.ShowSettings>('/show/settings', s),
+	/** Settings → Features: the catalogue and state. */
+	features: () => get<T.FeaturesState>('/features'),
+	/** Turn one feature on/off (what it needs / what needs it follows), or set a whole preset. */
+	setFeatures: (body: { id: T.FeatureId; enabled: boolean } | { disabled: string[] }) =>
+		put<T.FeaturesState>('/features', body),
 
 	// ---- nodes
 	nodes: crud<T.Node>('/nodes'),

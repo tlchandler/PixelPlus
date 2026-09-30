@@ -2,15 +2,18 @@
 	import { page } from '$app/state';
 	import { app } from '$lib/stores/app.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
-	import { NAV, GROUPS, isActive } from './nav';
+	import { GROUPS, isActive, visibleNav } from './nav';
 	import Logo from './Logo.svelte';
-	import { Moon, Sun, Keyboard, FlaskConical } from '@lucide/svelte';
+	import { Moon, Sun, Keyboard, FlaskConical, SlidersHorizontal } from '@lucide/svelte';
 	import { exitMock } from '$lib/api/mode';
 
 	let { onshortcuts }: { onshortcuts: () => void } = $props();
 
 	const online = $derived(app.nodes.filter((n) => n.online).length);
 	const conn = $derived(app.connection);
+	const nav = $derived(visibleNav());
+	/** Groups that still have a page (a group whose pages are all turned off disappears). */
+	const groups = $derived(GROUPS.filter((g) => nav.some((n) => n.group === g.id)));
 </script>
 
 <nav class="sidebar" aria-label="Main">
@@ -47,10 +50,10 @@
 	{/if}
 
 	<div class="scroll">
-		{#each GROUPS as g (g.id)}
+		{#each groups as g (g.id)}
 			<div class="group">
 				<div class="glabel">{g.label}</div>
-				{#each NAV.filter((n) => n.group === g.id) as item (item.href)}
+				{#each nav.filter((n) => n.group === g.id) as item (item.href)}
 					{@const active = isActive(item.href, page.url.pathname)}
 					<a href={item.href} class="item" class:active aria-current={active ? 'page' : undefined}>
 						<item.icon size={18} strokeWidth={active ? 2.2 : 1.8} />
@@ -62,13 +65,19 @@
 	</div>
 
 	<div class="foot">
-		{#each NAV.filter((n) => n.group === 'system') as item (item.href)}
+		{#each nav.filter((n) => n.group === 'system') as item (item.href)}
 			{@const active = isActive(item.href, page.url.pathname)}
 			<a href={item.href} class="item" class:active aria-current={active ? 'page' : undefined}>
 				<item.icon size={18} strokeWidth={active ? 2.2 : 1.8} />
 				<span>{item.label}</span>
 			</a>
 		{/each}
+		<a
+			class="customize"
+			href="/settings/features"
+			aria-current={page.url.pathname === '/settings/features' ? 'page' : undefined}
+			><SlidersHorizontal size={14} /> Customize what you see</a
+		>
 		<div class="tools">
 			<button
 				class="btn ghost icon sm"
@@ -229,6 +238,25 @@
 		align-items: center;
 		gap: 2px;
 		padding: 6px 2px 0;
+	}
+	.customize {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		height: 30px;
+		padding: 0 12px;
+		margin-top: 2px;
+		border-radius: 8px;
+		font-size: 12.5px;
+		color: var(--text-3);
+		font-weight: 520;
+	}
+	.customize:hover {
+		background: var(--surface-2);
+	}
+	.customize:hover,
+	.customize[aria-current='page'] {
+		color: var(--text);
 	}
 	.ver {
 		margin-left: auto;

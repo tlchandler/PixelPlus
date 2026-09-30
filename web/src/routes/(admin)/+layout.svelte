@@ -9,7 +9,9 @@
 	import Login from '$lib/components/shell/Login.svelte';
 	import FollowerScreen from '$lib/components/shell/FollowerScreen.svelte';
 	import Shortcuts from '$lib/components/shell/Shortcuts.svelte';
-	import { NAV } from '$lib/components/shell/nav';
+	import { visibleNav } from '$lib/components/shell/nav';
+	import { featureForPath, isEnabled } from '$lib/features';
+	import FeatureOff from '$lib/components/ui/FeatureOff.svelte';
 	import { togglePlay, setLightsOff } from '$lib/player';
 	import { FlaskConical, Power, X } from '@lucide/svelte';
 
@@ -18,6 +20,11 @@
 	let gPressed = false;
 	let gTimer: ReturnType<typeof setTimeout>;
 	let bannerHidden = $state(false);
+	/** A page of a feature that's turned off in Settings → Features shows a friendly "off" state. */
+	const offFeature = $derived.by(() => {
+		const f = featureForPath(page.url.pathname);
+		return f && !isEnabled(f) ? f : undefined;
+	});
 
 	$effect(() => {
 		if (app.ready && app.system?.needsSetup) goto('/setup', { replaceState: true });
@@ -52,7 +59,7 @@
 			clearTimeout(gTimer);
 			gTimer = setTimeout(() => (gPressed = false), 1200);
 		} else if (gPressed) {
-			const n = NAV.find((x) => x.key === e.key);
+			const n = visibleNav().find((x) => x.key === e.key);
 			gPressed = false;
 			if (n) goto(n.href);
 		}
@@ -110,7 +117,11 @@
 				</div>
 			{/if}
 			{#key page.url.pathname}
-				{@render children()}
+				{#if offFeature}
+					<FeatureOff id={offFeature} />
+				{:else}
+					{@render children()}
+				{/if}
 			{/key}
 		</main>
 		<TransportBar />

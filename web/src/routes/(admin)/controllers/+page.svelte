@@ -53,6 +53,7 @@
 	import { slide } from 'svelte/transition';
 	// WS4 (F9): guided "Add receiver". WS5 (F10): replace a controller, retired controllers.
 	import ReceiverWizard from '$lib/components/controllers/ReceiverWizard.svelte';
+	import { isEnabled } from '$lib/features';
 	import ReplaceDialog from '$lib/components/controllers/ReplaceDialog.svelte';
 	import RetiredControllers from '$lib/components/controllers/RetiredControllers.svelte';
 
@@ -283,9 +284,11 @@
 		subtitle="Set everything up here on the leader — followers receive their settings and sequences automatically."
 	>
 		{#snippet actions()}
-			<a class="btn ghost" href="/map"><Camera size={16} /> Map my yard</a>
+			{#if isEnabled('mapYard')}<a class="btn ghost" href="/map"><Camera size={16} /> Map my yard</a>{/if}
 			<button class="btn ghost" onclick={() => (joinOpen = true)}>Join another show…</button>
-			<button class="btn soft" onclick={() => openWizard(null)}><Wand size={16} /> Add receiver</button>
+			{#if isEnabled('receiverWizard')}<button class="btn soft" onclick={() => openWizard(null)}
+					><Wand size={16} /> Add receiver</button
+				>{/if}
 			<button class="btn" onclick={() => scan(true)} disabled={scanning}
 				><span class:spin={scanning} class="ic"><RefreshCw size={16} /></span> Scan network</button
 			>
@@ -486,12 +489,12 @@
 											><Pencil size={14} /> Edit</button
 										>
 									{:else if grp.jack != null}
-										<button
-											class="btn sm soft"
-											onclick={() => openWizard(n.id)}
-											title="Guided: find the jack and its props by lighting them"
-											><Wand size={14} /> Guided</button
-										>
+										{#if isEnabled('receiverWizard')}<button
+												class="btn sm soft"
+												onclick={() => openWizard(n.id)}
+												title="Guided: find the jack and its props by lighting them"
+												><Wand size={14} /> Guided</button
+											>{/if}
 										<button class="btn sm" onclick={() => newReceiver(n, grp.jack!)}
 											><Plus size={14} /> Add receiver</button
 										>

@@ -257,7 +257,8 @@ const ENDPOINTS = [
 	'/requests',
 	'/games/status',
 	'/games/roms',
-	'/journal'
+	'/journal',
+	'/features'
 ];
 
 describe.skipIf(!BASE)('daemon JSON matches the UI contract', () => {

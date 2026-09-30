@@ -17,6 +17,7 @@ import {
 	WandSparkles
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
+import { hrefEnabled } from '$lib/features';
 
 export interface NavItem {
 	href: string;
@@ -52,6 +53,14 @@ export const GROUPS: { id: NavItem['group']; label: string }[] = [
 	{ id: 'content', label: 'Content' },
 	{ id: 'extras', label: 'Extras' }
 ];
+
+/**
+ * The navigation for the current show: pages of features turned off in Settings → Features
+ * are left out (reactive: call it inside `$derived` or markup).
+ */
+export function visibleNav(): NavItem[] {
+	return NAV.filter((n) => hrefEnabled(n.href));
+}
 
 /** Phone tab bar: the pages people touch every night in the yard. Everything else is under More. */
 export const TABS = ['/', '/props', '/playlists', '/schedule'];
