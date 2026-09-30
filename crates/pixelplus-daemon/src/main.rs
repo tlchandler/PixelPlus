@@ -20,8 +20,31 @@ use std::sync::Arc;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    limit_malloc_arenas();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+/// glibc gives every thread that allocates concurrently its own arena (up to
+/// 8 per core) and keeps what they once held: the snapshot compressor, slice
+/// builds and analysis jobs run on changing blocking threads, and each new
+/// arena kept ~10 MB resident even after `malloc_trim` (a 45-minute soak grew
+/// the leader from 65 to 88 MB). Two arenas keep it flat on a 512 MB Pi Zero
+/// 2. `MALLOC_ARENA_MAX` in the environment still wins.
+fn limit_malloc_arenas() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    if std::env::var_os("MALLOC_ARENA_MAX").is_none() {
+        // SAFETY: plain allocator tuning call before any other thread exists.
+        unsafe {
+            libc::mallopt(libc::M_ARENA_MAX, 2);
+        }
+    }
+}
+
+async fn run() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             EnvFilter::try_from_env("PIXELPLUS_LOG")
