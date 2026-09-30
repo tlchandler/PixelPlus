@@ -1,13 +1,19 @@
 """Small client for pixelplusd's HTTP API (``/api/v1``).
 
 The sidecar runs next to pixelplusd and talks to it over loopback.  Every
-request carries ``X-PixelPlus-Local: 1``, which pixelplusd honours only for
-connections from 127.0.0.1 / ::1 so that a local service needs no session
-even when the UI is password protected.
+request carries ``X-PixelPlus-Local: <token>``: the random token pixelplusd
+writes to ``/run/pixelplus/local-token`` at startup (readable by the sidecar
+group ``pixelplus-overlay``; ``PIXELPLUS_LOCAL_TOKEN_FILE`` overrides the path).
+pixelplusd honours it only from 127.0.0.1 / ::1, never through a proxy, and only
+for what the sidecar needs (show, player pause/resume/stop, overlays, events),
+so a local service needs no session even when the UI is password protected.
+Every request also carries ``X-PixelPlus-Request: 1`` (pixelplusd refuses
+state-changing requests without it).
 """
 
 import json
 import logging
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,7 +21,42 @@ import urllib.request
 log = logging.getLogger("pixelplus_games.api")
 
 LOCAL_HEADER = "X-PixelPlus-Local"
+REQUEST_HEADER = "X-PixelPlus-Request"
 PREFIX = "/api/v1"
+TOKEN_FILE = "/run/pixelplus/local-token"
+
+_token_cache = {}
+
+
+def token_file():
+    return os.environ.get("PIXELPLUS_LOCAL_TOKEN_FILE", "").strip() or TOKEN_FILE
+
+
+def local_token(refresh=False):
+    """This daemon run's local token ('' when unavailable, e.g. no password set)."""
+    path = token_file()
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = (path, st.st_mtime_ns, st.st_size)
+    if refresh or _token_cache.get("key") != key:
+        try:
+            with open(path, encoding="ascii", errors="replace") as f:
+                token = f.read(256).strip()
+        except OSError:
+            return ""
+        _token_cache.update(key=key, token=token)
+    return _token_cache.get("token", "")
+
+
+def auth_headers(refresh=False):
+    """Headers every request to pixelplusd carries."""
+    h = {REQUEST_HEADER: "1"}
+    token = local_token(refresh)
+    if token:
+        h[LOCAL_HEADER] = token
+    return h
 
 
 class ApiError(Exception):
@@ -48,19 +89,25 @@ class PixelPlus:
         data = None
         if body is not None:
             data = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode()
-        req = urllib.request.Request(self.base + PREFIX + path, data=data, method=method)
-        req.add_header(LOCAL_HEADER, "1")
-        req.add_header("Accept", "application/json")
-        if data is not None:
-            req.add_header("Content-Type", content_type)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                raw = r.read()
-        except urllib.error.HTTPError as e:
-            message, code = _describe(e)
-            raise ApiError(message, status=e.code, code=code) from None
-        except (OSError, ValueError) as e:
-            raise ApiError("pixelplusd is not reachable at %s: %s" % (self.base, e)) from None
+        for attempt in (0, 1):
+            req = urllib.request.Request(self.base + PREFIX + path, data=data, method=method)
+            for k, v in auth_headers(refresh=attempt > 0).items():
+                req.add_header(k, v)
+            req.add_header("Accept", "application/json")
+            if data is not None:
+                req.add_header("Content-Type", content_type)
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    raw = r.read()
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and attempt == 0:
+                    e.close()
+                    continue  # pixelplusd restarted: re-read its new token
+                message, code = _describe(e)
+                raise ApiError(message, status=e.code, code=code) from None
+            except (OSError, ValueError) as e:
+                raise ApiError("pixelplusd is not reachable at %s: %s" % (self.base, e)) from None
         if not raw:
             return None
         try:

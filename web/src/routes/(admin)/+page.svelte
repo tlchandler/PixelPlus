@@ -374,7 +374,12 @@
 						{/if}
 					</div>
 				</div>
-				<a class="link" href="/settings#requests">Request settings <ChevronRight size={14} /></a>
+								<div class="links">
+					<a class="link" href="/settings#requests">Request settings <ChevronRight size={14} /></a>
+					{#if show?.settings.requests.enabled}<a class="link" href="/yard-sign"
+							>Yard sign <ChevronRight size={14} /></a
+						>{/if}
+				</div>
 			</div>
 		</section>
 	</div>
@@ -645,8 +650,13 @@
 	.row2 {
 		margin-top: 16px;
 	}
-	.nowrap {
+		.nowrap {
 		white-space: nowrap;
+	}
+	.links {
+		display: flex;
+		gap: 16px;
+		flex-wrap: wrap;
 	}
 	.big-num {
 		font-size: 17px;

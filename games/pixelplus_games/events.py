@@ -20,7 +20,7 @@ import os
 import struct
 import urllib.parse
 
-from .api import LOCAL_HEADER
+from .api import auth_headers
 
 log = logging.getLogger("pixelplus_games.events")
 
@@ -80,9 +80,10 @@ class EventStream:
         try:
             key = base64.b64encode(os.urandom(16)).decode()
             path = (u.path or "/") + ("?" + u.query if u.query else "")
+            extra = "".join("%s: %s\r\n" % kv for kv in auth_headers(refresh=True).items())
             writer.write(("GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                          "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n%s: 1\r\n\r\n"
-                          % (path, u.netloc, key, LOCAL_HEADER)).encode())
+                          "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n%s\r\n"
+                          % (path, u.netloc, key, extra)).encode())
             await writer.drain()
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HANDSHAKE_TIMEOUT)
             status = head.split(b"\r\n", 1)[0]

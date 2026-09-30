@@ -150,25 +150,40 @@ def _response(writer, status, body=b"", ctype="text/plain; charset=utf-8", extra
                   % (status, ctype, len(body), SECURITY_HEADERS, extra)).encode() + body)
 
 
+def _trusted_proxy(addr):
+    return addr.is_loopback or addr.is_private
+
+
 def client_address(peer, headers):
     """The visitor's address. Behind a local reverse proxy / Cloudflare Tunnel every connection
     comes from the proxy, so the forwarded address is used - but only when the peer is loopback
-    or on the LAN, since anyone on the internet could send those headers."""
+    or on the LAN, since anyone on the internet could send those headers. Same rules as
+    pixelplusd (api/security.rs client_ip): CF-Connecting-IP only from this machine (cloudflared),
+    otherwise the right-most X-Forwarded-For hop that isn't itself a proxy (proxies append what
+    they saw; everything to its left is what the client claimed)."""
     ip = peer[0] if isinstance(peer, (tuple, list)) and peer else ""
     try:
         addr = ipaddress.ip_address(ip)
-        trusted = addr.is_loopback or addr.is_private
     except ValueError:
-        trusted = False
-    if trusted:
-        fwd = headers.get("cf-connecting-ip") or headers.get("x-forwarded-for", "").split(",")[0]
-        fwd = fwd.strip()[:64]
-        if fwd:
-            try:
-                return str(ipaddress.ip_address(fwd))
-            except ValueError:
-                pass
-    return ip or "?"
+        return ip or "?"
+    if not _trusted_proxy(addr):
+        return ip
+    if addr.is_loopback:
+        cf = headers.get("cf-connecting-ip", "").strip()[:64]
+        try:
+            return str(ipaddress.ip_address(cf))
+        except ValueError:
+            pass
+    hops = []
+    for part in headers.get("x-forwarded-for", "")[:1024].split(","):
+        try:
+            hops.append(ipaddress.ip_address(part.strip()))
+        except ValueError:
+            continue
+    for hop in reversed(hops):
+        if not _trusted_proxy(hop):
+            return str(hop)
+    return str(hops[0]) if hops else ip
 
 
 class Server:

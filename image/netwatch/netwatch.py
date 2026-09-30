@@ -16,8 +16,22 @@ State machine::
                periodic retry while no phone is connected)--> ONLINE
 
 Hotspot: SSID ``PixelPlus-XXXX`` (XXXX = last 4 hex digits of the Wi-Fi MAC),
-WPA2 password ``pixelplus`` by default (``hotspot_password=`` in pixelplus.txt,
-``none`` = open), address 10.42.0.1/24, NetworkManager "shared" mode (its dnsmasq
+address 10.42.0.1/24. Password (WPA2):
+
+* first setup (this controller has never been online): ``pixelplus`` by default,
+  or ``hotspot_password=`` from pixelplus.txt (``none`` = open);
+* once it has been online (the hotspot is then a fallback a neighbour could
+  provoke by jamming Wi-Fi): ``hotspot_password=`` if the owner chose one,
+  otherwise a random per-device password, created once and written to
+  ``PIXELPLUS-HOTSPOT.txt`` on the SD card's boot partition (and shown in
+  PixelPlus under Settings -> Network). Never open.
+
+Runtime fallback only after the network has been gone for
+``hotspotAfterDisconnect`` s, and at least 10 minutes when a network was
+connected in the last 30 minutes (a deauthentication attack has to last that
+long; a real outage just waits a little longer).
+
+NetworkManager "shared" mode (its dnsmasq NetworkManager "shared" mode (its dnsmasq
 does DHCP; ``/etc/NetworkManager/dnsmasq-shared.d/pixelplus-portal.conf`` answers every
 DNS name with 10.42.0.1 and advertises the portal URL via DHCP option 114).
 TCP port 80 arriving on the hotspot is redirected with nftables to the portal on
@@ -56,6 +70,15 @@ CONFIG_PATH = os.environ.get("PIXELPLUS_NETWATCH_CONFIG", "/etc/pixelplus/netwat
 STATUS_PATH = os.environ.get("PIXELPLUS_NETWATCH_STATUS", "/run/pixelplus/netwatch.json")
 PORTAL_PORT = int(os.environ.get("PIXELPLUS_PORTAL_PORT", "8099"))
 NFT_TABLE = "pixelplus_portal"
+# Persistent netwatch state (root only): everOnline, devicePassword.
+STATE_PATH = os.environ.get("PIXELPLUS_NETWATCH_STATE", "/var/lib/pixelplus-system/netwatch-state.json")
+# Where PIXELPLUS-HOTSPOT.txt goes ("" = /boot/firmware or /boot, whichever exists).
+BOOT_DIR = os.environ.get("PIXELPLUS_BOOT_DIR", "")
+DEFAULT_PASSWORD = "pixelplus"
+# Runtime fallback: at least this long offline when a network was connected recently.
+MIN_OFFLINE_AFTER_RECENT = 600
+RECENT_ONLINE = 1800
+PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
 
 DEFAULTS = {
     "hotspot": True,
@@ -86,11 +109,21 @@ def mac_suffix(iface: str) -> str:
         return "0000"
 
 
-def write_json_atomic(path: str, obj: Dict) -> None:
-    """Write world-readable JSON to ``path`` without following links an unprivileged user
-    could plant: /run/pixelplus belongs to the pixelplus user, and we run as root. The file
-    is created exclusively under a random name (O_EXCL never follows symlinks), chmod-ed by
-    descriptor, then renamed over the target (rename replaces a symlink, never follows it)."""
+def _gid(name: str) -> Optional[int]:
+    try:
+        import grp
+
+        return grp.getgrnam(name).gr_gid
+    except (ImportError, KeyError):
+        return None
+
+
+def write_json_atomic(path: str, obj: Dict, mode: int = 0o644, group: Optional[str] = None) -> None:
+    """Write JSON to ``path`` without following links an unprivileged user could plant:
+    /run/pixelplus belongs to the pixelplus user, and we run as root. The file is created
+    exclusively under a random name (O_EXCL never follows symlinks), chmod-ed (and chown-ed
+    to ``group``) by descriptor, then renamed over the target (rename replaces a symlink,
+    never follows it)."""
     d = os.path.dirname(path) or "."
     try:
         os.makedirs(d, exist_ok=True)
@@ -99,7 +132,13 @@ def write_json_atomic(path: str, obj: Dict) -> None:
         return
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            os.fchmod(f.fileno(), 0o644)
+            os.fchmod(f.fileno(), mode)
+            gid = _gid(group) if group else None
+            if gid is not None:
+                try:
+                    os.fchown(f.fileno(), -1, gid)
+                except OSError:
+                    pass
             json.dump(obj, f)
         os.replace(tmp, path)
     except OSError:
@@ -107,6 +146,54 @@ def write_json_atomic(path: str, obj: Dict) -> None:
             os.unlink(tmp)
         except OSError:
             pass
+
+
+def load_state() -> Dict:
+    try:
+        with open(STATE_PATH, encoding="utf-8") as f:
+            st = json.load(f)
+            return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def new_device_password(n: int = 10) -> str:
+    import secrets
+
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(n))
+
+
+def boot_dir() -> Optional[str]:
+    if BOOT_DIR:
+        return BOOT_DIR
+    for d in ("/boot/firmware", "/boot"):
+        if os.path.isfile(os.path.join(d, "config.txt")):
+            return d
+    return None
+
+
+def write_boot_note(ssid: str, password: str) -> None:
+    """PIXELPLUS-HOTSPOT.txt on the boot partition (readable on any PC)."""
+    d = boot_dir()
+    if not d:
+        return
+    text = (
+        "PixelPlus setup hotspot\r\n"
+        "=======================\r\n\r\n"
+        "If this controller loses its network for a while, it opens its own Wi-Fi so you\r\n"
+        "can connect it again from your phone:\r\n\r\n"
+        f"  Network:  {ssid}\r\n"
+        f"  Password: {password}\r\n\r\n"
+        "(Before it has ever been online the password is 'pixelplus'.)\r\n"
+        "Choose your own with hotspot_password= in pixelplus.txt.\r\n"
+    )
+    try:
+        tmp = os.path.join(d, ".PIXELPLUS-HOTSPOT.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, os.path.join(d, "PIXELPLUS-HOTSPOT.txt"))
+    except OSError as e:
+        LOG.warning("could not write the hotspot note to %s: %s", d, e)
 
 
 class Netwatch:
@@ -131,6 +218,24 @@ class Netwatch:
         self.last_retry = clock()
         self.server: Optional[portal.PortalServer] = None
         self.hostname = socket.gethostname()
+        self.last_online: Optional[float] = None
+        self.persist = load_state()
+        if not self.persist.get("devicePassword"):
+            self.persist["devicePassword"] = new_device_password()
+            self.save_state()
+        write_boot_note(self.hotspot_ssid, self.persist["devicePassword"])
+
+    def save_state(self) -> None:
+        write_json_atomic(STATE_PATH, self.persist, mode=0o600)
+
+    def hotspot_password(self) -> Optional[str]:
+        """WPA2 password of the hotspot right now (None = open), see the module docs."""
+        configured = self.cfg.get("hotspotPassword") or None
+        if not self.persist.get("everOnline"):
+            return configured
+        if configured and configured != DEFAULT_PASSWORD:
+            return configured
+        return self.persist["devicePassword"]
 
     # ----- helpers ---------------------------------------------------------
     def set_state(self, st: str) -> None:
@@ -144,13 +249,15 @@ class Netwatch:
         st = {
             "state": self.state.lower(),
             "hotspotSsid": self.hotspot_ssid if self.state in ("HOTSPOT", "CONNECTING") else None,
-            "hotspotSecured": bool(self.cfg.get("hotspotPassword")),
+            "hotspotSecured": bool(self.hotspot_password()),
+            # Settings -> Network shows it to the signed-in owner (file is 0640 root:pixelplus).
+            "hotspotPassword": self.hotspot_password(),
             "portalUrl": f"http://{nmconn.HOTSPOT_ADDR}/" if self.state == "HOTSPOT" else None,
             "lastError": self.last_error,
             "lastJoined": self.last_joined,
             "updatedAt": int(time.time()),
         }
-        write_json_atomic(STATUS_PATH, st)
+        write_json_atomic(STATUS_PATH, st, mode=0o640, group="pixelplus")
 
     def elapsed(self) -> float:
         return self.clock() - self.state_since
@@ -161,7 +268,7 @@ class Netwatch:
         self.nm.radio_on()
         # Scan while still in client mode; most Pi radios cannot scan while acting as an AP.
         self.refresh_scan(rescan=True)
-        psk = self.cfg.get("hotspotPassword") or None
+        psk = self.hotspot_password()
         nmconn.write_keyfile(
             nmconn.HOTSPOT_CON,
             nmconn.render_hotspot_keyfile(self.hotspot_ssid, psk, self.iface, int(self.cfg.get("channel", 6))),
@@ -347,6 +454,10 @@ class Netwatch:
                 if self.state != "ONLINE" or self.offline_since is not None:
                     LOG.info("online via %s (%s)", online["device"], online["connection"])
                 self.offline_since = None
+                self.last_online = now
+                if not self.persist.get("everOnline"):
+                    self.persist["everOnline"] = True
+                    self.save_state()
                 self.boot = False
                 self.set_state("ONLINE")
                 return
@@ -362,6 +473,9 @@ class Netwatch:
                 )
             else:
                 limit = self.cfg["hotspotAfterDisconnect"]
+                if self.last_online is not None and now - self.last_online < RECENT_ONLINE:
+                    # Deauth resistance: a jammer has to keep at it for 10 minutes.
+                    limit = max(limit, MIN_OFFLINE_AFTER_RECENT)
             if now - self.offline_since >= limit:
                 if self.nm.ethernet_connected():
                     return

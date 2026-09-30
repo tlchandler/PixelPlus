@@ -8,12 +8,15 @@ Wants=network.target avahi-daemon.service
 Type=simple
 User=pixelplus
 Group=pixelplus
-# Supplementary groups (video render i2c gpio spi audio netdev dialout) come from
-# /etc/group, set up by the package's postinst.
+# Supplementary groups (video render i2c gpio spi audio netdev dialout, and
+# pixelplus-overlay shared with the games sidecar) come from /etc/group, set up by
+# the package's postinst. Files it creates stay private to it (show.json, node.json,
+# cluster keys, uploads).
+UMask=0027
 Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
 Environment=PIXELPLUS_WEB_DIR=/usr/share/pixelplus/web
 Environment=PIXELPLUS_TTS_URL=http://127.0.0.1:7081
-Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock
+Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus-games/games.sock
 EnvironmentFile=-/etc/default/pixelplus
 ExecStart=/usr/bin/pixelplusd
 # Park the pixel pins low (WS281x idle) whenever the daemon is not running, even after

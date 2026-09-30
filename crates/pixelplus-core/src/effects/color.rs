@@ -15,7 +15,7 @@ pub struct Rgb {
 
 /// Error for a string that is not a colour.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("\"{0}\" is not a colour; use #rrggbb")]
+#[error("\"{0}\" is not a color; use #rrggbb")]
 pub struct ParseColorError(pub String);
 
 impl Rgb {

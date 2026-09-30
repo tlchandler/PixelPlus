@@ -9,13 +9,15 @@
 	import { fmtDuration } from '$lib/util/format';
 	import { newId } from '$lib/util/id';
 	import { renderSpeech, renderWhere, playBlob, sampleText } from '$lib/tts';
-	import { sortable, moveItem } from '$lib/actions/sortable';
+		import { sortable, moveItem } from '$lib/actions/sortable';
+	import { PLACEHOLDER_LABELS, PAUSES, tokenize } from '$lib/util/djtokens';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+		import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import VoiceEditor from '$lib/components/dj/VoiceEditor.svelte';
 	import {
 		Mic,
@@ -70,9 +72,36 @@
 			if (!c) draft = null;
 		});
 	});
-	$effect(() => {
+		$effect(() => {
 		const list = show?.pronunciations;
-		if (list) untrack(() => (words = structuredClone($state.snapshot(list) as Pronunciation[])));
+		// Only take the server's list when it's really different (not while a row is half typed).
+		if (list)
+			untrack(() => {
+				if (wordsSave === 'saved' && JSON.stringify(cleanWords(words)) !== JSON.stringify(list))
+					words = structuredClone($state.snapshot(list) as Pronunciation[]);
+			});
+	});
+	const cleanWords = (ws: Pronunciation[]) =>
+		ws.filter((w) => w.word.trim() && w.say.trim()).map((w) => ({ word: w.word, say: w.say }));
+	let wordsSave = $state<'saved' | 'saving' | 'dirty'>('saved');
+	let wordsTimer: ReturnType<typeof setTimeout> | undefined;
+	// The dictionary saves itself: complete rows are stored a moment after you stop typing.
+	$effect(() => {
+		const clean = JSON.stringify(cleanWords(words));
+		if (clean === JSON.stringify(untrack(() => show?.pronunciations ?? []))) return;
+		wordsSave = 'dirty';
+		clearTimeout(wordsTimer);
+		wordsTimer = setTimeout(async () => {
+			wordsSave = 'saving';
+			try {
+				await api.savePronunciations(cleanWords($state.snapshot(words) as Pronunciation[]));
+				await app.reloadShow();
+			} catch (e) {
+				toasts.error('Couldn’t save the pronunciations', (e as Error).message);
+			} finally {
+				wordsSave = 'saved';
+			}
+		}, 800);
 	});
 
 	function queueSave() {
@@ -104,10 +133,45 @@
 				lines: [{ voice: v, text: '', pauseMs: 300, energy: 0.4 }]
 			})
 		);
-		if (c) {
+				if (c) {
 			clipId = c.id;
 			tab = 'clips';
+			focusTitle();
 		}
+	}
+	let titleInput: HTMLInputElement | undefined = $state();
+	/** New clip: name field focused and selected, ready to type over. */
+	function focusTitle() {
+		setTimeout(() => {
+			titleInput?.focus();
+			titleInput?.select();
+		}, 80);
+	}
+	/** Lines whose voice picker shows every base voice (the curated DJs come first). */
+	let allVoices = $state<Set<number>>(new Set());
+	const isDj = (id: string) => !!show?.djVoices.some((v) => v.id === id);
+	function pickVoice(line: DjLine, i: number, e: Event) {
+		const el = e.target as HTMLSelectElement;
+		if (el.value === '__more') {
+			el.value = line.voice;
+			allVoices = new Set([...allVoices, i]);
+			// Re-open the picker, now with every voice in it.
+			requestAnimationFrame(() => {
+				try {
+					(document.getElementById(`voice-${i}`) as HTMLSelectElement | null)?.showPicker?.();
+				} catch {
+					/* not supported: the longer list is there on the next tap */
+				}
+			});
+			return;
+		}
+		line.voice = el.value;
+		queueSave();
+	}
+	let tokensOpen = $state(false);
+	/** Pauses are picked in words; older clips' odd values snap to the closest one. */
+	function nearestPause(ms: number) {
+		return PAUSES.reduce((best, p) => (Math.abs(p.ms - ms) < Math.abs(best - ms) ? p.ms : best), 0);
 	}
 	async function removeClip() {
 		if (!draft) return;
@@ -135,12 +199,18 @@
 		if (c) clipId = c.id;
 	}
 
+		/** New lines go to the other DJ: two-voice banter is the common case. */
 	function addLine() {
 		if (!draft) return;
 		const last = draft.lines[draft.lines.length - 1];
-		const voices = show?.djVoices ?? [];
-		const other = voices.find((v) => v.id !== last?.voice)?.id ?? last?.voice ?? 'af_heart';
-		draft.lines = [...draft.lines, { voice: other, text: '', pauseMs: 300, energy: 0.4 }];
+		const inClip = [...new Set(draft.lines.map((l) => l.voice))];
+		const partner =
+			[...draft.lines].reverse().find((l) => l.voice !== last?.voice)?.voice ??
+			inClip.find((v) => v !== last?.voice) ??
+			show?.djVoices.find((v) => v.id !== last?.voice)?.id ??
+			last?.voice ??
+			'af_heart';
+		draft.lines = [...draft.lines, { voice: partner, text: '', pauseMs: 300, energy: 0.4 }];
 		queueSave();
 	}
 	function removeLine(i: number) {
@@ -148,7 +218,8 @@
 		draft.lines = draft.lines.filter((_, k) => k !== i);
 		queueSave();
 	}
-	function insertPlaceholder(p: string) {
+		function insertPlaceholder(p: string) {
+		tokensOpen = false;
 		if (!draft) return;
 		const token = `{${p}}`;
 		if (focused) {
@@ -203,7 +274,7 @@
 				auditioning = null;
 			});
 		} catch (e) {
-			toasts.error('Couldn’t render the voice', (e as Error).message);
+			toasts.error('Couldn’t make the voice', (e as Error).message);
 			auditioning = null;
 		}
 	}
@@ -215,26 +286,26 @@
 		rendering = 0;
 		try {
 			if (where === 'device') {
-				renderMsg = 'Rendering on the controller…';
+				renderMsg = 'Making the voice on the controller…';
 				const tick = setInterval(() => (rendering = Math.min(0.9, (rendering ?? 0) + 0.07)), 200);
 				await api.djClips.render(id);
 				clearInterval(tick);
 			} else {
-				renderMsg = 'Rendering in this browser (first time downloads the voice model)…';
+				renderMsg = 'Making the voice in this browser (the first time downloads the voices, about a minute)…';
 				const blob = await renderSpeech(
 					show,
 					draft.lines.map((l) => ({ ...l, text: draft!.dynamic ? sampleText(l.text, show) : l.text })),
 					draft.speed,
 					(p) => (rendering = p * 0.85)
 				);
-				renderMsg = 'Uploading…';
+				renderMsg = 'Sending it to the controller…';
 				await api.djClips.upload(id, blob, (p) => (rendering = 0.85 + p * 0.15));
 			}
 			rendering = 1;
 			await app.reloadShow();
-			toasts.success('Clip rendered and ready to play');
+			toasts.success('Voice ready — the clip can play');
 		} catch (e) {
-			toasts.error('Rendering failed', (e as Error).message);
+			toasts.error('Couldn’t make the voice', (e as Error).message);
 		} finally {
 			setTimeout(() => (rendering = null), 600);
 		}
@@ -283,12 +354,7 @@
 		};
 	}
 
-	async function saveWords() {
-		const clean = words.filter((w) => w.word.trim() && w.say.trim());
-		await app.mutate(() => api.savePronunciations(clean), { success: 'Pronunciations saved' });
-	}
-
-	const wordsDirty = $derived(JSON.stringify(words) !== JSON.stringify(show?.pronunciations ?? []));
+	
 	const media = $derived(show?.media.find((m) => m.id === draft?.mediaId));
 	const estSec = $derived(
 		draft
@@ -314,7 +380,8 @@
 					? 'Voices render on this controller'
 					: 'Voices render in your browser, then upload'}
 			>
-				{#if where === 'device'}<Cpu size={12} /> Renders on controller{:else}<Globe size={12} /> Renders in browser{/if}
+								{#if where === 'device'}<Cpu size={12} /> Voices made on the controller{:else}<Globe size={12} /> Voices made in
+					this browser{/if}
 			</span>
 			<button class="btn primary" onclick={newClip}><Plus size={16} /> New clip</button>
 		{/snippet}
@@ -388,7 +455,7 @@
 			{/each}
 			<button class="card vnew" onclick={newVoice}
 				><span class="icon-tile accent"><Plus size={20} /></span><strong>Create a voice</strong><span
-					class="faint small">Blend Kokoro voices into a new DJ</span
+										class="faint small">Mix base voices to create a new DJ</span
 				></button
 			>
 		</div>
@@ -397,9 +464,7 @@
 			<div class="card-head">
 				<BookA size={18} />
 				<h2 class="grow">Pronunciation dictionary</h2>
-				<button class="btn primary sm" disabled={!wordsDirty} onclick={saveWords}
-					><Check size={14} /> Save</button
-				>
+								<SaveState state={wordsSave} />
 			</div>
 			<div class="card-body">
 				<p class="muted small" style="margin-bottom:14px">
@@ -460,7 +525,7 @@
 								>{c.lines.length} line{c.lines.length === 1 ? '' : 's'}{c.dynamic ? ' · live text' : ''}</span
 							></span
 						>
-						{#if c.mediaId}<span class="rdot" title="Rendered"></span>{/if}
+						{#if c.mediaId}<span class="rdot" title="Voice ready"></span>{/if}
 					</button>
 				{/each}
 			</nav>
@@ -468,10 +533,14 @@
 			{#if draft}
 				<section class="editor card">
 					<header class="ehead">
-						<input class="title-input" bind:value={draft.name} oninput={queueSave} aria-label="Clip name" />
-						<span class="faint tiny save"
-							>{saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : 'Saved'}</span
-						>
+												<input
+							class="title-input"
+							bind:this={titleInput}
+							bind:value={draft.name}
+							oninput={queueSave}
+							aria-label="Clip name"
+						/>
+												<span class="save"><SaveState state={saveState} /></span>
 						<span class="grow"></span>
 						<button class="btn ghost icon sm" onclick={duplicateClip} aria-label="Duplicate clip"
 							><Copy size={15} /></button
@@ -481,13 +550,22 @@
 						>
 					</header>
 
-					<div class="ph">
-						<span class="faint tiny"><Braces size={12} /> Insert live info:</span>
-						{#each DJ_PLACEHOLDERS as p (p)}<button
-								class="pchip"
-								onmousedown={(e) => e.preventDefault()}
-								onclick={() => insertPlaceholder(p)}>{`{${p}}`}</button
-							>{/each}
+										<div class="ph" class:open={tokensOpen}>
+						<button
+							class="ph-toggle btn sm"
+							onmousedown={(e) => e.preventDefault()}
+							onclick={() => (tokensOpen = !tokensOpen)}
+							aria-expanded={tokensOpen}><Braces size={14} /> Insert live info</button
+						>
+						<span class="faint tiny ph-label"><Braces size={12} /> Insert live info:</span>
+						<div class="ph-chips">
+							{#each DJ_PLACEHOLDERS as p (p)}<button
+									class="pchip"
+									onmousedown={(e) => e.preventDefault()}
+									onclick={() => insertPlaceholder(p)}
+									title="Inserts {`{${p}}`}, filled in when the clip plays">{PLACEHOLDER_LABELS[p] ?? p}</button
+								>{/each}
+						</div>
 					</div>
 
 					<ol
@@ -506,20 +584,23 @@
 								<button class="drag-handle" aria-label="Move line {i + 1}"><GripVertical size={16} /></button>
 								<div class="who" style:--h={voiceHue(line.voice)}>
 									<span class="av">{voiceName(line.voice)[0]}</span>
-									<select
+																		<select
 										class="select sm"
-										bind:value={line.voice}
-										onchange={queueSave}
+										id="voice-{i}"
+										value={line.voice}
+										onchange={(e) => pickVoice(line, i, e)}
 										aria-label="Voice for line {i + 1}"
 									>
-										<optgroup label="Your DJs"
-											>{#each show.djVoices as v (v.id)}<option value={v.id}>{v.name}</option
-												>{/each}</optgroup
-										>
-										<optgroup label="Base voices"
-											>{#each KOKORO_VOICES as v (v.id)}<option value={v.id}>{v.name}</option
-												>{/each}</optgroup
-										>
+										{#each show.djVoices as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
+										{#if allVoices.has(i) || !isDj(line.voice) || !show.djVoices.length}
+											<optgroup label="More voices"
+												>{#each KOKORO_VOICES as v (v.id)}<option value={v.id}
+														>{v.name} ({v.gender === 'male' ? 'male' : 'female'}, {v.accent})</option
+													>{/each}</optgroup
+											>
+										{:else}
+											<option value="__more">More voices…</option>
+										{/if}
 									</select>
 								</div>
 								<div class="grow ltext">
@@ -530,7 +611,14 @@
 										bind:value={line.text}
 										oninput={queueSave}
 										onfocus={(e) => (focused = { i, el: e.currentTarget })}
-										aria-label="Line {i + 1} text"></textarea>
+																				aria-label="Line {i + 1} text"></textarea>
+									{#if /\{\w+\}/.test(line.text)}
+										<div class="said" aria-label="How line {i + 1} reads">
+											{#each tokenize(line.text) as part, k (k)}{#if 'token' in part}<span class="tok"
+														>{part.label}</span
+													>{:else}{part.text}{/if}{/each}
+										</div>
+									{/if}
 									<div class="lopts">
 										<div class="energy" role="radiogroup" aria-label="Energy">
 											{#each ENERGY_LEVELS as l (l.value)}
@@ -547,18 +635,17 @@
 												>
 											{/each}
 										</div>
-										<label class="pause"
-											><span class="faint tiny">pause after</span><input
-												class="input sm num"
-												type="number"
-												min="0"
-												max="5000"
-												step="50"
-												bind:value={line.pauseMs}
-												oninput={queueSave}
-												aria-label="Pause after line in ms"
-											/><span class="faint tiny">ms</span></label
+																				<select
+											class="select sm pausesel"
+											value={String(nearestPause(line.pauseMs))}
+											onchange={(e) => {
+												line.pauseMs = Number((e.target as HTMLSelectElement).value);
+												queueSave();
+											}}
+											aria-label="Pause after line {i + 1}"
 										>
+																						{#each PAUSES as p (p.ms)}<option value={String(p.ms)}>{p.label}</option>{/each}
+										</select>
 										<span class="grow"></span>
 										<button
 											class="btn ghost icon sm"
@@ -624,11 +711,11 @@
 							<span class="hint">Plays quietly underneath the voices.</span>
 						</label>
 						<div class="field">
-							<span class="label">Live text</span>
-							<div class="row" style="height:40px">
+														<span class="label">Say live info fresh each time</span>
+							<div class="row" style="min-height:40px">
 								<Switch
 									checked={draft.dynamic}
-									label="Re-render at showtime"
+									label="Say live info fresh each time"
 									onchange={(v) => {
 										if (draft) {
 											draft.dynamic = v;
@@ -636,7 +723,7 @@
 										}
 									}}
 								/><span class="small muted"
-									>{draft.dynamic ? 'Re-rendered at showtime' : 'Rendered once'}</span
+									>{draft.dynamic ? 'The voice is made again as it plays' : 'Made once, played the same'}</span
 								>
 							</div>
 						</div>
@@ -658,9 +745,9 @@
 							</div>
 						{:else}
 							<div class="grow small">
-								{#if media}<span class="ok"
-										><Check size={14} /> Rendered · {fmtDuration(media.durationMs)}</span
-									>{:else}<span class="faint">Not rendered yet · about {estSec} s</span>{/if}
+																{#if media}<span class="ok"
+										><Check size={14} /> Voice ready · {fmtDuration(media.durationMs)}</span
+									>{:else}<span class="faint">No voice yet · about {estSec} s long</span>{/if}
 							</div>
 						{/if}
 						{#if media}<button class="btn" onclick={previewRendered}
@@ -677,7 +764,7 @@
 							class="btn primary"
 							onclick={renderClip}
 							disabled={rendering != null || !draft.lines.some((l) => l.text.trim())}
-							><Wand2 size={15} /> {media ? 'Re-render' : 'Render'}</button
+														><Wand2 size={15} /> {media ? 'Update voice' : 'Make the voice'}</button
 						>
 					</footer>
 				</section>
@@ -900,12 +987,78 @@
 		margin-right: 4px;
 	}
 	.pchip {
-		font-family: var(--mono);
-		font-size: 11.5px;
-		padding: 4px 8px;
-		border-radius: 7px;
+		font-size: 12px;
+		font-weight: 560;
+		padding: 5px 10px;
+		border-radius: 99px;
 		background: var(--blue-soft);
 		color: var(--blue);
+	}
+	.ph-chips {
+		display: contents;
+	}
+	.ph-toggle {
+		display: none;
+	}
+	.said {
+		margin-top: 6px;
+		font-size: 12.5px;
+		color: var(--text-2);
+		line-height: 1.9;
+	}
+	.tok {
+		display: inline-block;
+		padding: 0 8px;
+		margin: 0 1px;
+		border-radius: 99px;
+		background: var(--blue-soft);
+		color: var(--blue);
+		font-weight: 600;
+		font-size: 11.5px;
+		line-height: 20px;
+	}
+	.pausesel {
+		width: auto;
+		min-width: 132px;
+	}
+	/* Phones: the live-info chips fold into one "Insert live info" button. */
+	@media (max-width: 760px) {
+		.ph .ph-label {
+			display: none;
+		}
+		.ehead {
+			flex-wrap: wrap;
+			padding: 12px 12px 6px 16px;
+		}
+		.ehead .title-input {
+			flex: 1 1 100%;
+			max-width: none;
+			font-size: 18px;
+		}
+		.ph-toggle {
+			display: inline-flex;
+		}
+		.ph-chips {
+			display: none;
+		}
+		.ph.open .ph-chips {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 6px;
+			width: 100%;
+		}
+	}
+	@media (pointer: coarse) {
+		.pchip {
+			min-height: 44px;
+			padding: 0 14px;
+			font-size: 13px;
+		}
+		.en {
+			height: 40px !important;
+			padding: 0 12px !important;
+			font-size: 12.5px !important;
+		}
 	}
 	.pchip:hover {
 		background: var(--blue);
@@ -992,14 +1145,6 @@
 	}
 	.en15.on {
 		background: linear-gradient(90deg, #f2555a, #f5a524);
-	}
-	.pause {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.pause .input {
-		width: 76px;
 	}
 	.addline {
 		display: flex;

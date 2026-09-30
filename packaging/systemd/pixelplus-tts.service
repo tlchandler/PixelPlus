@@ -8,8 +8,11 @@ ConditionPathExists=/opt/pixelplus-tts/venv/bin/python
 
 [Service]
 Type=simple
-User=pixelplus
-Group=pixelplus
+# Its own user without polkit rights. It reads music beds from media/ (group pixelplus)
+# and keeps its models in tts/; nothing else of the data directory is visible.
+User=pixelplus-tts
+Group=pixelplus-tts
+SupplementaryGroups=pixelplus
 # ...and only worth running on a Pi 4/5 (>= 2 GB) or a PC (amd64). Exit 1 = skip.
 ExecCondition=/usr/lib/pixelplus/tts-capable
 Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
@@ -30,7 +33,18 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=-/var/lib/pixelplus/tts
+PrivateDevices=yes
+TemporaryFileSystem=/var/lib/pixelplus:ro /dev/shm
+BindReadOnlyPaths=-/var/lib/pixelplus/media
+BindPaths=/var/lib/pixelplus/tts
+InaccessiblePaths=-/run/pixelplus -/run/pixelplus-games
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target

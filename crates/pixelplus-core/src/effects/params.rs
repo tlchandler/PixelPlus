@@ -16,9 +16,9 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ParamKind {
-    /// One `"#rrggbb"` colour.
+    /// One `"#rrggbb"` color.
     Color,
-    /// A list of `"#rrggbb"` colours (at least one).
+    /// A list of `"#rrggbb"` colors (at least one).
     Colors,
     /// A number between `min` and `max`.
     Number,
@@ -184,7 +184,7 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
         EffectKind::Solid => vec![P::color("color", "Color", "#ffb46b")],
         EffectKind::Chase => vec![
             P::colors("colors", "Colors", &["#ff0000", "#00c000"])
-                .help("Each band of lit pixels takes the next colour."),
+                .help("Each band of lit pixels takes the next color."),
             P::color("background", "Background", "#000000"),
             P::number("speed", "Speed", 0.0, 60.0, 0.5, 8.0)
                 .unit("px/s")
@@ -216,9 +216,9 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
             P::colors("colors", "Colors", &["#ff0000", "#00c000", "#0040ff"]),
             P::number("speed", "Speed", 0.0, 2.0, 0.01, 0.05)
                 .unit("cycles/s")
-                .help("Trips through the whole colour list per second."),
+                .help("Trips through the whole color list per second."),
             P::number("spread", "Spread", 0.0, 2.0, 0.05, 0.0).help(
-                "0 = every prop the same colour; higher staggers colours across the display.",
+                "0 = every prop the same color; higher staggers colors across the display.",
             ),
         ],
         EffectKind::Candycane => vec![
@@ -283,7 +283,7 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
         ],
         EffectKind::Breathe => vec![
             P::colors("colors", "Colors", &["#ff0000", "#00c000"])
-                .help("Each breath uses the next colour."),
+                .help("Each breath uses the next color."),
             P::number("period", "Breath length", 0.5, 20.0, 0.1, 4.0).unit("s"),
             P::number("minBrightness", "Lowest brightness", 0.0, 1.0, 0.01, 0.05),
         ],

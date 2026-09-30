@@ -74,6 +74,8 @@ def read_static(name: str) -> Optional[bytes]:
 class Handler(BaseHTTPRequestHandler):
     server_version = "PixelPlusSetup/1"
     protocol_version = "HTTP/1.1"
+    # Socket timeout: slow or idle clients can't pin the server's threads.
+    timeout = 10
 
     # quieter logs
     def log_message(self, fmt, *args):  # noqa: D401
@@ -183,6 +185,16 @@ class Handler(BaseHTTPRequestHandler):
 class PortalServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # At most this many connections at once (each has its own thread).
+    max_clients = 32
+
+    def process_request(self, request, client_address):
+        import threading as _t
+
+        if _t.active_count() > self.max_clients + 8:
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
 
     def __init__(self, addr, ctl, public_host: str = PORTAL_ADDR, extra_hosts=()):
         self.ctl = ctl

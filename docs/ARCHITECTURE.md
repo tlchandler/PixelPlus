@@ -361,7 +361,8 @@ media filename is used to auto-link.
 
 ```
 show.json                    # the Show (source of truth, leader)
-node.json                    # this node's identity: {id, role, leaderUrl?, clusterKey?}
+node.json                    # this node's identity: {id, role, leaderUrl?, clusterKey? (follower: its own key)}
+cluster/keys.json            # leader: one key per follower; follower: key-pending flag (0600)
 sequences/<id>.fseq          # leader: full fseq
 sequences/<id>.ppseq         # follower: node-specific slice (see §7.3)
 media/<id>.<ext>             # audio
@@ -369,8 +370,18 @@ media/<id>.meta.json         # loudness etc.
 thumbnails/<id>.png
 snapshots/<timestamp>-<label>.tar.zst   # show.json + referenced small files (not sequences unless requested)
 logs/
-tts/models/                  # kokoro model (Pi 4/5, Docker)
+tts/models/                  # kokoro model (Pi 4/5, Docker); owned by the pixelplus-tts user on packages
+games/roms/                  # NES ROMs (group pixelplus-overlay, shared with the games sidecar)
 ```
+
+File paths inside `show.json` (`media.file`, `sequence.file`, `sequence.thumbnail`) are never
+trusted (`services/paths.rs`): they must be `media/<id>.<audio ext>`, `sequences/<id>.fseq|ppseq`,
+`thumbnails/<id>.png` with `<id>` of `[A-Za-z0-9_-]{1,64}`. Every store write (and loading, and a
+snapshot restore) rebuilds any other path from the entity id or blanks it; file-serving code
+resolves them through the same check. Snapshot restore unpacks only such files, within a size
+budget (16 GiB and the free space minus 256 MiB); snapshot uploads are capped at 2 GiB. Audio is
+served only with an audio content type from a whitelist, `Content-Disposition: attachment` and
+`nosniff`.
 
 ---
 
@@ -382,9 +393,16 @@ tts/models/                  # kokoro model (Pi 4/5, Docker)
   broadcast **beacon** on port 32320 every 2 s:
   `{"t":"beacon","id","name","role","board","boardRev","pi","ver","http":80,"adoptedBy":<leaderId|null>}`.
 * The leader UI lists unadopted nodes under **Controllers → New controllers found**. Clicking
-  **Adopt** calls `POST http://<follower>/api/v1/cluster/adopt {leaderId, leaderUrl, clusterKey}`.
-  The follower persists it in `node.json`. From then on all leader→follower HTTP calls carry
-  header `X-PixelPlus-Key: <clusterKey>`.
+  **Adopt** calls `POST http://<follower>/api/v1/cluster/adopt {leaderId, leaderUrl, dh, force?, name?}`;
+  the follower answers `{id, name, hostname, board, …, dh, proof}`. Both sides derive **a key for this
+  follower only** from the X25519 exchange (`dh`), so the key never crosses the network; `proof`
+  shows the leader that the follower derived the same key. The follower keeps it in `node.json`
+  (`clusterKey`), the leader in `cluster/keys.json` (0600). See §7.5 for how it is used and for the
+  rules deciding who may adopt a controller.
+* A controller that is itself a leader is offered for adoption only while its owner has
+  **Controllers → Join another show** open (15 minutes, optionally for one leader address:
+  `POST /api/v1/system/join-show {leaderUrl?}`, a normal signed-in call); adopting it replaces its
+  show (a copy is kept in `cluster/show-before-adopt-*.json`).
 * A fresh node boots as `role: "unconfigured"`: its own UI shows a welcome screen:
   "Make this the show leader" or "Waiting to be adopted by a leader…" (with its name/IP).
 
@@ -421,13 +439,86 @@ The leader uses the same renderer for its own outputs (it plays from the full fs
 * Commands (test patterns, fault finder, effects, blackout) are sent as HTTP POSTs to
   `/api/v1/cluster/command` on the follower.
 
+### 7.5 Cluster security
+**Keys.** One key per follower (§7.1), never shared: compromising one follower gives no access
+to the leader's admin API, to other followers, or to anything but that follower's own slot. A
+cluster key **never authenticates the admin API** (`/api/v1/*` outside `/cluster/*`), only the
+calls between that follower and its leader. Manifests and slices carry no secrets (no
+passwords, SMTP/MQTT settings or keys). Followers adopted by an older PixelPlus (one show-wide
+key) keep working and are re-keyed automatically by a signed re-adoption.
+
+**Signed HTTP** (`cluster/sig.rs`). Leader → follower (`/cluster/command`, `/cluster/release`,
+re-adoption) and follower → leader (`/cluster/manifest/<own id>`, `/cluster/slice/<own id>/…`)
+carry `X-PixelPlus-Auth: v1 <senderId> <unixTime> <nonce> <hmac>`: HMAC-SHA256 with that
+follower's key over method, path + query, sender, time, nonce and the SHA-256 of the body. The
+receiver rejects a time more than 30 s off its clock and any nonce it has seen. Controllers
+without a real-time clock may disagree about the time: a correctly signed request outside the
+window gets `401` with `X-PixelPlus-Time: <unixTime> <hmac>` (MACed over the request nonce), and
+the sender retries once with the corrected offset. The leader's manifest and slice replies carry
+`X-PixelPlus-Reply` (HMAC over the request nonce and the body hash / slice ETag + checksum), so
+a follower only installs what its leader sent. The key itself is never sent.
+
+**UDP** (`proto.rs`). Every authenticated datagram carries the sender's boot id (`bt`) and a
+sequence number (`sq`) that grows with every packet, inside the HMAC. Receivers keep, per sender,
+the current boot id and highest sequence number and drop anything not newer (replays of sync,
+overlay, pong or beacon packets). A follower accepts a *new* leader boot id only from a pong that
+answers one of its own pings of the last 5 s (a replay can't); an authenticated packet from an
+unknown run triggers such a ping. Boot ids that were replaced are never accepted again. The
+leader unicasts sync packets, pongs, overlay frames (`'P'` frames with boot id and sequence
+number) and a copy of its beacon to each follower, MACed with that follower's key; its
+broadcast beacon is unauthenticated (discovery only).
+
+**Who may adopt a controller** (`POST /cluster/adopt`, `follower::handle_adopt`):
+
+| This controller | Accepted when |
+|---|---|
+| unconfigured, or a follower without leader (released) | always: trust on first use, logged ("Adopted by show leader … at …") and shown on its page |
+| follower of leader L | the call is signed by L with the current key; or it repeats an adoption by L whose key L never used yet (e.g. after a timeout); or its signed-in owner clicked **Allow a new leader** (15 min, `POST /system/join-show`); or — only when this controller has no password — `force` from the local subnet after L has been silent for 10 minutes |
+| leader | only while its owner has **Join another show** open (15 min, optionally only for one leader address) |
+
+`leaderUrl` must be an IP literal on a local network (private, loopback, link-local, CGNAT or
+IPv6), so a stranger's adoption can't make the controller call arbitrary hosts.
+
+**Beacon spoofing.** An unauthenticated beacon never replaces a peer entry whose beacon proved a
+key in the last 30 s, and a second unverified device announcing the same id from another address
+is kept out; either marks the entry as a **possible duplicate** (shown in *New controllers found*,
+adoption refused until it clears for 60 s). A spoofed beacon can at most obtain a key for that
+(unadopted) slot, which grants that slot's manifest and nothing else; the leader then trusts only
+traffic MACed with that key. Right after an adoption the leader ignores the follower's stale,
+pre-adoption beacon for up to 10 s (no duplicate "re-adoption").
+
 ---
 
 ## 8. HTTP API (`/api/v1`, JSON, camelCase)
 
-Auth: if a password is set, `POST /api/v1/auth/login {password}` → session cookie `pp_session`.
-Unauthenticated requests get 401 except `/auth/*`, `/public/*` (song requests page), and
-`/cluster/*` (which require `X-PixelPlus-Key`).
+Auth: if a password is set, `POST /api/v1/auth/login {password}` → session cookie `pp_session`
+(minimum 6 characters for new passwords; sign-in is throttled per client address — 5 tries, then
+1 min doubling up to 15 min — and globally after 50 failures in 10 min).
+Unauthenticated requests get 401 except `/auth/*`, `/public/*` (song requests page), `/system`
+(limited info for the sign-in screen), `/system/setup` while unconfigured (local network only) and
+`/cluster/*` (signed with a per-follower key, §7.5). A local sidecar (games) sends
+`X-PixelPlus-Local: <token>` from `/run/pixelplus/local-token` (random per daemon start, 0640
+group `pixelplus-overlay`): accepted only from loopback, never with proxy headers
+(`X-Forwarded-For`, `Forwarded`, `CF-Connecting-IP`, …), and only for `GET /show`, `GET /player`,
+`GET /system`, `/ws`, `POST /player/{pause,resume,stop}` and `/overlay/*`.
+
+Browser protection (`api/security.rs`), independent of the password:
+* **Host allow-list** for `/api/v1/*` except `/public/*`: IP literals, `localhost`,
+  `<hostname>`/`<hostname>.local`, and `settings.security.allowedHosts` (e.g. a tunnel domain;
+  `*.example.com` allowed; env `PIXELPLUS_ALLOWED_HOSTS`). Others get `421` (friendly HTML page
+  for browsers) — this defeats DNS rebinding.
+* **CSRF header**: every request other than GET/HEAD/OPTIONS (except `/public/*`) must send
+  `X-PixelPlus-Request: 1` (the web UI, sidecars and cluster calls always do), else `403 csrf`.
+* **WebSocket** `Origin`, when present, must match `Host`; messages are limited to 64 KiB.
+* **Headers** on every response: `Content-Security-Policy` (inline-script hashes of the built UI,
+  recomputed when `index.html` changes; `PIXELPLUS_CSP` overrides, `off` disables),
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`.
+* **Secrets are write-only**: `GET /show` and `PUT /show/settings` return SMTP and MQTT passwords
+  as `"********"`; sending that placeholder back keeps the stored value. `POST /mqtt/test` uses the
+  stored password only for the stored broker (host + port).
+* **Client address** (song-request rate limit, sign-in throttle): forwarding headers count only
+  from this machine (`CF-Connecting-IP`, else the right-most `X-Forwarded-For` hop) or from
+  `settings.security.trustedProxies`.
 
 Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with HTTP status.
 
@@ -480,7 +571,8 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `POST /dj-clips/:id/upload` | multipart audio rendered in browser |
 | `GET /public/requests` | public song list + queue (no auth) ; `POST /public/requests {sequenceId, name?}` |
 | `GET /requests`, `DELETE /requests/:id` | admin view of queue |
-| `GET /cluster/manifest/:nodeId`, `GET /cluster/slice/:nodeId/:seqId`, `POST /cluster/adopt`, `POST /cluster/command`, `POST /cluster/release` | cluster internal |
+| `GET /cluster/manifest/:nodeId`, `GET /cluster/slice/:nodeId/:seqId`, `POST /cluster/adopt`, `POST /cluster/command`, `POST /cluster/release` | cluster internal (signed, §7.5) |
+| `GET/POST/DELETE /system/join-show` | {open, secondsLeft, leaderAddress}; POST {leaderUrl?}: for 15 min another leader may adopt this controller ("Join another show" / "Allow a new leader") |
 
 ### 8.1 WebSocket `/api/v1/ws`
 Server → client messages `{type, data}`:

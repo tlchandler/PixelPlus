@@ -450,7 +450,13 @@ export interface ShowSettings {
 	requests: RequestSettings;
 	tts: { mode: TtsMode };
 	oled: { enabled: boolean };
-	security: { passwordHash?: string };
+	security: {
+		passwordHash?: string;
+		/** Extra host names the UI answers to (tunnel / own domain); `*.example.com` allowed. */
+		allowedHosts?: string[];
+		/** Reverse proxies on the network whose X-Forwarded-For is believed (IP or CIDR). */
+		trustedProxies?: string[];
+	};
 	triggers: Trigger[];
 	games: GameSettings;
 	/** Display units. Absent = follow the viewer's locale (US → °F). Values are stored metric. */
@@ -586,8 +592,11 @@ export interface NetwatchStatus {
 	state: 'waiting' | 'online' | 'hotspot' | 'connecting' | string;
 	/** The setup hotspot's name while it is up (PixelPlus-XXXX). */
 	hotspotSsid?: string | null;
-	/** The hotspot has a password (default "pixelplus"). */
+	/** The hotspot has a password ("pixelplus" until the controller has been online once,
+	 *  then a per-device one, also in PIXELPLUS-HOTSPOT.txt on the SD card). */
 	hotspotSecured: boolean;
+	/** The hotspot's current password (signed-in owner only). */
+	hotspotPassword?: string | null;
 	/** Setup page for phones on the hotspot (http://10.42.0.1/). */
 	portalUrl?: string | null;
 	lastError?: string | null;
@@ -629,6 +638,17 @@ export interface DiscoveredNode {
 	http?: number;
 	ip?: string;
 	adoptedBy?: string | null;
+	/** Two devices announce this id from different addresses (cloned SD card or an impostor). */
+	duplicate?: boolean;
+	/** A show leader whose owner chose "Join another show" (adopting replaces its show). */
+	joining?: boolean;
+}
+
+/** "Join another show" / "Allow a new leader" (POST /system/join-show). */
+export interface JoinWindow {
+	open: boolean;
+	secondsLeft: number;
+	leaderAddress?: string | null;
 }
 
 export type PlayerState = 'idle' | 'playing' | 'paused' | 'testing' | 'effect';

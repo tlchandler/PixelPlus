@@ -22,10 +22,34 @@ configure)
         fi
     done
 
+    # Sidecars get their own users without polkit rights (security audit M6):
+    # pixelplus-games (internet-facing) shares only the group pixelplus-overlay with
+    # pixelplusd (overlay shared memory, local API token, games/ folder, control socket);
+    # pixelplus-tts reads the music beds (group pixelplus) and owns tts/.
+    add_group_if_missing pixelplus-overlay
+    adduser "${SERVICE_USER}" pixelplus-overlay >/dev/null 2>&1 || true
+    if ! getent passwd pixelplus-games >/dev/null; then
+        adduser --system --ingroup pixelplus-overlay --home /nonexistent --no-create-home \
+            --shell /usr/sbin/nologin --gecos "PixelPlus games sidecar" pixelplus-games >/dev/null
+    fi
+    if getent group audio >/dev/null 2>&1; then
+        adduser pixelplus-games audio >/dev/null 2>&1 || true
+    fi
+    if ! getent passwd pixelplus-tts >/dev/null; then
+        adduser --system --group --home /nonexistent --no-create-home \
+            --shell /usr/sbin/nologin --gecos "PixelPlus TTS sidecar" pixelplus-tts >/dev/null
+    fi
+    adduser pixelplus-tts "${SERVICE_USER}" >/dev/null 2>&1 || true
+
     install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0750 /var/lib/pixelplus
-    for d in sequences media thumbnails snapshots logs tts tts/models games games/roms; do
+    for d in sequences media thumbnails snapshots logs; do
         install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0750 "/var/lib/pixelplus/$d"
     done
+    install -d -o "${SERVICE_USER}" -g pixelplus-overlay -m 2770 /var/lib/pixelplus/games /var/lib/pixelplus/games/roms
+    chgrp -R pixelplus-overlay /var/lib/pixelplus/games
+    chmod -R g+rwX /var/lib/pixelplus/games
+    install -d -o pixelplus-tts -g pixelplus-tts -m 0750 /var/lib/pixelplus/tts /var/lib/pixelplus/tts/models
+    chown -R pixelplus-tts:pixelplus-tts /var/lib/pixelplus/tts
     # provision.json (from pixelplus.txt) must stay private to the daemon
     if [ -f /var/lib/pixelplus/provision.json ]; then
         chown "${SERVICE_USER}:${SERVICE_USER}" /var/lib/pixelplus/provision.json

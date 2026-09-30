@@ -179,7 +179,11 @@ export const api = {
 	// ---- nodes
 	nodes: crud<T.Node>('/nodes'),
 	discovered: () => get<T.DiscoveredNode[]>('/nodes/discovered'),
-	adopt: (id: string, name?: string) => post<T.Node>('/nodes/adopt', { id, name }),
+	adopt: (id: string, name?: string, force?: boolean) => post<T.Node>('/nodes/adopt', { id, name, force }),
+	/** Let another show leader adopt this controller for the next 15 minutes. */
+	joinShow: (leaderUrl?: string) => post<T.JoinWindow>('/system/join-show', { leaderUrl }),
+	joinStatus: () => get<T.JoinWindow>('/system/join-show'),
+	cancelJoin: () => del<T.JoinWindow>('/system/join-show'),
 	identifyNode: (id: string) => post(`/nodes/${id}/identify`),
 	saveOutput: (nodeId: string, index: number, o: Partial<T.OutputConfig>) =>
 		put<T.OutputConfig>(`/nodes/${nodeId}/outputs/${index}`, o),

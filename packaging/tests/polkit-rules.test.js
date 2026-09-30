@@ -24,4 +24,17 @@ t('pixelplus',A('org.freedesktop.timedate1.set-timezone'),'yes');
 t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'pixelplusd.service',verb:'restart'}),'yes');
 for (const u of ['config-txt:difftxlarge:1600','config-txt:bare-pi','update','ssh-on','ssh-off','reapply','wifi-country:US','hosts'])
   t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:`pixelplus-helper@${u}.service`,verb:'start'}),'yes');
+// Least privilege (security audit M6): only the NetworkManager actions nmcli needs, no clock
+// setting, and nothing at all for the sidecars' own users.
+for (const a of ['network-control','wifi.scan','enable-disable-wifi','settings.modify.own'])
+  t('pixelplus',A('org.freedesktop.NetworkManager.'+a),'yes');
+for (const a of ['wifi.share.open','wifi.share.protected','settings.modify.hostname','sleep-wake','checkpoint-rollback','reload','enable-disable-network'])
+  t('pixelplus',A('org.freedesktop.NetworkManager.'+a),'nh');
+t('pixelplus',A('org.freedesktop.timedate1.set-time'),'nh');
+t('pixelplus',A('org.freedesktop.timedate1.set-ntp'),'nh');
+for (const u of ['pixelplus-games','pixelplus-tts']) {
+  t(u,A('org.freedesktop.NetworkManager.network-control'),'nh');
+  t(u,A('org.freedesktop.login1.reboot'),'nh');
+  t(u,A('org.freedesktop.systemd1.manage-units',{unit:'pixelplus-helper@ssh-on.service',verb:'start'}),'nh');
+}
 if(!process.exitCode)console.log('polkit rules OK');

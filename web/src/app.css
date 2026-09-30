@@ -60,9 +60,10 @@
 	--text-2: #55555f;
 	--text-3: #63636d;
 	--text-inv: #ffffff;
-	--accent: #e39112;
+	/* Deep amber: 3:1 against the page for switches, progress and buttons (WCAG non-text). */
+	--accent: #c77c00;
 	--accent-text: #8a5100;
-	--accent-2: #f5a524;
+	--accent-2: #d98a0b;
 	--accent-fg: #1d1300;
 	--accent-soft: rgba(245, 165, 36, 0.16);
 	--accent-line: rgba(227, 145, 18, 0.45);

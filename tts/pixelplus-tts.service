@@ -28,7 +28,12 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ReadWritePaths=/var/lib/pixelplus/tts
+# Of the data directory only tts/ (models, cache) and media/ (music beds, read-only)
+# are visible (install.sh adds User=pixelplus-tts when run as root).
+TemporaryFileSystem=/var/lib/pixelplus:ro
+BindReadOnlyPaths=-/var/lib/pixelplus/media
+BindPaths=/var/lib/pixelplus/tts
+InaccessiblePaths=-/run/pixelplus -/run/pixelplus-games
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 IPAddressAllow=localhost
 IPAddressDeny=any

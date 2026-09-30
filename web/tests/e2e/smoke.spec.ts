@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const pages: [string, string | RegExp][] = [
-	['/', /Good (morning|afternoon|evening)/],
+	['/', 'Chandler Lights'],
 	['/props', 'Props'],
 	['/layout', 'Layout'],
 	['/controllers', 'Controllers'],

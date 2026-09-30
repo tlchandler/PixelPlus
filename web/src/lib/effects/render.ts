@@ -334,7 +334,7 @@ const DIR = P.sel(
 export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
 	solid: [P.color('color', 'Color', '#ffb46b'), BRIGHT],
 	chase: [
-		P.colors('colors', 'Colors', ['#ff0000', '#00c000'], 'Each band of lit pixels takes the next colour.'),
+		P.colors('colors', 'Colors', ['#ff0000', '#00c000'], 'Each band of lit pixels takes the next color.'),
 		P.color('background', 'Background', '#000000'),
 		P.num('speed', 'Speed', 0, 60, 0.5, 8, 'px/s', '0 holds the pattern still.'),
 		P.num('size', 'Band size', 1, 50, 1, 3, 'px'),
@@ -366,7 +366,7 @@ export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
 	],
 	colorwash: [
 		P.colors('colors', 'Colors', ['#ff0000', '#00c000', '#0040ff']),
-		P.num('speed', 'Speed', 0, 2, 0.01, 0.05, 'cycles/s', 'Trips through the whole colour list per second.'),
+		P.num('speed', 'Speed', 0, 2, 0.01, 0.05, 'cycles/s', 'Trips through the whole color list per second.'),
 		P.num(
 			'spread',
 			'Spread',
@@ -375,7 +375,7 @@ export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
 			0.05,
 			0,
 			undefined,
-			'0 = every prop the same colour; higher staggers colours across the display.'
+			'0 = every prop the same color; higher staggers colors across the display.'
 		),
 		BRIGHT
 	],
@@ -448,7 +448,7 @@ export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
 		BRIGHT
 	],
 	breathe: [
-		P.colors('colors', 'Colors', ['#ff0000', '#00c000'], 'Each breath uses the next colour.'),
+		P.colors('colors', 'Colors', ['#ff0000', '#00c000'], 'Each breath uses the next color.'),
 		P.num('period', 'Breath length', 0.5, 20, 0.1, 4, 's'),
 		P.num('minBrightness', 'Lowest brightness', 0, 1, 0.01, 0.05),
 		BRIGHT
@@ -456,16 +456,16 @@ export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
 };
 
 export const EFFECT_META: Record<EffectKind, { label: string; blurb: string }> = {
-	solid: { label: 'Solid', blurb: 'Every pixel one steady colour.' },
-	chase: { label: 'Chase', blurb: 'Bands of colour running along each prop.' },
+	solid: { label: 'Solid', blurb: 'Every pixel one steady color.' },
+	chase: { label: 'Chase', blurb: 'Bands of color running along each prop.' },
 	twinkle: { label: 'Twinkle', blurb: 'Pixels gently fade in and out at random.' },
 	rainbow: { label: 'Rainbow', blurb: 'A flowing rainbow along each prop or across the display.' },
-	colorwash: { label: 'Color Wash', blurb: 'The whole display slowly blends through a list of colours.' },
+	colorwash: { label: 'Color Wash', blurb: 'The whole display slowly blends through a list of colors.' },
 	candycane: { label: 'Candy Cane', blurb: 'Moving stripes, like a candy cane.' },
 	fire: { label: 'Fire', blurb: 'Flickering flames rising from the bottom of each prop.' },
 	snow: { label: 'Snow', blurb: 'Snowflakes drifting down.' },
-	sparkle: { label: 'Sparkle', blurb: 'Quick glints over a background colour.' },
-	wave: { label: 'Wave', blurb: 'Smooth waves of colour rolling across the display.' },
+	sparkle: { label: 'Sparkle', blurb: 'Quick glints over a background color.' },
+	wave: { label: 'Wave', blurb: 'Smooth waves of color rolling across the display.' },
 	meteor: { label: 'Meteor', blurb: 'Shooting stars with fading tails.' },
 	strobe: { label: 'Strobe', blurb: 'Fast flashes.' },
 	breathe: { label: 'Breathe', blurb: 'Slowly brightens and dims, like breathing.' }

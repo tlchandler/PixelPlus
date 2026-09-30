@@ -521,6 +521,16 @@ impl Shared {
     /// older PixelPlus still use the show-wide key (`node.json` clusterKey)
     /// until they are re-keyed.
     pub fn follower_key(&self, state: &AppState, id: &str) -> Option<String> {
+        // Only for followers adopted in the show right now: a released or
+        // removed follower has forgotten its key and accepts a fresh adoption.
+        let adopted = state
+            .store
+            .get()
+            .node(id)
+            .is_some_and(|n| n.role == NodeRole::Follower && n.adopted);
+        if !adopted {
+            return None;
+        }
         if let Some(k) = self.keys.lock().followers.get(id) {
             return Some(k.clone());
         }
@@ -528,13 +538,7 @@ impl Shared {
         if identity.role != LocalRole::Leader {
             return None;
         }
-        let legacy = identity.cluster_key.filter(|k| !k.is_empty())?;
-        state
-            .store
-            .get()
-            .node(id)
-            .is_some_and(|n| n.role == NodeRole::Follower && n.adopted)
-            .then_some(legacy)
+        identity.cluster_key.filter(|k| !k.is_empty())
     }
 
     /// Leader: `id` still uses the show-wide legacy key.

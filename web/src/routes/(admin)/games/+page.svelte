@@ -458,24 +458,7 @@
 								/>
 							</div>
 						</div>
-						<div class="setting stack">
-							<div class="text">
-								<div class="title">Matrix frame rate</div>
-								<div class="desc">The game always runs at 60 fps; this is how often the matrix updates.</div>
-							</div>
-							<div class="control">
-								<Segmented
-									bind:value={g.outputFps}
-									size="sm"
-									label="Frame rate"
-									onchange={changed}
-									options={[
-										{ value: 40, label: '40 fps' },
-										{ value: 20, label: '20 fps' }
-									]}
-								/>
-							</div>
-						</div>
+						
 						<div class="setting stack">
 							<div class="text"><div class="title">Brightness</div></div>
 							<div class="control slider-c">
@@ -512,7 +495,28 @@
 							</div>
 						</div>
 						<details class="adv">
-							<summary>Advanced · crop & port</summary>
+														<summary>Advanced · smoothness, crop & port</summary>
+							<div class="setting stack">
+								<div class="text">
+									<div class="title">Smoothness</div>
+									<div class="desc">
+										How often the matrix picture updates. Smooth looks best; pick Standard if a big matrix
+										flickers.
+									</div>
+								</div>
+								<div class="control">
+									<Segmented
+										bind:value={g.outputFps}
+										size="sm"
+										label="Smoothness"
+										onchange={changed}
+										options={[
+											{ value: 40, label: 'Smooth' },
+											{ value: 20, label: 'Standard' }
+										]}
+									/>
+								</div>
+							</div>
 							<p class="faint small">
 								Which part of the 256×240 NES screen is shown in Mario mode. The defaults drop the score bar
 								and the blank left column.

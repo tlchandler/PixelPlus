@@ -54,7 +54,12 @@
 	});
 
 	const hits = $derived(searchCities(cityQ, 6));
-	const tzs = timezones();
+		// Never show a blank time zone: add this browser's zone (e.g. "UTC") when the list lacks it.
+	const tzs = (() => {
+		const list = timezones();
+		const mine = loc.timezone;
+		return mine && !list.includes(mine) ? [mine, ...list] : list;
+	})();
 	const steps = ['Welcome', 'Role', 'Board', 'Your show', 'Password', 'Done'];
 
 	function next() {
@@ -155,7 +160,7 @@
 							<div class="bigmark"><Logo size={84} /></div>
 							<h1>Welcome to PixelPlus</h1>
 							<p class="lead">
-								Let’s get your light show running. It takes about two minutes — no universes, no channel math.
+								Let’s get your light show running. It takes about two minutes — no spreadsheets, no network math.
 							</p>
 							<button class="btn primary lg" onclick={next}>Get started <ArrowRight size={18} /></button>
 							<p class="faint small">{app.system?.hostname ?? 'pixelplus'} · {app.system?.ips?.[0] ?? ''}</p>
@@ -225,7 +230,16 @@
 									: 'We couldn’t read the board’s ID chip — it may be blank. Pick the board you have.'}
 							</p>
 						{/if}
-						<div class="boardpic"><BoardDiagram {board} {rev} compact={board !== 'difftxlarge'} /></div>
+												<div class="boardpic"><BoardDiagram {board} {rev} compact={board !== 'difftxlarge'} /></div>
+						{#if BOARDS[board].outputs}
+							<div class="facts" aria-label="Board facts">
+								{#if BOARDS[board].jacks > 1}<span
+										><strong>{BOARDS[board].jacks}</strong> network jacks</span
+									>{/if}
+								<span><strong>{BOARDS[board].outputs}</strong> pixel outputs</span>
+								{#if board === 'difftxlarge'}<span>Power &amp; temperature monitor</span>{/if}
+							</div>
+						{/if}
 						{#if changingBoard || !detected}
 							<div class="boards">
 								{#each boardChoices as b (b)}
@@ -268,7 +282,7 @@
 						{#if !detected && (board === 'difftx' || board === 'difftxlarge' || board === 'diffsmart')}
 							<label class="chk"
 								><input type="checkbox" class="check" bind:checked={writeEeprom} /> Save this on the board so it’s
-								recognised automatically next time</label
+								recognized automatically next time</label
 							>
 						{/if}
 						<div class="nav">
@@ -304,7 +318,7 @@
 											aria-label="Search town or city"
 										/>
 									</div>
-									<button class="btn" onclick={geolocate}
+																		<button class="btn" onclick={geolocate} aria-label="Use my location" title="Use my location"
 										><LocateFixed size={16} /> <span class="hide-sm">Use my location</span></button
 									>
 								</div>
@@ -356,7 +370,7 @@
 							<input
 								class="input lg"
 								type="password"
-								placeholder="Password"
+								placeholder="Password (at least 6 characters)"
 								bind:value={password}
 								autocomplete="new-password"
 								aria-label="Password"
@@ -369,7 +383,9 @@
 								autocomplete="new-password"
 								aria-label="Repeat password"
 							/>
-							{#if password2 && password !== password2}<span class="small" style="color:var(--red)"
+							{#if password && password.length < 6}<span class="small" style="color:var(--red)"
+									>Use at least 6 characters</span
+								>{:else if password2 && password !== password2}<span class="small" style="color:var(--red)"
 									>Passwords don’t match</span
 								>{/if}
 						</div>
@@ -386,7 +402,7 @@
 							<button
 								class="btn primary"
 								onclick={() => finish('leader')}
-								disabled={busy || !password || password !== password2}
+								disabled={busy || password.length < 6 || password !== password2}
 								>{busy ? 'Finishing…' : 'Finish setup'} <ArrowRight size={16} /></button
 							>
 						</div>
@@ -408,7 +424,7 @@
 								<a href="/sequences"
 									><span class="n">2</span><span class="ic"><Music size={18} /></span><span class="grow"
 										><strong>Upload sequences & songs</strong><span class="faint small"
-											>Drop your .fseq files and music</span
+																						>Your light sequences from xLights, with their music</span
 										></span
 									><ArrowRight size={16} /></a
 								>
@@ -615,6 +631,24 @@
 		width: 100%;
 		max-width: 620px;
 		margin: 8px 0;
+	}
+	.facts {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 8px;
+		margin-bottom: 8px;
+	}
+	.facts span {
+		padding: 6px 12px;
+		border-radius: 99px;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		font-size: 13px;
+		color: var(--text-2);
+	}
+	.facts strong {
+		color: var(--text);
 	}
 	.boards {
 		display: grid;

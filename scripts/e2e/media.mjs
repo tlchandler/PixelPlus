@@ -145,10 +145,11 @@ export function fillFrame(props, frame, frameMs, buf) {
 /** Channels a frame needs for `props`. */
 export function channelCount(props) {
 	let n = 0;
-	for (const p of props) for (let i = 0; i < p.pixelCount; i++) {
-		const o = channelOf(p, i);
-		if (o !== null) n = Math.max(n, o + 3);
-	}
+	for (const p of props)
+		for (let i = 0; i < p.pixelCount; i++) {
+			const o = channelOf(p, i);
+			if (o !== null) n = Math.max(n, o + 3);
+		}
 	return n;
 }
 
@@ -200,7 +201,11 @@ export function readPpseq(buf) {
 	const blocks = [];
 	for (let b = 0; b < nBlocks; b++) {
 		const e = idx + b * 16;
-		blocks.push({ off: Number(buf.readBigUInt64LE(e)), len: buf.readUInt32LE(e + 8), first: buf.readUInt32LE(e + 12) });
+		blocks.push({
+			off: Number(buf.readBigUInt64LE(e)),
+			len: buf.readUInt32LE(e + 8),
+			first: buf.readUInt32LE(e + 12)
+		});
 	}
 	const cache = new Map();
 	const block = (b) => {

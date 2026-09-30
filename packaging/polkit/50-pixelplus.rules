@@ -1,25 +1,28 @@
 // PixelPlus: what the unprivileged "pixelplus" service user (pixelplusd) may do
-// without a password. Everything else falls through to the distribution defaults.
+// without a password - only what it actually uses. The sidecars (pixelplus-games,
+// pixelplus-tts) run as their own users and get nothing here. Everything else falls
+// through to the distribution defaults.
 polkit.addRule(function (action, subject) {
     if (subject.user !== "pixelplus") {
         return polkit.Result.NOT_HANDLED;
     }
 
-    // Wi-Fi scan/connect, hotspot, Ethernet settings (Settings -> Network).
-    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0) {
-        return polkit.Result.YES;
-    }
-
     switch (action.id) {
+    // Settings -> Network: scan, join Wi-Fi, Ethernet settings (nmcli).
+    case "org.freedesktop.NetworkManager.network-control":
+    case "org.freedesktop.NetworkManager.settings.modify.system":
+    case "org.freedesktop.NetworkManager.settings.modify.own":
+    case "org.freedesktop.NetworkManager.wifi.scan":
+    case "org.freedesktop.NetworkManager.enable-disable-wifi":
+    // Reboot / power off (logind).
     case "org.freedesktop.login1.reboot":
     case "org.freedesktop.login1.reboot-multiple-sessions":
     case "org.freedesktop.login1.power-off":
     case "org.freedesktop.login1.power-off-multiple-sessions":
+    // Host name (hostnamed) and time zone (timedated). Not the clock itself: NTP sets it.
     case "org.freedesktop.hostname1.set-hostname":
     case "org.freedesktop.hostname1.set-static-hostname":
     case "org.freedesktop.timedate1.set-timezone":
-    case "org.freedesktop.timedate1.set-ntp":
-    case "org.freedesktop.timedate1.set-time":
         return polkit.Result.YES;
     }
 

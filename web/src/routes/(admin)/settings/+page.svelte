@@ -13,7 +13,7 @@
 		WifiNetwork
 	} from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
-	import { theme } from '$lib/stores/theme.svelte';
+		import { theme, type ThemePref } from '$lib/stores/theme.svelte';
 	import { toasts, confirm } from '$lib/stores/toasts.svelte';
 	import { BOARDS } from '$lib/util/boards';
 	import { fmtBytes, fmtRelative, fmtUptime } from '$lib/util/format';
@@ -25,7 +25,9 @@
 		import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import SignalBars from '$lib/components/ui/SignalBars.svelte';
-	import { countryName, fmtTemp, tempUnitOf, tempValue, cToF, fToC, wifiQuality } from '$lib/util/units';
+			import { requestLink, prettyUrl } from '$lib/util/visitors';
+	import { parseLogs, dayLabel } from '$lib/util/logs';
+	import { countryName, fmtTemp, tempUnitOf, tempValue, fToC } from '$lib/util/units';
 	import QrCode from '$lib/components/viz/QrCode.svelte';
 	import {
 		Wifi,
@@ -41,9 +43,6 @@
 		ScrollText,
 		RefreshCw,
 		Lock,
-		WifiHigh,
-		WifiLow,
-		WifiZero,
 		Send,
 		Plus,
 		Trash2,
@@ -165,10 +164,10 @@
 	const savedSsid = $derived(netOrig ? ((JSON.parse(netOrig) as NetworkConfig).wifi?.ssid ?? '') : '');
 	/** Picked a different network than the saved one: needs its password, then Apply. */
 	const switching = $derived(!!net && !!net.wifi.ssid && net.wifi.ssid !== savedSsid);
-	const pickedSecure = $derived(scan?.find((n) => n.ssid === net?.wifi.ssid)?.secure ?? true);
 	let scan = $state<WifiNetwork[] | null>(null);
 	let scanning = $state(false);
 	let psk = $state('');
+	const pickedSecure = $derived(scan?.find((n) => n.ssid === net?.wifi.ssid)?.secure ?? true);
 	$effect(() => {
 		if (sec === 'network' && !net)
 			api
@@ -220,9 +219,6 @@
 	function ago(unix?: number | null) {
 		return unix ? fmtRelative(new Date(unix * 1000).toISOString()) : '';
 	}
-	function sigIcon(dbm: number) {
-		return dbm > -60 ? WifiHigh : dbm > -75 ? Wifi : dbm > -85 ? WifiLow : WifiZero;
-	}
 
 	// ---- audio
 	let devices = $state<{ id: string; name: string }[]>([]);
@@ -259,7 +255,8 @@
 				.then((q) => (queue = q))
 				.catch(() => {});
 	});
-	const requestUrl = $derived(`${location.origin}/request`);
+		const reqLink = $derived(requestLink(show, location.origin));
+	const requestUrl = $derived(reqLink.url);
 
 	// ---- security
 	let pwOpen = $state(false);
@@ -290,10 +287,10 @@
 	});
 	async function takeSnap() {
 		const sn = await api
-			.createSnapshot(snapLabel.trim() || 'Manual snapshot')
-			.catch((e) => toasts.error('Snapshot failed', e.message));
+			.createSnapshot(snapLabel.trim() || 'Backup')
+			.catch((e) => toasts.error('Backup failed', e.message));
 		if (sn) {
-			toasts.success('Snapshot saved');
+			toasts.success('Backup saved');
 			snapLabel = '';
 			loadSnaps();
 		}
@@ -302,7 +299,7 @@
 		if (
 			!(await confirm({
 				title: `Restore “${sn.label}”?`,
-				message: `Your show goes back to how it was ${fmtRelative(sn.createdAt)}. A snapshot of the current show is taken first, so you can undo this.`,
+				message: `Your show goes back to how it was ${fmtRelative(sn.createdAt)}. Your current show is backed up first, so you can undo this.`,
 				confirmLabel: 'Restore'
 			}))
 		)
@@ -427,9 +424,31 @@
 	$effect(() => {
 		if (sec === 'logs' && logs == null) loadLogs();
 	});
-	const logLines = $derived(
-		(logs ?? '').split('\n').filter((l) => l && (logFilter === 'all' || /WARN|ERROR/.test(l)))
-	);
+			let logQ = $state('');
+	const fmtClock = (d: Date) =>
+		new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(d);
+	const parsedLogs = $derived(parseLogs(logs ?? ''));
+	/** Newest first, grouped by local day ("Today", "Yesterday", …). */
+	const logGroups = $derived.by(() => {
+		const needle = logQ.trim().toLowerCase();
+		const rows = parsedLogs.filter(
+			(l) =>
+				(logFilter === 'all' || l.level === 'warn' || l.level === 'error') &&
+				(!needle || l.message.toLowerCase().includes(needle))
+		);
+		const groups: { day: string; rows: typeof rows }[] = [];
+		for (const r of rows) {
+			const day = r.time ? dayLabel(r.time) : 'Earlier';
+			if (groups[groups.length - 1]?.day !== day) groups.push({ day, rows: [] });
+			groups[groups.length - 1].rows.push(r);
+		}
+		return groups;
+	});
+	const logProblems = $derived(parsedLogs.filter((l) => l.level === 'warn' || l.level === 'error').length);
+	function copyLogs() {
+		navigator.clipboard?.writeText(logs ?? '');
+		toasts.success('Logs copied — paste them into your support message');
+	}
 
 	// ---- triggers
 	function addTrigger() {
@@ -452,7 +471,15 @@
 		changed('triggers');
 	}
 
-	const sys = $derived(app.system);
+		const sys = $derived(app.system);
+	const tunit = $derived(s?.units?.temperature ?? tempUnitOf(show));
+	/** The heat alert, shown in the chosen unit but always stored in °C. */
+	const alertTemp = $derived(s ? Math.round(tempValue(s.alerts.rules.tempC, tunit)) : 0);
+	function setAlertTemp(v: number) {
+		if (!s || !Number.isFinite(v)) return;
+		s.alerts.rules.tempC = tunit === 'f' ? Math.round(fToC(v) * 10) / 10 : v;
+		changed('alerts');
+	}
 </script>
 
 <div class="page">
@@ -498,6 +525,54 @@
 			{/if}
 			{#if !s || !show}
 				<div class="card card-pad"><Skeleton count={8} h={28} /></div>
+						{:else if sec === 'general'}
+				<section class="card">
+					<div class="card-head"><h2 class="grow">General</h2></div>
+					<div class="card-body">
+						<div class="setting stack">
+							<div class="text">
+								<div class="title">Temperature</div>
+								<div class="desc">For controller temperatures and heat alerts, everywhere in PixelPlus.</div>
+							</div>
+							<div class="control">
+								<Segmented
+									value={tunit}
+									label="Temperature unit"
+									onchange={(v) => {
+										if (s) {
+											s.units = { temperature: v };
+											changed('units');
+										}
+									}}
+									options={[
+										{ value: 'f', label: '°F Fahrenheit' },
+										{ value: 'c', label: '°C Celsius' }
+									]}
+								/>
+							</div>
+						</div>
+						<div class="setting stack">
+							<div class="text">
+								<div class="title">Appearance</div>
+								<div class="desc">
+									Just for this browser. Automatic follows your phone or computer (dark at night).
+								</div>
+							</div>
+							<div class="control">
+								<Segmented
+									value={theme.preference}
+									label="Appearance"
+									onchange={(v) => theme.set(v as ThemePref)}
+									options={[
+										{ value: 'system', label: 'Automatic', icon: Monitor },
+										{ value: 'dark', label: 'Dark', icon: Moon },
+										{ value: 'light', label: 'Light', icon: Sun }
+									]}
+								/>
+							</div>
+						</div>
+					</div>
+				</section>
 			{:else if sec === 'network'}
 				<section class="card">
 					<div class="card-head"><h2 class="grow">Network & Wi-Fi</h2></div>
@@ -523,9 +598,9 @@
 										{#if nw.state === 'hotspot'}
 											<strong>Setup hotspot is on{nw.hotspotSsid ? `: ${nw.hotspotSsid}` : ''}</strong>
 											<div class="small muted">
-												{nw.hotspotSecured
-													? 'Password protected (default password: pixelplus).'
-													: 'Open network, no password.'}
+												{#if nw.hotspotSecured && nw.hotspotPassword}Password:
+													<span class="mono">{nw.hotspotPassword}</span>.{:else if nw.hotspotSecured}Password
+													protected.{:else}Open network, no password.{/if}
 												Join it with a phone and open
 												<span class="mono">{nw.portalUrl ?? 'http://10.42.0.1/'}</span> to pick a Wi-Fi network.
 												It turns off by itself once the controller is back online.
@@ -542,8 +617,10 @@
 												{#if nw.lastJoined}Joined “{nw.lastJoined.ssid}” from the setup page {ago(
 														nw.lastJoined.at
 													)}{nw.lastJoined.ips?.length ? ` (${nw.lastJoined.ips.join(', ')})` : ''}.{:else}If
-													the network is lost for 5 minutes, the setup hotspot turns on so you can fix it from
-													a phone.{/if}
+													the network is lost for 10 minutes, the setup hotspot turns on so you can fix it from
+													a phone{nw.hotspotPassword ? ' (password ' : ''}{#if nw.hotspotPassword}<span
+														class="mono">{nw.hotspotPassword}</span
+													>){/if}.{/if}
 											</div>
 										{:else}
 											<strong>Checking the network…</strong>
@@ -739,7 +816,7 @@
 						</div>
 						<div class="setting">
 							<div class="text">
-								<div class="title">Even out song volume</div>
+																<div class="title">Volume leveling</div>
 								<div class="desc">
 									Plays every song at the same loudness, so nobody reaches for the volume knob.
 								</div>
@@ -747,7 +824,7 @@
 							<div class="control">
 								<Switch
 									bind:checked={s.audio.normalize}
-									label="Normalize loudness"
+																		label="Volume leveling"
 									onchange={() => changed('audio')}
 								/>
 							</div>
@@ -755,13 +832,13 @@
 						{#if s.audio.normalize}
 							<div class="setting stack">
 								<div class="text">
-									<div class="title">Target loudness</div>
-									<div class="desc">-14 LUFS is typical for streaming; -16 is a little quieter.</div>
+																		<div class="title">How loud</div>
+									<div class="desc">Normal matches music apps. Pick Quiet for a sleepy street.</div>
 								</div>
 								<div class="control">
 									<Segmented
 										value={s.audio.targetLufs}
-										label="Target loudness"
+																				label="How loud"
 										size="sm"
 										onchange={(v) => {
 											if (s) {
@@ -769,10 +846,10 @@
 												changed('audio');
 											}
 										}}
-										options={[
+																				options={[
 											{ value: -18, label: 'Quiet' },
-											{ value: -16, label: '-16' },
-											{ value: -14, label: '-14' },
+											{ value: -16, label: 'Relaxed' },
+											{ value: -14, label: 'Normal' },
 											{ value: -12, label: 'Loud' }
 										]}
 									/>
@@ -781,19 +858,20 @@
 						{/if}
 						<div class="setting stack">
 							<div class="text">
-								<div class="title">DJ voice rendering</div>
+																<div class="title">Where DJ voices are made</div>
 								<div class="desc">
-									Auto uses the controller when it can (Pi 4/5, Docker) and your browser otherwise.
+									Automatic uses this controller when it’s fast enough (Raspberry Pi 4 or 5) and your
+									browser otherwise.
 								</div>
 							</div>
 							<div class="control">
 								<Segmented
 									bind:value={s.tts.mode}
-									label="Voice rendering"
+																		label="Where DJ voices are made"
 									size="sm"
 									onchange={() => changed('tts')}
 									options={[
-										{ value: 'auto', label: 'Auto' },
+										{ value: 'auto', label: 'Automatic' },
 										{ value: 'device', label: 'Controller' },
 										{ value: 'browser', label: 'Browser' }
 									]}
@@ -816,12 +894,13 @@
 							</div>
 							<div class="control">
 								<div class="input-group" style="width:120px">
-									<input
+																		<input
 										class="input num"
 										type="number"
-										bind:value={s.alerts.rules.tempC}
-										oninput={() => changed('alerts')}
-									/><span class="suffix">°C</span>
+										value={alertTemp}
+										oninput={(e) => setAlertTemp(Number((e.target as HTMLInputElement).value))}
+										aria-label="Alert temperature"
+									/><span class="suffix">{tunit === 'f' ? '°F' : '°C'}</span>
 								</div>
 							</div>
 						</div>
@@ -1107,7 +1186,7 @@
 											>{#each show.playlists as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select
 										></label
 									>
-									<label class="field"
+																		<label class="field"
 										><span class="label">Most requests waiting</span><input
 											class="input num"
 											type="number"
@@ -1118,21 +1197,82 @@
 										/></label
 									>
 								</div>
+								<div class="form-grid">
+									<label class="field"
+										><span class="label"><Radio size={13} /> FM radio station</span><input
+											class="input"
+											placeholder="e.g. 88.3 FM"
+											value={s.requests.radioFrequency ?? ''}
+											oninput={(e) => {
+												if (s) {
+													s.requests.radioFrequency = (e.target as HTMLInputElement).value;
+													changed('requests');
+												}
+											}}
+										/><span class="hint">Shown as “Tune your radio to…” on the request page and yard sign.</span
+										></label
+									>
+									<label class="field"
+										><span class="label"><Globe size={13} /> Internet address (optional)</span><input
+											class="input"
+											placeholder="e.g. requests.yourlights.com"
+											value={s.requests.publicUrl ?? ''}
+											inputmode="url"
+											autocapitalize="off"
+											spellcheck="false"
+											oninput={(e) => {
+												if (s) {
+													s.requests.publicUrl = (e.target as HTMLInputElement).value.trim();
+													changed('requests');
+												}
+											}}
+										/><span class="hint">So visitors on the street can open the page on their own data.</span
+										></label
+									>
+								</div>
 							</div>
 							<div class="qrbox">
 								<QrCode text={requestUrl} size={150} />
-								<a class="small" href="/request" target="_blank" rel="noopener"
-									>{requestUrl.replace(/^https?:\/\//, '')}</a
+								<a class="small" href={reqLink.isPublic ? requestUrl : '/request'} target="_blank" rel="noopener"
+									>{prettyUrl(requestUrl)}</a
 								>
-								<button
-									class="btn sm"
-									onclick={() => {
-										navigator.clipboard?.writeText(requestUrl);
-										toasts.success('Link copied');
-									}}><Copy size={13} /> Copy link</button
-								>
+								<div class="row wrap" style="justify-content:center">
+									<button
+										class="btn sm"
+										onclick={() => {
+											navigator.clipboard?.writeText(requestUrl);
+											toasts.success('Link copied');
+										}}><Copy size={13} /> Copy link</button
+									>
+									<a class="btn sm" href="/yard-sign"><Printer size={13} /> Yard sign</a>
+								</div>
 							</div>
 						</div>
+						{#if !reqLink.isPublic}
+							<div class="notice info small lanwarn">
+								<Info size={16} />
+								<div>
+									<strong>This QR code only works on your home Wi-Fi.</strong> It points at the controller’s
+									address on your network, which phones on the street can’t reach. Add an internet address
+									above to share it with visitors.
+									<details class="howto">
+										<summary>How do I get an internet address?</summary>
+										<ol>
+											<li>
+												Set up a free <strong>Cloudflare Tunnel</strong> (or a similar service) on a computer at
+												home, or on this controller.
+											</li>
+											<li>
+												Point it at <span class="mono">{location.origin}/request</span> — only the request
+												page, not the rest of PixelPlus.
+											</li>
+											<li>Paste the address it gives you into “Internet address” above.</li>
+										</ol>
+										<p>Keep a password on PixelPlus (Security) so only you can change the show.</p>
+									</details>
+								</div>
+							</div>
+						{/if}
 						<h3 class="eyebrow" style="margin:22px 0 8px">Waiting to play · {queue.length}</h3>
 						<div class="list qlist">
 							{#each queue as q (q.id)}
@@ -1166,7 +1306,8 @@
 					</div>
 					<div class="card-body">
 						<p class="muted small" style="margin-bottom:14px">
-							Start things with a button wired to the Pi, or from another system over HTTP.
+														Start things with a push button wired to the controller, or from another app (like Home
+							Assistant) by opening a link.
 						</p>
 						{#each s.triggers as t (t.id)}
 							<div class="trig">
@@ -1183,10 +1324,13 @@
 										bind:value={t.kind}
 										onchange={() => changed('triggers')}
 										aria-label="Trigger kind"
-										><option value="gpio">Button (GPIO)</option><option value="http">Web request</option
+										><option value="gpio">Button wired to the controller</option><option value="http"
+											>Link (web request)</option
 										></select
 									>
-									{#if t.kind === 'gpio'}<span class="small muted">pin</span><input
+									{#if t.kind === 'gpio'}<span class="small muted" title="The Raspberry Pi GPIO pin the button is wired to"
+										>on pin</span
+									><input
 											class="input sm num"
 											style="width:70px"
 											type="number"
@@ -1206,7 +1350,7 @@
 									>
 										<option value="playPlaylist">Play playlist</option><option value="playSequence"
 											>Play sequence</option
-										><option value="effect">Show effect</option><option value="stop">Stop the show</option>
+										><option value="effect">Show a look</option><option value="stop">Stop the show</option>
 									</select>
 									{#if t.action.type !== 'stop'}
 										<select
@@ -1279,6 +1423,34 @@
 								/>
 							</div>
 						</div>
+						{#if s}
+							<div class="setting">
+								<div class="text">
+									<div class="title">Other names for this controller</div>
+									<div class="desc">
+										PixelPlus only answers to its IP address and <span class="mono"
+											>{sys?.hostname ?? 'pixelplus'}.local</span
+										>. If you open it through a tunnel or your own domain, add that name here
+										(comma separated, <span class="mono">*.example.com</span> allowed).
+									</div>
+								</div>
+								<div class="control">
+									<input
+										class="input"
+										placeholder="lights.example.com"
+										aria-label="Other names for this controller"
+										value={(s.security.allowedHosts ?? []).join(', ')}
+										onchange={(e) => {
+											s!.security.allowedHosts = (e.currentTarget as HTMLInputElement).value
+												.split(/[\s,]+/)
+												.map((x) => x.trim())
+												.filter(Boolean);
+											changed('security');
+										}}
+									/>
+								</div>
+							</div>
+						{/if}
 						<div class="setting">
 							<div class="text">
 								<div class="title">Sign out</div>
@@ -1301,9 +1473,9 @@
 				<section class="card">
 					<div class="card-head">
 						<History size={16} />
-						<h2 class="grow">Time machine</h2>
+												<h2 class="grow">Backups</h2>
 						<button class="btn sm" onclick={() => importInput?.click()}
-							><Upload size={14} /> Import backup</button
+							><Upload size={14} /> Import a backup file</button
 						>
 						<input
 							bind:this={importInput}
@@ -1315,17 +1487,17 @@
 					</div>
 					<div class="card-body">
 						<p class="muted small">
-							PixelPlus saves a snapshot of your show every night and before big changes. Go back to any of
-							them — or download one as a backup.
+														PixelPlus backs up your whole show every night and before big changes. Go back to any of them,
+							or download one to keep somewhere safe.
 						</p>
 						<div class="row" style="margin:16px 0 8px">
 							<input
 								class="input"
-								placeholder="Name this snapshot (optional)"
+																placeholder="Name this backup (optional)"
 								bind:value={snapLabel}
-								aria-label="Snapshot name"
+								aria-label="Backup name"
 							/>
-							<button class="btn primary" onclick={takeSnap}><Camera size={15} /> Take snapshot</button>
+							<button class="btn primary" onclick={takeSnap}><Camera size={15} /> Back up now</button>
 						</div>
 					</div>
 					<div class="list">
@@ -1469,33 +1641,19 @@
 							</div>
 							<div>
 								<dt>Temperature</dt>
-								<dd>{sys?.tempC != null ? `${sys.tempC.toFixed(0)} °C` : '—'}</dd>
+								<dd>{fmtTemp(sys?.tempC, tunit)}</dd>
 							</div>
 						</dl>
 						<div class="setting" style="margin-top:12px">
 							<div class="text">
-								<div class="title">OLED status display</div>
+																<div class="title">Status screen</div>
 								<div class="desc">Shows the song and status on the little screen on the transmitter.</div>
 							</div>
 							<div class="control">
-								<Switch bind:checked={s.oled.enabled} label="OLED display" onchange={() => changed('oled')} />
+								<Switch bind:checked={s.oled.enabled} label="Status screen" onchange={() => changed('oled')} />
 							</div>
 						</div>
-						<div class="setting stack">
-							<div class="text"><div class="title">Appearance</div></div>
-							<div class="control">
-								<Segmented
-									value={theme.current}
-									label="Theme"
-									size="sm"
-									onchange={(v) => theme.set(v as 'dark' | 'light')}
-									options={[
-										{ value: 'dark', label: 'Dark', icon: Moon },
-										{ value: 'light', label: 'Light', icon: Sun }
-									]}
-								/>
-							</div>
-						</div>
+						
 						<div class="row wrap" style="margin-top:16px">
 							<button class="btn" onclick={() => power('restart')}
 								><RefreshCw size={14} /> Restart PixelPlus</button
@@ -1514,25 +1672,57 @@
 				<section class="card">
 					<div class="card-head">
 						<ScrollText size={16} />
-						<h2 class="grow">Logs</h2>
+												<h2 class="grow">Logs</h2>
+						<button class="btn ghost icon sm" onclick={loadLogs} aria-label="Refresh logs" title="Refresh"
+							><RefreshCw size={14} /></button
+						>
+						<button class="btn sm" onclick={copyLogs} disabled={!logs}
+							><Copy size={13} /> Copy for support</button
+						>
+					</div>
+					<div class="logbar">
 						<Segmented
 							bind:value={logFilter}
 							size="sm"
-							label="Filter"
+							label="Show"
 							options={[
 								{ value: 'all', label: 'Everything' },
-								{ value: 'warn', label: 'Problems' }
+								{ value: 'warn', label: logProblems ? `Problems · ${logProblems}` : 'Problems' }
 							]}
 						/>
-						<button class="btn ghost icon sm" onclick={loadLogs} aria-label="Refresh logs"
-							><RefreshCw size={14} /></button
-						>
+						<input
+							class="input sm grow"
+							placeholder="Search logs"
+							bind:value={logQ}
+							aria-label="Search logs"
+						/>
 					</div>
-					<div class="logs mono">
-						{#if logs == null}<Skeleton count={10} h={14} />{/if}
-						{#each logLines as l, i (i)}<div class:warn={/WARN/.test(l)} class:err={/ERROR/.test(l)}>
-								{l}
-							</div>{/each}
+					<div class="loglist">
+						{#if logs == null}<div class="card-body"><Skeleton count={8} h={18} /></div>{/if}
+						{#each logGroups as g (g.day)}
+							<div class="logday">{g.day}</div>
+							{#each g.rows as l, i (i + l.raw)}
+								<div class="logrow {l.level}">
+									<span class="lt num">{l.time ? fmtClock(l.time) : ''}</span>
+									<span class="lvl-badge {l.level}"
+										>{l.level === 'error'
+											? 'Error'
+											: l.level === 'warn'
+												? 'Warning'
+												: l.level === 'debug'
+													? 'Detail'
+													: 'Info'}</span
+									>
+									<span class="lm">{l.message}</span>
+								</div>
+							{/each}
+						{:else}
+							{#if logs != null}
+								<div class="card-body faint small">
+									{logFilter === 'warn' ? 'No problems logged. Nice.' : 'Nothing matches.'}
+								</div>
+							{/if}
+						{/each}
 					</div>
 				</section>
 			{/if}
@@ -1556,7 +1746,9 @@
 				type="password"
 				bind:value={pwNew}
 				autocomplete="new-password"
-			/></label
+			/>{#if pwNew && pwNew.length < 6}<span class="hint" style="color:var(--red)"
+					>Use at least 6 characters</span
+				>{/if}</label
 		>
 		<label class="field"
 			><span class="label">Repeat it</span><input
@@ -1573,7 +1765,7 @@
 		{#if sys?.passwordSet}<button class="btn ghost" onclick={() => setPassword(true)}>Remove password</button
 			><span class="grow"></span>{/if}
 		<button class="btn ghost" onclick={() => (pwOpen = false)}>Cancel</button>
-		<button class="btn primary" disabled={!pwNew || pwNew !== pwNew2} onclick={() => setPassword()}
+		<button class="btn primary" disabled={pwNew.length < 6 || pwNew !== pwNew2} onclick={() => setPassword()}
 			>Save password</button
 		>
 	{/snippet}
@@ -1620,12 +1812,54 @@
 		color: var(--text);
 		box-shadow: inset 0 0 0 1px var(--border-2);
 	}
-	.si.on :global(svg) {
+		.si.on .si-ic {
 		color: var(--accent-text);
+	}
+	.si-ic {
+		display: grid;
+		place-items: center;
+		flex: 0 0 auto;
+	}
+	.si-txt {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		flex: 1 1 auto;
+	}
+	.si-desc,
+	.si :global(.si-chev),
+	.secbar .back {
+		display: none;
 	}
 	.content {
 		max-width: 820px;
 		min-width: 0;
+	}
+	.secbar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 28px;
+		margin: -4px 0 8px;
+	}
+	.notapplied {
+		color: var(--accent-text);
+		font-weight: 560;
+	}
+	.devnote {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 10px;
+		padding: 4px 10px;
+		border-radius: 99px;
+		background: var(--blue-soft);
+		color: var(--blue);
+		font-size: 12px;
+		font-weight: 560;
+	}
+	.devnote strong {
+		font-weight: 650;
 	}
 	:global(.spin) {
 		animation: spin 1s linear infinite;
@@ -1744,10 +1978,33 @@
 	.disabled {
 		opacity: 0.5;
 	}
-	.reqgrid {
+		.reqgrid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 200px;
+		grid-template-columns: minmax(0, 1fr) 210px;
 		gap: 20px;
+	}
+	.lanwarn {
+		margin-top: 16px;
+	}
+	.howto {
+		margin-top: 8px;
+	}
+	.howto summary {
+		cursor: pointer;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.howto ol {
+		margin: 8px 0;
+		padding-left: 20px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.field .label :global(svg) {
+		display: inline-block;
+		vertical-align: -2px;
+		margin-right: 2px;
 	}
 	.qrbox {
 		display: flex;
@@ -1759,7 +2016,7 @@
 		background: var(--surface-2);
 		text-align: center;
 	}
-	.qrbox a {
+	.qrbox a:not(.btn) {
 		color: var(--accent-text);
 		word-break: break-all;
 	}
@@ -1835,39 +2092,150 @@
 		font-weight: 550;
 		font-size: 13.5px;
 	}
-	.logs {
-		max-height: 60vh;
+		.logbar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 12px 20px;
+		border-bottom: 1px solid var(--border);
+		flex-wrap: wrap;
+	}
+	.logbar .input {
+		width: auto;
+		min-width: 160px;
+	}
+	.loglist {
+		max-height: 62vh;
 		overflow: auto;
-		padding: 14px 20px;
-		font-size: 12px;
-		line-height: 1.7;
-		background: var(--canvas-bg);
-		color: #b9bcc6;
 		border-radius: 0 0 var(--r-3) var(--r-3);
-		white-space: pre-wrap;
-		word-break: break-word;
 	}
-	.logs .warn {
-		color: #f5c35b;
+	.logday {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		padding: 8px 20px;
+		font-size: 11px;
+		font-weight: 650;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--text-3);
+		background: var(--surface-2);
+		border-bottom: 1px solid var(--border);
 	}
-	.logs .err {
-		color: #ff7b7b;
+	.logrow {
+		display: grid;
+		grid-template-columns: 92px 74px minmax(0, 1fr);
+		align-items: baseline;
+		gap: 10px;
+		padding: 8px 20px;
+		border-bottom: 1px solid var(--border);
+		font-size: 13px;
+	}
+	.lt {
+		color: var(--text-3);
+		font-size: 12px;
+	}
+	.lm {
+		overflow-wrap: anywhere;
+	}
+	.lvl-badge {
+		justify-self: start;
+		font-size: 11px;
+		font-weight: 620;
+		padding: 1px 8px;
+		border-radius: 99px;
+		background: var(--surface-3);
+		color: var(--text-2);
+	}
+	.lvl-badge.warn {
+		background: var(--accent-soft);
+		color: var(--accent-text);
+	}
+	.lvl-badge.error {
+		background: var(--red-soft);
+		color: var(--red);
+	}
+	.lvl-badge.debug {
+		color: var(--text-3);
 	}
 	@media (max-width: 900px) {
 		.layout {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
+		}
+		/* Phones and small tablets: an iOS-style list of sections that drills into one. */
+		.mobile-hidden {
+			display: none !important;
 		}
 		.snav {
 			position: static;
-			flex-direction: row;
-			overflow-x: auto;
-			margin: 0 -16px;
-			padding: 0 16px 4px;
-			scrollbar-width: none;
+			gap: 0;
+			border-radius: var(--r-3);
+			background: var(--surface);
+			border: 1px solid var(--border);
+			overflow: hidden;
 		}
-		.si {
-			flex: 0 0 auto;
+		.si,
+		.si.on {
+			height: auto;
+			min-height: 60px;
+			padding: 10px 14px;
+			gap: 14px;
+			border-radius: 0;
+			background: none;
+			box-shadow: none;
+			color: var(--text);
+			border-bottom: 1px solid var(--border);
+		}
+		.si:last-child {
+			border-bottom: 0;
+		}
+		.si-ic {
+			width: 34px;
+			height: 34px;
+			border-radius: 9px;
+			background: var(--surface-3);
+			color: var(--text-2);
+		}
+		.si.on .si-ic {
+			color: var(--text-2);
+		}
+		.si-label {
+			font-weight: 580;
+			font-size: 14.5px;
+		}
+		.si-desc {
+			display: block;
+			font-size: 12.5px;
+			color: var(--text-3);
 			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.si :global(.si-chev) {
+			display: block;
+			color: var(--text-3);
+			flex: 0 0 auto;
+		}
+		.secbar .back {
+			display: inline-flex;
+			margin-left: -10px;
+			color: var(--accent-text);
+			font-size: 15px;
+		}
+		.secbar {
+			margin: -6px 0 10px;
+		}
+		.logrow {
+			grid-template-columns: max-content max-content minmax(0, 1fr);
+			padding: 8px 14px;
+		}
+		.logrow .lm {
+			grid-column: 1 / -1;
+		}
+		.logday,
+		.logbar {
+			padding-left: 14px;
+			padding-right: 14px;
 		}
 		.reqgrid {
 			grid-template-columns: 1fr;

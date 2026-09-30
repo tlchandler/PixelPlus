@@ -9,26 +9,45 @@ ConditionPathExists=/usr/lib/pixelplus/games/pixelplus_games/__main__.py
 
 [Service]
 Type=simple
-User=pixelplus
-Group=pixelplus
+# Its own user (internet-facing sidecar): no polkit rights, no access to show.json /
+# node.json / keys. The group pixelplus-overlay (shared with pixelplusd) opens the
+# overlay shared memory, the local API token and the control socket.
+User=pixelplus-games
+Group=pixelplus-overlay
+SupplementaryGroups=audio
+UMask=0007
 WorkingDirectory=/usr/lib/pixelplus/games
 ExecStart=/usr/bin/python3 -m pixelplus_games
 Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
-Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock
+Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus-games/games.sock
+Environment=PIXELPLUS_LOCAL_TOKEN_FILE=/run/pixelplus/local-token
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/default/pixelplus
 Restart=on-failure
 RestartSec=3
 # The emulator must finish every frame in under 16.7 ms (nice is set before the
-# switch to the pixelplus user, so no extra capability is needed).
+# switch to the service user, so no extra capability is needed).
 Nice=-5
-# Hardening. The overlay buffer (/dev/shm) and the sound card (/dev/snd, audio group)
-# stay reachable; /run/pixelplus is created by tmpfiles.d (0775 root:pixelplus).
+# Control socket for pixelplusd (0770 pixelplus-games:pixelplus-overlay).
+RuntimeDirectory=pixelplus-games
+RuntimeDirectoryMode=0770
+# Hardening. Of the data directory only games/ (ROMs, saves) is visible; the overlay
+# buffer (/dev/shm) and the sound card (/dev/snd, audio group) stay reachable.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=-/var/lib/pixelplus/games -/run/pixelplus
+TemporaryFileSystem=/var/lib/pixelplus:ro
+BindPaths=/var/lib/pixelplus/games
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
 
 [Install]
 WantedBy=multi-user.target

@@ -1,11 +1,25 @@
 <script lang="ts">
 	import { app } from '$lib/stores/app.svelte';
+	import { api } from '$lib/api/client';
 	import { BOARDS } from '$lib/util/boards';
 	import Logo from './Logo.svelte';
 	import { Radio, CircleCheck } from '@lucide/svelte';
 
 	const sys = $derived(app.system);
 	const adopted = $derived(!!sys?.leaderName);
+
+	// "Allow a new leader": another show leader may adopt this one for 15 minutes.
+	let allowUntil = $state<number | null>(null);
+	let allowError = $state('');
+	async function allowNewLeader() {
+		allowError = '';
+		try {
+			const w = await api.joinShow();
+			allowUntil = Date.now() + w.secondsLeft * 1000;
+		} catch (e) {
+			allowError = (e as Error).message;
+		}
+	}
 </script>
 
 <div class="wrap">
@@ -18,6 +32,17 @@
 				Everything is configured on the show leader. This controller receives its settings, sequences and
 				commands automatically — there is nothing to set up here.
 			</p>
+			{#if allowUntil}
+				<p class="small">
+					For the next 15 minutes another show leader can adopt this controller from its Controllers page.
+				</p>
+			{:else}
+				<p class="small muted">
+					Moving it to another show, or its leader is gone for good?
+					<button class="btn sm ghost" onclick={allowNewLeader}>Allow a new leader</button>
+				</p>
+			{/if}
+			{#if allowError}<p class="small" style="color:var(--red)">{allowError}</p>{/if}
 		{:else}
 			<div class="state"><span class="radar"><Radio size={16} /></span> Waiting to be adopted…</div>
 			<h1>Ready to join a show</h1>

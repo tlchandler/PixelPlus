@@ -21,20 +21,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-	channelCount,
-	fillFrame,
-	MARKER_B,
-	nodeFrame,
-	readPpseq,
-	writeFseq,
-	writeWav
-} from './media.mjs';
+import { channelCount, fillFrame, MARKER_B, nodeFrame, readPpseq, writeFseq, writeWav } from './media.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const args = new Set(process.argv.slice(2));
 const KEEP = args.has('--keep');
-const ONLY = [...args].find((a) => a.startsWith('--only='))?.slice(7).split(',');
+const ONLY = [...args]
+	.find((a) => a.startsWith('--only='))
+	?.slice(7)
+	.split(',');
 const OWN_DIR = !process.env.PP_CLUSTER_DIR;
 const DIR = process.env.PP_CLUSTER_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'pixelplus-e2e-'));
 process.env.PP_CLUSTER_DIR = DIR;
@@ -57,7 +52,8 @@ function check(cond, msg) {
 	if (!cond) throw new Fail(msg);
 }
 function eq(a, b, msg) {
-	if (JSON.stringify(a) !== JSON.stringify(b)) throw new Fail(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+	if (JSON.stringify(a) !== JSON.stringify(b))
+		throw new Fail(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(what, fn, { timeout = 15000, every = 250 } = {}) {
@@ -72,7 +68,9 @@ async function until(what, fn, { timeout = 15000, every = 250 } = {}) {
 		}
 		await sleep(every);
 	}
-	throw new Fail(`timed out after ${timeout} ms waiting for ${what}${last instanceof Error ? ` (${last.message})` : ''}`);
+	throw new Fail(
+		`timed out after ${timeout} ms waiting for ${what}${last instanceof Error ? ` (${last.message})` : ''}`
+	);
 }
 async function step(name, fn) {
 	current = name;
@@ -109,7 +107,8 @@ function client(node) {
 		const setCookie = r.headers.get('set-cookie');
 		if (setCookie) cookie = setCookie.split(';')[0].endsWith('=') ? '' : setCookie.split(';')[0];
 		if (raw) {
-			if (expect !== null && r.status !== expect) throw new Fail(`${method} ${node}${p} → ${r.status}, expected ${expect}`);
+			if (expect !== null && r.status !== expect)
+				throw new Fail(`${method} ${node}${p} → ${r.status}, expected ${expect}`);
 			return r;
 		}
 		const text = await r.text();
@@ -171,7 +170,16 @@ const lit = (buf) => buf.some((b) => b !== 0);
 // Scenario state
 // ---------------------------------------------------------------------------
 
-const S = { ids: {}, props: {}, show: null, seq: null, seq2: null, media: null, playlist: null, fseqBytes: null };
+const S = {
+	ids: {},
+	props: {},
+	show: null,
+	seq: null,
+	seq2: null,
+	media: null,
+	playlist: null,
+	fseqBytes: null
+};
 const chanCache = new Map();
 function chanFrame(frame) {
 	if (!chanCache.has(frame)) {
@@ -201,7 +209,8 @@ function verifyPixels(nodeName, t) {
 async function phaseSetup() {
 	await step('start a fresh 3-node cluster', async () => {
 		cluster('start', '--fresh');
-		for (const c of Object.values(NODES)) eq((await c.get('/public/health')).role, 'unconfigured', 'fresh role');
+		for (const c of Object.values(NODES))
+			eq((await c.get('/public/health')).role, 'unconfigured', 'fresh role');
 		const sys = await L.get('/system');
 		check(sys.needsSetup === true, 'fresh leader needs setup');
 	});
@@ -228,7 +237,11 @@ async function phaseSetup() {
 		eq([f1.role, f2.role, f1.outputs, f2.outputs], ['follower', 'follower', 4, 4], 'follower setup');
 		S.ids = { leader: ls.nodeId, f1: f1.nodeId, f2: f2.nodeId };
 		const show = await L.get('/show');
-		eq(show.nodes.map((n) => [n.id, n.role, n.outputs.length]), [[ls.nodeId, 'leader', 60]], 'leader node in show');
+		eq(
+			show.nodes.map((n) => [n.id, n.role, n.outputs.length]),
+			[[ls.nodeId, 'leader', 60]],
+			'leader node in show'
+		);
 		eq(show.schedule.location.timezone, 'America/New_York', 'schedule location from the wizard');
 	});
 
@@ -253,7 +266,11 @@ async function phaseSetup() {
 		});
 		eq((await L.get('/nodes/discovered')).length, 0, 'nothing left to adopt');
 		const sys = await F1.get('/system');
-		eq([sys.role, sys.leaderName, sys.showName], ['follower', 'Main', 'E2E Show'], 'follower knows its leader');
+		eq(
+			[sys.role, sys.leaderName, sys.showName],
+			['follower', 'Main', 'E2E Show'],
+			'follower knows its leader'
+		);
 		await until('f1 manifest (show name)', async () => (await F1.get('/show')).name === 'E2E Show');
 	});
 }
@@ -262,12 +279,23 @@ async function phaseImport() {
 	await step('xLights import: preview, match controllers, apply', async () => {
 		const td = path.join(ROOT, 'crates/pixelplus-core/testdata');
 		const fd = new FormData();
-		fd.append('rgbeffects', new Blob([fs.readFileSync(path.join(td, 'xlights_2025_rgbeffects.xml'))]), 'xlights_rgbeffects.xml');
-		fd.append('networks', new Blob([fs.readFileSync(path.join(td, 'xlights_2025_networks.xml'))]), 'xlights_networks.xml');
+		fd.append(
+			'rgbeffects',
+			new Blob([fs.readFileSync(path.join(td, 'xlights_2025_rgbeffects.xml'))]),
+			'xlights_rgbeffects.xml'
+		);
+		fd.append(
+			'networks',
+			new Blob([fs.readFileSync(path.join(td, 'xlights_2025_networks.xml'))]),
+			'xlights_networks.xml'
+		);
 		const preview = await L.post('/import/xlights', fd);
 		eq(preview.controllers.map((c) => c.name).sort(), ['Front PixelPlus', 'Tree F48'], 'controllers');
 		check(preview.props.length >= 9, `props in preview: ${preview.props.length}`);
-		check(preview.warnings.some((w) => /Window/.test(w)), 'unassigned model warned');
+		check(
+			preview.warnings.some((w) => /Window/.test(w)),
+			'unassigned model warned'
+		);
 		const show = await L.post('/import/xlights/apply', {
 			preview,
 			controllerMap: { 'Front PixelPlus': S.ids.f1, 'Tree F48': S.ids.leader }
@@ -275,16 +303,31 @@ async function phaseImport() {
 		for (const p of show.props) S.props[p.name] = p;
 		// "Front PixelPlus" has 5 ports in xLights, the pHAT only 4: port 5 is left unwired.
 		const poly = S.props['Garage Poly'];
-		eq(poly.segments.map((s) => [s.nodeId, s.output]), [[S.ids.f1, 4]], 'Garage Poly wiring after import');
+		eq(
+			poly.segments.map((s) => [s.nodeId, s.output]),
+			[[S.ids.f1, 4]],
+			'Garage Poly wiring after import'
+		);
 		const h = await L.post('/health/run');
 		const wiring = h.checks.find((c) => c.id === 'wiring');
-		check(wiring.status === 'warn' && /Partly wired: Garage Poly/.test(wiring.detail), `wiring check: ${wiring.detail}`);
+		check(
+			wiring.status === 'warn' && /Partly wired: Garage Poly/.test(wiring.detail),
+			`wiring check: ${wiring.detail}`
+		);
 		check(/Window not wired/.test(wiring.detail), `unwired Window: ${wiring.detail}`);
 	});
 
 	await step('wire the rest by hand (Garage Poly 2nd half + Window on f2)', async () => {
 		const poly = structuredClone(S.props['Garage Poly']);
-		poly.segments.push({ nodeId: S.ids.f2, output: 1, startPixel: 0, pixelCount: 75, propOffset: 75, reverse: true, nullPixels: 0 });
+		poly.segments.push({
+			nodeId: S.ids.f2,
+			output: 1,
+			startPixel: 0,
+			pixelCount: 75,
+			propOffset: 75,
+			reverse: true,
+			nullPixels: 0
+		});
 		// A segment on an output the board doesn't have is refused with a clear message.
 		const bad = structuredClone(poly);
 		bad.segments[1].output = 5;
@@ -292,7 +335,17 @@ async function phaseImport() {
 		check(/Garage doesn't have output 5/.test(err.error.message), err.error.message);
 		await L.put(`/props/${poly.id}`, poly);
 		const win = structuredClone(S.props['Window']);
-		win.segments = [{ nodeId: S.ids.f2, output: 2, startPixel: 2, pixelCount: 60, propOffset: 0, reverse: false, nullPixels: 2 }];
+		win.segments = [
+			{
+				nodeId: S.ids.f2,
+				output: 2,
+				startPixel: 2,
+				pixelCount: 60,
+				propOffset: 0,
+				reverse: false,
+				nullPixels: 2
+			}
+		];
 		await L.put(`/props/${win.id}`, win);
 		S.show = await L.get('/show');
 		for (const p of S.show.props) S.props[p.name] = p;
@@ -316,7 +369,7 @@ async function phaseContent() {
 			mediaFilename: 'C:\\Users\\me\\Documents\\xLights\\Audio\\E2E Song.wav',
 			frame: (i, b) => fillFrame(S.show.props, i, FRAME_MS, b)
 		});
-		const wav = writeWav({ seconds: SONG_FRAMES * FRAME_MS / 1000 });
+		const wav = writeWav({ seconds: (SONG_FRAMES * FRAME_MS) / 1000 });
 		const mf = new FormData();
 		mf.append('file', new Blob([wav]), 'E2E Song.wav');
 		S.media = await L.post('/media', mf);
@@ -325,18 +378,30 @@ async function phaseContent() {
 		const sf = new FormData();
 		sf.append('fseq', new Blob([S.fseqBytes]), 'E2E Song.fseq');
 		S.seq = await L.post('/sequences', sf);
-		eq([S.seq.durationMs, S.seq.frameMs, S.seq.channelCount, S.seq.mediaId], [20000, 50, S.channels, S.media.id], 'sequence');
+		eq(
+			[S.seq.durationMs, S.seq.frameMs, S.seq.channelCount, S.seq.mediaId],
+			[20000, 50, S.channels, S.media.id],
+			'sequence'
+		);
 		const th = await L.raw('GET', `/sequences/${S.seq.id}/thumbnail`);
 		eq(th.headers.get('content-type'), 'image/png', 'thumbnail type');
 		const png = Buffer.from(await th.arrayBuffer());
 		eq(png.subarray(1, 4).toString(), 'PNG', 'thumbnail is a PNG');
 		const peaks = await L.get(`/media/${S.media.id}/peaks?n=50`);
-		check(peaks.length === 50 && peaks.every((p) => p >= 0 && p <= 1) && Math.max(...peaks) > 0.1, 'waveform peaks');
+		check(
+			peaks.length === 50 && peaks.every((p) => p >= 0 && p <= 1) && Math.max(...peaks) > 0.1,
+			'waveform peaks'
+		);
 	});
 
 	await step('upload a second sequence together with its audio', async () => {
 		const fd = new FormData();
-		const short = writeFseq({ channelCount: S.channels, frameMs: 25, frames: 200, frame: (i, b) => fillFrame(S.show.props, i, 25, b) });
+		const short = writeFseq({
+			channelCount: S.channels,
+			frameMs: 25,
+			frames: 200,
+			frame: (i, b) => fillFrame(S.show.props, i, 25, b)
+		});
 		fd.append('fseq', new Blob([short]), 'Short One.fseq');
 		fd.append('audio', new Blob([writeWav({ seconds: 5, hz: 330 })]), 'Short One.wav');
 		S.seq2 = await L.post('/sequences', fd);
@@ -366,11 +431,15 @@ async function phaseContent() {
 			eq([s.frameCount, s.frameUs, s.sha], [SONG_FRAMES, FRAME_MS * 1000, sha], `${f} slice header`);
 			for (let i = 0; i < s.frameCount; i++) {
 				const exp = nodeFrame(S.show.props, S.ids[f], chanFrame(i), s.ppo);
-				if (!exp.equals(s.frame(i))) throw new Fail(`${f}: slice frame ${i} differs from the leader's rendering`);
+				if (!exp.equals(s.frame(i)))
+					throw new Fail(`${f}: slice frame ${i} differs from the leader's rendering`);
 			}
 			log(`${f}: ${s.frameCount} frames, outputs ${s.ppo.join('/')} px — all bytes match`);
 		}
-		check(!fs.existsSync(path.join(DIR, 'leader', 'sequences', `${S.seq.id}.ppseq`)), 'leader plays the fseq itself');
+		check(
+			!fs.existsSync(path.join(DIR, 'leader', 'sequences', `${S.seq.id}.ppseq`)),
+			'leader plays the fseq itself'
+		);
 	});
 }
 
@@ -388,7 +457,8 @@ async function phaseShow() {
 		check(up.mediaId, 'browser-rendered DJ audio stored');
 		const looks = await L.get('/effects');
 		const look = looks.find((e) => e.effect === 'candycane') ?? looks[0];
-		const pl = (await L.get('/playlists'))[0] ?? (await L.post('/playlists', { name: 'Main Show', items: [] }));
+		const pl =
+			(await L.get('/playlists'))[0] ?? (await L.post('/playlists', { name: 'Main Show', items: [] }));
 		pl.items = [
 			{ id: 'it1', type: 'sequence', sequenceId: S.seq.id },
 			{ id: 'it2', type: 'dj', djClipId: clip.id },
@@ -420,14 +490,21 @@ async function phaseShow() {
 		sch.enabled = true;
 		await L.put('/schedule', sch);
 		const prev = await L.get('/schedule/preview?days=2');
-		check(prev.some((o) => o.entryId === 'e2e-now'), 'schedule preview lists the entry');
+		check(
+			prev.some((o) => o.entryId === 'e2e-now'),
+			'schedule preview lists the entry'
+		);
 	});
 
 	await step('scheduler starts the show; WebSocket status progresses', async () => {
-		const st = await until('player playing the sequence', async () => {
-			const p = await L.get('/player');
-			return p.state === 'playing' && p.item?.id === S.seq.id && p;
-		}, { timeout: 20000 });
+		const st = await until(
+			'player playing the sequence',
+			async () => {
+				const p = await L.get('/player');
+				return p.state === 'playing' && p.item?.id === S.seq.id && p;
+			},
+			{ timeout: 20000 }
+		);
 		eq([st.playlist?.id, st.scheduleEntry?.id, st.durationMs], [S.playlist.id, 'e2e-now', 20000], 'status');
 		const ws = new WebSocket(`ws://127.0.0.1:${URL_OF.leader}/api/v1/ws`);
 		const msgs = [];
@@ -438,7 +515,10 @@ async function phaseShow() {
 		check(statuses.length >= 4, `status messages while playing: ${statuses.length}`);
 		const pos = statuses.filter((s) => s.item?.id === S.seq.id).map((s) => s.posMs);
 		check(pos.length >= 2 && pos.at(-1) > pos[0], `posMs advances: ${pos.join(',')}`);
-		check(msgs.some((m) => m.type === 'nodes'), 'nodes message on connect');
+		check(
+			msgs.some((m) => m.type === 'nodes'),
+			'nodes message on connect'
+		);
 		for (const f of [F1, F2]) {
 			const p = await f.get('/player');
 			eq([p.state, p.item?.id], ['playing', S.seq.id], 'follower plays too');
@@ -454,7 +534,10 @@ async function phaseShow() {
 				check(k > 0, `not all nodes are on the sequence: ${taps.map((t) => t.seq).join(',')}`);
 				break; // the song ended
 			}
-			for (const [name, t] of [['f1', a], ['f2', b]]) {
+			for (const [name, t] of [
+				['f1', a],
+				['f2', b]
+			]) {
 				// Frame difference corrected for when each snapshot was taken.
 				const drift = t.frame - l.frame - (t.wallMs - l.wallMs) / FRAME_MS;
 				worst = Math.max(worst, Math.abs(drift));
@@ -475,7 +558,10 @@ async function phaseShow() {
 		await sleep(700);
 		const [l, a] = await Promise.all([tap(L), tap(F1)]);
 		check(l.frame >= 240 && l.frame < 260, `leader frame after seek ${l.frame}`);
-		check(Math.abs(a.frame - l.frame - (a.wallMs - l.wallMs) / FRAME_MS) <= 1.5, `f1 after seek ${a.frame} vs ${l.frame}`);
+		check(
+			Math.abs(a.frame - l.frame - (a.wallMs - l.wallMs) / FRAME_MS) <= 1.5,
+			`f1 after seek ${a.frame} vs ${l.frame}`
+		);
 		await L.post('/player/pause');
 		await sleep(600);
 		const p1 = await Promise.all([tap(L), tap(F2)]);
@@ -485,7 +571,9 @@ async function phaseShow() {
 		check(Math.abs(p2[0].frame - p2[1].frame) <= 1, `paused on the same frame ${p2[0].frame}/${p2[1].frame}`);
 		eq((await F2.get('/player')).state, 'paused', 'follower paused');
 		await L.post('/player/resume');
-		await until('playing again', async () => (await F2.get('/player')).state === 'playing', { timeout: 3000 });
+		await until('playing again', async () => (await F2.get('/player')).state === 'playing', {
+			timeout: 3000
+		});
 	});
 
 	await step('playlist moves on: DJ clip → pause → look (followers run the look)', async () => {
@@ -495,9 +583,14 @@ async function phaseShow() {
 		await until('look', async () => (await L.get('/player')).item?.type === 'effect', { timeout: 8000 });
 		await sleep(400);
 		const [l, a, b] = await Promise.all([tap(L), tap(F1), tap(F2)]);
-		check(lit(Buffer.concat(l.rgb)) && lit(Buffer.concat(a.rgb)) && lit(Buffer.concat(b.rgb)), 'look lights every node');
+		check(
+			lit(Buffer.concat(l.rgb)) && lit(Buffer.concat(a.rgb)) && lit(Buffer.concat(b.rgb)),
+			'look lights every node'
+		);
 		eq((await F1.get('/player')).state, (await L.get('/player')).state, 'follower state follows the leader');
-		await until('back to the sequence (repeat)', async () => (await L.get('/player')).item?.id === S.seq.id, { timeout: 8000 });
+		await until('back to the sequence (repeat)', async () => (await L.get('/player')).item?.id === S.seq.id, {
+			timeout: 8000
+		});
 	});
 }
 
@@ -510,18 +603,27 @@ async function phaseTools() {
 			const t = await tap(c);
 			const px = Buffer.concat(t.rgb);
 			const pixels = [];
-			for (let i = 0; i < px.length; i += 3) if (px[i] || px[i + 1] || px[i + 2]) pixels.push(px.subarray(i, i + 3).toString('hex'));
+			for (let i = 0; i < px.length; i += 3)
+				if (px[i] || px[i + 1] || px[i + 2]) pixels.push(px.subarray(i, i + 3).toString('hex'));
 			check(pixels.length > 0, `${n}: test pattern lit nothing`);
-			check(pixels.every((p) => p === 'ff0000'), `${n}: not solid red (${[...new Set(pixels)].slice(0, 4)})`);
+			check(
+				pixels.every((p) => p === 'ff0000'),
+				`${n}: not solid red (${[...new Set(pixels)].slice(0, 4)})`
+			);
 		}
 		eq((await L.get('/player')).state, 'testing', 'leader state testing');
 		// Raw output test on one follower port.
 		await L.post('/test/start', { mode: 'solid', color: '#00ff00', target: { nodeId: S.ids.f2, output: 2 } });
 		await sleep(600);
 		const t = await tap(F2);
-		check(t.rgb[1].length && t.rgb[1].every((v, i) => (i % 3 === 1 ? v === 255 : v === 0)), 'f2 output 2 all green');
+		check(
+			t.rgb[1].length && t.rgb[1].every((v, i) => (i % 3 === 1 ? v === 255 : v === 0)),
+			'f2 output 2 all green'
+		);
 		await L.post('/test/stop');
-		await until('show back after the test', async () => (await L.get('/player')).state !== 'testing', { timeout: 3000 });
+		await until('show back after the test', async () => (await L.get('/player')).state !== 'testing', {
+			timeout: 3000
+		});
 	});
 
 	await step('identify a follower + the leader', async () => {
@@ -536,10 +638,14 @@ async function phaseTools() {
 		await sleep(500);
 		const t = await tap(F1);
 		const out1 = t.rgb[0];
-		check(lit(out1.subarray(0, 50 * 3)) && !lit(out1.subarray(50 * 3)), 'f1 lights exactly pixels 1–50 of Big Arch');
+		check(
+			lit(out1.subarray(0, 50 * 3)) && !lit(out1.subarray(50 * 3)),
+			'f1 lights exactly pixels 1–50 of Big Arch'
+		);
 		// Pretend pixel 38 (index 37) is broken: "yes" while all lit pixels are before it.
 		let guard = 0;
-		while (!st.done && guard++ < 12) st = await L.post(`/faultfinder/${st.session}/answer`, { lit: st.litTo <= 37 });
+		while (!st.done && guard++ < 12)
+			st = await L.post(`/faultfinder/${st.session}/answer`, { lit: st.litTo <= 37 });
 		check(st.done && st.result, 'fault finder finished');
 		eq(st.result.pixelIndex, 37, 'found pixel');
 		await L.post('/faultfinder/stop');
@@ -572,7 +678,10 @@ async function phaseTools() {
 		eq((await L.get('/player')).state, 'effect', 'effect state');
 		const t = await tap(F1);
 		const arch = t.rgb[0].subarray(0, 300);
-		check(lit(arch) && [...arch].every((v, i) => (i % 3 === 2 ? v > 0 : v === 0)), 'Big Arch solid blue on f1');
+		check(
+			lit(arch) && [...arch].every((v, i) => (i % 3 === 2 ? v > 0 : v === 0)),
+			'Big Arch solid blue on f1'
+		);
 		check(!lit(t.rgb[1]), 'Canes (not targeted) dark');
 		await L.post('/player/effect', { effect: null });
 	});
@@ -581,7 +690,11 @@ async function phaseTools() {
 		const m = S.props['Matrix'];
 		check(m.matrix?.width > 0, 'Matrix has matrix geometry');
 		await L.post(`/overlay/${m.id}/text`, { text: 'HELLO', color: '#ff0000', durationMs: 2000 });
-		const qr = await L.post(`/overlay/${m.id}/qr`, { url: 'http://pixelplus.local/request', durationMs: 2000 }, { expect: null });
+		const qr = await L.post(
+			`/overlay/${m.id}/qr`,
+			{ url: 'http://pixelplus.local/request', durationMs: 2000 },
+			{ expect: null }
+		);
 		check(qr.ok || /QR code/.test(qr.error?.message ?? ''), `QR answer: ${JSON.stringify(qr)}`);
 		const nm = await L.post(`/overlay/${S.props['Big Arch'].id}/text`, { text: 'x' }, { expect: 400 });
 		check(/matrix/.test(nm.error.message), nm.error.message);
@@ -589,14 +702,22 @@ async function phaseTools() {
 	});
 
 	await step('song requests: public page, submit, admin queue', async () => {
-		await L.put('/show/settings', { requests: { enabled: true, maxQueue: 5, title: 'Pick a song', message: 'Tune to 88.1' } });
+		await L.put('/show/settings', {
+			requests: { enabled: true, maxQueue: 5, title: 'Pick a song', message: 'Tune to 88.1' }
+		});
 		const pub = await L.get('/public/requests');
 		eq([pub.enabled, pub.title], [true, 'Pick a song'], 'public request page');
-		check(pub.songs.some((s) => s.sequenceId === S.seq.id), 'songs listed');
+		check(
+			pub.songs.some((s) => s.sequenceId === S.seq.id),
+			'songs listed'
+		);
 		const r = await L.post('/public/requests', { sequenceId: S.seq2.id, name: 'Ana' });
 		check(r.ok && r.position >= 1, 'request accepted');
 		const q = await L.get('/requests');
-		check(q.some((x) => x.sequenceId === S.seq2.id), 'admin queue has it');
+		check(
+			q.some((x) => x.sequenceId === S.seq2.id),
+			'admin queue has it'
+		);
 		await L.del(`/requests/${q[0].id}`);
 		const bad = await L.post('/public/requests', { sequenceId: 'nope' }, { expect: null });
 		check(bad.error, 'unknown song refused');
@@ -612,27 +733,49 @@ async function phaseTools() {
 		const dl = await L.raw('GET', `/snapshots/${snap.id}/download`);
 		check((await dl.arrayBuffer()).byteLength > 0, 'download');
 		const list = await L.get('/snapshots');
-		check(list.some((s) => s.id === snap.id), 'listed');
+		check(
+			list.some((s) => s.id === snap.id),
+			'listed'
+		);
 		await L.del(`/snapshots/${snap.id}`);
-		await until('followers back on the restored show', async () => (await F1.get('/show')).name === 'E2E Show');
+		await until(
+			'followers back on the restored show',
+			async () => (await F1.get('/show')).name === 'E2E Show'
+		);
 	});
 
 	await step('health, power estimate, sensors', async () => {
-		await until('followers synced', async () => (await L.get('/nodes')).every((n) => n.syncState === 'synced'));
+		await until('followers synced', async () =>
+			(await L.get('/nodes')).every((n) => n.syncState === 'synced')
+		);
 		const h = await L.post('/health/run');
 		const ids = h.checks.map((c) => c.id);
-		for (const id of ['followers', 'disk', 'audio', 'output', 'clock', 'sequences', 'wiring', 'schedule']) check(ids.includes(id), `health check ${id}`);
+		for (const id of ['followers', 'disk', 'audio', 'output', 'clock', 'sequences', 'wiring', 'schedule'])
+			check(ids.includes(id), `health check ${id}`);
 		const audio = h.checks.find((c) => c.id === 'audio');
-		check(audio.status === 'warn' && /turned off/.test(audio.detail), `audio check with PIXELPLUS_AUDIO=none: ${audio.detail}`);
+		check(
+			audio.status === 'warn' && /turned off/.test(audio.detail),
+			`audio check with PIXELPLUS_AUDIO=none: ${audio.detail}`
+		);
 		eq(h.checks.find((c) => c.id === 'followers').status, 'ok', 'controllers ok');
 		const p = await L.get(`/power/estimate?sequenceId=${S.seq.id}`);
 		check(p.perOutput.length > 20 && p.perProp.length === S.show.props.length, 'power per output / prop');
-		check(p.perOutput.every((o) => o.peakAmps >= o.avgAmps), 'peak ≥ average');
-		const sensors = await until('simulated sensors (PIXELPLUS_DEV)', async () => {
-			const s = await L.get('/system/sensors');
-			return s.some((x) => x.id === 'inputVoltage') && s;
-		}, { timeout: 12000 });
-		check(sensors.every((s) => typeof s.value === 'number' && s.unit && s.nodeId), 'sensor shape');
+		check(
+			p.perOutput.every((o) => o.peakAmps >= o.avgAmps),
+			'peak ≥ average'
+		);
+		const sensors = await until(
+			'simulated sensors (PIXELPLUS_DEV)',
+			async () => {
+				const s = await L.get('/system/sensors');
+				return s.some((x) => x.id === 'inputVoltage') && s;
+			},
+			{ timeout: 12000 }
+		);
+		check(
+			sensors.every((s) => typeof s.value === 'number' && s.unit && s.nodeId),
+			'sensor shape'
+		);
 		const hist = await L.get('/system/sensors/history?minutes=10');
 		check(Object.keys(hist.series).length > 0, 'sensor history');
 	});
@@ -641,7 +784,10 @@ async function phaseTools() {
 		const g = await L.get('/games/status');
 		eq([g.running, g.available], [false, false], 'games not running');
 		const inv = await L.post('/games/invite', {}, { expect: null });
-		check(inv?.error?.message && !/panic|internal/i.test(inv.error.message), `games invite: ${JSON.stringify(inv)}`);
+		check(
+			inv?.error?.message && !/panic|internal/i.test(inv.error.message),
+			`games invite: ${JSON.stringify(inv)}`
+		);
 		const t = await L.get('/tts/status');
 		eq([t.mode, t.available], ['browser', true], 'TTS falls back to the browser');
 	});
@@ -652,7 +798,10 @@ async function phaseTools() {
 		eq((await L.get('/public/health')).ok, true, 'public health stays open');
 		await L.get('/public/requests');
 		const sys = await L.get('/system');
-		check(sys.passwordSet === true && sys.ips === undefined && sys.cpuPct === undefined, 'unauthenticated /system is minimal');
+		check(
+			sys.passwordSet === true && sys.ips === undefined && sys.cpuPct === undefined,
+			'unauthenticated /system is minimal'
+		);
 		const wrong = await L.post('/auth/login', { password: 'nope' }, { expect: 401 });
 		check(/isn't right/.test(wrong.error.message), wrong.error.message);
 		await L.post('/auth/login', { password: 'e2e-secret' });
@@ -707,7 +856,9 @@ async function phaseResilience() {
 		const wire = t.wire[1].subarray(3, 6);
 		const half = (v) => Math.round(v / 2);
 		check(
-			Math.abs(wire[0] - half(rgb[1])) <= 1 && Math.abs(wire[1] - half(rgb[0])) <= 1 && Math.abs(wire[2] - half(rgb[2])) <= 1,
+			Math.abs(wire[0] - half(rgb[1])) <= 1 &&
+				Math.abs(wire[1] - half(rgb[0])) <= 1 &&
+				Math.abs(wire[2] - half(rgb[2])) <= 1,
 			`GRB 50 %: rgb ${rgb.toString('hex')} → wire ${wire.toString('hex')}`
 		);
 		arch.name = 'Big Arch';
@@ -733,9 +884,13 @@ async function phaseResilience() {
 		const p = await F1.get('/player');
 		check(p.state === 'idle' || p.state === 'stopped', `follower state after losing the leader: ${p.state}`);
 		cluster('restart', 'leader');
-		await until('followers online again', async () => (await L.get('/nodes')).every((n) => n.online), { timeout: 15000 });
+		await until('followers online again', async () => (await L.get('/nodes')).every((n) => n.online), {
+			timeout: 15000
+		});
 		// The schedule is still active: the leader restarts the show by itself.
-		await until('show running again', async () => (await L.get('/player')).state === 'playing', { timeout: 20000 });
+		await until('show running again', async () => (await L.get('/player')).state === 'playing', {
+			timeout: 20000
+		});
 		await until('f2 in sync again', () => inSync(F2, 'f2'), { timeout: 15000 });
 	});
 
@@ -745,23 +900,54 @@ async function phaseResilience() {
 		await until('f2 released', async () => (await F2.get('/system')).leaderName == null, { timeout: 8000 });
 		const show = await L.get('/show');
 		check(!show.nodes.some((n) => n.id === S.ids.f2), 'f2 gone from the show');
-		check(show.props.every((p) => p.segments.every((s) => s.nodeId !== S.ids.f2)), 'its wiring is gone');
-		await until('f2 discovered again', async () => (await L.get('/nodes/discovered')).some((n) => n.id === S.ids.f2), { timeout: 10000 });
+		check(
+			show.props.every((p) => p.segments.every((s) => s.nodeId !== S.ids.f2)),
+			'its wiring is gone'
+		);
+		await until(
+			'f2 discovered again',
+			async () => (await L.get('/nodes/discovered')).some((n) => n.id === S.ids.f2),
+			{ timeout: 10000 }
+		);
 		await L.post('/nodes/adopt', { id: S.ids.f2, name: 'Garage' });
-		await until('f2 online', async () => (await L.get('/nodes')).some((n) => n.id === S.ids.f2 && n.online && n.adopted));
+		await until('f2 online', async () =>
+			(await L.get('/nodes')).some((n) => n.id === S.ids.f2 && n.online && n.adopted)
+		);
 		eq((await F2.get('/system')).leaderName, 'Main', 'f2 follows Main again');
 		// Wire it again so later runs (and the UI walk) see a complete show.
 		const cur = await L.get('/show');
 		const poly = cur.props.find((p) => p.name === 'Garage Poly');
-		poly.segments.push({ nodeId: S.ids.f2, output: 1, startPixel: 0, pixelCount: 75, propOffset: 75, reverse: true, nullPixels: 0 });
+		poly.segments.push({
+			nodeId: S.ids.f2,
+			output: 1,
+			startPixel: 0,
+			pixelCount: 75,
+			propOffset: 75,
+			reverse: true,
+			nullPixels: 0
+		});
 		await L.put(`/props/${poly.id}`, poly);
 		const win = cur.props.find((p) => p.name === 'Window');
-		win.segments = [{ nodeId: S.ids.f2, output: 2, startPixel: 2, pixelCount: 60, propOffset: 0, reverse: false, nullPixels: 2 }];
+		win.segments = [
+			{
+				nodeId: S.ids.f2,
+				output: 2,
+				startPixel: 2,
+				pixelCount: 60,
+				propOffset: 0,
+				reverse: false,
+				nullPixels: 2
+			}
+		];
 		await L.put(`/props/${win.id}`, win);
-		await until('f2 slices again', async () => {
-			const n = (await L.get('/nodes')).find((x) => x.id === S.ids.f2);
-			return n.files.total === 2 && n.files.pending === 0;
-		}, { timeout: 20000 });
+		await until(
+			'f2 slices again',
+			async () => {
+				const n = (await L.get('/nodes')).find((x) => x.id === S.ids.f2);
+				return n.files.total === 2 && n.files.pending === 0;
+			},
+			{ timeout: 20000 }
+		);
 	});
 }
 

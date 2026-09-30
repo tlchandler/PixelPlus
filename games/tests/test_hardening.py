@@ -167,6 +167,12 @@ class ClientAddressTests(unittest.TestCase):
         # straight from the internet (port forward): headers are the visitor's own words
         self.assertEqual(web.client_address(("8.8.8.8", 5), h), "8.8.8.8")
         self.assertEqual(web.client_address(("127.0.0.1", 5), {"x-forwarded-for": "not an ip"}), "127.0.0.1")
+        # the proxy appends the real address: a forged left-most value is ignored
+        self.assertEqual(web.client_address(("127.0.0.1", 5), {"x-forwarded-for": "6.6.6.6, 81.2.69.160"}),
+                         "81.2.69.160")
+        # CF-Connecting-IP only from cloudflared on this machine
+        self.assertEqual(web.client_address(("192.168.1.20", 5), {"cf-connecting-ip": "198.51.100.7"}),
+                         "192.168.1.20")
 
 
 # --- the hub ---------------------------------------------------------------------------------

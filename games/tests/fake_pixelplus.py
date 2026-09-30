@@ -8,7 +8,9 @@ buffer the way pixelplusd does, so the whole sidecar runs on any Linux box:
         PIXELPLUS_GAMES_SOCKET=/tmp/pp/games.sock python3 -m pixelplus_games
 
 Like pixelplusd with a password set, it answers 401 unless a request carries
-``X-PixelPlus-Local: 1``.  Test helpers live under ``/fake/``:
+``X-PixelPlus-Local: <token>`` with the token it wrote to a file (exported as
+``PIXELPLUS_LOCAL_TOKEN_FILE`` when started), and 403 for POST/PUT without
+``X-PixelPlus-Request: 1``.  Test helpers live under ``/fake/``:
 
     GET  /fake/state              everything recorded so far
     POST /fake/player/<state>     pretend the scheduler changed the show state
@@ -30,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 LOCAL_HEADER = "X-PixelPlus-Local"
+REQUEST_HEADER = "X-PixelPlus-Request"
 
 
 def default_games(prop_id, port=8088):
@@ -61,6 +64,13 @@ class FakePixelPlus:
         self.last_frame = None
         self.calls = []                 # (method, path) in order
         self.unauthorized = 0
+        self.forbidden = 0
+        # Like pixelplusd: a fresh random token per run, in a file the sidecar reads.
+        self.token = base64.b16encode(os.urandom(32)).decode().lower()
+        self.token_dir = __import__("tempfile").mkdtemp(prefix="fake-pp-")
+        self.token_file = os.path.join(self.token_dir, "local-token")
+        with open(self.token_file, "w") as f:
+            f.write(self.token)
         self.games = default_games(prop_id)
         if games:
             self.games.update(games)
@@ -86,6 +96,8 @@ class FakePixelPlus:
         threading.Thread(target=tick, name="fake-status", daemon=True).start()
 
     def start(self):
+        # The sidecar (in-process or a child process started afterwards) reads this.
+        os.environ["PIXELPLUS_LOCAL_TOKEN_FILE"] = self.token_file
         self._start_status_ticker()
         self._thread = threading.Thread(target=self.httpd.serve_forever, args=(0.05,), name="fake-pixelplus",
                                         daemon=True)
@@ -93,6 +105,7 @@ class FakePixelPlus:
         return self
 
     def stop(self):
+        __import__("shutil").rmtree(self.token_dir, ignore_errors=True)
         if getattr(self, "_ticking", None):
             self._ticking.set()
         for c in list(self.ws_clients):
@@ -201,9 +214,15 @@ class FakePixelPlus:
                 return self.rfile.read(n) if n else b""
 
             def _authorized(self):
-                if not fake.require_local or self.path.startswith("/fake/"):
+                if self.path.startswith("/fake/"):
                     return True
-                if self.headers.get(LOCAL_HEADER) == "1":
+                if self.command in ("POST", "PUT", "DELETE") and self.headers.get(REQUEST_HEADER) != "1":
+                    fake.forbidden += 1
+                    self._error(403, "csrf", "missing X-PixelPlus-Request")
+                    return False
+                if not fake.require_local:
+                    return True
+                if self.headers.get(LOCAL_HEADER) == fake.token:
                     return True
                 fake.unauthorized += 1
                 self._error(401, "unauthorized", "Sign in first")

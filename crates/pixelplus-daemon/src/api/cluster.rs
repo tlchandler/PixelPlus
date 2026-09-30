@@ -339,22 +339,16 @@ async fn adopt(
     body: Bytes,
 ) -> ApiResult<Response> {
     let cluster = handle(&state)?;
-    // Signed by our current leader? (An unsigned call may still be allowed.)
-    let signed_by_leader = if auth_header(&headers).is_some() {
-        match verify_from_leader(
-            &state,
-            &cluster,
-            &headers,
-            &Method::POST,
-            &path_of(&uri),
-            &body,
-        ) {
+    // Signed by our current leader? A signature we can't check (e.g. we were
+    // released and forgot the key) counts as unsigned: an unsigned adoption
+    // may still be allowed. Only a clock difference is answered, so the
+    // leader can correct it.
+    let signed_by_leader = auth_header(&headers).is_some()
+        && match verify_from_leader(&state, &cluster, &headers, &Method::POST, &path_of(&uri), &body) {
             Ok(_) => true,
-            Err(r) => return Ok(*r),
-        }
-    } else {
-        false
-    };
+            Err(r) if r.headers().contains_key(sig::TIME_HEADER) => return Ok(*r),
+            Err(_) => false,
+        };
     let call: AdoptCall = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("Invalid adoption request: {e}")))?;
     let auth = AdoptAuth {

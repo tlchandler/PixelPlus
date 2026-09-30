@@ -459,7 +459,8 @@ pub struct AdoptAuth {
     pub peer: Option<std::net::IpAddr>,
 }
 
-/// Why an adoption is allowed (`None`: refused), per ARCHITECTURE §7.5.
+/// Why an adoption is allowed (`Err`: refused), per ARCHITECTURE §7.5. An
+/// empty reason is the ordinary first adoption (trust on first use).
 fn adoption_allowed(
     state: &AppState,
     sh: &Shared,
@@ -471,10 +472,9 @@ fn adoption_allowed(
         .join_window()
         .filter(|w| w.leader_ip.is_none() || w.leader_ip == auth.peer);
     match identity.role {
-        LocalRole::Unconfigured => Ok("first adoption of a new controller"),
-        LocalRole::Follower if identity.leader_id.is_none() => {
-            Ok("first adoption since it was released")
-        }
+        // Trust on first use (a new or released controller).
+        LocalRole::Unconfigured => Ok(""),
+        LocalRole::Follower if identity.leader_id.is_none() => Ok(""),
         LocalRole::Follower => {
             let current = identity.leader_id.as_deref().unwrap_or_default();
             if auth.signed_by_leader {
@@ -587,13 +587,12 @@ pub async fn handle_adopt(
         .peer
         .map(|ip| ip.to_string())
         .unwrap_or_else(|| call.leader_url.clone());
-    super::log_warning(
-        state,
-        format!(
-            "Adopted by show leader {} at {from} ({why}).",
-            leader_label(sh, &call.leader_id)
-        ),
-    );
+    let label = leader_label(sh, &call.leader_id);
+    if why.is_empty() {
+        tracing::info!("Adopted by show leader {label} at {from}.");
+    } else {
+        super::log_warning(state, format!("Adopted by show leader {label} at {from} ({why})."));
+    }
     state.events.toast(
         crate::events::ToastKind::Success,
         "This controller was adopted by the show leader",

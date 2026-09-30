@@ -755,6 +755,24 @@ async fn leader_adopts_followers_and_drives_them() {
     assert!(show.node(&f2_id).is_none());
     assert_eq!(show.props[2].segments.len(), 1);
 
+    // 14. Released / removed controllers can be adopted again (trust on first
+    // use; the leader's old key for them is gone).
+    assert!(leader.cluster.shared.keys.lock().followers.is_empty());
+    for id in [&f1_id] {
+        eventually("offered again", Duration::from_secs(5), || {
+            leader.cluster.discovered().iter().any(|n| &n.id == id).then_some(())
+        })
+        .await;
+        let r = http
+            .post(leader.url("/nodes/adopt"))
+            .json(&serde_json::json!({ "id": id }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "re-adopt {id}: {}", r.text().await.unwrap());
+    }
+    assert_eq!(f1.state.identity().leader_id.as_deref(), Some(leader_id.as_str()));
+
     for n in [&leader, &f1, &f2] {
         n.cluster.shutdown();
         let _ = std::fs::remove_dir_all(&n.dir);
@@ -874,6 +892,24 @@ async fn adoption_rules_skew_and_replay() {
     while let Ok(c) = f.player_rx.try_recv() {
         assert!(!matches!(c, PlayerCmd::Sync(p) if p.brightness == 9), "replayed sync applied");
     }
+
+    // Removed from the show (force), then adopted again: works (TOFU), with a
+    // new key.
+    let r = http.delete(leader.url(&format!("/nodes/{f_id}?force=1"))).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(f.state.identity().leader_id, None);
+    eventually("f offered again", Duration::from_secs(5), || {
+        leader.cluster.discovered().iter().any(|n| n.id == f_id).then_some(())
+    })
+    .await;
+    let r = http
+        .post(leader.url("/nodes/adopt"))
+        .json(&serde_json::json!({ "id": f_id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
+    assert_ne!(f.state.identity().cluster_key.as_deref(), Some(key.as_str()));
 
     // "Allow a new leader" on the follower (signed-in admin, 15 minutes).
     let r = http

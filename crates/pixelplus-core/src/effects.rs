@@ -118,16 +118,16 @@ pub fn effect_label(kind: EffectKind) -> &'static str {
 
 fn effect_description(kind: EffectKind) -> &'static str {
     match kind {
-        EffectKind::Solid => "Every pixel one steady colour.",
-        EffectKind::Chase => "Bands of colour running along each prop.",
+        EffectKind::Solid => "Every pixel one steady color.",
+        EffectKind::Chase => "Bands of color running along each prop.",
         EffectKind::Twinkle => "Pixels gently fade in and out at random.",
         EffectKind::Rainbow => "A flowing rainbow along each prop or across the display.",
-        EffectKind::Colorwash => "The whole display slowly blends through a list of colours.",
+        EffectKind::Colorwash => "The whole display slowly blends through a list of colors.",
         EffectKind::Candycane => "Moving stripes, like a candy cane.",
         EffectKind::Fire => "Flickering flames rising from the bottom of each prop.",
         EffectKind::Snow => "Snowflakes drifting down.",
-        EffectKind::Sparkle => "Quick glints over a background colour.",
-        EffectKind::Wave => "Smooth waves of colour rolling across the display.",
+        EffectKind::Sparkle => "Quick glints over a background color.",
+        EffectKind::Wave => "Smooth waves of color rolling across the display.",
         EffectKind::Meteor => "Shooting stars with fading tails.",
         EffectKind::Strobe => "Fast flashes.",
         EffectKind::Breathe => "Slowly brightens and dims, like breathing.",

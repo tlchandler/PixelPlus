@@ -13,7 +13,8 @@
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-	import Segmented from '$lib/components/ui/Segmented.svelte';
+		import Segmented from '$lib/components/ui/Segmented.svelte';
+	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import {
 		Plus,
 		Play,
@@ -33,7 +34,6 @@
 		Gamepad2,
 		Search,
 		Check,
-		LoaderCircle
 	} from '@lucide/svelte';
 
 	type Section = 'intro' | 'items' | 'outro';
@@ -91,7 +91,7 @@
 				const m = s.media.find((x) => x.id === q?.mediaId);
 				return {
 					name: q?.name ?? 'Missing sequence',
-					sub: m ? 'Sequence + audio' : 'Sequence',
+										sub: m ? 'Song' : 'Light-only sequence',
 					ms: q?.durationMs ?? 0,
 					icon: Music,
 					tone: 'accent'
@@ -131,14 +131,17 @@
 			case 'pause':
 				return { name: 'Pause', sub: 'Dark and quiet', ms: it.durationMs, icon: Clock, tone: '' };
 			case 'command':
-				return {
+								return {
 					name: commandLabel(it.command),
-					sub: 'Command',
+					sub: commandKind(it.command),
 					ms: 0,
 					icon: it.command.startsWith('games') ? Gamepad2 : Terminal,
 					tone: ''
 				};
 		}
+	}
+		function commandKind(c: string) {
+		return c.startsWith('games.') ? 'Game' : c.startsWith('overlay.') ? 'Message' : 'Action';
 	}
 	function commandLabel(c: string) {
 		return (
@@ -157,17 +160,33 @@
 		return [...p.intro, ...p.items, ...p.outro].reduce((n, it) => n + itemInfo(it, show).ms, 0);
 	}
 
-	function add(it: Omit<PlaylistItem, 'id'>, section: Section = target) {
+		/** Items added while the add sheet is open (it stays open so you can add several). */
+	let addedNow = $state<string[]>([]);
+	function add(it: Omit<PlaylistItem, 'id'>, section: Section = target, key?: string) {
 		if (!draft) return;
 		const item = { ...it, id: newId() } as PlaylistItem;
 		draft[section] = [...draft[section], item];
 		queueSave();
-		addOpen = false;
+		if (addOpen) {
+			if (key) addedNow = [...addedNow, key];
+			return;
+		}
 		toasts.push({
 			kind: 'success',
 			message: `Added to ${section === 'items' ? 'the playlist' : section}`,
 			timeout: 1800
 		});
+	}
+	$effect(() => {
+		if (!addOpen) addedNow = [];
+	});
+	let titleInput: HTMLInputElement | undefined = $state();
+	/** New playlist: put the cursor in its name, selected, ready to type over (like Linear). */
+	function focusTitle() {
+		setTimeout(() => {
+			titleInput?.focus();
+			titleInput?.select();
+		}, 60);
 	}
 	function removeItem(section: Section, i: number) {
 		if (!draft) return;
@@ -207,7 +226,10 @@
 				crossfadeMs: 0
 			})
 		);
-		if (p) selectedId = p.id;
+				if (p) {
+			selectedId = p.id;
+			focusTitle();
+		}
 	}
 	async function duplicate() {
 		if (!draft) return;
@@ -363,17 +385,21 @@
 		</div>
 		<div class="lib-list">
 			{#each library as l (l.key)}
+								{@const times = addedNow.filter((k) => k === l.key).length}
 				<button
 					class="lib-item"
+					class:added={times > 0}
 					draggable="true"
 					ondragstart={(e) => libDrag(e, l.item)}
-					onclick={() => add(l.item)}
+					onclick={() => add(l.item, target, l.key)}
 				>
 					<div class="grow">
 						<div class="ellipsis small"><strong>{l.name}</strong></div>
 						<div class="faint tiny ellipsis">{l.sub}</div>
 					</div>
-					<Plus size={16} />
+					{#if times}<span class="addedmark"
+							><Check size={15} />{times > 1 ? ` ×${times}` : ''}</span
+						>{:else}<Plus size={16} />{/if}
 				</button>
 			{:else}
 				<div class="faint small" style="padding:12px">Nothing here yet.</div>
@@ -425,17 +451,14 @@
 			{#if draft}
 				<section class="builder card">
 					<header class="bhead">
-						<input
+												<input
 							class="title-input"
+							bind:this={titleInput}
 							bind:value={draft.name}
 							oninput={queueSave}
 							aria-label="Playlist name"
 						/>
-						<span class="save faint tiny">
-							{#if saveState === 'saving'}<LoaderCircle size={12} class="spin" /> Saving{:else if saveState === 'dirty'}Unsaved{:else}<Check
-									size={12}
-								/> Saved{/if}
-						</span>
+												<span class="save"><SaveState state={saveState} /></span>
 						<span class="grow"></span>
 						<button
 							class="btn primary sm"
@@ -573,6 +596,12 @@
 
 <Modal bind:open={addOpen} title="Add to {sectionMeta.find((s) => s.id === target)?.title}" size="md">
 	{@render libraryPanel()}
+	{#snippet footer()}
+		<span class="grow small muted added-count"
+			>{addedNow.length ? `${addedNow.length} added` : 'Tap to add — add as many as you like'}</span
+		>
+		<button class="btn primary" onclick={() => (addOpen = false)}>Done</button>
+	{/snippet}
 </Modal>
 
 <style>
@@ -819,6 +848,37 @@
 	}
 	.lib-target strong {
 		color: var(--accent-text);
+	}
+	/* Five equal tabs that always fit the library column (no clipped "More"). */
+	.lib-tabs :global(.seg) {
+		display: flex;
+		width: 100%;
+	}
+	.lib-tabs :global(.seg button) {
+		flex: 1 1 0;
+		justify-content: center;
+		padding: 0 4px;
+		min-width: 0;
+	}
+	.lib-item.added {
+		border-color: var(--accent-line);
+		background: var(--accent-soft);
+	}
+	.addedmark {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		color: var(--accent-text);
+		font-size: 12px;
+		font-weight: 650;
+	}
+	.added-count {
+		align-self: center;
+	}
+	@media (pointer: coarse) {
+		.lib-item {
+			min-height: 52px;
+		}
 	}
 	.lib-list {
 		display: flex;

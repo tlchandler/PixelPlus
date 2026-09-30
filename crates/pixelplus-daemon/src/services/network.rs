@@ -98,6 +98,10 @@ pub struct NetwatchStatus {
     pub hotspot_ssid: Option<String>,
     #[serde(default)]
     pub hotspot_secured: bool,
+    /// The hotspot's current Wi-Fi password (signed-in owner only; the file is
+    /// readable by root and the pixelplus group).
+    #[serde(default)]
+    pub hotspot_password: Option<String>,
     #[serde(default)]
     pub portal_url: Option<String>,
     #[serde(default)]

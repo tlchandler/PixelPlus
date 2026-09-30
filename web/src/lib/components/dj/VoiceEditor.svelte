@@ -95,7 +95,7 @@
 <Modal
 	open={!!draft}
 	title={isNew ? 'New voice' : `Edit ${draft?.name}`}
-	subtitle="Mix Kokoro base voices into a character, then tune how it sounds when hyped."
+	subtitle="Mix base voices into a character of your own, then tune how it sounds when hyped."
 	size="lg"
 	onclose={() => (voice = null)}
 >

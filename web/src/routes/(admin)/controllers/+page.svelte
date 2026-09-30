@@ -99,10 +99,29 @@
 		for (let i = (show?.nodes.length ?? 0) + 1; ; i++)
 			if (!taken.has(`controller ${i}`)) return `Controller ${i}`;
 	}
+	// ---- "Join another show": this leader becomes a follower of another one.
+	let joinOpen = $state(false);
+	let joinAddr = $state('');
+	let joinBusy = $state(false);
+	async function joinShow() {
+		joinBusy = true;
+		try {
+			await api.joinShow(joinAddr.trim() || undefined);
+			toasts.success(
+				'Ready to join: open PixelPlus on the other show leader and adopt this controller within 15 minutes.'
+			);
+			joinOpen = false;
+		} catch (e) {
+			toasts.error('Could not get ready to join', (e as Error).message);
+		} finally {
+			joinBusy = false;
+		}
+	}
+
 	async function adopt() {
 		if (!adopting || !adoptName.trim()) return;
 		adoptBusy = true;
-		await app.mutate(() => api.adopt(adopting!.id, adoptName.trim()));
+		await app.mutate(() => api.adopt(adopting!.id, adoptName.trim(), adopting!.joining || undefined));
 		adoptBusy = false;
 		adopting = null;
 		scan();
@@ -251,6 +270,7 @@
 		subtitle="Set everything up here on the leader — followers receive their settings and sequences automatically."
 	>
 		{#snippet actions()}
+			<button class="btn ghost" onclick={() => (joinOpen = true)}>Join another show…</button>
 			<button class="btn" onclick={() => scan(true)} disabled={scanning}
 				><span class:spin={scanning} class="ic"><RefreshCw size={16} /></span> Scan network</button
 			>
@@ -279,9 +299,16 @@
 							{BOARDS[d.board]?.name ?? d.board}{d.boardRev ? ` · rev ${d.boardRev}` : ''} · {d.ip ??
 								'unknown address'}{d.pi ? ` · ${d.pi.replace(' Rev 1.0', '')}` : ''}
 						</div>
+						{#if d.duplicate}<div class="small" style="color:var(--red)">
+								Possible duplicate: two devices on the network claim to be this controller. Make sure only one
+								uses this SD card.
+							</div>{:else if d.joining}<div class="small muted">
+								A show leader that wants to join this show. Adopting it replaces its own show.
+							</div>{/if}
 					</div>
 					<button
 						class="btn primary"
+						disabled={d.duplicate}
 						onclick={() => {
 														adopting = d;
 							adoptName = suggestName();
@@ -692,6 +719,30 @@
 		<button class="btn primary" onclick={adopt} disabled={adoptBusy || !adoptName.trim()}
 			>{adoptBusy ? 'Adopting…' : 'Adopt controller'}</button
 		>
+	{/snippet}
+</Modal>
+
+<Modal
+	bind:open={joinOpen}
+	title="Join another show"
+	subtitle="Make this controller a follower of another show leader."
+	size="sm"
+>
+	<p class="small">
+		For the next 15 minutes, the other show leader can adopt this controller from its
+		<strong>Controllers</strong> page. When it does, this controller's own show is replaced by the other
+		one (a copy is kept).
+	</p>
+	<label class="field"
+		><span class="label">Other leader's address (optional)</span><input
+			class="input"
+			placeholder="e.g. 192.168.1.20"
+			bind:value={joinAddr}
+		/><span class="hint">Only that controller may adopt this one. Leave empty to allow any show leader.</span></label
+	>
+	{#snippet footer()}
+		<button class="btn ghost" onclick={() => (joinOpen = false)}>Cancel</button>
+		<button class="btn primary" onclick={joinShow} disabled={joinBusy}>Allow for 15 minutes</button>
 	{/snippet}
 </Modal>
 

@@ -9,8 +9,9 @@
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import Drawer from '$lib/components/ui/Drawer.svelte';
 	import EffectPreview from '$lib/components/viz/EffectPreview.svelte';
-	import ParamEditor from '$lib/components/effects/ParamEditor.svelte';
-	import { Radio, Save, Square, Trash2, WandSparkles, Plus, Check } from '@lucide/svelte';
+		import ParamEditor from '$lib/components/effects/ParamEditor.svelte';
+	import SaveState from '$lib/components/ui/SaveState.svelte';
+	import { Radio, Square, Trash2, WandSparkles, Plus, Check } from '@lucide/svelte';
 
 	const show = $derived(app.show);
 	let schema = $state<EffectSchema>(DEFAULT_EFFECT_SCHEMA);
@@ -30,11 +31,39 @@
 	const live = $derived(app.status?.state === 'effect');
 	const isLive = $derived(live && !!draft && liveId === draft.id);
 
-	function openPreset(p: EffectPreset) {
+		function openPreset(p: EffectPreset) {
 		draft = structuredClone($state.snapshot(p) as EffectPreset);
 		draft.params = { ...defaultParams(schema[draft.effect] ?? []), ...draft.params };
+		lastSaved = JSON.stringify(draft);
+		fxSave = 'saved';
 		open = true;
 	}
+
+	// Saved looks save themselves as you edit (a new look is saved with "Save as look").
+	let fxSave = $state<'saved' | 'saving' | 'dirty'>('saved');
+	let lastSaved = '';
+	let fxTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		if (!draft || !open) return;
+		const now = JSON.stringify(draft);
+		if (!isSaved || now === lastSaved) return;
+		fxSave = 'dirty';
+		clearTimeout(fxTimer);
+		fxTimer = setTimeout(async () => {
+			if (!draft) return;
+			fxSave = 'saving';
+			const d = $state.snapshot(draft) as EffectPreset;
+			try {
+				await api.effects.update(d.id, d);
+				lastSaved = JSON.stringify(d);
+				await app.reloadShow();
+				fxSave = 'saved';
+			} catch (e) {
+				fxSave = 'dirty';
+				toasts.error('Couldn’t save the look', (e as Error).message);
+			}
+		}, 700);
+	});
 	function startFrom(kind: EffectKind) {
 		draft = {
 			id: newId(),
@@ -77,11 +106,12 @@
 		await api.applyEffect(null).catch(() => {});
 		liveId = null;
 	}
-	async function save() {
+		async function save() {
 		if (!draft) return;
 		const d = $state.snapshot(draft) as EffectPreset;
-		if (isSaved) await app.mutate(() => api.effects.update(d.id, d), { success: `Saved “${d.name}”` });
-		else await app.mutate(() => api.effects.create(d), { success: `Saved “${d.name}” to your looks` });
+		lastSaved = JSON.stringify(d);
+		await app.mutate(() => api.effects.create(d), { success: `Saved “${d.name}” to your looks` });
+		fxSave = 'saved';
 	}
 	async function remove() {
 		if (!draft) return;
@@ -145,15 +175,15 @@
 	<div class="gallery">
 		{#each show?.effects ?? [] as p (p.id)}
 			{@const on = live && liveId === p.id}
-			<article class="card fx interactive" class:on>
+						<article class="card fx interactive" class:on>
 				<button class="pv" onclick={() => openPreset(p)} aria-label="Edit {p.name}"
 					><EffectPreview kind={p.effect} params={p.params} height={130} /></button
 				>
 				<div class="meta">
-					<div class="grow">
+					<button class="grow meta-open" onclick={() => openPreset(p)} tabindex="-1" aria-hidden="true">
 						<div class="name ellipsis">{p.name}</div>
 						<div class="faint tiny ellipsis">{EFFECT_META[p.effect].label} · {targetLabel(p)}</div>
-					</div>
+					</button>
 					<button class="btn sm {on ? 'primary' : ''}" onclick={() => quickApply(p)} aria-pressed={on}>
 						{#if on}<Check size={14} /> Live{:else}<Radio size={14} /> Apply{/if}
 					</button>
@@ -180,8 +210,10 @@
 	{#snippet header()}
 		{#if draft}
 			<input class="title-input" bind:value={draft.name} aria-label="Look name" />
-			<div class="faint small" style="margin-left:0">
-				{isSaved ? 'Saved look' : 'New look — not saved yet'}{isLive ? ' · live on the display' : ''}
+						<div class="faint small drawer-sub">
+				{#if isSaved}<SaveState state={fxSave} />{:else}New look — not saved yet{/if}{isLive
+					? ' · live on the display'
+					: ''}
 			</div>
 		{/if}
 	{/snippet}
@@ -276,13 +308,23 @@
 		{:else}
 			<button class="btn soft" onclick={applyLive}><Radio size={15} /> Try it live</button>
 		{/if}
-		<button class="btn primary" onclick={save}
-			>{#if isSaved}<Save size={15} /> Save{:else}<Plus size={15} /> Save as look{/if}</button
-		>
+				{#if !isSaved}
+			<button class="btn primary" onclick={save}><Plus size={15} /> Save as look</button>
+		{/if}
 	{/snippet}
 </Drawer>
 
 <style>
+	.meta-open {
+		text-align: left;
+		min-width: 0;
+	}
+	.drawer-sub {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 2px;
+	}
 	.gallery {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

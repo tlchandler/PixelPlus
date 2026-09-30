@@ -212,7 +212,7 @@ export class MockServer {
 		this.logs = [
 			{
 				level: 'warn',
-				message: 'Garage: difftx rev D detected — port 3 needs a 4/5-swapped lead',
+				message: 'Garage: rev D board — port 3 needs the swapped patch lead',
 				time: new Date(now - 3600e3).toISOString()
 			},
 			{
@@ -552,6 +552,20 @@ export class MockServer {
 
 		// nodes
 		r('GET', '/nodes/discovered', () => this.discovered);
+		let joinUntil = 0;
+		const joinWindow = () => {
+			const left = Math.max(0, Math.round((joinUntil - Date.now()) / 1000));
+			return { open: left > 0, secondsLeft: left, leaderAddress: null };
+		};
+		r('GET', '/system/join-show', () => joinWindow());
+		r('POST', '/system/join-show', () => {
+			joinUntil = Date.now() + 15 * 60 * 1000;
+			return joinWindow();
+		});
+		r('DELETE', '/system/join-show', () => {
+			joinUntil = 0;
+			return joinWindow();
+		});
 		r('POST', '/nodes/adopt', async ({ body }) => {
 			const d = this.discovered.find((x) => x.id === body.id);
 			if (!d) throw new HttpError(404, 'not_found', 'That controller is no longer announcing itself');
@@ -965,7 +979,8 @@ export class MockServer {
 				nowPlaying:
 					st.item && st.state === 'playing'
 						? { name: st.item.name, posMs: st.posMs, durationMs: st.durationMs }
-						: null
+						: null,
+				radioFrequency: rs.radioFrequency?.trim() || null
 			};
 		});
 		r('POST', '/public/requests', ({ body }) => {
@@ -1731,13 +1746,13 @@ function toneWav(seconds: number): ArrayBuffer {
 function demoLogLines(): LogLine[] {
 	const now = Date.now();
 	const lines: [string, LogLine['level'], string][] = [
-		['info', 'info', 'pixelplusd 0.9.0 starting (board difftxlarge rev A, Pi 4 Model B)'],
+		['info', 'info', 'PixelPlus 0.9.0 started on a 60-Port Transmitter (rev A, Raspberry Pi 4)'],
 		['info', 'info', 'Output: DPI 24-bit @ 38.4 MHz, 3 latch banks, 60 outputs'],
 		['info', 'info', 'Cluster: follower "Garage" (pixelplus-garage) online, offset 0.8 ms'],
 		['info', 'info', 'Audio: hw:CARD=Headphones, 48 kHz, normalization to -14 LUFS'],
 		['info', 'info', 'Scheduler: playlist "Main Show" started by "Weeknights"'],
 		['warn', 'warn', 'Garage CPU at 61 °C'],
-		['info', 'info', 'Snapshot "Automatic — nightly" saved (179 KB)']
+		['info', 'info', 'Backup "Automatic — nightly" saved (179 KB)']
 	];
 	return lines.map(([, level, message], i) => ({
 		level,

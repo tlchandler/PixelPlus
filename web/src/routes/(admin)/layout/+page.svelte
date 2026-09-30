@@ -26,6 +26,9 @@
 	let q = $state('');
 	let panel = $state(true);
 	let canvasRef: LayoutCanvas | undefined = $state();
+	// Touch screens get touch wording, and arrange mode only labels the selected prop.
+	const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+	const small = typeof window !== 'undefined' && !!window.matchMedia?.('(max-width: 760px)').matches;
 
 	const sel = $derived(show?.props.find((p) => p.id === selected) ?? null);
 	const list = $derived(
@@ -60,18 +63,21 @@
 
 <div class="wrap">
 	<div class="bar">
-		<h1>Layout</h1>
-		<Segmented
-			bind:value={mode}
-			label="Mode"
-			options={[
-				{ value: 'live', label: 'Live', icon: Eye },
-				{ value: 'edit', label: 'Arrange', icon: Move }
-			]}
-		/>
+		<div class="b1">
+			<h1>Layout</h1>
+			<Segmented
+				bind:value={mode}
+				label="Mode"
+				options={[
+					{ value: 'live', label: 'Live', icon: Eye },
+					{ value: 'edit', label: 'Arrange', icon: Move }
+				]}
+			/>
+		</div>
+		<div class="b2">
 		<label class="lbl"
 			><Switch bind:checked={labels} label="Show names" size="sm" />
-			<Tag size={14} /> <span class="hide-sm">Names</span></label
+			<Tag size={14} /> <span>Names</span></label
 		>
 		<span class="grow"></span>
 		<div class="zoom">
@@ -92,6 +98,7 @@
 		>
 			{#if panel}<PanelRightClose size={16} />{:else}<PanelRightOpen size={16} />{/if}
 		</button>
+		</div>
 	</div>
 
 	<div class="body">
@@ -101,6 +108,7 @@
 					bind:this={canvasRef}
 					props={show.props}
 					edit={mode === 'edit'}
+					editLabels={!touch}
 					{labels}
 					bind:selected
 					onmove={(id, pos) => saveLayout(id, pos)}
@@ -108,7 +116,14 @@
 			{/if}
 			{#if mode === 'edit'}
 				<div class="hint">
-					Drag props to arrange them. Hold <span class="kbd">Shift</span> for fine moves. Scroll or pinch to zoom.
+					{#if touch}
+						Drag to move · pinch to zoom{#if small}<br /><span class="faint"
+								>Arranging works best on a bigger screen</span
+							>{/if}
+					{:else}
+						Drag props to arrange them. Hold <span class="kbd">Shift</span> for fine moves. Scroll or pinch to
+						zoom.
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -190,6 +205,15 @@
 	.bar h1 {
 		font-size: 20px;
 		margin-right: 6px;
+	}
+	.b1,
+	.b2 {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+	}
+	.b2 {
+		flex: 1;
 	}
 	.lbl {
 		display: flex;
@@ -295,7 +319,15 @@
 		}
 		.bar {
 			padding: 10px 12px;
+			gap: 8px;
+		}
+		.b1,
+		.b2 {
+			width: 100%;
 			gap: 10px;
+		}
+		.b1 h1 {
+			flex: 1;
 		}
 		.hint {
 			white-space: normal;

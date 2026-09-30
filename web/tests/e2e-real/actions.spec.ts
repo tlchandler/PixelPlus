@@ -39,17 +39,25 @@ test('transport: pause, resume, stop', async ({ page }) => {
 	await bar.getByRole('button', { name: 'Play', exact: true }).first().click();
 	await expect.poll(async () => (await player()).state).toBe('playing');
 	await bar.getByRole('button', { name: 'Stop', exact: true }).first().click();
-	await expect.poll(async () => (await player()).state).toBe('idle');
+	// Inside a scheduled show window stopping asks first.
+	const confirmStop = page.getByRole('button', { name: 'Stop the show' });
+	if (await confirmStop.isVisible({ timeout: 1500 }).catch(() => false)) await confirmStop.click();
+	// Stop fades out (a few seconds) before the player is idle.
+	await expect.poll(async () => (await player()).state, { timeout: 15_000 }).toBe('idle');
 	await expectNoProblems(page, problems);
 });
 
 test('dashboard blackout and "Test all props"', async ({ page }) => {
 	const problems = watch(page);
 	await page.goto('/');
-	await page.getByRole('button', { name: 'Blackout' }).first().click();
+	// "Blackout" in the API; the UI may call it "Lights off".
+	await page
+		.getByRole('button', { name: /Blackout|Lights off/ })
+		.first()
+		.click();
 	await expect.poll(async () => (await player()).blackout).toBe(true);
 	await page
-		.getByRole('button', { name: /Blackout/ })
+		.getByRole('button', { name: /Blackout|Lights (off|on)|back on/ })
 		.first()
 		.click();
 	await expect.poll(async () => (await player()).blackout).toBe(false);
@@ -92,9 +100,15 @@ test('effects: apply a look live, then stop it', async ({ page }) => {
 test('settings: take a snapshot and see it listed', async ({ page }) => {
 	const problems = watch(page);
 	await page.goto('/settings');
-	await page.getByRole('button', { name: 'Time machine' }).click();
+	await page
+		.getByRole('button', { name: /Time machine|Backups/ })
+		.first()
+		.click();
 	const before = (await daemon<unknown[]>('/snapshots')).length;
-	await page.getByRole('button', { name: 'Take snapshot' }).click();
+	await page
+		.getByRole('button', { name: /Take snapshot|Back up now/ })
+		.first()
+		.click();
 	const dialog = page.getByRole('dialog');
 	if (await dialog.isVisible().catch(() => false)) {
 		await dialog.getByRole('textbox').first().fill('From the UI test');

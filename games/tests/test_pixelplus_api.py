@@ -37,11 +37,26 @@ class ClientTests(FakeTestCase):
         self.api.player()
         self.api.pause()
         self.assertEqual(self.fake.unauthorized, 0)
+        self.assertEqual(self.fake.forbidden, 0)
+        # the old constant header is not enough
+        req = urllib.request.Request(self.fake.base + "/api/v1/show", headers={"X-PixelPlus-Local": "1"})
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req, timeout=3)
+        self.assertEqual(ctx.exception.code, 401)
+        self.fake.unauthorized = 0
         # without the header, a protected daemon refuses
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(self.fake.base + "/api/v1/show", timeout=3)
         self.assertEqual(ctx.exception.code, 401)
         self.assertEqual(self.fake.unauthorized, 1)
+
+    def test_new_token_after_a_daemon_restart_is_picked_up(self):
+        self.api.player()
+        with open(self.fake.token_file, "w") as f:
+            f.write("rotated-token-0123456789")
+        self.fake.token = "rotated-token-0123456789"
+        self.assertIsNotNone(self.api.player())
+        self.assertTrue(self.api.pause())
 
     def test_error_envelope_is_surfaced(self):
         with self.assertRaises(ApiError) as ctx:

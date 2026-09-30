@@ -115,8 +115,19 @@ if [ "$MODELS" = 1 ]; then
   [ -n "$MIRROR" ] && ARGS+=(--base-url "$MIRROR")
   PIXELPLUS_DATA_DIR="$DATA_DIR" "$VPY" -m pixelplus_tts download-models "${ARGS[@]}"
 fi
-if [ "$IS_ROOT" = 1 ] && id pixelplus >/dev/null 2>&1; then
-  chown -R pixelplus:pixelplus "$DATA_DIR/tts"
+# Its own unprivileged user (no polkit rights; security model in docs/BUILDING.md). It reads
+# the music beds through group "pixelplus" (pixelplusd's) and owns only tts/.
+TTS_USER=""
+if [ "$IS_ROOT" = 1 ]; then
+  if ! id pixelplus-tts >/dev/null 2>&1; then
+    adduser --system --group --home /nonexistent --no-create-home \
+      --shell /usr/sbin/nologin --gecos "PixelPlus TTS sidecar" pixelplus-tts >/dev/null
+  fi
+  TTS_USER=pixelplus-tts
+  if getent group pixelplus >/dev/null 2>&1; then
+    adduser pixelplus-tts pixelplus >/dev/null 2>&1 || true
+  fi
+  chown -R pixelplus-tts:pixelplus-tts "$DATA_DIR/tts"
 fi
 
 # --- systemd -----------------------------------------------------------------------
@@ -124,9 +135,11 @@ if [ "$SERVICE" = 1 ]; then
   if [ "$IS_ROOT" = 1 ] && command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
     UNIT=/etc/systemd/system/pixelplus-tts.service
     sed -e "s#/opt/pixelplus-tts#$PREFIX#g" -e "s#/var/lib/pixelplus#$DATA_DIR#g" "$SRC/pixelplus-tts.service" > "$UNIT"
-    if id pixelplus >/dev/null 2>&1; then
-      # run unprivileged, as pixelplusd's user (it owns the data dir and the music beds)
-      sed -i 's#^\[Service\]$#[Service]\nUser=pixelplus\nGroup=pixelplus#' "$UNIT"
+    if [ -n "$TTS_USER" ]; then
+      # run unprivileged as its own user; music beds are readable through group pixelplus
+      EXTRA_GROUP=""
+      getent group pixelplus >/dev/null 2>&1 && EXTRA_GROUP='\nSupplementaryGroups=pixelplus'
+      sed -i "s#^\[Service\]\$#[Service]\nUser=$TTS_USER\nGroup=$TTS_USER$EXTRA_GROUP#" "$UNIT"
     fi
     if [ ! -f /etc/default/pixelplus-tts ]; then
       cat > /etc/default/pixelplus-tts <<EOF

@@ -4,7 +4,17 @@
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
-	import { FileUp, FileCheck2, TriangleAlert, ArrowRight } from '@lucide/svelte';
+	import {
+		FileUp,
+		FileCheck2,
+		TriangleAlert,
+		ArrowRight,
+		CircleCheck,
+		Sparkles,
+		Pencil
+	} from '@lucide/svelte';
+	import type { Prop } from '$lib/api/types';
+	import { portName } from '$lib/util/boards';
 
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -46,6 +56,39 @@
 		rgb = net = null;
 		preview = null;
 	}
+	/** Compare with the current show: what's new, what changed, what stays the same. */
+	const diff = $derived.by(() => {
+		const out = { added: [] as Prop[], changed: [] as Prop[], same: [] as Prop[] };
+		if (!preview) return out;
+		const cur = app.show?.props ?? [];
+		for (const p of preview.props) {
+			const old =
+				cur.find((x) => x.id === p.id) ??
+				cur.find((x) => !!p.xlightsModel && x.xlightsModel === p.xlightsModel) ??
+				cur.find((x) => x.name === p.name);
+			if (!old) out.added.push(p);
+			else if (old.pixelCount !== p.pixelCount || old.kind !== p.kind || old.name !== p.name)
+				out.changed.push(p);
+			else out.same.push(p);
+		}
+		return out;
+	});
+	/** "J3 · Port 2 on Main Controller" for a new prop, once its controller is matched. */
+	function whereItGoes(p: Prop): string {
+		const seg = p.segments[0];
+		if (!seg) return 'Not connected in xLights — wire it here afterwards';
+		const node = app.show?.nodes.find((n) => n.id === map[seg.nodeId]);
+		if (!node) return 'Stays unwired for now';
+		return `${portName(node.board, seg.output)} on ${node.name}`;
+	}
+	/** Daemon import warnings, in plain words. */
+	function friendly(w: string): string {
+		const m = /^skipped '(.+?)': (.+)$/i.exec(w);
+		if (m)
+			return `“${m[1]}” was skipped: ${m[2].replace(/'/g, '’')}. You can add and wire it here after importing.`;
+		return w.charAt(0).toUpperCase() + w.slice(1);
+	}
+
 	/** "Porch has 4 outputs" when the chosen controller has fewer outputs than the xLights one uses. */
 	function portWarning(controller: string, ports: number): string | null {
 		const node = app.show?.nodes.find((n) => n.id === map[controller]);
@@ -82,11 +125,21 @@
 			</label>
 		</div>
 		<div class="tip">
-			<strong>Tip:</strong> Both files are in your xLights show folder. In xLights, set up each PixelPlus
-			controller as
-			<em>PixelPlus / Generic</em> with protocol <em>DDP</em> and “Auto size” — you never need to type a universe
-			or channel.
+			<strong>Where are they?</strong> Both files are in your xLights show folder (the folder you picked in
+			xLights under <em>Show Folder</em>).
 		</div>
+		<details class="xl-help">
+			<summary>Setting up xLights for PixelPlus</summary>
+			<ol>
+				<li>In xLights, open <em>Controllers</em> and add one controller for each PixelPlus box.</li>
+				<li>
+					Choose <em>Ethernet</em>, vendor <em>PixelPlus</em> (or <em>Generic</em>), protocol <em>DDP</em>,
+					and turn on <em>Auto size</em>.
+				</li>
+				<li>Plug each prop into the port it uses in real life, then save.</li>
+			</ol>
+			<p class="faint small">That’s all — PixelPlus works out the rest when you import.</p>
+		</details>
 	{:else}
 		<h3 class="eyebrow">Match controllers</h3>
 		<div class="maps">
@@ -115,16 +168,49 @@
 				{/if}
 			{/each}
 		</div>
-		<h3 class="eyebrow" style="margin-top:20px">{preview.props.length} props to add or update</h3>
-		<div class="props">
-			{#each preview.props as p (p.id)}
-				<div class="prow">
-					<span class="grow ellipsis">{p.name}</span><span class="faint small num">{p.pixelCount} px</span>
+		<p class="summary">
+			Found <strong>{preview.props.length} props</strong> — {diff.added.length} new, {diff.changed.length} changed,
+			{diff.same.length} unchanged.
+		</p>
+		{#if diff.added.length}
+			<h3 class="eyebrow sect"><Sparkles size={13} /> New · {diff.added.length}</h3>
+			<div class="props">
+				{#each diff.added as p (p.id)}
+					<div class="prow">
+						<span class="grow ellipsis"><strong>{p.name}</strong></span>
+						<span class="faint small where ellipsis">{whereItGoes(p)}</span>
+						<span class="faint small num">{p.pixelCount} px</span>
+					</div>
+				{/each}
+			</div>
+		{/if}
+		{#if diff.changed.length}
+			<h3 class="eyebrow sect"><Pencil size={13} /> Changed · {diff.changed.length}</h3>
+			<div class="props">
+				{#each diff.changed as p (p.id)}
+					<div class="prow">
+						<span class="grow ellipsis">{p.name}</span><span class="faint small num">{p.pixelCount} px</span>
+					</div>
+				{/each}
+			</div>
+		{/if}
+		{#if diff.same.length}
+			<details class="same">
+				<summary class="eyebrow"><CircleCheck size={13} /> Unchanged · {diff.same.length}</summary>
+				<div class="props">
+					{#each diff.same as p (p.id)}
+						<div class="prow">
+							<span class="grow ellipsis">{p.name}</span><span class="faint small num">{p.pixelCount} px</span
+							>
+						</div>
+					{/each}
 				</div>
-			{/each}
-		</div>
+			</details>
+		{/if}
 		{#each preview.warnings as w (w)}
-			<div class="notice warn small" style="margin-top:8px"><TriangleAlert size={16} /><span>{w}</span></div>
+			<div class="notice warn small" style="margin-top:10px">
+				<TriangleAlert size={16} class="ico" /><span>{friendly(w)}</span>
+			</div>
 		{/each}
 	{/if}
 	{#snippet footer()}
@@ -135,7 +221,11 @@
 			>
 		{:else}
 			<button class="btn primary" disabled={busy} onclick={apply}
-				>{busy ? 'Importing…' : `Import ${preview.props.length} props`}</button
+				>{busy
+					? 'Importing…'
+					: diff.added.length || diff.changed.length
+						? `Import ${diff.added.length + diff.changed.length} ${diff.added.length + diff.changed.length === 1 ? 'prop' : 'props'}`
+						: 'Everything’s up to date'}</button
 			>
 		{/if}
 	{/snippet}
@@ -211,5 +301,45 @@
 	.props {
 		max-height: 200px;
 		overflow: auto;
+	}
+	.summary {
+		margin-top: 18px;
+		font-size: 14px;
+	}
+	.sect,
+	.same summary {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 16px;
+	}
+	.same summary {
+		cursor: pointer;
+		list-style: none;
+	}
+	.where {
+		max-width: 46%;
+	}
+	.xl-help {
+		margin-top: 10px;
+		font-size: 13px;
+		color: var(--text-2);
+	}
+	.xl-help summary {
+		cursor: pointer;
+		font-weight: 560;
+		color: var(--text);
+	}
+	.xl-help ol {
+		margin: 8px 0;
+		padding-left: 20px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.xl-help em {
+		font-style: normal;
+		font-weight: 560;
+		color: var(--text);
 	}
 </style>

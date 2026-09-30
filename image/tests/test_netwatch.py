@@ -80,6 +80,10 @@ class PortalTests(unittest.TestCase):
         st, _, _ = self.req("POST", "/api/connect", body=["not", "a", "dict"])
         self.assertEqual(st, 400)
 
+    def test_slow_clients_time_out(self):
+        self.assertEqual(portal.Handler.timeout, 10)
+        self.assertGreater(portal.PortalServer.max_clients, 0)
+
     def test_foreign_host_post_redirects(self):
         st, _, _ = self.req("POST", "/api/connect", host="evil.example", body={"ssid": "x"})
         self.assertEqual(st, 302)
@@ -167,6 +171,10 @@ class StateMachineTests(unittest.TestCase):
         nmconn.NM_DIR = self.tmp
         self.nm = FakeNM()
         self.clock = Clock()
+        self.saved_paths = (netwatch.STATE_PATH, netwatch.BOOT_DIR, netwatch.STATUS_PATH)
+        netwatch.STATE_PATH = os.path.join(self.tmp, "state.json")
+        netwatch.BOOT_DIR = self.tmp
+        netwatch.STATUS_PATH = os.path.join(self.tmp, "netwatch.json")
         self.nw = netwatch.Netwatch(self.nm, dict(netwatch.DEFAULTS), clock=self.clock, sleep=self.clock.sleep)
         # no real sockets / nftables in unit tests
         self.nw.start_portal = lambda: None
@@ -176,6 +184,11 @@ class StateMachineTests(unittest.TestCase):
 
     def tearDown(self):
         nmconn.NM_DIR = self.saved_dir
+        netwatch.STATE_PATH, netwatch.BOOT_DIR, netwatch.STATUS_PATH = self.saved_paths
+
+    def hotspot_psk(self):
+        kf = open(os.path.join(self.tmp, "pixelplus-hotspot.nmconnection")).read()
+        return [ln.split("=", 1)[1] for ln in kf.splitlines() if ln.startswith("psk=")]
 
     def advance(self, seconds, step=3):
         end = self.clock.t + seconds
@@ -261,6 +274,14 @@ class StateMachineTests(unittest.TestCase):
         self.advance(400)
         self.assertEqual(self.nw.state, "ONLINE")
 
+    def test_first_setup_hotspot_uses_the_documented_password(self):
+        self.advance(30)
+        self.assertEqual(self.nw.state, "HOTSPOT")
+        self.assertEqual(self.hotspot_psk(), ["pixelplus"])
+        note = open(os.path.join(self.tmp, "PIXELPLUS-HOTSPOT.txt")).read()
+        self.assertIn(self.nw.hotspot_ssid, note)
+        self.assertIn(self.nw.persist["devicePassword"], note)
+
     def test_runtime_disconnect(self):
         self.nm.online_dev = {"device": "wlan0", "connection": "pixelplus-wifi"}
         self.nw.tick()
@@ -269,7 +290,27 @@ class StateMachineTests(unittest.TestCase):
         self.advance(200)
         self.assertEqual(self.nw.state, "ONLINE")  # still waiting (after_disconnect = 300 s)
         self.advance(150)
+        # Deauth resistance: online a moment ago, so it waits 10 minutes in all.
+        self.assertEqual(self.nw.state, "ONLINE")
+        self.advance(260)
         self.assertEqual(self.nw.state, "HOTSPOT")
+        # A configured controller never opens the published default password.
+        pw = self.nw.persist["devicePassword"]
+        self.assertEqual(len(pw), 10)
+        self.assertEqual(self.hotspot_psk(), [pw])
+        st = json.load(open(netwatch.STATUS_PATH))
+        self.assertEqual(st["hotspotPassword"], pw)
+        self.assertEqual(os.stat(netwatch.STATUS_PATH).st_mode & 0o777, 0o640)
+        # Remembered across restarts.
+        again = netwatch.Netwatch(self.nm, dict(netwatch.DEFAULTS), clock=self.clock, sleep=self.clock.sleep)
+        self.assertEqual(again.hotspot_password(), pw)
+
+    def test_owner_chosen_or_open_password_after_being_online(self):
+        self.nw.persist["everOnline"] = True
+        self.nw.cfg["hotspotPassword"] = "my own pass"
+        self.assertEqual(self.nw.hotspot_password(), "my own pass")
+        self.nw.cfg["hotspotPassword"] = None  # "none" in pixelplus.txt: open only for first setup
+        self.assertEqual(self.nw.hotspot_password(), self.nw.persist["devicePassword"])
 
 
 class StatusFileTests(unittest.TestCase):

@@ -65,14 +65,32 @@
 		return show?.media.find((m) => m.id === s.mediaId);
 	}
 
+	/**
+	 * With volume leveling on, every song already plays at the same loudness: nothing to show.
+	 * With it off, point out the songs that will sound much louder or quieter than the rest.
+	 */
 	function loudness(m?: Media) {
-		if (!m?.loudnessLufs) return null;
+		if (!m?.loudnessLufs || show?.settings.audio.normalize) return null;
 		const d = m.loudnessLufs - target;
-		if (Math.abs(d) <= 2) return { label: 'Balanced', cls: 'green', d };
+		if (Math.abs(d) <= 3) return null;
 		return d > 0
-			? { label: `Loud · ${d.toFixed(0)} dB`, cls: 'accent', d }
-			: { label: `Quiet · ${(-d).toFixed(0)} dB`, cls: 'blue', d };
+			? { label: 'Louder than the rest', cls: 'accent', d }
+			: { label: 'Quieter than the rest', cls: 'blue', d };
 	}
+	/** An audio file whose name matches this sequence (offered as a one-tap link). */
+	function audioMatch(s: Sequence): Media | undefined {
+		if (s.mediaId || !show) return undefined;
+		const n = norm(s.name);
+		return show.media.find(
+			(m) => m.kind === 'song' && (norm(m.name) === n || norm(m.name).includes(n) || n.includes(norm(m.name)))
+		);
+	}
+	/** Smoothness of a sequence, in words (fps stays out of sight). */
+	function smoothness(frameMs: number) {
+		const fps = Math.round(1000 / frameMs);
+		return fps >= 40 ? 'Extra smooth' : fps >= 25 ? 'Smooth' : 'Standard';
+	}
+	let fresh = $state<Set<string>>(new Set());
 
 	function norm(name: string) {
 		return name
@@ -86,7 +104,7 @@
 		const audios = files.filter((f) => /\.(mp3|ogg|m4a|wav|flac|aac)$/i.test(f.name));
 		const others = files.filter((f) => !fseqs.includes(f) && !audios.includes(f));
 		for (const o of others)
-			toasts.warn(`Skipped ${o.name} — only .fseq and audio files can be uploaded here`);
+			toasts.warn(`Skipped ${o.name} — only light sequences from xLights and songs can be uploaded here`);
 		const used = new Set<File>();
 		const jobs: Promise<unknown>[] = [];
 		for (const f of fseqs) {
@@ -102,10 +120,23 @@
 		}
 		for (const a of audios.filter((x) => !used.has(x)))
 			jobs.push(run(a.name, 'audio file', (p) => api.media.upload(a, 'song', p)));
+		const before = new Set([...(show?.sequences ?? []), ...(show?.media ?? [])].map((x) => x.id));
 		await Promise.allSettled(jobs);
 		await app.reloadShow();
 		const ok = uploads.filter((u) => u.state === 'done').length;
 		if (ok) toasts.success(`Uploaded ${plural(ok, 'file')}`);
+		// Scroll to and highlight what just arrived.
+		const added = [...(app.show?.sequences ?? []), ...(app.show?.media ?? [])]
+			.map((x) => x.id)
+			.filter((id) => !before.has(id));
+		if (added.length) {
+			fresh = new Set(added);
+			if (!fseqs.length && audios.length) tab = 'audio';
+			requestAnimationFrame(() =>
+				document.getElementById(`row-${added[0]}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+			);
+			setTimeout(() => (fresh = new Set()), 4000);
+		}
 		setTimeout(() => (uploads = uploads.filter((u) => u.state !== 'done')), 4000);
 	}
 
@@ -245,7 +276,7 @@
 >
 	<PageHeader
 		title="Sequences & Audio"
-		subtitle="Upload .fseq files from xLights together with their songs — PixelPlus links them up."
+		subtitle="Upload your xLights sequences and their songs — PixelPlus pairs them up for you."
 	>
 		{#snippet actions()}
 			<button class="btn primary" onclick={() => fileInput?.click()}
@@ -269,8 +300,9 @@
 	<button class="drop" class:active={dragging} onclick={() => fileInput?.click()}>
 		<span class="dicon"><UploadCloud size={24} /></span>
 		<span
-			><strong>Drop .fseq and audio files here</strong>&nbsp;<span class="faint small">
-				— or click to choose. Several at once is fine; matching names are paired automatically.</span
+			><strong>Drop your sequences and songs here</strong>&nbsp;<span class="faint small">
+				— or click to choose. Use the light sequence files from your xLights show folder; songs with matching
+				names are paired automatically.</span
 			></span
 		>
 	</button>
@@ -337,7 +369,7 @@
 				<EmptyState
 					icon={Film}
 					title="No sequences yet"
-					message="In xLights, save your sequence (File → Save) and upload the .fseq from your show folder along with the song."
+					message="In xLights, save your sequence, then upload it from your xLights show folder together with its song. Several at once is fine."
 				>
 					<button class="btn primary" onclick={() => fileInput?.click()}
 						><UploadCloud size={16} /> Upload sequences</button
@@ -349,7 +381,8 @@
 				{#each seqs as s (s.id)}
 					{@const m = mediaOf(s)}
 					{@const ld = loudness(m)}
-					<div class="srow">
+					{@const am = audioMatch(s)}
+					<div class="srow" id="row-{s.id}" class:fresh={fresh.has(s.id)}>
 						<div class="list-row">
 							<button
 								class="thumb"
@@ -368,17 +401,17 @@
 								<button class="sname ellipsis" onclick={() => toggleExpand(s.id, m?.id)}>{s.name}</button>
 								<div class="faint small row wrap" style="gap:6px 10px">
 									<span class="num">{fmtDuration(s.durationMs)}</span>
-									<span class="num">{Math.round(1000 / s.frameMs)} fps</span>
-									{#if m}<span class="linked"><Link2 size={12} /> {m.name}</span>{:else}<span class="nolink"
-											><Link2Off size={12} /> No audio</span
-										>{/if}
+									{#if m}<span class="linked"><Link2 size={12} /> {m.name}</span>{:else if am}
+										<button class="suggest" onclick={() => linkAudio(s, am.id)}
+											><Link2 size={12} /> Link “{am.name}”?</button
+										>
+									{:else}<span class="nolink"><Link2Off size={12} /> Light-only (no song)</span>{/if}
 								</div>
 							</div>
 							{#if ld}<span
 									class="badge {ld.cls} hide-sm"
-									title="Loudness {m?.loudnessLufs} LUFS · target {target} LUFS{show.settings.audio.normalize
-										? ' · normalized automatically'
-										: ''}"><Volume2 size={12} /> {ld.label}</span
+									title="Turn on volume leveling (Settings → Audio) to even this out"
+									><Volume2 size={12} /> {ld.label}</span
 								>{/if}
 							<button
 								class="btn sm ghost icon"
@@ -432,6 +465,13 @@
 										<span class="label">From xLights</span>
 										<div class="faint small mono" style="padding-top:10px">{s.xlightsName ?? s.file}</div>
 									</div>
+									<details class="adv span-2">
+										<summary class="small muted">Advanced</summary>
+										<div class="faint small" style="margin-top:6px">
+											Smoothness: <strong>{smoothness(s.frameMs)}</strong> ({Math.round(1000 / s.frameMs)} updates
+											a second, set in xLights when the sequence was made)
+										</div>
+									</details>
 								</div>
 							</div>
 						{/if}
@@ -454,7 +494,7 @@
 			<div class="card list">
 				{#each media as m (m.id)}
 					{@const ld = loudness(m)}
-					<div class="srow">
+					<div class="srow" id="row-{m.id}" class:fresh={fresh.has(m.id)}>
 						<div class="list-row">
 							<button
 								class="play-dot"
@@ -494,7 +534,9 @@
 				{/each}
 			</div>
 			<p class="faint tiny" style="margin-top:10px">
-				Loudness is measured on upload. With normalization on (Settings → Audio) every song plays at {target} LUFS.
+				{show.settings.audio.normalize
+					? 'Volume leveling is on: every song plays at the same loudness.'
+					: 'Volume leveling is off. Turn it on in Settings → Audio so every song plays at the same loudness.'}
 			</p>
 		{/if}
 	{/if}
@@ -626,7 +668,41 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
+		color: var(--text-3);
+	}
+	.suggest {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		min-height: 28px;
+		padding: 0 10px;
+		border-radius: 99px;
+		background: var(--accent-soft);
 		color: var(--accent-text);
+		font-size: 12px;
+		font-weight: 600;
+	}
+	.suggest:hover {
+		background: var(--accent);
+		color: var(--accent-fg);
+	}
+	@media (pointer: coarse) {
+		.suggest {
+			min-height: 36px;
+		}
+	}
+	.srow.fresh {
+		animation: fresh 3.6s var(--ease);
+	}
+	@keyframes fresh {
+		0%,
+		60% {
+			background: var(--accent-soft);
+			box-shadow: inset 3px 0 0 var(--accent);
+		}
+	}
+	.adv summary {
+		cursor: pointer;
 	}
 	.detail {
 		padding: 0 20px 18px 104px;

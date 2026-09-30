@@ -2,7 +2,8 @@
 	import { api, ApiError } from '$lib/api/client';
 	import { initBackend } from '$lib/api/mode';
 	import type { PublicRequests } from '$lib/api/types';
-	import { fmtDuration } from '$lib/util/format';
+		import { fmtDuration } from '$lib/util/format';
+	import { fmStation } from '$lib/util/visitors';
 	import { Music, Check, Search, Radio, Sparkles, Clock } from '@lucide/svelte';
 	import { fade, fly } from 'svelte/transition';
 
@@ -62,7 +63,8 @@
 		data?.songs.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase())) ?? []
 	);
 	const queued = $derived(new Set(data?.queue.map((x) => x.sequenceId) ?? []));
-	const full = $derived(!!data && data.queue.length >= data.maxQueue);
+		const full = $derived(!!data && data.queue.length >= data.maxQueue);
+	const station = $derived(fmStation(data?.radioFrequency));
 </script>
 
 <svelte:head>
@@ -84,7 +86,10 @@
 		<div class="star"><Sparkles size={22} /></div>
 		<p class="show">{data?.showName ?? ' '}</p>
 		<h1>{data?.title ?? 'Request a song'}</h1>
-		{#if data?.message}<p class="msg">{data.message}</p>{/if}
+				{#if data?.message}<p class="msg">{data.message}</p>{/if}
+		{#if station}
+			<p class="tune"><Radio size={18} /> Tune your radio to <strong>{station}</strong></p>
+		{/if}
 	</header>
 
 	{#if !ready || (!data && !error)}
@@ -167,7 +172,10 @@
 				{/each}
 			</ul>
 		</section>
-		<p class="foot"><Radio size={14} /> Tune in on your car radio · Please be kind to the neighbors</p>
+				<p class="foot">
+			{#if station}<Radio size={14} /> {station} ·
+			{/if}Please be kind to the neighbors
+		</p>
 	{/if}
 
 	{#if error}
@@ -205,11 +213,46 @@
 		overflow-x: hidden;
 		font-size: 15px;
 	}
+		/* Snow falls behind the content: cards are frosted so flakes never cross the text. */
 	.snow {
 		position: fixed;
 		inset: 0;
 		pointer-events: none;
 		overflow: hidden;
+		z-index: 0;
+	}
+	header,
+	.now,
+	.queue,
+	.pick,
+	.closed,
+	.loading,
+	.foot {
+		z-index: 1;
+	}
+	.now,
+	.queue,
+	.closed {
+		background-color: rgba(11, 16, 38, 0.78);
+		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+	}
+	.tune {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 14px;
+		padding: 8px 16px;
+		border-radius: 999px;
+		background: rgba(61, 220, 151, 0.14);
+		border: 1px solid rgba(61, 220, 151, 0.35);
+		color: #d9fbe9;
+		font-size: 15px;
+	}
+	.tune strong {
+		color: #fff;
+		font-weight: 750;
+		letter-spacing: -0.01em;
 	}
 	.snow i {
 		position: absolute;
@@ -466,8 +509,8 @@
 		gap: 12px;
 		padding: 10px 10px 10px 12px;
 		border-radius: 16px;
-		background: rgba(255, 255, 255, 0.06);
-		border: 1px solid rgba(255, 255, 255, 0.06);
+		background: rgba(25, 30, 54, 0.82);
+		border: 1px solid rgba(255, 255, 255, 0.07);
 	}
 	.songs .grow {
 		flex: 1;

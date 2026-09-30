@@ -8,9 +8,10 @@
 #   --no-apt        don't install the Debian packages   (e.g. already in the image)
 #   --no-service    install files only; don't enable/start the systemd service
 #
-# The service runs as the unprivileged "pixelplus" user, like pixelplusd and exactly as the
-# pixelplus Debian package installs it (packaging/systemd/pixelplus-games.service is the same
-# file as ./pixelplus-games.service). On a system with the package the program and unit are
+# The service runs as its own unprivileged user "pixelplus-games" (group "pixelplus-overlay",
+# shared with pixelplusd's user "pixelplus" for the overlay buffer, the local API token, the
+# games/ folder and the control socket), exactly as the pixelplus Debian package installs it
+# (packaging/systemd/pixelplus-games.service is the same file as ./pixelplus-games.service). On a system with the package the program and unit are
 # already installed; this script then only refreshes the program files and enables the unit.
 set -eu
 
@@ -18,7 +19,9 @@ PREFIX=/usr/lib/pixelplus/games
 DATA_DIR=/var/lib/pixelplus
 APT=1
 SERVICE=1
-SERVICE_USER=pixelplus
+SERVICE_USER=pixelplus-games
+SIDECAR_GROUP=pixelplus-overlay
+DAEMON_USER=pixelplus
 while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) PREFIX="${2:?--prefix needs a directory}"; shift 2 ;;
@@ -46,11 +49,15 @@ if [ "$APT" = 1 ]; then
         libretro-nestopia python3-numpy python3-qrcode alsa-utils
 fi
 
-# The service user (normally created by the pixelplus package's postinst).
+# The service user and shared group (normally created by the pixelplus package's postinst).
+getent group "$SIDECAR_GROUP" >/dev/null 2>&1 || addgroup --system "$SIDECAR_GROUP" >/dev/null
+if getent passwd "$DAEMON_USER" >/dev/null 2>&1; then
+    adduser "$DAEMON_USER" "$SIDECAR_GROUP" >/dev/null 2>&1 || true
+fi
 if ! getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
     say "Creating the system user $SERVICE_USER"
-    adduser --system --group --home "$DATA_DIR" --no-create-home \
-        --shell /usr/sbin/nologin --gecos "PixelPlus daemon" "$SERVICE_USER" >/dev/null
+    adduser --system --ingroup "$SIDECAR_GROUP" --home /nonexistent --no-create-home \
+        --shell /usr/sbin/nologin --gecos "PixelPlus games sidecar" "$SERVICE_USER" >/dev/null
 fi
 # Game sound goes through aplay: the sound card belongs to group "audio".
 if getent group audio >/dev/null 2>&1; then
@@ -69,20 +76,25 @@ fi
 
 # ROMs are uploaded from the web UI (Settings > Games) into this folder; smb.nes is Super Mario Bros.
 say "ROM folder: $DATA_DIR/games/roms"
-install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$DATA_DIR" "$DATA_DIR/games" "$DATA_DIR/games/roms"
+OWNER="$DAEMON_USER"
+getent passwd "$OWNER" >/dev/null 2>&1 || OWNER=root
+install -d -m 0750 "$DATA_DIR"
+install -d -o "$OWNER" -g "$SIDECAR_GROUP" -m 2770 "$DATA_DIR/games" "$DATA_DIR/games/roms"
+chgrp -R "$SIDECAR_GROUP" "$DATA_DIR/games" && chmod -R g+rwX "$DATA_DIR/games"
 
-# /run/pixelplus holds the control socket (games.sock) pixelplusd talks to. The package's
-# tmpfiles.d entry creates it; without the package, add an equivalent one.
+# /run/pixelplus holds pixelplusd's local API token; the unit's RuntimeDirectory
+# (/run/pixelplus-games) holds the control socket. The package's tmpfiles.d entry creates
+# /run/pixelplus; without the package, add an equivalent one.
 if [ ! -f /usr/lib/tmpfiles.d/pixelplus.conf ] && [ ! -f /etc/tmpfiles.d/pixelplus.conf ]; then
     say "Adding /etc/tmpfiles.d/pixelplus.conf (/run/pixelplus)"
     mkdir -p /etc/tmpfiles.d
-    printf 'd /run/pixelplus 0775 %s %s -\n' "$SERVICE_USER" "$SERVICE_USER" >/etc/tmpfiles.d/pixelplus.conf
+    printf 'd /run/pixelplus 0775 %s %s -\n' "$OWNER" "$OWNER" >/etc/tmpfiles.d/pixelplus.conf
 fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/pixelplus.conf /etc/tmpfiles.d/pixelplus.conf 2>/dev/null || true
 fi
 if [ ! -d /run/pixelplus ]; then
-    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0775 /run/pixelplus
+    install -d -o "$OWNER" -g "$OWNER" -m 0775 /run/pixelplus
 fi
 
 if ! python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from pixelplus_games.libretro import find_core; sys.exit(0 if find_core() else 1)' "$PREFIX"; then

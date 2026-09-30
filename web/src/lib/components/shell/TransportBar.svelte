@@ -390,7 +390,9 @@
 	.t {
 		font-weight: 600;
 		font-size: 13.5px;
-		letter-spacing: -0.005em;
+		/* No negative tracking here: Chromium's hinting ate the word space ("Wizardsin Winter"). */
+		letter-spacing: 0;
+		word-spacing: 0.02em;
 	}
 	.s {
 		color: var(--text-3);

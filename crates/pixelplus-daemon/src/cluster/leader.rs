@@ -740,7 +740,16 @@ pub struct ReleaseResult {
 }
 
 /// Tell a follower to forget this leader (best effort).
+/// Also forgets the follower's key (it is worthless from now on).
 pub(crate) async fn call_release(state: &AppState, sh: &Shared, node_id: &str) -> bool {
+    let reached = send_release(state, sh, node_id).await;
+    sh.update_keys(|k| {
+        k.followers.remove(node_id);
+    });
+    reached
+}
+
+async fn send_release(state: &AppState, sh: &Shared, node_id: &str) -> bool {
     let my_id = state.identity().id;
     let Some(key) = sh.follower_key(state, node_id) else {
         return false;
@@ -797,10 +806,6 @@ pub async fn release(
         return Err(ApiError::bad_request("The show leader cannot be released."));
     }
     let reached = call_release(state, sh, node_id).await;
-    // A released follower's key is worthless from now on.
-    sh.update_keys(|k| {
-        k.followers.remove(node_id);
-    });
     let id = node_id.to_string();
     state
         .store

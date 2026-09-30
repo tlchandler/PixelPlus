@@ -7,6 +7,7 @@
 		props,
 		edit = false,
 		labels = false,
+		editLabels = true,
 		selected = $bindable<string | null>(null),
 		highlight = [],
 		onmove,
@@ -15,6 +16,8 @@
 		props: Prop[];
 		edit?: boolean;
 		labels?: boolean;
+		/** Arrange mode labels every prop; off on small touch screens, where they'd overlap. */
+		editLabels?: boolean;
 		selected?: string | null;
 		highlight?: string[];
 		onmove?: (id: string, layout: { x: number; y: number }) => void;
@@ -137,7 +140,7 @@
 				);
 				ctx.setLineDash([]);
 			}
-			if (labels || isSel || isHi || edit) {
+			if (labels || isSel || isHi || (edit && editLabels)) {
 				ctx.font = '500 11px Inter Variable, Inter, system-ui, sans-serif';
 				const tw = ctx.measureText(p.name).width;
 				const lx = box.x - 4,
@@ -158,6 +161,7 @@
 		void selected;
 		void edit;
 		void labels;
+		void editLabels;
 		void highlight;
 		redraw();
 	});
