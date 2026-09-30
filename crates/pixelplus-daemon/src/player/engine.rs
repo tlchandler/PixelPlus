@@ -2134,10 +2134,12 @@ impl Core {
         let target = p.pos_ms as f64 + if playing { age } else { 0.0 };
 
         // Tests carried in the packet.
+        let mut new_leader_test = false;
         match (&p.test, p.state) {
             (Some(t), PlayerState::Testing) => {
                 if f.test.as_ref().map(|x| &x.req) != Some(t) {
                     f.test = TestLayer::new(&show, &self.node_id, t, now_ms).ok();
+                    new_leader_test = true;
                 }
             }
             _ => f.test = None,
@@ -2206,6 +2208,11 @@ impl Core {
         }
         let released = p.leader.is_empty() && p.state == PlayerState::Idle;
         f.pkt = Some(p);
+        if new_leader_test {
+            // A test started on the leader (fault finder, test pattern) replaces a
+            // local one, e.g. the "identify" chase, which would otherwise cover it.
+            self.test = None;
+        }
         if released {
             // Released by the leader: stop everything it had us doing.
             self.follow = FollowState::default();
