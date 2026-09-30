@@ -377,9 +377,44 @@ pub fn content_security_policy(web_dir: &Path) -> Option<String> {
     ))
 }
 
+/// The CSP for the UI in `web_dir`, recomputed whenever `index.html` changes
+/// (a rebuilt UI has new inline-script hashes; dev servers and Docker volume
+/// setups rebuild while the daemon runs).
+pub struct CspCache {
+    web_dir: std::path::PathBuf,
+    cached: parking_lot::Mutex<Option<(Option<(std::time::SystemTime, u64)>, Option<HeaderValue>)>>,
+}
+
+impl CspCache {
+    pub fn new(web_dir: &Path) -> Self {
+        CspCache {
+            web_dir: web_dir.to_path_buf(),
+            cached: Default::default(),
+        }
+    }
+
+    fn stamp(&self) -> Option<(std::time::SystemTime, u64)> {
+        let m = std::fs::metadata(self.web_dir.join("index.html")).ok()?;
+        Some((m.modified().ok()?, m.len()))
+    }
+
+    pub fn get(&self) -> Option<HeaderValue> {
+        let stamp = self.stamp();
+        let mut cached = self.cached.lock();
+        if let Some((s, v)) = cached.as_ref() {
+            if *s == stamp {
+                return v.clone();
+            }
+        }
+        let v = content_security_policy(&self.web_dir).and_then(|v| HeaderValue::from_str(&v).ok());
+        *cached = Some((stamp, v.clone()));
+        v
+    }
+}
+
 /// Add the security headers to every response.
 pub async fn headers(
-    State(csp): State<std::sync::Arc<Option<HeaderValue>>>,
+    State(csp): State<std::sync::Arc<CspCache>>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -388,9 +423,9 @@ pub async fn headers(
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     h.insert(header::REFERRER_POLICY, HeaderValue::from_static("same-origin"));
-    if let Some(v) = csp.as_ref() {
-        if !h.contains_key(header::CONTENT_SECURITY_POLICY) {
-            h.insert(header::CONTENT_SECURITY_POLICY, v.clone());
+    if !h.contains_key(header::CONTENT_SECURITY_POLICY) {
+        if let Some(v) = csp.get() {
+            h.insert(header::CONTENT_SECURITY_POLICY, v);
         }
     }
     resp
@@ -557,6 +592,27 @@ mod tests {
         assert_eq!(base64(b"f"), "Zg==");
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
+    }
+
+    #[test]
+    fn csp_follows_rebuilds_of_the_ui() {
+        let dir = std::env::temp_dir().join(format!("pp-csp-{}", pixelplus_core::model::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let index = dir.join("index.html");
+        std::fs::write(&index, "<script>one()</script>").unwrap();
+        let cache = CspCache::new(&dir);
+        let first = cache.get().unwrap();
+        let hash = |js: &str| inline_script_hashes(&format!("<script>{js}</script>")).remove(0);
+        assert!(first.to_str().unwrap().contains(&hash("one()")));
+        assert_eq!(cache.get(), Some(first.clone()), "cached while unchanged");
+        // A rebuild while the daemon runs.
+        std::fs::write(&index, "<script>two(2)</script>").unwrap();
+        let f = std::fs::File::options().append(true).open(&index).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+        let second = cache.get().unwrap();
+        assert!(second.to_str().unwrap().contains(&hash("two(2)")));
+        assert!(!second.to_str().unwrap().contains(&hash("one()")));
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

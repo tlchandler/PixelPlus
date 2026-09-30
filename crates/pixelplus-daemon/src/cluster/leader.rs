@@ -22,6 +22,9 @@ const DISCOVERY_FRESH: Duration = Duration::from_secs(10);
 /// Don't raise "offline" alerts for followers that simply have not reported
 /// since this leader started.
 const STARTUP_GRACE: Duration = Duration::from_secs(30);
+/// After an adoption, wait this long for the follower's first authenticated
+/// beacon before judging (re-adopting, "offline") it.
+const ADOPT_GRACE: Duration = Duration::from_secs(10);
 const READOPT_EVERY: Duration = Duration::from_secs(15);
 
 pub(crate) fn spawn(state: &AppState, sh: &Arc<Shared>) {
@@ -716,7 +719,13 @@ pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResul
             Ok(node)
         })
         .await?;
-    sh.health.lock().remove(&node.id);
+    sh.health.lock().insert(
+        node.id.clone(),
+        super::Health {
+            adopted_at: Some(Instant::now()),
+            ..Default::default()
+        },
+    );
     tracing::info!("adopted {} ({}) at {}", node.name, node.id, peer.addr.ip());
     Ok(node)
 }
@@ -1003,7 +1012,7 @@ pub(crate) fn publish_nodes(state: &AppState, sh: &Shared) {
     }
 }
 
-async fn check_health(state: &AppState, sh: &Arc<Shared>) {
+pub(crate) async fn check_health(state: &AppState, sh: &Arc<Shared>) {
     let identity = state.identity();
     let show = state.store.get();
     let peers: std::collections::HashMap<String, Peer> = sh.peers.read().clone();
@@ -1023,6 +1032,12 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
             let m = member(peer, &identity.id);
             let online = m.is_some_and(|p| p.last_seen.elapsed() < sh.settings.offline_after);
             let h = health.entry(node.id.clone()).or_default();
+            if online {
+                h.adopted_at = None;
+            } else if h.adopted_at.is_some_and(|t| t.elapsed() < ADOPT_GRACE) {
+                // Adopted a moment ago; its first authenticated beacon is on the way.
+                continue;
+            }
             match (h.online, online) {
                 (Some(false), true) => {
                     h.online = Some(true);

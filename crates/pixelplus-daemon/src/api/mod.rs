@@ -21,6 +21,8 @@ pub mod test;
 pub mod tools;
 #[cfg(test)]
 pub mod testkit;
+#[cfg(test)]
+mod security_tests;
 
 pub use error::{ApiError, ApiResult};
 
@@ -84,10 +86,7 @@ pub fn router(state: AppState) -> Router {
         .precompressed_gzip()
         .fallback(ServeFile::new(web.join("index.html")));
 
-    let csp = std::sync::Arc::new(
-        security::content_security_policy(web)
-            .and_then(|v| HeaderValue::from_str(&v).ok()),
-    );
+    let csp = std::sync::Arc::new(security::CspCache::new(web));
     Router::new()
         .nest("/api/v1", api)
         .fallback_service(spa)

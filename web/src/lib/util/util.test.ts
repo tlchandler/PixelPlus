@@ -22,7 +22,7 @@ describe('boards', () => {
 		expect(outputLabel('difftxlarge', 1)).toBe('J1-1');
 		expect(outputLabel('difftxlarge', 60)).toBe('J15-4');
 		expect(outputLabel('difftx', 3)).toBe('Port 3');
-		expect(outputLabel('diffsmart', 2)).toBe('Out 2');
+		expect(outputLabel('diffsmart', 2)).toBe('Port 2');
 		expect(jackOf('difftxlarge', 9)).toBe(3);
 	});
 	it('describes the wiring chain in plain words', () => {
@@ -51,7 +51,7 @@ describe('boards', () => {
 			wiringChain(show, seg)
 				.map((s) => s.label)
 				.join(' › ')
-		).toBe(`${leader.name} › J3-2 › pixels 1–5`);
+		).toBe(`${leader.name} › J3 · Port 2 › pixels 1–5`);
 	});
 	it('repacks a chain in order, keeping null pixels', () => {
 		const m = repackChain([

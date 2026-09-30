@@ -152,10 +152,16 @@
 		)
 			return;
 		const copy = structuredClone($state.snapshot(s) as Sequence);
+		// The daemon also takes it out of playlists: undo puts those back too.
+		const playlistsBefore = used.map((p) => structuredClone($state.snapshot(p)) as typeof p);
 		await app.mutate(() => api.sequences.remove(s.id));
 		toasts.success(`Deleted ${s.name}`, {
 			label: 'Undo',
-			run: () => app.mutate(() => api.sequences.create(copy))
+			run: () =>
+				app.mutate(async () => {
+					await api.sequences.create(copy);
+					for (const p of playlistsBefore) await api.playlists.update(p.id, p);
+				})
 		});
 	}
 	async function removeMedia(m: Media) {

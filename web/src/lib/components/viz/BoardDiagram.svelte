@@ -142,9 +142,9 @@
 			class="silk small"
 			text-anchor="middle">RTC</text
 		>
-		<text x="1090" y="290" class="silk title" text-anchor="middle">difftxlarge{rev ? ` rev ${rev}` : ''}</text
+		<text x="1090" y="290" class="silk title" text-anchor="middle">PixelPlus</text>
+		<text x="1090" y="322" class="silk" text-anchor="middle">60-Port Transmitter{rev ? ` · rev ${rev}` : ''}</text
 		>
-		<text x="1090" y="316" class="silk small" text-anchor="middle">60 outputs · 15 × RJ45 differential</text>
 		<!-- jacks -->
 		{#each Array(15) as _, i (i)}
 			{@render rj45(64 + i * 80, 380, i + 1)}
@@ -154,9 +154,6 @@
 				>
 			{/if}
 		{/each}
-		<text x="650" y="516" class="silk small" text-anchor="middle"
-			>BANK 1: J1–J5 · BANK 2: J6–J10 · BANK 3: J11–J15</text
-		>
 	</svg>
 {:else if board === 'difftx'}
 	<svg viewBox="0 0 520 250" class="board compact-board" role="img" aria-label="PixelPlus pHAT board diagram">
@@ -193,7 +190,7 @@
 		<text x="102" y="226" class="silk small" text-anchor="middle">5V IN</text>
 		<rect x="180" y="90" width="80" height="60" rx="4" fill="#161616" />
 		<rect x="280" y="86" width="40" height="80" rx="3" fill="#161616" />
-		<text x="200" y="80" class="silk small">FPP RS-422 pHAT{rev ? ` rev ${rev}` : ''}</text>
+		<text x="182" y="76" class="silk small">PixelPlus pHAT{rev ? ` · rev ${rev}` : ''}</text>
 		{@render rj45(360, 110, 1, 110, 'Ports 1–4')}
 	</svg>
 {:else if board === 'diffsmart'}
@@ -226,6 +223,7 @@
 			opacity=".6"
 		/>
 		<text x="140" y="95" class="silk" text-anchor="middle">PI ZERO 2 W</text>
+		<text x="140" y="178" class="silk small" text-anchor="middle">PixelPlus Smart Receiver</text>
 		<rect x="290" y="40" width="70" height="40" rx="4" fill="#1a1a1a" stroke="#555" />
 		<rect x="296" y="46" width="28" height="28" rx="3" fill="#F5A524" />
 		<text x="325" y="100" class="silk small" text-anchor="middle">SW1 · PI / RX</text>
@@ -241,7 +239,7 @@
 					opacity={px(o) > 0 ? 1 : 0.85}
 				/>
 				{#each [0, 1, 2] as k (k)}<circle cx={20 + k * 28} cy="25" r="9" fill="#c7ccd6" />{/each}
-				<text x="48" y="72" class="lbl" text-anchor="middle">Out {o}</text>
+				<text x="48" y="72" class="lbl" text-anchor="middle">Port {o}</text>
 			</g>
 		{/each}
 	</svg>

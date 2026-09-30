@@ -77,8 +77,8 @@
 	{:else}
 		<div class="q">
 			<div class="row between small faint">
-				<span>Question {step.step} of about {Math.max(step.totalSteps, step.step)}</span><span class="num"
-					>{Math.round((step.step / Math.max(step.totalSteps, step.step)) * 100)}%</span
+				<span>Question {step.step} of about {Math.max(estimate, step.step)}</span><span class="num"
+					>{Math.round((step.step / Math.max(estimate, step.step)) * 100)}%</span
 				>
 			</div>
 			<div class="progress"><span style:width="{(step.step / step.totalSteps) * 100}%"></span></div>

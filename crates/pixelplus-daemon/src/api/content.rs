@@ -378,8 +378,67 @@ impl FromReqMp for Multipart {
 }
 
 /// Undo of a delete: re-create the entity and bring its files back.
-async fn restore_sequence(state: &AppState, seq: Sequence) -> ApiResult<Json<Value>> {
+/// What an edit (`PUT /sequences/:id`) can't change: identity, files and what was
+/// measured from the file (a patch naming another `file` would make the leader read,
+/// slice and serve an arbitrary path).
+fn keep_sequence_facts(old: &Sequence, new: &mut Sequence) {
+    new.id = old.id.clone();
+    new.file = old.file.clone();
+    new.thumbnail = old.thumbnail.clone();
+    new.hash = old.hash.clone();
+    new.duration_ms = old.duration_ms;
+    new.frame_ms = old.frame_ms;
+    new.channel_count = old.channel_count;
+}
+
+/// Same for `PUT /media/:id` (`GET /media/:id/file` serves `file`).
+fn keep_media_facts(old: &Media, new: &mut Media) {
+    new.id = old.id.clone();
+    new.file = old.file.clone();
+    new.duration_ms = old.duration_ms;
+    new.loudness_lufs = old.loudness_lufs;
+}
+
+fn safe_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 32
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A re-created (undone) media item may only point at `media/<id>.<ext>`.
+fn restored_media_path_ok(m: &Media) -> bool {
+    safe_id(&m.id)
+        && m.file
+            .strip_prefix(&format!("media/{}.", m.id))
+            .is_some_and(|ext| {
+                !ext.is_empty() && ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            })
+}
+
+/// A re-created (undone) sequence may only point at `sequences/<id>.fseq` and
+/// `thumbnails/<id>.png`.
+fn check_restored_paths(seq: &Sequence) -> ApiResult<()> {
+    let id_ok = safe_id(&seq.id);
+    let file_ok = seq.file == format!("sequences/{}.fseq", seq.id);
+    let thumb_ok = seq
+        .thumbnail
+        .as_deref()
+        .map_or(true, |t| t == format!("thumbnails/{}.png", seq.id));
+    if id_ok && file_ok && thumb_ok {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "That isn't a sequence PixelPlus made.",
+        ))
+    }
+}
+
+async fn restore_sequence(state: &AppState, mut seq: Sequence) -> ApiResult<Json<Value>> {
     let data = state.config.data_dir.clone();
+    // Only this sequence's own files: the body comes from the client.
+    check_restored_paths(&seq)?;
     media_svc::untrash(&data, &seq.file);
     if let Some(t) = &seq.thumbnail {
         media_svc::untrash(&data, t);
@@ -389,6 +448,11 @@ async fn restore_sequence(state: &AppState, seq: Sequence) -> ApiResult<Json<Val
             "The sequence file is gone. Please upload it again.",
         ));
     }
+    // Followers cache slices by this hash: never trust the one in the request.
+    let path = data.join(&seq.file);
+    seq.hash = tokio::task::spawn_blocking(move || pixelplus_core::fseq::sha256_file(path))
+        .await
+        .map_err(ApiError::internal)??;
     let (s, _) = state
         .store
         .update(move |show| {
@@ -604,8 +668,9 @@ async fn update_sequence(
                 .ok_or_else(|| ApiError::not_found("That sequence"))?;
             let mut v = serde_json::to_value(&show.sequences[idx]).map_err(ApiError::internal)?;
             merge_patch(&mut v, &patch);
-            let seq: Sequence = serde_json::from_value(v)
+            let mut seq: Sequence = serde_json::from_value(v)
                 .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
+            keep_sequence_facts(&show.sequences[idx], &mut seq);
             if seq.name.trim().is_empty() {
                 return Err(ApiError::bad_request("Please give it a name."));
             }
@@ -723,6 +788,13 @@ async fn get_media(
 async fn create_media(State(state): State<AppState>, req: Request) -> ApiResult<Json<Value>> {
     if is_json(req.headers()) {
         let Json(m): Json<Media> = Json::from_request_json(req).await?;
+        // Undo of a delete: only this item's own file (the body comes from the client,
+        // and /media/:id/file serves whatever `file` names).
+        if !restored_media_path_ok(&m) {
+            return Err(ApiError::bad_request(
+                "That isn't an audio file PixelPlus stored.",
+            ));
+        }
         let data = state.config.data_dir.clone();
         media_svc::untrash(&data, &m.file);
         media_svc::untrash(&data, &format!("media/{}.meta.json", m.id));
@@ -845,6 +917,7 @@ async fn update_media(
             merge_patch(&mut v, &patch);
             let mut m: Media = serde_json::from_value(v)
                 .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
+            keep_media_facts(&show.media[idx], &mut m);
             if m.name.trim().is_empty() {
                 return Err(ApiError::bad_request("Please give it a name."));
             }
@@ -922,23 +995,32 @@ async fn media_file(
         .filter(|p| p.is_file())
         .ok_or_else(|| ApiError::not_found("The audio file on disk"))?;
     let mime = audio_mime(&m.file).ok_or_else(|| ApiError::not_found("The audio file on disk"))?;
-    let resp = tower_http::services::ServeFile::new_with_mime(path, &mime.parse().map_err(ApiError::internal)?)
-        .oneshot(req)
-        .await
-        .map_err(ApiError::internal)?;
+    let resp = tower_http::services::ServeFile::new_with_mime(
+        path,
+        &mime.parse().map_err(ApiError::internal)?,
+    )
+    .oneshot(req)
+    .await
+    .map_err(ApiError::internal)?;
     let mut resp = resp.map(axum::body::Body::new);
     let name: String = media_original(&state, m)
         .chars()
         .filter(|c| !c.is_control() && !matches!(c, '"' | '\\' | ';'))
         .collect();
-    let ascii: String = name.chars().map(|c| if c.is_ascii() { c } else { '_' }).collect();
+    let ascii: String = name
+        .chars()
+        .map(|c| if c.is_ascii() { c } else { '_' })
+        .collect();
     let disp = format!("attachment; filename=\"{ascii}\"");
     let h = resp.headers_mut();
     h.insert(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_str(&disp).unwrap_or(HeaderValue::from_static("attachment")),
     );
-    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
     Ok(resp)
 }
 
@@ -1210,6 +1292,82 @@ pub fn routes() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undo_can_only_restore_its_own_files() {
+        let seq = |id: &str, file: &str, thumb: Option<&str>| Sequence {
+            id: id.into(),
+            name: "S".into(),
+            file: file.into(),
+            duration_ms: 1,
+            frame_ms: 50,
+            channel_count: 3,
+            media_id: None,
+            xlights_name: None,
+            thumbnail: thumb.map(String::from),
+            hash: String::new(),
+        };
+        assert!(check_restored_paths(&seq(
+            "abc",
+            "sequences/abc.fseq",
+            Some("thumbnails/abc.png")
+        ))
+        .is_ok());
+        assert!(check_restored_paths(&seq("abc", "sequences/abc.fseq", None)).is_ok());
+        assert!(check_restored_paths(&seq("abc", "../../etc/passwd", None)).is_err());
+        assert!(check_restored_paths(&seq("abc", "sequences/other.fseq", None)).is_err());
+        assert!(
+            check_restored_paths(&seq("abc", "sequences/abc.fseq", Some("/etc/shadow"))).is_err()
+        );
+        assert!(check_restored_paths(&seq("../x", "sequences/../x.fseq", None)).is_err());
+    }
+
+    #[test]
+    fn edits_cannot_repoint_files() {
+        let old = Media {
+            id: "abc".into(),
+            name: "Song".into(),
+            kind: MediaKind::Song,
+            file: "media/abc.mp3".into(),
+            duration_ms: 1000,
+            loudness_lufs: Some(-14.0),
+            gain_db: None,
+        };
+        let mut new = Media {
+            id: "zzz".into(),
+            name: "Renamed".into(),
+            file: "/etc/shadow".into(),
+            duration_ms: 5,
+            ..old.clone()
+        };
+        keep_media_facts(&old, &mut new);
+        assert_eq!(
+            (new.id.as_str(), new.file.as_str(), new.duration_ms),
+            ("abc", "media/abc.mp3", 1000)
+        );
+        assert_eq!(new.name, "Renamed");
+    }
+
+    #[test]
+    fn undo_can_only_restore_its_own_media_file() {
+        let m = |id: &str, file: &str| Media {
+            id: id.into(),
+            name: "Song".into(),
+            kind: MediaKind::Song,
+            file: file.into(),
+            duration_ms: 1,
+            loudness_lufs: None,
+            gain_db: None,
+        };
+        assert!(restored_media_path_ok(&m("abc", "media/abc.mp3")));
+        assert!(!restored_media_path_ok(&m("abc", "/etc/shadow")));
+        assert!(!restored_media_path_ok(&m(
+            "abc",
+            "media/abc.mp3/../../../etc/shadow"
+        )));
+        assert!(!restored_media_path_ok(&m("abc", "media/other.mp3")));
+        assert!(!restored_media_path_ok(&m("..", "media/...mp3")));
+    }
 
     #[test]
     fn channel_warning_text() {

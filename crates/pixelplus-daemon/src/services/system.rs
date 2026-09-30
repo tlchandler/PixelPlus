@@ -724,7 +724,7 @@ mod tests {
 
     #[test]
     fn percentages_are_rounded_for_json() {
-        assert_eq!(serde_json::json!(round1(33.400_001)).to_string(), "33.4");
+        assert_eq!(serde_json::json!(round1(100.0 / 3.0)).to_string(), "33.3");
     }
 
     #[test]

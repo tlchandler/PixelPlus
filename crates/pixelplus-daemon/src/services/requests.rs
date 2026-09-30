@@ -15,6 +15,8 @@ use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
+/// Song requests accepted from everyone together within the rate window.
+const GLOBAL_RATE_MAX: usize = 60;
 /// Per visitor (IP): at most this many requests...
 pub const RATE_MAX: usize = 3;
 /// ...within this window.
@@ -64,14 +66,20 @@ impl RequestQueue {
         removed
     }
 
-    /// Per-IP rate limiting. Records the hit when allowed.
+    /// Per-IP rate limiting, plus a cap on all requests together (many
+    /// addresses, or none known). Records the hit when allowed.
     pub fn check_rate(&self, ip: Option<IpAddr>, now: Instant) -> bool {
-        let Some(ip) = ip else { return true };
         let mut hits = self.hits.lock();
         hits.retain(|_, v| {
             v.back()
                 .is_some_and(|t| now.duration_since(*t) < RATE_WINDOW)
         });
+        let total: usize = hits.values().map(VecDeque::len).sum();
+        if total >= GLOBAL_RATE_MAX || hits.len() >= 4096 {
+            return false;
+        }
+        // Unknown address: all such requests share one bucket.
+        let ip = ip.unwrap_or(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED));
         let q = hits.entry(ip).or_default();
         while q
             .front()
@@ -363,6 +371,25 @@ mod tests {
         assert!(!q.check_rate(ip, t));
         assert!(q.check_rate(Some("10.0.0.10".parse().unwrap()), t));
         assert!(q.check_rate(ip, t + RATE_WINDOW + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn rate_limit_global_and_unknown_addresses() {
+        let q = RequestQueue::default();
+        let t = Instant::now();
+        // Unknown addresses share one bucket (no unlimited bypass).
+        for _ in 0..RATE_MAX {
+            assert!(q.check_rate(None, t));
+        }
+        assert!(!q.check_rate(None, t));
+        // Spoofed / rotating addresses hit the global cap.
+        let mut ok = 0;
+        for i in 0..200u32 {
+            if q.check_rate(Some(IpAddr::from([10, 1, (i / 250) as u8, (i % 250) as u8])), t) {
+                ok += 1;
+            }
+        }
+        assert_eq!(ok + RATE_MAX, GLOBAL_RATE_MAX);
     }
 
     #[test]

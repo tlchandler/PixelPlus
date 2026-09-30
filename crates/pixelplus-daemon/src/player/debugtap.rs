@@ -29,6 +29,16 @@ pub struct TapFrame {
     pub wire: Vec<Vec<u8>>,
 }
 
+/// What [`OutputTap::record`] notes about a frame besides its pixels.
+#[derive(Debug, Clone, Copy)]
+pub struct TapMeta<'a> {
+    pub frame_no: u64,
+    pub at_ms: f64,
+    /// Sequence id and frame index shown.
+    pub sequence: Option<(&'a str, u32)>,
+    pub master: u8,
+}
+
 /// Shared between the output thread (writer) and the API (reader).
 #[derive(Debug, Default)]
 pub struct OutputTap {
@@ -43,20 +53,17 @@ impl OutputTap {
     /// Called by the output thread after every frame.
     pub fn record(
         &self,
-        frame_no: u64,
-        at_ms: f64,
-        sequence: Option<(&str, u32)>,
-        master: u8,
+        meta: TapMeta<'_>,
         ppo: &[u32],
         rgb: &[u8],
         wire: &mut dyn Iterator<Item = &[u8]>,
     ) {
         let mut t = self.last.lock();
-        t.frame_no = frame_no;
-        t.at_ms = at_ms;
+        t.frame_no = meta.frame_no;
+        t.at_ms = meta.at_ms;
         t.wall_ms = chrono::Utc::now().timestamp_millis();
-        t.sequence = sequence.map(|(id, f)| (id.to_string(), f));
-        t.master = master;
+        t.sequence = meta.sequence.map(|(id, f)| (id.to_string(), f));
+        t.master = meta.master;
         t.pixels_per_output.clear();
         t.pixels_per_output.extend_from_slice(ppo);
         t.rgb.clear();
@@ -154,10 +161,12 @@ mod tests {
         let tap = OutputTap::new();
         let wire: [&[u8]; 2] = [&[3, 2, 1], &[6, 5, 4, 9, 8, 7]];
         tap.record(
-            7,
-            1.0,
-            Some(("s", 3)),
-            100,
+            TapMeta {
+                frame_no: 7,
+                at_ms: 1.0,
+                sequence: Some(("s", 3)),
+                master: 100,
+            },
             &[1, 2],
             &[1, 2, 3, 4, 5, 6, 7, 8, 9],
             &mut wire.iter().copied(),

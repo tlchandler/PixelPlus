@@ -370,6 +370,9 @@ pub(crate) struct Health {
     pub online: Option<bool>,
     pub problem: Option<String>,
     pub last_readopt: Option<Instant>,
+    /// Just adopted: its beacons from before the adoption (`adoptedBy: null`,
+    /// unauthenticated) may still be in the peer table for a moment.
+    pub adopted_at: Option<Instant>,
     pub warned_foreign: bool,
 }
 

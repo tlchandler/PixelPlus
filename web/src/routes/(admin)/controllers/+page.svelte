@@ -4,16 +4,25 @@
 	import { COLOR_ORDERS } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts, confirm } from '$lib/stores/toasts.svelte';
-	import {
+		import {
 		BOARDS,
 		RECEIVERS,
 		needsPort3Warning,
 		nodeUsage,
-		outputLabel,
+		portName,
 		pixelsOnOutput,
 		propsOnOutput,
 		MAX_PIXELS_PER_OUTPUT
 	} from '$lib/util/boards';
+	import { sortable } from '$lib/actions/sortable';
+	import {
+		reorderChain,
+		wirePropToPort,
+		flashPort,
+		COLOR_CORRECTION,
+		correctionIndex
+	} from '$lib/wiring';
+	import { fmtTemp, tempUnitOf } from '$lib/util/units';
 	import { fmtRelative } from '$lib/util/format';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import GeometryBanner from '$lib/components/ui/GeometryBanner.svelte';
@@ -36,10 +45,13 @@
 		RefreshCw,
 		Radio,
 		HardDrive,
-		CircleCheck,
+				CircleCheck,
 		ChevronDown,
+		ChevronUp,
 		Cpu,
-		Settings2
+		Settings2,
+		GripVertical,
+		Search
 	} from '@lucide/svelte';
 	import { slide } from 'svelte/transition';
 
@@ -81,10 +93,16 @@
 		return () => clearInterval(t);
 	});
 
+		/** A real name to start from ("Controller 3"), so nobody adopts a box called "pixelplus-3f2a". */
+	function suggestName() {
+		const taken = new Set(show?.nodes.map((n) => n.name.toLowerCase()) ?? []);
+		for (let i = (show?.nodes.length ?? 0) + 1; ; i++)
+			if (!taken.has(`controller ${i}`)) return `Controller ${i}`;
+	}
 	async function adopt() {
-		if (!adopting) return;
+		if (!adopting || !adoptName.trim()) return;
 		adoptBusy = true;
-		await app.mutate(() => api.adopt(adopting!.id, adoptName.trim() || undefined));
+		await app.mutate(() => api.adopt(adopting!.id, adoptName.trim()));
 		adoptBusy = false;
 		adopting = null;
 		scan();
@@ -211,7 +229,20 @@
 		}
 	}
 
-	const sensorIcon = { temperature: Thermometer, voltage: Zap, current: Activity, power: Gauge };
+		const sensorIcon = { temperature: Thermometer, voltage: Zap, current: Activity, power: Gauge };
+	const tunit = $derived(tempUnitOf(show));
+
+	// ---- "+ Add a prop to this port"
+	let addTo = $state<{ nodeId: string; output: number } | null>(null);
+	let addQ = $state('');
+	const addChoices = $derived.by(() => {
+		if (!show || !addTo) return [];
+		const needle = addQ.trim().toLowerCase();
+		return show.props
+			.filter((p) => !needle || p.name.toLowerCase().includes(needle))
+			.map((p) => ({ p, left: p.pixelCount - p.segments.reduce((n, sg) => n + sg.pixelCount, 0) }))
+			.sort((a, b) => Number(b.left > 0) - Number(a.left > 0) || a.p.name.localeCompare(b.p.name));
+	});
 </script>
 
 <div class="page">
@@ -252,8 +283,8 @@
 					<button
 						class="btn primary"
 						onclick={() => {
-							adopting = d;
-							adoptName = '';
+														adopting = d;
+							adoptName = suggestName();
 						}}><Plus size={16} /> Adopt</button
 					>
 				</div>
@@ -282,16 +313,17 @@
 								>{n.role === 'leader' ? 'Leader' : 'Follower'}</span
 							>
 							{#if live}
-								<span
+																<span
 									class="badge {live.online ? (live.syncState === 'syncing' ? 'accent' : 'green') : 'red'}"
+									title={live.online && n.role !== 'leader'
+										? `Clock within ${Math.abs(live.syncOffsetMs).toFixed(1)} ms of the leader`
+										: undefined}
 								>
 									<span class="dot"></span>
 									{#if !live.online}Offline · last seen {fmtRelative(
 											live.lastSeen
 										)}{:else if n.role === 'leader'}Online{:else if live.syncState === 'syncing'}Syncing files {live
-											.files.total - live.files.pending}/{live.files.total}{:else}In sync · ±{live.syncOffsetMs.toFixed(
-											1
-										)} ms{/if}
+											.files.total - live.files.pending}/{live.files.total}{:else}In sync{/if}
 								</span>
 							{/if}
 						</div>
@@ -358,7 +390,7 @@
 							/>
 							<div class="legend">
 								<span><i class="lg on"></i> In use</span><span><i class="lg"></i> Free</span><span
-									><i class="lg bad"></i> Over {MAX_PIXELS_PER_OUTPUT} px</span
+									><i class="lg bad"></i> Too many pixels</span
 								>
 								<span class="grow"></span>
 								<span class="num"
@@ -412,7 +444,7 @@
 													onclick={() => (editOut = editOut === key ? null : key)}
 													aria-expanded={editOut === key}
 												>
-													<span class="pnum">{rx ? `Port ${k + 1}` : outputLabel(n.board, oi)}</span>
+													<span class="pnum">{rx ? `Port ${k + 1}` : portName(n.board, oi)}</span>
 													<span class="grow pprops ellipsis">
 														{#if chain.length}{chain.map((c) => c.prop.name).join(' → ')}{:else}<span
 																class="faint">Nothing plugged in</span
@@ -431,7 +463,69 @@
 													<ChevronDown size={15} class="chev {editOut === key ? 'open' : ''}" />
 												</button>
 												{#if editOut === key}
+													{@const ci = correctionIndex(o.gamma)}
 													<div class="oedit" transition:slide={{ duration: 160 }}>
+														<div class="ochain-wrap">
+															<div class="row between">
+																<span class="eyebrow"
+																	>{chain.length > 1
+																		? 'Plugged in, in order · drag or use the arrows'
+																		: 'Plugged in'}</span
+																>
+																<button class="btn ghost sm" onclick={() => flashPort(n.id, oi)}
+																	><Zap size={14} /> Flash this port</button
+																>
+															</div>
+															{#if chain.length}
+																<ol
+																	class="ochain"
+																	use:sortable={{ onsort: (f, t) => reorderChain(show, n.id, oi, f, t) }}
+																>
+																	{#each chain as c, ci2 (c.prop.id + c.seg.propOffset)}
+																		<li data-sort-index={ci2}>
+																			<button
+																				type="button"
+																				class="drag-handle"
+																				aria-label="Move {c.prop.name} (use arrow keys)"
+																				><GripVertical size={15} /></button
+																			>
+																			<span class="on-n num">{ci2 + 1}</span>
+																			<a class="grow ellipsis on-name" href="/props#{c.prop.id}"
+																				>{c.prop.name}</a
+																			>
+																			<span class="faint small num on-px"
+																				>{c.seg.startPixel + 1}–{c.seg.startPixel + c.seg.pixelCount}</span
+																			>
+																			<button
+																				type="button"
+																				class="btn ghost icon sm"
+																				disabled={ci2 === 0}
+																				onclick={() => reorderChain(show, n.id, oi, ci2, ci2 - 1)}
+																				aria-label="Move {c.prop.name} earlier in the chain"
+																				><ChevronUp size={15} /></button
+																			>
+																			<button
+																				type="button"
+																				class="btn ghost icon sm"
+																				disabled={ci2 === chain.length - 1}
+																				onclick={() => reorderChain(show, n.id, oi, ci2, ci2 + 1)}
+																				aria-label="Move {c.prop.name} later in the chain"
+																				><ChevronDown size={15} /></button
+																			>
+																		</li>
+																	{/each}
+																</ol>
+															{/if}
+															<button
+																class="btn sm add-prop"
+																onclick={() => {
+																	addQ = '';
+																	addTo = { nodeId: n.id, output: oi };
+																}}
+																><Plus size={14} />
+																{chain.length ? 'Add another prop to this port' : 'Add a prop to this port'}</button
+															>
+														</div>
 														<label class="field"
 															><span class="label">Color order</span>
 															<select
@@ -447,7 +541,7 @@
 															</select>
 														</label>
 														<label class="field"
-															><span class="label">Brightness · {o.brightness}%</span>
+															><span class="label">Brightness limit · {o.brightness}%</span>
 															<input
 																type="range"
 																class="range"
@@ -463,41 +557,34 @@
 															/>
 														</label>
 														<label class="field"
-															><span class="label">Gamma</span>
-															<select
-																class="select sm"
-																value={String(o.gamma)}
+															><span class="label">Color correction · {COLOR_CORRECTION[ci].label}</span>
+															<input
+																type="range"
+																class="range"
+																min="0"
+																max={COLOR_CORRECTION.length - 1}
+																step="1"
+																value={ci}
+																style:--pct="{(ci / (COLOR_CORRECTION.length - 1)) * 100}%"
+																aria-valuetext={COLOR_CORRECTION[ci].label}
 																onchange={(e) =>
-																	saveOutput(n, o, { gamma: Number((e.target as HTMLSelectElement).value) })}
-															>
-																<option value="1">None</option><option value="1.8">Soft 1.8</option><option
-																	value="2.2">Standard 2.2</option
-																><option value="2.8">Strong 2.8</option>
-															</select>
+																	saveOutput(n, o, {
+																		gamma: COLOR_CORRECTION[Number((e.target as HTMLInputElement).value)]
+																			.gamma
+																	})}
+															/>
 														</label>
 														<div class="field">
-															<span class="label">Enabled</span>
-															<div class="row" style="height:32px">
+															<span class="label">Port on</span>
+															<div class="row" style="min-height:32px">
 																<Switch
 																	size="sm"
 																	checked={o.enabled}
-																	label="Output enabled"
+																	label="Port on"
 																	onchange={(v) => saveOutput(n, o, { enabled: v })}
 																/>
 															</div>
 														</div>
-														{#if chain.length}
-															<div class="ochain">
-																{#each chain as c (c.prop.id + c.seg.propOffset)}
-																	<a href="/props#{c.prop.id}" class="ochip"
-																		>{c.prop.name}
-																		<span class="faint num"
-																			>{c.seg.startPixel + 1}–{c.seg.startPixel + c.seg.pixelCount}</span
-																		></a
-																	>
-																{/each}
-															</div>
-														{/if}
 													</div>
 												{/if}
 											</div>
@@ -519,9 +606,10 @@
 						{#each sensors as s (s.id)}
 							{@const Icon = sensorIcon[s.kind]}
 							<div class="sensor">
-								<Icon size={14} /><span class="faint small">{s.label.replace(n.name + ' ', '')}</span><strong
-									class="num"
-									>{s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)} {s.unit}</strong
+								<Icon size={14} /><span class="faint small">{s.label.replace(n.name + ' ', '')}</span><strong class="num"
+									>{s.kind === 'temperature'
+										? fmtTemp(s.value, tunit)
+										: `${s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)} ${s.unit}`}</strong
 								>
 							</div>
 						{/each}
@@ -584,11 +672,14 @@
 	onclose={() => (adopting = null)}
 >
 	<label class="field"
-		><span class="label">Give it a friendly name</span><input
+				><span class="label">Give it a friendly name</span><input
 			class="input"
 			placeholder="e.g. Back Yard"
 			bind:value={adoptName}
-		/></label
+			data-autofocus
+			onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
+			onkeydown={(e) => e.key === 'Enter' && adopt()}
+		/><span class="hint">Where it lives, so you can tell your controllers apart.</span></label
 	>
 	<div class="notice success small" style="margin-top:14px">
 		<CircleCheck size={16} /><span
@@ -598,7 +689,7 @@
 	</div>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (adopting = null)}>Cancel</button>
-		<button class="btn primary" onclick={adopt} disabled={adoptBusy}
+		<button class="btn primary" onclick={adopt} disabled={adoptBusy || !adoptName.trim()}
 			>{adoptBusy ? 'Adopting…' : 'Adopt controller'}</button
 		>
 	{/snippet}
@@ -678,6 +769,52 @@
 		<button class="btn ghost" onclick={() => (renameNode = null)}>Cancel</button>
 		<button class="btn primary" type="submit" form="rename" disabled={!renameValue.trim()}>Save</button>
 	{/snippet}
+</Modal>
+
+<Modal
+	open={!!addTo}
+	title="Add a prop to {addTo && show
+		? portName(show.nodes.find((x) => x.id === addTo!.nodeId)?.board ?? 'difftx', addTo.output)
+		: 'this port'}"
+	subtitle="It goes on the end of the chain. Drag it into place afterwards if it sits earlier on the cable."
+	size="md"
+	onclose={() => (addTo = null)}
+>
+	<div class="input-group" style="margin-bottom:10px">
+		<span class="prefix"><Search size={16} /></span><input
+			class="input"
+			placeholder="Search props"
+			bind:value={addQ}
+			aria-label="Search props"
+			data-autofocus
+		/>
+	</div>
+	<div class="pickprops">
+		{#each addChoices as { p, left } (p.id)}
+			<button
+				class="pickprop"
+				onclick={async () => {
+					const t = addTo;
+					addTo = null;
+					if (t && show) await wirePropToPort(show, p.id, t.nodeId, t.output);
+				}}
+			>
+				<span class="grow ellipsis"><strong>{p.name}</strong></span>
+				<span class="faint small num"
+					>{left > 0
+						? left === p.pixelCount
+							? `Not wired · ${p.pixelCount} px`
+							: `${left} px not wired`
+						: 'Already wired'}</span
+				>
+				<Plus size={15} />
+			</button>
+		{:else}
+			<div class="faint small" style="padding:12px">
+				{show?.props.length ? 'No props match.' : 'No props yet — import your xLights layout first.'}
+			</div>
+		{/each}
+	</div>
 </Modal>
 
 <Modal bind:open={eepromOpen} title="Write board EEPROM" size="sm">
@@ -885,20 +1022,75 @@
 		gap: 12px;
 		padding: 4px 16px 16px;
 	}
-	.ochain {
+		.ochain-wrap {
 		grid-column: span 2;
 		display: flex;
-		flex-wrap: wrap;
+		flex-direction: column;
+		gap: 8px;
+		padding-bottom: 4px;
+	}
+	.ochain {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.ochain li {
+		display: flex;
+		align-items: center;
 		gap: 6px;
+		min-height: 44px;
+		padding: 2px 4px 2px 2px;
+		border-radius: 10px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		font-size: 13px;
 	}
-	.ochip {
-		font-size: 12px;
-		padding: 4px 10px;
-		border-radius: 99px;
+	.on-n {
+		width: 20px;
+		height: 20px;
+		border-radius: 6px;
+		display: grid;
+		place-items: center;
+		font-size: 11px;
 		background: var(--surface-3);
+		color: var(--text-2);
+		flex: 0 0 auto;
 	}
-	.ochip:hover {
+	.on-name {
+		font-weight: 550;
+	}
+	.on-name:hover {
 		color: var(--accent-text);
+	}
+	.add-prop {
+		align-self: flex-start;
+	}
+	.pickprops {
+		display: flex;
+		flex-direction: column;
+		max-height: 50dvh;
+		overflow: auto;
+		border: 1px solid var(--border);
+		border-radius: 12px;
+	}
+	.pickprop {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-height: 48px;
+		padding: 0 14px;
+		border-bottom: 1px solid var(--border);
+		text-align: left;
+		font-size: 13.5px;
+	}
+	.pickprop:last-child {
+		border-bottom: 0;
+	}
+	.pickprop:hover {
+		background: var(--surface-hover);
 	}
 	.sensors {
 		display: flex;

@@ -32,6 +32,18 @@ describe('api client', () => {
 		expect(JSON.parse(String(seen?.body))).toEqual({ volume: 42 });
 	});
 
+	it('marks every request as coming from the app (CSRF header)', async () => {
+		const seen: RequestInit[] = [];
+		setTransport(async (_i, init) => {
+			seen.push(init!);
+			return new Response(null, { status: 204 });
+		});
+		await api.reboot();
+		await api.show().catch(() => undefined);
+		await api.submitRequest('s1');
+		for (const init of seen) expect((init.headers as Record<string, string>)['X-PixelPlus-Request']).toBe('1');
+	});
+
 	it('turns error bodies into ApiError with code and message', async () => {
 		setTransport(async () => json({ error: { code: 'not_found', message: 'No such prop' } }, 404));
 		await expect(api.props.get('nope')).rejects.toMatchObject({

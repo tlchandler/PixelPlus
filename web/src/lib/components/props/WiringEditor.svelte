@@ -5,57 +5,42 @@
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import {
-		jackOf,
-		outputLabel,
 		pixelsOnOutput,
+		portName,
 		portOf,
 		propsOnOutput,
-		receiverFor,
 		wiringChain,
 		MAX_PIXELS_PER_OUTPUT,
 		needsPort3Warning
 	} from '$lib/util/boards';
-	import { sortable, moveItem } from '$lib/actions/sortable';
+	import { sortable } from '$lib/actions/sortable';
+	import { reorderChain, flashPort, COLOR_CORRECTION, correctionIndex } from '$lib/wiring';
 	import Switch from '$lib/components/ui/Switch.svelte';
+	import PortPicker from './PortPicker.svelte';
 	import {
 		Plus,
 		Trash2,
 		GripVertical,
 		ChevronRight,
+		ChevronUp,
+		ChevronDown,
 		TriangleAlert,
 		Cable,
-		ArrowLeftRight
+		ArrowLeftRight,
+		Zap
 	} from '@lucide/svelte';
 
 	let { show, prop = $bindable() }: { show: Show; prop: Prop } = $props();
 
 	const wired = $derived(prop.segments.reduce((n, s) => n + s.pixelCount, 0));
 	const unwired = $derived(prop.pixelCount - wired);
-
-	function outputOptions(nodeId: string) {
-		const node = show.nodes.find((n) => n.id === nodeId);
-		if (!node) return [];
-		return node.outputs.map((o) => {
-			const rx = receiverFor(show, node.id, o.index);
-			const jack = jackOf(node.board, o.index);
-			let label: string;
-			if (rx)
-				label = `${node.board === 'difftxlarge' ? `J${jack} · ` : ''}${rx.name} receiver · Port ${portOf(o.index)}`;
-			else
-				label =
-					node.board === 'difftxlarge'
-						? `J${jack} · Port ${portOf(o.index)}`
-						: outputLabel(node.board, o.index);
-			const used = pixelsOnOutput(show, node.id, o.index);
-			return { value: o.index, label: used ? `${label} — ${used} px in use` : label };
-		});
-	}
+	const wirableNodes = $derived(show.nodes.filter((n) => n.outputs.length));
 
 	function addSegment() {
-		const node = show.nodes[0];
+		const node = wirableNodes[0];
 		if (!node) return;
 		// first empty output
-		let out = node.outputs.find((o) => !pixelsOnOutput(show, node.id, o.index))?.index ?? 1;
+		const out = node.outputs.find((o) => !pixelsOnOutput(show, node.id, o.index))?.index ?? 1;
 		const seg: PropSegment = {
 			nodeId: node.id,
 			output: out,
@@ -89,32 +74,18 @@
 		return propsOnOutput(show, seg.nodeId, seg.output);
 	}
 
-	async function reorderChain(seg: PropSegment, from: number, to: number) {
-		const chain = moveItem(chainFor(seg), from, to);
-		let cursor = 0;
-		const ops: { op: 'update'; id: string; patch: Partial<Prop> }[] = [];
-		const patched = new Map<string, Prop>();
-		for (const { prop: p, seg: s } of chain) {
-			cursor += s.nullPixels;
-			const target = patched.get(p.id) ?? structuredClone($state.snapshot(p) as Prop);
-			const ts = target.segments.find(
-				(x) => x.nodeId === s.nodeId && x.output === s.output && x.propOffset === s.propOffset
-			);
-			if (ts) ts.startPixel = cursor;
-			patched.set(p.id, target);
-			cursor += s.pixelCount;
-		}
-		for (const [id, p] of patched) ops.push({ op: 'update', id, patch: { segments: p.segments } });
-		const mine = patched.get(prop.id);
-		if (mine) prop.segments = mine.segments.map((s) => ({ ...s }));
-		await app.mutate(() => api.props.bulk(ops), { success: 'Chain order updated' });
+	async function moveInChain(seg: PropSegment, from: number, to: number) {
+		await reorderChain(show, seg.nodeId, seg.output, from, to);
+		// Pick up the new start pixel for this prop without discarding other edits in the panel.
+		const fresh = app.show?.props.find((p) => p.id === prop.id);
+		const fs = fresh?.segments.find((x) => x.nodeId === seg.nodeId && x.output === seg.output);
+		if (fs) seg.startPixel = fs.startPixel;
 	}
 
 	async function saveOutput(nodeId: string, index: number, patch: Record<string, unknown>) {
 		try {
 			await api.saveOutput(nodeId, index, patch);
 			await app.reloadShow();
-			toasts.success('Port settings saved');
 		} catch (e) {
 			toasts.error('Could not save port settings', (e as Error).message);
 		}
@@ -145,7 +116,7 @@
 				{/each}
 			</div>
 
-			<div class="form-grid">
+			{#if wirableNodes.length > 1}
 				<label class="field">
 					<span class="label">Controller</span>
 					<select
@@ -156,15 +127,35 @@
 							placeAfterLast(seg);
 						}}
 					>
-						{#each show.nodes as n (n.id)}<option value={n.id}>{n.name}</option>{/each}
+						{#each wirableNodes as n (n.id)}<option value={n.id}>{n.name}</option>{/each}
 					</select>
 				</label>
-				<label class="field">
+			{/if}
+
+			<div class="field">
+				<div class="row between">
 					<span class="label">Plugged into</span>
-					<select class="select" bind:value={seg.output} onchange={() => placeAfterLast(seg)}>
-						{#each outputOptions(seg.nodeId) as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
-					</select>
-				</label>
+					<button
+						type="button"
+						class="btn ghost sm"
+						onclick={() => flashPort(seg.nodeId, seg.output)}
+						title="Lights everything on this port for a few seconds so you can find the cable"
+						><Zap size={14} /> Flash this port</button
+					>
+				</div>
+				<PortPicker
+					{show}
+					nodeId={seg.nodeId}
+					value={seg.output}
+					propId={prop.id}
+					onchange={(o) => {
+						seg.output = o;
+						placeAfterLast(seg);
+					}}
+				/>
+			</div>
+
+			<div class="form-grid">
 				<label class="field">
 					<span class="label">First pixel on this port</span>
 					<input
@@ -175,7 +166,7 @@
 						oninput={(e) => (seg.startPixel = Math.max(0, Number((e.target as HTMLInputElement).value) - 1))}
 					/>
 					<span class="hint"
-						>1 = first pixel after the receiver. <button
+						>1 = the first pixel on the cable. <button
 							type="button"
 							class="linkish"
 							onclick={() => placeAfterLast(seg)}>Place after the last prop</button
@@ -187,16 +178,16 @@
 					<input class="input" type="number" min="1" max={prop.pixelCount} bind:value={seg.pixelCount} />
 				</label>
 				<label class="field">
-					<span class="label">Null pixels before</span>
+					<span class="label">Skip pixels (dark spacers)</span>
 					<input class="input" type="number" min="0" bind:value={seg.nullPixels} />
-					<span class="hint">Spacer pixels that stay dark (e.g. a lead-in pixel).</span>
+					<span class="hint">Pixels before this prop that stay dark, e.g. a lead-in pixel or a gap.</span>
 				</label>
 				<div class="field">
 					<span class="label">Direction</span>
-					<div class="row" style="height:40px">
+					<div class="row dir">
 						<Switch bind:checked={seg.reverse} label="Reverse direction" />
-						<span class="small muted"
-							><ArrowLeftRight size={13} />
+						<span class="small muted dirtext"
+							><ArrowLeftRight size={14} />
 							{seg.reverse ? 'Reversed — starts at the far end' : 'Normal'}</span
 						>
 					</div>
@@ -219,8 +210,8 @@
 
 			{#if chain.length > 1}
 				<div class="chain-list">
-					<div class="eyebrow">Daisy chain on this port · drag to reorder</div>
-					<ol use:sortable={{ onsort: (f, t) => reorderChain(seg, f, t) }}>
+					<div class="eyebrow">Daisy chain on this port · drag or use the arrows to reorder</div>
+					<ol use:sortable={{ onsort: (f, t) => moveInChain(seg, f, t) }}>
 						{#each chain as c, k (c.prop.id + c.seg.propOffset)}
 							<li data-sort-index={k} class:me={c.prop.id === prop.id}>
 								<button type="button" class="drag-handle" aria-label="Move {c.prop.name} (use arrow keys)"
@@ -228,8 +219,22 @@
 								>
 								<span class="n num">{k + 1}</span>
 								<span class="grow ellipsis">{c.prop.name}</span>
-								<span class="faint small num"
+								<span class="faint small num hide-xs"
 									>px {c.seg.startPixel + 1}–{c.seg.startPixel + c.seg.pixelCount}</span
+								>
+								<button
+									type="button"
+									class="btn ghost icon sm"
+									disabled={k === 0}
+									onclick={() => moveInChain(seg, k, k - 1)}
+									aria-label="Move {c.prop.name} earlier in the chain"><ChevronUp size={15} /></button
+								>
+								<button
+									type="button"
+									class="btn ghost icon sm"
+									disabled={k === chain.length - 1}
+									onclick={() => moveInChain(seg, k, k + 1)}
+									aria-label="Move {c.prop.name} later in the chain"><ChevronDown size={15} /></button
 								>
 							</li>
 						{/each}
@@ -238,10 +243,11 @@
 			{/if}
 
 			{#if outCfg && node}
+				{@const ci = correctionIndex(outCfg.gamma)}
 				<details class="port">
 					<summary
 						>Port settings <span class="faint small"
-							>· shared by everything on {outputLabel(node.board, seg.output)}</span
+							>· shared by everything on {portName(node.board, seg.output)}</span
 						></summary
 					>
 					<div class="form-grid" style="margin-top:12px">
@@ -255,7 +261,7 @@
 							>
 								{#each COLOR_ORDERS as c (c)}<option value={c}>{c}</option>{/each}
 							</select>
-							<span class="hint">If red shows as green, try GRB.</span>
+							<span class="hint">If red shows up as green, try GRB.</span>
 						</label>
 						<label class="field">
 							<span class="label">Brightness limit · {outCfg.brightness}%</span>
@@ -274,27 +280,32 @@
 							/>
 						</label>
 						<label class="field">
-							<span class="label">Gamma</span>
-							<select
-								class="select"
-								value={String(outCfg.gamma)}
+							<span class="label">Color correction · {COLOR_CORRECTION[ci].label}</span>
+							<input
+								type="range"
+								class="range"
+								min="0"
+								max={COLOR_CORRECTION.length - 1}
+								step="1"
+								value={ci}
+								style:--pct="{(ci / (COLOR_CORRECTION.length - 1)) * 100}%"
 								onchange={(e) =>
-									saveOutput(node.id, seg.output, { gamma: Number((e.target as HTMLSelectElement).value) })}
-							>
-								<option value="1">None (1.0)</option>
-								<option value="1.8">Soft (1.8)</option>
-								<option value="2.2">Standard (2.2)</option>
-								<option value="2.8">Strong (2.8)</option>
-							</select>
+									saveOutput(node.id, seg.output, {
+										gamma: COLOR_CORRECTION[Number((e.target as HTMLInputElement).value)].gamma
+									})}
+								aria-valuetext={COLOR_CORRECTION[ci].label}
+							/>
+							<span class="hint">Makes dim colors look natural. Normal suits most pixels.</span>
 						</label>
 						<div class="field">
-							<span class="label">Port enabled</span>
-							<div style="height:40px" class="row">
+							<span class="label">Port on</span>
+							<div class="row dir">
 								<Switch
 									checked={outCfg.enabled}
-									label="Port enabled"
+									label="Port on"
 									onchange={(v) => saveOutput(node.id, seg.output, { enabled: v })}
 								/>
+								<span class="small muted">{outCfg.enabled ? 'On' : 'Off — nothing on it lights'}</span>
 							</div>
 						</div>
 					</div>
@@ -311,8 +322,8 @@
 		</section>
 	{/each}
 
-	<div class="row">
-		<button type="button" class="btn" onclick={addSegment}
+	<div class="row wrap">
+		<button type="button" class="btn" onclick={addSegment} disabled={!wirableNodes.length}
 			><Plus size={16} /> {prop.segments.length ? 'Add another run' : 'Wire this prop'}</button
 		>
 		{#if prop.segments.length}
@@ -325,7 +336,9 @@
 			>
 		{/if}
 	</div>
-	{#if prop.segments.length}
+	{#if !wirableNodes.length}
+		<p class="faint small">Adopt a controller with pixel outputs first (Controllers page).</p>
+	{:else if prop.segments.length}
 		<p class="faint tiny">
 			Props longer than one port can be split into several runs (e.g. a mega tree across four ports).
 		</p>
@@ -375,6 +388,16 @@
 		color: var(--accent-text);
 		font-weight: 560;
 		font-size: 12px;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	.dir {
+		min-height: 44px;
+	}
+	.dirtext {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 	}
 	.chain-list ol {
 		list-style: none;
@@ -387,13 +410,13 @@
 	.chain-list li {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		padding: 2px 10px 2px 2px;
+		gap: 6px;
+		padding: 2px 4px 2px 2px;
 		border-radius: 8px;
 		background: var(--surface);
 		border: 1px solid var(--border);
 		font-size: 13px;
-		min-height: 40px;
+		min-height: 44px;
 	}
 	.chain-list li.me {
 		border-color: var(--accent-line);
@@ -408,17 +431,23 @@
 		font-size: 11px;
 		background: var(--surface-3);
 		color: var(--text-2);
+		flex: 0 0 auto;
 	}
 	details.port summary {
 		cursor: pointer;
 		font-weight: 560;
 		font-size: 13px;
 		list-style: none;
+		min-height: 32px;
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px;
 	}
 	details.port summary::before {
 		content: '▸';
 		display: inline-block;
-		margin-right: 6px;
+		margin-right: 2px;
 		transition: transform 150ms;
 		color: var(--text-3);
 	}
@@ -432,5 +461,10 @@
 	}
 	.warn-text {
 		color: var(--accent-text);
+	}
+	@media (max-width: 420px) {
+		.hide-xs {
+			display: none;
+		}
 	}
 </style>

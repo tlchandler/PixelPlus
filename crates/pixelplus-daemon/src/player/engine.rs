@@ -2056,7 +2056,13 @@ impl Core {
                 self.output.write(&wire, now);
                 if let Some(tap) = &self.tap {
                     let shown = self.shown.as_ref().map(|(id, f)| (id.as_str(), *f));
-                    tap.record(self.frames_out + 1, now_ms, shown, master, &ppo[..n], data, &mut wire.iter());
+                    let meta = super::debugtap::TapMeta {
+                        frame_no: self.frames_out + 1,
+                        at_ms: now_ms,
+                        sequence: shown,
+                        master,
+                    };
+                    tap.record(meta, &ppo[..n], data, &mut wire.iter());
                 }
             }
             Err(e) => tracing::debug!("frame layout mismatch: {e}"),

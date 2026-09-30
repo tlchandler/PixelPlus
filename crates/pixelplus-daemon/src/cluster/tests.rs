@@ -804,6 +804,17 @@ async fn adoption_rules_skew_and_replay() {
         .unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
     let key = f.state.identity().cluster_key.unwrap();
+    // The beacon from before the adoption (adoptedBy: null) may still be in the
+    // leader's table right after adopting: that must not trigger a second
+    // ("re-")adoption.
+    if let Some(p) = leader.cluster.shared.peers.write().get_mut(&f_id) {
+        p.beacon.adopted_by = None;
+        p.authenticated = false;
+        p.last_seen = Instant::now();
+    }
+    leader::check_health(&leader.state, &leader.cluster.shared).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(f.state.identity().cluster_key.as_deref(), Some(key.as_str()), "adopted only once");
     // Now it refuses strangers, even "forced" (its leader is online).
     let r = http.post(f.url("/cluster/adopt")).json(&stranger(true)).send().await.unwrap();
     assert_eq!(r.status(), 409);

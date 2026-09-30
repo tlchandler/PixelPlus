@@ -17,8 +17,10 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import TimeSpecPicker from '$lib/components/schedule/TimeSpecPicker.svelte';
 	import {
-		CalendarDays,
+				CalendarDays,
 		List,
+		Rows3,
+		ChevronRight,
 		Plus,
 		Sunset,
 		Star,
@@ -35,7 +37,10 @@
 	const show = $derived(app.show);
 	const sched = $derived(show?.schedule);
 	const tz = $derived(sched?.location.timezone ?? 'UTC');
-	let view = $state<'week' | 'list'>('week');
+		// Phones open on the day list: the week grid needs a wide screen.
+	let view = $state<'days' | 'week' | 'list'>(
+		typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches ? 'days' : 'week'
+	);
 	let preview = $state<ScheduleOccurrence[] | null>(null);
 	let editing = $state<ScheduleEntry | null>(null);
 	let locOpen = $state(false);
@@ -72,7 +77,7 @@
 		save(s, msg);
 	}
 
-	function newEntry() {
+		function newEntry() {
 		editing = {
 			id: newId(),
 			name: 'Show night',
@@ -81,9 +86,37 @@
 			days: [...WEEKDAYS],
 			start: { kind: 'sunset', offsetMin: 15 },
 			end: { kind: 'clock', time: '22:00' },
+			// The Christmas season: roughly Thanksgiving through Twelfth Night.
+			dateRange: { start: '11-26', end: '01-06' },
 			priority: 0,
 			endBehavior: 'finishSong'
 		};
+	}
+	/** One-night specials: the date chips people reach for. */
+	const specialDates = [
+		{ label: 'Christmas Eve', md: '12-24' },
+		{ label: 'Christmas', md: '12-25' },
+		{ label: 'New Year’s Eve', md: '12-31' }
+	];
+	function setSpecial(on: boolean) {
+		if (!editing) return;
+		editing.priority = on ? Math.max(10, editing.priority) : 0;
+		if (on) {
+			// A special is usually one night: default to Christmas Eve, every weekday.
+			const single = editing.dateRange && editing.dateRange.start === editing.dateRange.end;
+			if (!single) editing.dateRange = { start: '12-24', end: '12-24' };
+			editing.days = [...WEEKDAYS];
+			if (editing.name === 'Show night') editing.name = 'Christmas Eve';
+		} else if (editing.dateRange && editing.dateRange.start === editing.dateRange.end) {
+			editing.dateRange = { start: '11-26', end: '01-06' };
+		}
+	}
+	function setSingleDate(md: string) {
+		if (!editing) return;
+		editing.dateRange = { start: md, end: md };
+		const chip = specialDates.find((d) => d.md === md);
+		if (chip && (editing.name === 'Show night' || specialDates.some((d) => d.label === editing!.name)))
+			editing.name = chip.label;
 	}
 	function saveEntry() {
 		if (!editing || !sched) return;
@@ -122,9 +155,10 @@
 	}
 	// Evening shows: a 2 pm → 2 am grid (after-midnight hours continue the night). A show
 	// starting in the morning (e.g. Christmas morning) switches to a whole-day grid.
-	const nightGrid = $derived(week.every((d) => d.items.every((o) => rawHour(o.start) >= 12)));
+		const nightGrid = $derived(week.every((d) => d.items.every((o) => rawHour(o.start) >= 12)));
+	// Start at 4 PM (or earlier if a show does) so evening blocks are big enough to read.
 	const H0 = $derived(
-		nightGrid ? Math.min(14, ...week.flatMap((d) => d.items.map((o) => Math.floor(rawHour(o.start))))) : 0
+		nightGrid ? Math.min(16, ...week.flatMap((d) => d.items.map((o) => Math.floor(rawHour(o.start))))) : 0
 	);
 	const H1 = $derived(nightGrid ? 26 : 24);
 	function localHour(iso: string) {
@@ -268,7 +302,8 @@
 			<Segmented
 				bind:value={view}
 				label="View"
-				options={[
+								options={[
+					{ value: 'days', label: 'Days', icon: Rows3 },
 					{ value: 'week', label: 'Week', icon: CalendarDays },
 					{ value: 'list', label: 'Show times', icon: List }
 				]}
@@ -288,6 +323,47 @@
 								><Plus size={16} /> Add show time</button
 							>
 						</EmptyState>
+					</div>
+								{:else if view === 'days'}
+					<div class="card days" role="list" aria-label="This week">
+						{#each week as d, di (d.key)}
+							{@const live = d.items.filter((o) => !o.overridden)}
+							{@const replaced = d.items.filter((o) => o.overridden)}
+							{@const first = live[0]}
+							{@const e = first ? sched.entries.find((x) => x.id === first.entryId) : undefined}
+							<button
+								class="drow"
+								class:today={di === 0}
+								class:none={!live.length}
+								role="listitem"
+								onclick={() =>
+									e ? (editing = structuredClone($state.snapshot(e) as ScheduleEntry)) : newEntry()}
+							>
+								<span class="dd">
+									<span class="ddw">{di === 0 ? 'Today' : fmtDate(d.date, 'UTC', { weekday: 'short', month: undefined, day: undefined })}</span>
+									<span class="ddn num">{d.date.getUTCDate()}</span>
+								</span>
+								<span class="grow dbody">
+									{#if live.length}
+										{#each live as o (o.entryId + o.start)}
+											<span class="dline">
+												<span class="edot" style:background={entryColor(o.entryId)}></span>
+												<strong class="num">{fmtTime(new Date(o.start), tz)} – {fmtTime(new Date(o.end), tz)}</strong>
+												<span class="muted ellipsis">{o.name}</span>
+											</span>
+										{/each}
+										{#if replaced.length}
+											<span class="faint tiny"
+												>{live[0].name} replaces {replaced.map((r) => r.name).join(', ')} tonight</span
+											>
+										{/if}
+									{:else}
+										<span class="faint">No show</span>
+									{/if}
+								</span>
+								<ChevronRight size={16} class="faint" />
+							</button>
+						{/each}
 					</div>
 				{:else if view === 'week'}
 					<div class="card weekcard">
@@ -322,11 +398,15 @@
 												onclick={() => e && (editing = structuredClone($state.snapshot(e) as ScheduleEntry))}
 												title="{o.name}: {fmtTime(new Date(o.start), tz)}–{fmtTime(new Date(o.end), tz)}"
 											>
-												<span class="bn ellipsis"
-													>{#if (e?.priority ?? 0) > 0}<Star size={10} fill="currentColor" />{/if}
-													{o.name}</span
-												>
-												<span class="bt num">{fmtTime(new Date(o.start), tz)}</span>
+																								{#if !o.overridden}
+													<span class="bn ellipsis"
+														>{#if (e?.priority ?? 0) > 0}<Star size={10} fill="currentColor" />{/if}
+														{o.name}</span
+													>
+													<span class="bt num">{fmtTime(new Date(o.start), tz)}</span>
+												{:else}
+													<span class="sr-only">{o.name} (replaced)</span>
+												{/if}
 											</button>
 										{/each}
 									</div>
@@ -335,7 +415,7 @@
 						</div>
 					</div>
 					<p class="faint tiny" style="margin-top:8px">
-						Dashed blocks are replaced by a higher-priority show time that night.
+												Dashed outlines are regular show times replaced by a special night.
 					</p>
 				{:else}
 					<div class="card list">
@@ -537,6 +617,19 @@
 				>
 			</label>
 			<div class="field span-2">
+				<span class="label">Kind of night</span>
+								<Segmented
+					value={editing.priority > 0 ? 'special' : 'regular'}
+					label="Priority"
+					onchange={(v) => setSpecial(v === 'special')}
+					options={[
+						{ value: 'regular', label: 'Regular' },
+						{ value: 'special', label: 'Special night', icon: Star }
+					]}
+				/>
+								<span class="hint">A special night (like Christmas Eve) takes over from your regular show that evening.</span>
+			</div>
+			<div class="field span-2">
 				<span class="label">Days</span>
 				<div class="row wrap">
 					{#each WEEKDAYS as d (d)}
@@ -576,6 +669,49 @@
 					label="End"
 				/>
 			</div>
+						{#if editing.priority > 0}
+				<div class="field span-2">
+					<span class="label">Which night?</span>
+					<div class="row wrap">
+						{#each specialDates as sd (sd.md)}
+							<button
+								type="button"
+								class="chip"
+								aria-pressed={editing.dateRange?.start === sd.md && editing.dateRange?.end === sd.md}
+								onclick={() => setSingleDate(sd.md)}>{sd.label}</button
+							>
+						{/each}
+						<span class="sep"></span>
+						<select
+							class="select sm month"
+							value={(editing.dateRange?.start ?? '12-24').split('-')[0]}
+							onchange={(e) =>
+								setSingleDate(
+									`${(e.target as HTMLSelectElement).value}-${(editing?.dateRange?.start ?? '12-24').split('-')[1]}`
+								)}
+							aria-label="Month"
+							>{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option
+								>{/each}</select
+						>
+						<input
+							class="input sm dayn"
+							type="number"
+							min="1"
+							max="31"
+							value={+(editing.dateRange?.start ?? '12-24').split('-')[1]}
+							onchange={(e) =>
+								setSingleDate(
+									`${(editing?.dateRange?.start ?? '12-24').split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`
+								)}
+							aria-label="Day"
+						/>
+					</div>
+					<span class="hint"
+						>A special night replaces your regular show time for the whole evening, every year on this
+						date.</span
+					>
+				</div>
+			{:else}
 			<div class="field span-2">
 				<span class="label">Dates</span>
 				<div class="row wrap">
@@ -589,7 +725,7 @@
 						{@const dr = editing.dateRange}
 						<span class="small muted">From</span>
 						<select
-							class="select sm"
+							class="select sm month"
 							style="width:auto"
 							value={dr.start.split('-')[0]}
 							onchange={(e) =>
@@ -611,7 +747,7 @@
 						/>
 						<span class="small muted">to</span>
 						<select
-							class="select sm"
+							class="select sm month"
 							style="width:auto"
 							value={dr.end.split('-')[0]}
 							onchange={(e) => (dr.end = `${(e.target as HTMLSelectElement).value}-${dr.end.split('-')[1]}`)}
@@ -630,25 +766,12 @@
 								(dr.end = `${dr.end.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)}
 							aria-label="End day"
 						/>
-					{:else}
+										{:else}
 						<span class="small faint">Runs all year on the chosen days</span>
 					{/if}
 				</div>
 			</div>
-			<div class="field">
-				<span class="label">Priority</span>
-				<Segmented
-					value={editing.priority > 0 ? 'special' : 'regular'}
-					label="Priority"
-					onchange={(v) =>
-						editing && (editing.priority = v === 'special' ? Math.max(10, editing.priority) : 0)}
-					options={[
-						{ value: 'regular', label: 'Regular' },
-						{ value: 'special', label: 'Special night', icon: Star }
-					]}
-				/>
-				<span class="hint">Special nights replace regular show times when they overlap.</span>
-			</div>
+			{/if}
 			<div class="field">
 				<span class="label">When it ends</span>
 				<select class="select" bind:value={editing.endBehavior}>
@@ -1014,9 +1137,87 @@
 	.hit:hover {
 		background: var(--accent-soft);
 	}
+		.days {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	.drow {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		min-height: 60px;
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--border);
+		text-align: left;
+		transition: background var(--dur) var(--ease);
+	}
+	.drow:last-child {
+		border-bottom: 0;
+	}
+	.drow:hover {
+		background: var(--surface-hover);
+	}
+	.dd {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		width: 48px;
+		height: 44px;
+		border-radius: 10px;
+		background: var(--surface-2);
+		flex: 0 0 auto;
+	}
+	.drow.today .dd {
+		background: var(--accent-soft);
+		color: var(--accent-text);
+	}
+	.ddw {
+		font-size: 10.5px;
+		font-weight: 650;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--text-3);
+	}
+	.drow.today .ddw {
+		color: var(--accent-text);
+	}
+	.ddn {
+		font-size: 16px;
+		font-weight: 650;
+		line-height: 1.1;
+	}
+	.dbody {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		min-width: 0;
+	}
+	.dline {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 13.5px;
+		min-width: 0;
+	}
+	.dline strong {
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.drow.none .dd {
+		opacity: 0.7;
+	}
+	.month {
+		width: auto;
+		min-width: 86px;
+	}
+	.dayn {
+		width: 72px;
+	}
 	@media (max-width: 1100px) {
 		.cols {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 	@media (max-width: 760px) {

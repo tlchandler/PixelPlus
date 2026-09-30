@@ -36,20 +36,12 @@ struct SubmitBody {
     name: Option<String>,
 }
 
-/// Client address; behind a local reverse proxy (tunnel), trust X-Forwarded-For.
-fn client_ip(peer: Peer, headers: &HeaderMap) -> Option<IpAddr> {
-    let direct = peer.0.map(|a| a.ip());
-    if direct.is_some_and(|ip| ip.is_loopback()) {
-        if let Some(fwd) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .and_then(|v| v.trim().parse().ok())
-        {
-            return Some(fwd);
-        }
-    }
-    direct
+/// Client address; behind a trusted reverse proxy (a local tunnel, or one in
+/// `settings.security.trustedProxies`) the proxy's view (see
+/// `security::client_ip`), never the client-controlled left-most hop.
+fn client_ip(state: &AppState, peer: Peer, headers: &HeaderMap) -> Option<IpAddr> {
+    let trusted = state.store.get().settings.security.trusted_proxies.clone();
+    super::security::client_ip(peer.0, headers, &trusted)
 }
 
 async fn submit(
@@ -63,7 +55,7 @@ async fn submit(
         &show,
         &b.sequence_id,
         b.name.as_deref(),
-        client_ip(peer, &headers),
+        client_ip(&state, peer, &headers),
         Instant::now(),
     )?;
     let who = req

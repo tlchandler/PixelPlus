@@ -65,12 +65,18 @@ export const RECEIVERS: Record<ReceiverKind, { name: string; short: string; port
 		direct: { name: 'Direct connection', short: 'Direct', ports: 1 }
 	};
 
+/** Short output id, as printed next to the jacks: "J3-2" on the 60-port board, else "Port 2". */
 export function outputLabel(board: BoardKind, index: number): string {
 	if (board === 'difftxlarge') {
 		const k = index - 1;
 		return `J${Math.floor(k / 4) + 1}-${(k % 4) + 1}`;
 	}
-	if (board === 'diffsmart') return `Out ${index}`;
+	return `Port ${index}`;
+}
+
+/** The name people use for an output: "J3 · Port 2" on the 60-port board, else "Port 2". */
+export function portName(board: BoardKind, index: number): string {
+	if (board === 'difftxlarge') return `J${Math.floor((index - 1) / 4) + 1} · Port ${portOf(index)}`;
 	return `Port ${index}`;
 }
 
@@ -111,7 +117,7 @@ export function wiringChain(show: Show, seg: Prop['segments'][number]): ChainSte
 		steps.push({ label: `${rx.name} receiver`.replace(/receiver receiver$/i, 'receiver'), kind: 'receiver' });
 		steps.push({ label: `Port ${portOf(seg.output)}`, kind: 'port' });
 	} else {
-		steps.push({ label: outputLabel(node.board, seg.output), kind: 'port' });
+		steps.push({ label: portName(node.board, seg.output), kind: 'port' });
 	}
 	const a = seg.startPixel + 1;
 	const b = seg.startPixel + seg.pixelCount;

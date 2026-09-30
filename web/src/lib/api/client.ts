@@ -11,6 +11,9 @@ export type Uploader = (
 ) => Promise<unknown>;
 
 export const API_BASE = '/api/v1';
+/** Sent on every API request. pixelplusd refuses state-changing requests without it
+ *  (a cross-site page can't add custom headers without a CORS preflight). */
+export const REQUEST_HEADER = 'X-PixelPlus-Request';
 
 export class ApiError extends Error {
 	status: number;
@@ -55,7 +58,12 @@ export async function request<R = unknown>(
 	body?: unknown,
 	opts: { raw?: 'text' | 'blob'; signal?: AbortSignal } = {}
 ): Promise<R> {
-	const init: RequestInit = { method, credentials: 'same-origin', signal: opts.signal, headers: {} };
+	const init: RequestInit = {
+		method,
+		credentials: 'same-origin',
+		signal: opts.signal,
+		headers: { [REQUEST_HEADER]: '1' }
+	};
 	if (body !== undefined) {
 		if (body instanceof FormData) init.body = body;
 		else {
@@ -81,6 +89,7 @@ function xhrUpload(path: string, form: FormData, onProgress?: (p: number) => voi
 		const xhr = new XMLHttpRequest();
 		xhr.open(method, API_BASE + path);
 		xhr.withCredentials = true;
+		xhr.setRequestHeader(REQUEST_HEADER, '1');
 		xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
 		xhr.onload = () => {
 			let body: any;
