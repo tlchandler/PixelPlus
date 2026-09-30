@@ -82,7 +82,8 @@
 		{/if}
 		<div class="step">
 			<span class="lbl"
-				>{multiJack ? '2 · Port' : 'Port'}{#if jackRx}<span class="faint">{` on the ${jackRx.name} receiver`}</span>{/if}</span
+				>{multiJack ? '2 · Port' : 'Port'}{#if jackRx}<span class="faint"
+						>{` on the ${jackRx.name} receiver`}</span
 					>{/if}</span
 			>
 			<div class="ports" role="radiogroup" aria-label="Port">

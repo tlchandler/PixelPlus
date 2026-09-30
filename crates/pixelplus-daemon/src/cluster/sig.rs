@@ -88,7 +88,14 @@ fn request_mac(
 }
 
 /// Sign a request; returns `(header value, nonce)`.
-pub fn sign(key: &str, sender: &str, method: &str, path: &str, body: &[u8], ts: i64) -> (String, String) {
+pub fn sign(
+    key: &str,
+    sender: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    ts: i64,
+) -> (String, String) {
     let nonce = random_hex(16);
     let mac = request_mac(key, method, path, sender, ts, &nonce, body);
     (format!("v1 {sender} {ts} {nonce} {}", hex(&mac)), nonce)
@@ -112,10 +119,16 @@ pub fn parse(header: &str) -> Option<Signed> {
     let ts = it.next()?.parse().ok()?;
     let nonce = it.next()?.to_string();
     let mac = unhex(it.next()?)?;
-    if it.next().is_some() || !safe_token(&sender, 64) || !safe_token(&nonce, 64) || mac.len() != 32 {
+    if it.next().is_some() || !safe_token(&sender, 64) || !safe_token(&nonce, 64) || mac.len() != 32
+    {
         return None;
     }
-    Some(Signed { sender, ts, nonce, mac })
+    Some(Signed {
+        sender,
+        ts,
+        nonce,
+        mac,
+    })
 }
 
 impl Signed {
@@ -168,6 +181,10 @@ impl NonceCache {
     }
 }
 
+/// A refusal, plus (for [`Refusal::Skew`]) the key and nonce to answer with
+/// our clock.
+pub type CheckError = (Refusal, Option<(String, String)>);
+
 /// Full check of a signed request: header, MAC with `key_for(sender)`, time
 /// window and nonce. Returns the sender and the key that verified it.
 pub fn check(
@@ -178,7 +195,7 @@ pub fn check(
     nonces: &NonceCache,
     now: i64,
     key_for: impl Fn(&str) -> Option<String>,
-) -> Result<(Signed, String), (Refusal, Option<(String, String)>)> {
+) -> Result<(Signed, String), CheckError> {
     let Some(signed) = header.and_then(parse) else {
         return Err((Refusal::Unauthenticated, None));
     };
@@ -198,7 +215,10 @@ pub fn check(
 }
 
 fn time_mac(key: &str, now: i64, nonce: &str) -> [u8; 32] {
-    hmac_sha256(key.as_bytes(), format!("pixelplus-time-v1\n{now}\n{nonce}").as_bytes())
+    hmac_sha256(
+        key.as_bytes(),
+        format!("pixelplus-time-v1\n{now}\n{nonce}").as_bytes(),
+    )
 }
 
 /// `X-PixelPlus-Time` value telling a key holder our clock.
@@ -342,7 +362,14 @@ pub(crate) async fn call(
     let mut corrected = false;
     loop {
         let skew = sh.skew.lock().get(peer_id).copied().unwrap_or(0);
-        let (auth, nonce) = sign(key, sender, method.as_str(), &path, &payload, now_s() + skew);
+        let (auth, nonce) = sign(
+            key,
+            sender,
+            method.as_str(),
+            &path,
+            &payload,
+            now_s() + skew,
+        );
         let mut req = sh
             .http
             .request(method.clone(), parsed.clone())
@@ -366,7 +393,9 @@ pub(crate) async fn call(
                 .and_then(|h| verify_time_proof(key, h, &nonce));
             if let Some(theirs) = theirs {
                 let offset = theirs - now_s();
-                tracing::info!("clock of {peer_id} differs by {offset} s; adjusting cluster signatures");
+                tracing::info!(
+                    "clock of {peer_id} differs by {offset} s; adjusting cluster signatures"
+                );
                 sh.skew.lock().insert(peer_id.to_string(), offset);
                 corrected = true;
                 continue;
@@ -382,9 +411,19 @@ mod tests {
 
     #[test]
     fn sign_and_verify() {
-        let (h, nonce) = sign("k1", "leader1", "post", "/api/v1/cluster/command", b"{}", 1000);
+        let (h, nonce) = sign(
+            "k1",
+            "leader1",
+            "post",
+            "/api/v1/cluster/command",
+            b"{}",
+            1000,
+        );
         let s = parse(&h).unwrap();
-        assert_eq!((s.sender.as_str(), s.ts, s.nonce.as_str()), ("leader1", 1000, nonce.as_str()));
+        assert_eq!(
+            (s.sender.as_str(), s.ts, s.nonce.as_str()),
+            ("leader1", 1000, nonce.as_str())
+        );
         assert!(s.verify("k1", "POST", "/api/v1/cluster/command", b"{}"));
         // Anything changed breaks the MAC.
         assert!(!s.verify("k2", "POST", "/api/v1/cluster/command", b"{}"));
@@ -392,7 +431,9 @@ mod tests {
         assert!(!s.verify("k1", "POST", "/api/v1/cluster/release", b"{}"));
         assert!(!s.verify("k1", "POST", "/api/v1/cluster/command", b"{\"a\":1}"));
         let forged = h.replace("leader1", "leader2");
-        assert!(!parse(&forged).unwrap().verify("k1", "POST", "/api/v1/cluster/command", b"{}"));
+        assert!(!parse(&forged)
+            .unwrap()
+            .verify("k1", "POST", "/api/v1/cluster/command", b"{}"));
         assert!(parse("v2 a 1 n ff").is_none());
         assert!(parse("v1 ../x 1 n 00").is_none());
         assert!(parse(&format!("{h} extra")).is_none());
@@ -405,19 +446,47 @@ mod tests {
         let (h, _) = sign("key", "f1", "GET", "/p", b"", 5000);
         assert!(check(Some(&h), "GET", "/p", b"", &nonces, 5010, keys).is_ok());
         // Replay.
-        assert_eq!(check(Some(&h), "GET", "/p", b"", &nonces, 5010, keys).unwrap_err().0, Refusal::Replay);
+        assert_eq!(
+            check(Some(&h), "GET", "/p", b"", &nonces, 5010, keys)
+                .unwrap_err()
+                .0,
+            Refusal::Replay
+        );
         // Old / future.
         let (h, nonce) = sign("key", "f1", "GET", "/p", b"", 5000);
-        let err = check(Some(&h), "GET", "/p", b"", &nonces, 5000 + MAX_SKEW_S + 1, keys).unwrap_err();
+        let err = check(
+            Some(&h),
+            "GET",
+            "/p",
+            b"",
+            &nonces,
+            5000 + MAX_SKEW_S + 1,
+            keys,
+        )
+        .unwrap_err();
         assert_eq!(err.0, Refusal::Skew { now: 5031 });
         assert_eq!(err.1, Some(("key".to_string(), nonce)));
         // Unknown sender, missing header, bad MAC.
         let (h, _) = sign("key", "f2", "GET", "/p", b"", 5000);
-        assert_eq!(check(Some(&h), "GET", "/p", b"", &nonces, 5000, keys).unwrap_err().0, Refusal::Unauthenticated);
-        assert_eq!(check(None, "GET", "/p", b"", &nonces, 5000, keys).unwrap_err().0, Refusal::Unauthenticated);
+        assert_eq!(
+            check(Some(&h), "GET", "/p", b"", &nonces, 5000, keys)
+                .unwrap_err()
+                .0,
+            Refusal::Unauthenticated
+        );
+        assert_eq!(
+            check(None, "GET", "/p", b"", &nonces, 5000, keys)
+                .unwrap_err()
+                .0,
+            Refusal::Unauthenticated
+        );
         let (h, _) = sign("nope", "f1", "GET", "/p", b"", 5000);
         let err = check(Some(&h), "GET", "/p", b"", &nonces, 9999, keys).unwrap_err();
-        assert_eq!(err, (Refusal::Unauthenticated, None), "no clock hint without the key");
+        assert_eq!(
+            err,
+            (Refusal::Unauthenticated, None),
+            "no clock hint without the key"
+        );
     }
 
     #[test]

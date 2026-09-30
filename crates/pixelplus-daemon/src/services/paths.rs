@@ -191,7 +191,10 @@ mod tests {
         assert_eq!(show.media[1].file, "", "not audio: unusable");
         assert_eq!(show.media[2].file, "", "unsafe id: unusable");
         assert_eq!(show.sequences[0].file, "");
-        assert_eq!(show.sequences[0].thumbnail.as_deref(), Some("thumbnails/s1.png"));
+        assert_eq!(
+            show.sequences[0].thumbnail.as_deref(),
+            Some("thumbnails/s1.png")
+        );
         // Idempotent, and well-formed shows are untouched.
         assert!(sanitize_show(&mut show).is_empty());
     }

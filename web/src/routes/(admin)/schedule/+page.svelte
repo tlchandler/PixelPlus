@@ -325,7 +325,7 @@
 						</EmptyState>
 					</div>
 								{:else if view === 'days'}
-					<div class="card days" role="list" aria-label="This week">
+					<div class="card days" aria-label="This week">
 						{#each week as d, di (d.key)}
 							{@const live = d.items.filter((o) => !o.overridden)}
 							{@const replaced = d.items.filter((o) => o.overridden)}
@@ -335,7 +335,6 @@
 								class="drow"
 								class:today={di === 0}
 								class:none={!live.length}
-								role="listitem"
 								onclick={() =>
 									e ? (editing = structuredClone($state.snapshot(e) as ScheduleEntry)) : newEntry()}
 							>
@@ -1220,9 +1219,29 @@
 			grid-template-columns: minmax(0, 1fr);
 		}
 	}
-	@media (max-width: 760px) {
+		@media (max-width: 760px) {
 		.banner {
 			padding: 16px;
+			gap: 12px;
+		}
+		.banner .icon-tile.big {
+			display: none;
+		}
+		.banner h2 {
+			font-size: 17px;
+		}
+		.dline {
+			flex-wrap: wrap;
+			row-gap: 0;
+		}
+		.dline .muted {
+			width: 100%;
+			padding-left: 18px;
+			font-size: 12.5px;
+		}
+		.drow {
+			padding: 10px 12px;
+			gap: 12px;
 		}
 		.pd {
 			width: 84px;

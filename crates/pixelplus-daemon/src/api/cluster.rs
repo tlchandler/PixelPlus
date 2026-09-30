@@ -61,7 +61,10 @@ fn path_of(uri: &OriginalUri) -> String {
 fn refusal(r: sig::Refusal, hint: Option<(String, String)>) -> Response {
     let (code, msg) = match r {
         sig::Refusal::Unauthenticated => ("cluster_auth", "Missing or wrong cluster signature."),
-        sig::Refusal::Skew { .. } => ("clock_skew", "The clocks of the two controllers differ too much."),
+        sig::Refusal::Skew { .. } => (
+            "clock_skew",
+            "The clocks of the two controllers differ too much.",
+        ),
         sig::Refusal::Replay => ("replay", "That request was already used."),
     };
     let mut resp = ApiError::new(StatusCode::UNAUTHORIZED, code, msg).into_response();
@@ -85,7 +88,7 @@ fn verify_from_leader(
     method: &Method,
     path: &str,
     body: &[u8],
-) -> Result<sig::Signed, Response> {
+) -> Result<sig::Signed, Box<Response>> {
     let identity = state.identity();
     let key_for = |sender: &str| {
         (identity.role == LocalRole::Follower && identity.leader_id.as_deref() == Some(sender))
@@ -105,7 +108,7 @@ fn verify_from_leader(
             follower::leader_key_confirmed(&cluster.shared);
             Ok(signed)
         }
-        Err((r, hint)) => Err(refusal(r, hint)),
+        Err((r, hint)) => Err(Box::new(refusal(r, hint))),
     }
 }
 
@@ -117,7 +120,7 @@ fn verify_from_follower(
     headers: &HeaderMap,
     path: &str,
     node_id: &str,
-) -> Result<(sig::Signed, String), Response> {
+) -> Result<(sig::Signed, String), Box<Response>> {
     let sh = &cluster.shared;
     let key_for = |sender: &str| {
         (sender == node_id)
@@ -133,7 +136,7 @@ fn verify_from_follower(
         sig::now_s(),
         key_for,
     )
-    .map_err(|(r, hint)| refusal(r, hint))
+    .map_err(|(r, hint)| Box::new(refusal(r, hint)))
 }
 
 fn require_leader(state: &AppState) -> ApiResult<()> {
@@ -162,10 +165,11 @@ async fn get_manifest(
     Path(node_id): Path<String>,
 ) -> ApiResult<Response> {
     let cluster = handle(&state)?;
-    let (signed, key) = match verify_from_follower(&state, &cluster, &headers, &path_of(&uri), &node_id) {
-        Ok(v) => v,
-        Err(r) => return Ok(r),
-    };
+    let (signed, key) =
+        match verify_from_follower(&state, &cluster, &headers, &path_of(&uri), &node_id) {
+            Ok(v) => v,
+            Err(r) => return Ok(*r),
+        };
     require_leader(&state)?;
     require_member(&state, &node_id)?;
     let show = state.store.get();
@@ -181,7 +185,11 @@ async fn get_manifest(
         ManifestError::NotFollower(n) => ApiError::bad_request(format!("{n} is the show leader")),
     })?;
     let body = serde_json::to_vec(&m).map_err(ApiError::internal)?;
-    let mac = sig::reply_mac(&key, &signed.nonce, &format!("manifest {}", sig::sha256_hex(&body)));
+    let mac = sig::reply_mac(
+        &key,
+        &signed.nonce,
+        &format!("manifest {}", sig::sha256_hex(&body)),
+    );
     Response::builder()
         .header(header::CONTENT_TYPE, "application/json")
         .header(sig::REPLY_HEADER, mac)
@@ -226,10 +234,11 @@ async fn get_slice(
     Path((node_id, seq_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
     let cluster = handle(&state)?;
-    let (signed, key) = match verify_from_follower(&state, &cluster, &headers, &path_of(&uri), &node_id) {
-        Ok(v) => v,
-        Err(r) => return Ok(r),
-    };
+    let (signed, key) =
+        match verify_from_follower(&state, &cluster, &headers, &path_of(&uri), &node_id) {
+            Ok(v) => v,
+            Err(r) => return Ok(*r),
+        };
     require_leader(&state)?;
     require_member(&state, &node_id)?;
     let show = state.store.get();
@@ -262,7 +271,11 @@ async fn get_slice(
         Err(e) => return Err(ApiError::internal(e)),
     };
 
-    let reply = sig::reply_mac(&key, &signed.nonce, &format!("slice {etag} {}", meta.sha256));
+    let reply = sig::reply_mac(
+        &key,
+        &signed.nonce,
+        &format!("slice {etag} {}", meta.sha256),
+    );
     let common = |b: axum::http::response::Builder| {
         b.header(header::ETAG, &etag)
             .header(header::ACCEPT_RANGES, "bytes")
@@ -328,9 +341,16 @@ async fn adopt(
     let cluster = handle(&state)?;
     // Signed by our current leader? (An unsigned call may still be allowed.)
     let signed_by_leader = if auth_header(&headers).is_some() {
-        match verify_from_leader(&state, &cluster, &headers, &Method::POST, &path_of(&uri), &body) {
+        match verify_from_leader(
+            &state,
+            &cluster,
+            &headers,
+            &Method::POST,
+            &path_of(&uri),
+            &body,
+        ) {
             Ok(_) => true,
-            Err(r) => return Ok(r),
+            Err(r) => return Ok(*r),
         }
     } else {
         false
@@ -356,8 +376,15 @@ async fn release(
     // Our leader (signed) or someone signed in to this controller's own UI
     // ("Forget leader") may release it.
     if !super::auth::is_authenticated(&state, &headers, peer.0) {
-        if let Err(r) = verify_from_leader(&state, &cluster, &headers, &Method::POST, &path_of(&uri), &body) {
-            return Ok(r);
+        if let Err(r) = verify_from_leader(
+            &state,
+            &cluster,
+            &headers,
+            &Method::POST,
+            &path_of(&uri),
+            &body,
+        ) {
+            return Ok(*r);
         }
     }
     follower::handle_release(&state, &cluster.shared).await?;
@@ -371,8 +398,15 @@ async fn command(
     body: Bytes,
 ) -> ApiResult<Response> {
     let cluster = handle(&state)?;
-    if let Err(r) = verify_from_leader(&state, &cluster, &headers, &Method::POST, &path_of(&uri), &body) {
-        return Ok(r);
+    if let Err(r) = verify_from_leader(
+        &state,
+        &cluster,
+        &headers,
+        &Method::POST,
+        &path_of(&uri),
+        &body,
+    ) {
+        return Ok(*r);
     }
     let cmd: ClusterCommand = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("Invalid command: {e}")))?;
@@ -416,10 +450,19 @@ async fn join_status(State(state): State<AppState>) -> ApiResult<Json<Value>> {
 async fn join_open(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Value>> {
     let cluster = handle(&state)?;
     let b: JoinBody = super::playerapi::body_or_default(&body)?;
-    let leader_ip = match b.leader_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+    let leader_ip = match b
+        .leader_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
         None => None,
         Some(u) => {
-            let with_scheme = if u.contains("://") { u.to_string() } else { format!("http://{u}") };
+            let with_scheme = if u.contains("://") {
+                u.to_string()
+            } else {
+                format!("http://{u}")
+            };
             let url = reqwest::Url::parse(&with_scheme)
                 .map_err(|_| ApiError::bad_request("That isn't a valid address."))?;
             let host = url
@@ -435,7 +478,9 @@ async fn join_open(State(state): State<AppState>, body: Bytes) -> ApiResult<Json
                     .and_then(|mut a| a.next())
                     .map(|a| a.ip())
                     .ok_or_else(|| {
-                        ApiError::bad_request(format!("Couldn't find “{host}” on the network. Use its IP address."))
+                        ApiError::bad_request(format!(
+                            "Couldn't find “{host}” on the network. Use its IP address."
+                        ))
                     })?,
             };
             Some(ip)
@@ -446,7 +491,9 @@ async fn join_open(State(state): State<AppState>, body: Bytes) -> ApiResult<Json
         leader_ip,
     };
     *cluster.shared.join.lock() = Some(w);
-    let who = leader_ip.map(|ip| format!("the leader at {ip}")).unwrap_or_else(|| "a show leader".into());
+    let who = leader_ip
+        .map(|ip| format!("the leader at {ip}"))
+        .unwrap_or_else(|| "a show leader".into());
     crate::cluster::log_warning(
         &state,
         format!("For the next 15 minutes {who} may adopt this controller."),

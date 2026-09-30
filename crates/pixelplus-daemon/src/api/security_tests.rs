@@ -27,12 +27,14 @@ async fn leader(app: &mut TestApp, password: Option<&str>) {
         .map(|c| c.split(';').next().unwrap().to_string());
 }
 
-    // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
 // Browser hardening (api::security) and secrets (M4)
 // ---------------------------------------------------------------------
 
 fn req(method: &str, path: &str, headers: &[(&str, &str)]) -> Request<Body> {
-    let mut b = Request::builder().method(method).uri(format!("/api/v1{path}"));
+    let mut b = Request::builder()
+        .method(method)
+        .uri(format!("/api/v1{path}"));
     for (k, v) in headers {
         b = b.header(*k, *v);
     }
@@ -44,19 +46,31 @@ async fn host_allow_list_csrf_header_and_security_headers() {
     let app = TestApp::new();
     // DNS rebinding: a foreign host name is refused (friendly page for browsers).
     let (s, h, body) = app
-        .send(req("GET", "/show", &[("host", "evil.example.com"), ("accept", "text/html")]))
+        .send(req(
+            "GET",
+            "/show",
+            &[("host", "evil.example.com"), ("accept", "text/html")],
+        ))
         .await;
     assert_eq!(s, StatusCode::MISDIRECTED_REQUEST);
     assert!(String::from_utf8_lossy(&body).contains("Other names for this controller"));
     assert_eq!(h["x-content-type-options"], "nosniff");
     // IP literal, localhost and <hostname>.local work.
-    for host in ["192.168.1.20", "localhost:8080", &format!("{}.local", crate::cluster::net::hostname())] {
+    for host in [
+        "192.168.1.20",
+        "localhost:8080",
+        &format!("{}.local", crate::cluster::net::hostname()),
+    ] {
         let (s, _, _) = app.send(req("GET", "/show", &[("host", host)])).await;
         assert_eq!(s, StatusCode::OK, "{host}");
     }
     // The public page works under any name (tunnels).
     let (s, _, _) = app
-        .send(req("GET", "/public/health", &[("host", "lights.example.com")]))
+        .send(req(
+            "GET",
+            "/public/health",
+            &[("host", "lights.example.com")],
+        ))
         .await;
     assert_eq!(s, StatusCode::OK);
     // Configured extra names.
@@ -68,7 +82,9 @@ async fn host_allow_list_csrf_header_and_security_headers() {
         })
         .await
         .unwrap();
-    let (s, _, _) = app.send(req("GET", "/show", &[("host", "lights.example.com")])).await;
+    let (s, _, _) = app
+        .send(req("GET", "/show", &[("host", "lights.example.com")]))
+        .await;
     assert_eq!(s, StatusCode::OK);
 
     // CSRF: state-changing calls need the app's header (a cross-site form can't send it).
@@ -77,20 +93,27 @@ async fn host_allow_list_csrf_header_and_security_headers() {
         .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
     let mut r = req("POST", "/player/stop", &[]);
-    r.headers_mut().insert("x-pixelplus-request", "1".parse().unwrap());
+    r.headers_mut()
+        .insert("x-pixelplus-request", "1".parse().unwrap());
     let (s, _, _) = app.send(r).await;
     assert_ne!(s, StatusCode::FORBIDDEN);
     // Security headers on everything, CSP included.
     let (_, h, _) = app.send(req("GET", "/show", &[])).await;
     assert_eq!(h["x-frame-options"], "DENY");
-    assert!(h["content-security-policy"].to_str().unwrap().contains("frame-ancestors 'none'"));
+    assert!(h["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .contains("frame-ancestors 'none'"));
 
     // WebSocket from another site.
     let (s, _, _) = app
         .send(req(
             "GET",
             "/ws",
-            &[("host", "192.168.1.20"), ("origin", "http://evil.example.com")],
+            &[
+                ("host", "192.168.1.20"),
+                ("origin", "http://evil.example.com"),
+            ],
         ))
         .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
@@ -109,24 +132,49 @@ async fn local_token_is_scoped_and_proxy_proof() {
         r
     };
     // The old constant header is worthless.
-    let (s, _, _) = app.send(lo(req("GET", "/show", &[("x-pixelplus-local", "1")]))).await;
+    let (s, _, _) = app
+        .send(lo(req("GET", "/show", &[("x-pixelplus-local", "1")])))
+        .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
-    let (s, _, _) = app.send(lo(req("GET", "/show", &[("x-pixelplus-local", &token)]))).await;
+    let (s, _, _) = app
+        .send(lo(req("GET", "/show", &[("x-pixelplus-local", &token)])))
+        .await;
     assert_eq!(s, StatusCode::OK);
     // Not through a reverse proxy on the same machine…
     let (s, _, _) = app
-        .send(lo(req("GET", "/show", &[("x-pixelplus-local", &token), ("x-forwarded-for", "6.6.6.6")])))
+        .send(lo(req(
+            "GET",
+            "/show",
+            &[
+                ("x-pixelplus-local", &token),
+                ("x-forwarded-for", "6.6.6.6"),
+            ],
+        )))
         .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     // …not from the network…
-    let (s, _, _) = app.send(req("GET", "/show", &[("x-pixelplus-local", &token)])).await;
+    let (s, _, _) = app
+        .send(req("GET", "/show", &[("x-pixelplus-local", &token)]))
+        .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     // …and only for the sidecar's routes.
-    for (m, p) in [("GET", "/system/ssh"), ("PUT", "/show/settings"), ("POST", "/system/update")] {
-        let (s, _, _) = app.send(lo(req(m, p, &[("x-pixelplus-local", &token)]))).await;
+    for (m, p) in [
+        ("GET", "/system/ssh"),
+        ("PUT", "/show/settings"),
+        ("POST", "/system/update"),
+    ] {
+        let (s, _, _) = app
+            .send(lo(req(m, p, &[("x-pixelplus-local", &token)])))
+            .await;
         assert_eq!(s, StatusCode::UNAUTHORIZED, "{m} {p}");
     }
-    let (s, _, _) = app.send(lo(req("POST", "/player/pause", &[("x-pixelplus-local", &token)]))).await;
+    let (s, _, _) = app
+        .send(lo(req(
+            "POST",
+            "/player/pause",
+            &[("x-pixelplus-local", &token)],
+        )))
+        .await;
     assert_ne!(s, StatusCode::UNAUTHORIZED);
 }
 
@@ -137,11 +185,16 @@ async fn login_is_throttled() {
     app.cookie = None;
     let mut last = StatusCode::OK;
     for _ in 0..6 {
-        last = app.json("POST", "/auth/login", Some(json!({"password": "nope"}))).await.0;
+        last = app
+            .json("POST", "/auth/login", Some(json!({"password": "nope"})))
+            .await
+            .0;
     }
     assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
     // Even the right password waits now (from that address).
-    let (s, v) = app.json("POST", "/auth/login", Some(json!({"password": "jingle"}))).await;
+    let (s, v) = app
+        .json("POST", "/auth/login", Some(json!({"password": "jingle"})))
+        .await;
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
 }
 
@@ -163,22 +216,45 @@ async fn secrets_are_write_only() {
     assert_eq!(s, StatusCode::OK);
     let (_, show) = app.json("GET", "/show", None).await;
     let text = show.to_string();
-    assert!(!text.contains("mqtt-secret") && !text.contains("smtp-secret"), "{text}");
+    assert!(
+        !text.contains("mqtt-secret") && !text.contains("smtp-secret"),
+        "{text}"
+    );
     assert_eq!(show["settings"]["mqtt"]["password"], "********");
     assert_eq!(show["settings"]["alerts"]["email"]["password"], "********");
     // Sending the settings back unchanged keeps the stored secrets.
-    let (s, back) = app.json("PUT", "/show/settings", Some(show["settings"].clone())).await;
+    let (s, back) = app
+        .json("PUT", "/show/settings", Some(show["settings"].clone()))
+        .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(back["mqtt"]["password"], "********");
     let stored = app.state.store.get();
-    assert_eq!(stored.settings.mqtt.password.as_deref(), Some("mqtt-secret"));
-    assert_eq!(stored.settings.alerts.email.as_ref().unwrap().password, "smtp-secret");
+    assert_eq!(
+        stored.settings.mqtt.password.as_deref(),
+        Some("mqtt-secret")
+    );
+    assert_eq!(
+        stored.settings.alerts.email.as_ref().unwrap().password,
+        "smtp-secret"
+    );
     // A new value replaces it.
-    app.json("PUT", "/show/settings", Some(json!({"mqtt": {"password": "new"}}))).await;
-    assert_eq!(app.state.store.get().settings.mqtt.password.as_deref(), Some("new"));
+    app.json(
+        "PUT",
+        "/show/settings",
+        Some(json!({"mqtt": {"password": "new"}})),
+    )
+    .await;
+    assert_eq!(
+        app.state.store.get().settings.mqtt.password.as_deref(),
+        Some("new")
+    );
     // Bad allowed-host entries are refused.
     let (s, _) = app
-        .json("PUT", "/show/settings", Some(json!({"security": {"allowedHosts": ["a b"]}})))
+        .json(
+            "PUT",
+            "/show/settings",
+            Some(json!({"security": {"allowedHosts": ["a b"]}})),
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
@@ -187,7 +263,11 @@ async fn secrets_are_write_only() {
 async fn hostile_media_paths_are_never_served() {
     let app = TestApp::new();
     std::fs::write(app.dir.join("node.json.mp3"), b"x").unwrap();
-    std::fs::write(app.dir.join("media/evil.html"), b"<script>alert(1)</script>").unwrap();
+    std::fs::write(
+        app.dir.join("media/evil.html"),
+        b"<script>alert(1)</script>",
+    )
+    .unwrap();
     std::fs::write(app.dir.join("media/good.mp3"), b"ID3").unwrap();
     let mk = |id: &str, file: &str| pixelplus_core::model::Media {
         id: id.into(),
@@ -200,16 +280,24 @@ async fn hostile_media_paths_are_never_served() {
     };
     // As a restored snapshot would bring them.
     let mut show = (*app.state.store.get()).clone();
-    show.media = vec![mk("a", "node.json.mp3"), mk("evil", "media/evil.html"), mk("good", "media/good.mp3")];
+    show.media = vec![
+        mk("a", "node.json.mp3"),
+        mk("evil", "media/evil.html"),
+        mk("good", "media/good.mp3"),
+    ];
     app.state.store.replace(show).await.unwrap();
     for id in ["a", "evil"] {
-        let (s, _, _) = app.send(req("GET", &format!("/media/{id}/file"), &[])).await;
+        let (s, _, _) = app
+            .send(req("GET", &format!("/media/{id}/file"), &[]))
+            .await;
         assert_eq!(s, StatusCode::NOT_FOUND, "{id}");
     }
     let (s, h, _) = app.send(req("GET", "/media/good/file", &[])).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(h["content-type"], "audio/mpeg");
-    assert!(h["content-disposition"].to_str().unwrap().starts_with("attachment"));
+    assert!(h["content-disposition"]
+        .to_str()
+        .unwrap()
+        .starts_with("attachment"));
     assert_eq!(h["x-content-type-options"], "nosniff");
 }
-

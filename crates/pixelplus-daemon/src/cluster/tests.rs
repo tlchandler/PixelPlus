@@ -864,7 +864,7 @@ async fn adoption_rules_skew_and_replay() {
     let fresh = proto::encode(&sync(9), Some(proto::Stamp { key: &key, boot: &boot, seq: u64::MAX / 2 }));
     sock.send_to(&fresh, ("127.0.0.1", fp)).unwrap();
     let cmd = next_cmd(&mut f.player_rx, "fresh sync", |c| {
-        matches!(c, PlayerCmd::Sync(p) if matches!(p.brightness, 7 | 8 | 9))
+        matches!(c, PlayerCmd::Sync(p) if matches!(p.brightness, 7..=9))
     })
     .await;
     assert!(matches!(cmd, PlayerCmd::Sync(p) if p.brightness == 9), "replays were dropped");

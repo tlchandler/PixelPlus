@@ -22,7 +22,10 @@
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
-	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+		import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import SaveState from '$lib/components/ui/SaveState.svelte';
+	import SignalBars from '$lib/components/ui/SignalBars.svelte';
+	import { countryName, fmtTemp, tempUnitOf, tempValue, cToF, fToC, wifiQuality } from '$lib/util/units';
 	import QrCode from '$lib/components/viz/QrCode.svelte';
 	import {
 		Wifi,
@@ -56,11 +59,18 @@
 		Radio,
 		Terminal,
 		TriangleAlert,
-		X,
-		WifiOff
+				X,
+		WifiOff,
+		SlidersHorizontal,
+		ChevronRight,
+		ChevronLeft,
+		Printer,
+		Globe,
+		Info
 	} from '@lucide/svelte';
 
-	type Sec =
+		type Sec =
+		| 'general'
 		| 'network'
 		| 'audio'
 		| 'alerts'
@@ -72,29 +82,49 @@
 		| 'updates'
 		| 'hardware'
 		| 'logs';
-	const sections: { id: Sec; label: string; icon: typeof Wifi }[] = [
-		{ id: 'network', label: 'Network & Wi-Fi', icon: Wifi },
-		{ id: 'audio', label: 'Audio', icon: Volume2 },
-		{ id: 'alerts', label: 'Alerts', icon: Bell },
-		{ id: 'mqtt', label: 'Home Assistant', icon: House },
-		{ id: 'requests', label: 'Song requests', icon: Hand },
-		{ id: 'triggers', label: 'Triggers', icon: Zap },
-		{ id: 'security', label: 'Security', icon: ShieldCheck },
-		{ id: 'snapshots', label: 'Time machine', icon: History },
-		{ id: 'updates', label: 'Updates', icon: Download },
-		{ id: 'hardware', label: 'Hardware & about', icon: Cpu },
-		{ id: 'logs', label: 'Logs', icon: ScrollText }
+		/** `device`: settings for this controller only (the rest apply to the whole show). */
+	const sections: { id: Sec; label: string; icon: typeof Wifi; desc: string; device?: boolean }[] = [
+		{ id: 'general', label: 'General', icon: SlidersHorizontal, desc: 'Units and appearance' },
+		{
+			id: 'network',
+			label: 'Network & Wi-Fi',
+			icon: Wifi,
+			desc: 'Wi-Fi and the controller’s name',
+			device: true
+		},
+		{ id: 'audio', label: 'Audio', icon: Volume2, desc: 'Speakers, volume and volume leveling' },
+		{ id: 'alerts', label: 'Alerts', icon: Bell, desc: 'A message when something needs you' },
+		{ id: 'mqtt', label: 'Home Assistant', icon: House, desc: 'Control the show from your smart home' },
+		{ id: 'requests', label: 'Song requests', icon: Hand, desc: 'Visitors pick songs · radio · yard sign' },
+		{ id: 'triggers', label: 'Triggers', icon: Zap, desc: 'Start things with a button or a link' },
+		{ id: 'security', label: 'Security', icon: ShieldCheck, desc: 'Password and remote access' },
+		{ id: 'snapshots', label: 'Backups', icon: History, desc: 'Go back to any earlier version' },
+		{ id: 'updates', label: 'Updates', icon: Download, desc: 'New versions of PixelPlus', device: true },
+		{ id: 'hardware', label: 'Hardware & about', icon: Cpu, desc: 'Board, restart, shut down', device: true },
+		{ id: 'logs', label: 'Logs', icon: ScrollText, desc: 'What happened, for troubleshooting', device: true }
 	];
 
-	let sec = $state<Sec>('network');
+	let sec = $state<Sec>('general');
+	/** Phones show the section list first and drill into one section (with a back button). */
+	let mobileOpen = $state(false);
 	$effect(() => {
 		const h = location.hash.slice(1) as Sec;
-		if (sections.some((s) => s.id === h)) sec = h;
+		if (sections.some((s) => s.id === h)) {
+			sec = h;
+			mobileOpen = true;
+		}
 	});
 	function go(s: Sec) {
 		sec = s;
+		mobileOpen = true;
 		history.replaceState(history.state, '', `#${s}`);
+		window.scrollTo({ top: 0 });
 	}
+	function backToList() {
+		mobileOpen = false;
+		history.replaceState(history.state, '', location.pathname);
+	}
+	const secInfo = $derived(sections.find((x) => x.id === sec)!);
 
 	const show = $derived(app.show);
 	let s = $state<ShowSettings | null>(null);
@@ -130,7 +160,12 @@
 
 	// ---- network
 	let net = $state<NetworkConfig | null>(null);
-	let netOrig = '';
+		let netOrig = $state('');
+	/** The Wi-Fi network the controller is set to join (before any edits here). */
+	const savedSsid = $derived(netOrig ? ((JSON.parse(netOrig) as NetworkConfig).wifi?.ssid ?? '') : '');
+	/** Picked a different network than the saved one: needs its password, then Apply. */
+	const switching = $derived(!!net && !!net.wifi.ssid && net.wifi.ssid !== savedSsid);
+	const pickedSecure = $derived(scan?.find((n) => n.ssid === net?.wifi.ssid)?.secure ?? true);
 	let scan = $state<WifiNetwork[] | null>(null);
 	let scanning = $state(false);
 	let psk = $state('');
@@ -421,27 +456,46 @@
 </script>
 
 <div class="page">
-	<PageHeader title="Settings" subtitle="Everything here applies to the whole show, including followers.">
-		{#snippet actions()}
-			<span class="faint small savestate"
-				>{#if saved}<Check size={13} /> All changes saved{:else}Saving…{/if}</span
-			>
-		{/snippet}
-	</PageHeader>
+		<div class="head" class:mobile-hidden={mobileOpen}>
+		<PageHeader
+			title="Settings"
+			subtitle="Changes save automatically and apply to the whole show, followers included — except those marked “This controller”."
+		/>
+	</div>
 
 	<div class="layout">
-		<nav class="snav" aria-label="Settings sections">
+		<nav class="snav" class:mobile-hidden={mobileOpen} aria-label="Settings sections">
 			{#each sections as x (x.id)}
 				<button
 					class="si"
 					class:on={sec === x.id}
 					onclick={() => go(x.id)}
-					aria-current={sec === x.id ? 'page' : undefined}><x.icon size={16} /> {x.label}</button
+					aria-current={sec === x.id ? 'page' : undefined}
 				>
+					<span class="si-ic"><x.icon size={16} /></span>
+					<span class="si-txt"
+						><span class="si-label">{x.label}</span><span class="si-desc">{x.desc}</span></span
+					>
+					<ChevronRight size={16} class="si-chev" />
+				</button>
 			{/each}
 		</nav>
 
-		<div class="content">
+		<div class="content" class:mobile-hidden={!mobileOpen}>
+			<div class="secbar">
+				<button class="btn ghost back" onclick={backToList}><ChevronLeft size={18} /> Settings</button>
+				<span class="grow"></span>
+				{#if sec === 'network' && netDirty}
+					<span class="small notapplied">Not applied yet</span>
+				{:else if !secInfo.device || sec === 'hardware'}
+					<SaveState state={saved ? 'saved' : 'saving'} />
+				{/if}
+			</div>
+			{#if secInfo.device}
+				<div class="devnote">
+					<Cpu size={14} /> This controller only · <strong>{sys?.name || sys?.hostname}</strong>
+				</div>
+			{/if}
 			{#if !s || !show}
 				<div class="card card-pad"><Skeleton count={8} h={28} /></div>
 			{:else if sec === 'network'}
@@ -511,7 +565,12 @@
 									<dt>Addresses</dt>
 									<dd class="mono">{sys?.ips?.length ? sys.ips.join(', ') : '—'}</dd>
 									<dt>Wi-Fi</dt>
-									<dd>{sys?.wifi?.ssid ? `${sys.wifi.ssid} · ${sys.wifi.signal} dBm` : 'Not connected'}</dd>
+																		<dd>
+										{#if sys?.wifi?.ssid}{sys.wifi.ssid} · <SignalBars
+												dbm={sys.wifi.signal}
+												showLabel
+											/>{:else}Not connected{/if}
+									</dd>
 								</dl>
 							{:else}
 								<div class="form-grid">
@@ -526,8 +585,8 @@
 										><span class="label">Wi-Fi country</span><select
 											class="select"
 											bind:value={net.wifi.country}
-											>{#each ['US', 'CA', 'GB', 'IE', 'AU', 'NZ', 'DE', 'FR', 'NL', 'SE', 'NO', 'MX'] as c (c)}<option
-													value={c}>{c}</option
+																						>{#each ['US', 'CA', 'GB', 'IE', 'AU', 'NZ', 'DE', 'FR', 'NL', 'SE', 'NO', 'MX'] as c (c)}<option
+													value={c}>{countryName(c)}</option
 												>{/each}</select
 										></label
 									>
@@ -540,25 +599,36 @@
 											{scanning ? 'Scanning…' : 'Scan'}</button
 										>
 									</div>
-									<div class="current">
-										{#if net.wifi.ssid}
-											<Wifi size={16} /> Connected to <strong>{net.wifi.ssid}</strong>{#if sys?.wifi}<span
-													class="faint small">· {sys.wifi.signal} dBm</span
-												>{/if}
+																		<div class="current">
+										{#if sys?.wifi?.ssid}
+											<Wifi size={16} /> Connected to <strong>{sys.wifi.ssid}</strong>
+											<SignalBars dbm={sys.wifi.signal} showLabel />
 										{:else}
-											<WifiOff size={16} /> Not connected to Wi-Fi — scan and pick a network.
+											<WifiOff size={16} class="off" /> Not connected to Wi-Fi — scan and pick a network.
 										{/if}
 									</div>
+									{#if switching}
+										<div class="switchto">
+											Switch to <strong>{net.wifi.ssid}</strong> — {pickedSecure
+												? 'type its password below, then'
+												: 'then'} press <em>Apply network settings</em>.
+											<button
+												class="linkish"
+												onclick={() => net && (net.wifi.ssid = savedSsid)}
+												>Keep {savedSsid || 'the current network'}</button
+											>
+										</div>
+									{/if}
 									{#if scan}
 										<div class="nets">
 											{#each scan as n (n.ssid)}
-												{@const Sig = sigIcon(n.signal)}
-												<button
+																								<button
 													class="netrow"
 													class:on={net.wifi.ssid === n.ssid}
 													onclick={() => net && (net.wifi.ssid = n.ssid)}
 												>
-													<Sig size={16} /><span class="grow">{n.ssid}</span>{#if n.secure}<Lock
+													<SignalBars dbm={n.signal} /><span class="grow">{n.ssid}</span
+													>{#if n.ssid === sys?.wifi?.ssid}<span class="faint tiny">Connected</span>{/if}{#if n.secure}<Lock
 															size={13}
 															class="faint"
 														/>{/if}{#if net.wifi.ssid === n.ssid}<Check size={15} />{/if}
@@ -568,11 +638,16 @@
 									{/if}
 									<label class="field" style="margin-top:12px"
 										><span class="label"
-											>{net.wifi.ssid ? `Password for ${net.wifi.ssid}` : 'Wi-Fi password'}</span
+																						>{net.wifi.ssid ? `Password for ${net.wifi.ssid}` : 'Wi-Fi password'}</span
 										><input
 											class="input"
 											type="password"
-											placeholder="Leave empty to keep the current password"
+											placeholder={switching
+												? pickedSecure
+													? `Password for ${net.wifi.ssid} (required)`
+													: 'This network has no password'
+												: 'Leave empty to keep the current password'}
+											disabled={switching && !pickedSecure}
 											bind:value={psk}
 											autocomplete="new-password"
 										/></label
@@ -618,7 +693,7 @@
 									</div>
 								</details>
 								<div class="row" style="margin-top:18px;justify-content:flex-end">
-									<button class="btn primary" disabled={!netDirty} onclick={saveNet}
+									<button class="btn primary" disabled={!netDirty || (switching && pickedSecure && !psk)} onclick={saveNet}
 										>Apply network settings</button
 									>
 								</div>

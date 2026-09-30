@@ -246,6 +246,48 @@ async fn nm(args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// `nmcli` with `input` on its stdin (secrets).
+async fn nm_stdin(args: &[&str], input: Option<&str>) -> Result<String, String> {
+    use tokio::io::AsyncWriteExt;
+    let Some(input) = input else {
+        return nm(args).await;
+    };
+    let mut child = tokio::process::Command::new("nmcli")
+        .args(args)
+        .env("LC_ALL", "C")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("could not run nmcli: {e}"))?;
+    if let Some(mut w) = child.stdin.take() {
+        let _ = w.write_all(input.as_bytes()).await;
+    }
+    let out = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output())
+        .await
+        .map_err(|_| "nmcli did not answer within 60 s".to_string())?
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr)
+            .trim()
+            .trim_start_matches("Error: ")
+            .to_string())
+    }
+}
+
+/// `nmcli` arguments to join `ssid`; the password (if any) is read from stdin.
+pub fn wifi_connect_args(ssid: &str, with_password: bool) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    if with_password {
+        a.push("--ask".into());
+    }
+    a.extend(["--wait", "45", "dev", "wifi", "connect", ssid, "name", "pixelplus-wifi"].map(String::from));
+    a
+}
+
 /// (name, type, device) of connections, active ones first.
 async fn connections() -> Vec<(String, String, String, bool)> {
     let Ok(out) = nm(&["-t", "-f", "NAME,TYPE,DEVICE,ACTIVE", "con", "show"]).await else {
@@ -484,19 +526,13 @@ pub async fn apply(new: NetworkConfig, state: AppState) -> ApiResult<NetworkConf
                 || new.wifi.psk.as_deref().is_some_and(|p| !p.is_empty()));
         if wifi_changed {
             let _ = nm(&["con", "delete", "pixelplus-wifi"]).await;
-            let mut args = vec![
-                "--wait",
-                "45",
-                "dev",
-                "wifi",
-                "connect",
-                new.wifi.ssid.as_str(),
-            ];
-            if let Some(psk) = new.wifi.psk.as_deref().filter(|p| !p.is_empty()) {
-                args.extend(["password", psk]);
-            }
-            args.extend(["name", "pixelplus-wifi"]);
-            if let Err(e) = nm(&args).await {
+            let psk = new.wifi.psk.as_deref().filter(|p| !p.is_empty());
+            // The password goes to nmcli on stdin (`--ask`), never on its command
+            // line where every local user could read it (/proc/<pid>/cmdline).
+            let args = wifi_connect_args(&new.wifi.ssid, psk.is_some());
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let stdin = psk.map(|p| format!("{p}\n"));
+            if let Err(e) = nm_stdin(&args, stdin.as_deref()).await {
                 problems.push(format!("couldn't join \"{}\" ({e})", new.wifi.ssid));
             }
         }
@@ -522,6 +558,14 @@ mod tests {
             managed: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn wifi_password_never_on_the_command_line() {
+        let a = wifi_connect_args("Home", true);
+        assert_eq!(a[0], "--ask");
+        assert!(!a.iter().any(|x| x == "password"));
+        assert!(!wifi_connect_args("Open", false).contains(&"--ask".to_string()));
     }
 
     #[test]

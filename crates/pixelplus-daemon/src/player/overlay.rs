@@ -327,7 +327,7 @@ pub fn parse_color(s: &str) -> Rgb {
     Rgb::from_hex(s.trim()).unwrap_or(Rgb::WHITE)
 }
 
-/// Overlay buffers: read/write for the `pixelplus` user and group only.
+/// Overlay buffers: read/write for the `pixelplus` user and the sidecar group only.
 const SHM_MODE: u32 = 0o660;
 
 fn create_shm(path: &Path, w: u32, h: u32) -> std::io::Result<Shm> {
@@ -356,6 +356,13 @@ fn create_shm(path: &Path, w: u32, h: u32) -> std::io::Result<Shm> {
     file.write_all_at(&header, 0)?;
     // Also fixes files left by older versions (0666) - by descriptor, not by path.
     let _ = file.set_permissions(std::fs::Permissions::from_mode(SHM_MODE));
+    // The games sidecar runs as its own user in the sidecar group
+    // (pixelplus-overlay): give the buffer to that group.
+    if let Some(gid) = crate::api::security::sidecar_gid() {
+        use std::os::fd::AsRawFd;
+        // SAFETY: fchown on our own open descriptor.
+        let _ = unsafe { libc::fchown(file.as_raw_fd(), u32::MAX, gid) };
+    }
     Ok(Shm { file, path: path.to_path_buf() })
 }
 

@@ -36,7 +36,10 @@ pub const SIDECAR_GROUP: &str = "pixelplus-overlay";
 
 fn canonical(ip: IpAddr) -> IpAddr {
     match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(v6)),
         v4 => v4,
     }
 }
@@ -54,12 +57,20 @@ fn in_net(ip: IpAddr, spec: &str) -> bool {
     match (canonical(ip), canonical(net)) {
         (IpAddr::V4(a), IpAddr::V4(n)) => {
             let bits = bits.unwrap_or(32).min(32);
-            let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+            let mask = if bits == 0 {
+                0
+            } else {
+                u32::MAX << (32 - bits)
+            };
             u32::from(a) & mask == u32::from(n) & mask
         }
         (IpAddr::V6(a), IpAddr::V6(n)) => {
             let bits = bits.unwrap_or(128).min(128);
-            let mask = if bits == 0 { 0 } else { u128::MAX << (128 - bits) };
+            let mask = if bits == 0 {
+                0
+            } else {
+                u128::MAX << (128 - bits)
+            };
             u128::from(a) & mask == u128::from(n) & mask
         }
         _ => false,
@@ -75,7 +86,11 @@ fn trusted_proxy(ip: IpAddr, trusted: &[String]) -> bool {
 /// `CF-Connecting-IP` from a local cloudflared, otherwise the right-most
 /// `X-Forwarded-For` entry that is not itself a trusted proxy (proxies append
 /// the address they saw; everything left of it is what the client claimed).
-pub fn client_ip(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: &[String]) -> Option<IpAddr> {
+pub fn client_ip(
+    peer: Option<SocketAddr>,
+    headers: &HeaderMap,
+    trusted: &[String],
+) -> Option<IpAddr> {
     let direct = canonical(peer?.ip());
     if !trusted_proxy(direct, trusted) {
         return Some(direct);
@@ -108,9 +123,15 @@ pub fn client_ip(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: &[Strin
 /// Carries any header a reverse proxy adds (such requests never get the
 /// sidecar's local-token trust).
 pub fn forwarded(headers: &HeaderMap) -> bool {
-    ["x-forwarded-for", "forwarded", "cf-connecting-ip", "x-real-ip", "x-forwarded-host"]
-        .iter()
-        .any(|h| headers.contains_key(*h))
+    [
+        "x-forwarded-for",
+        "forwarded",
+        "cf-connecting-ip",
+        "x-real-ip",
+        "x-forwarded-host",
+    ]
+    .iter()
+    .any(|h| headers.contains_key(*h))
 }
 
 /// A peer on this machine's networks: loopback, private/link-local/CGNAT
@@ -301,12 +322,24 @@ fn base64(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
         out.push(T[(n >> 18) as usize & 63] as char);
         out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -328,7 +361,10 @@ pub fn inline_script_hashes(html: &str) -> Vec<String> {
         let attrs = &lower[tag_start + 7..tag_end];
         if !attrs.contains("src=") {
             let body = &html[tag_end + 1..close];
-            out.push(format!("'sha256-{}'", base64(&Sha256::digest(body.as_bytes()))));
+            out.push(format!(
+                "'sha256-{}'",
+                base64(&Sha256::digest(body.as_bytes()))
+            ));
         }
         pos = close;
     }
@@ -382,8 +418,10 @@ pub fn content_security_policy(web_dir: &Path) -> Option<String> {
 /// setups rebuild while the daemon runs).
 pub struct CspCache {
     web_dir: std::path::PathBuf,
-    cached: parking_lot::Mutex<Option<(Option<(std::time::SystemTime, u64)>, Option<HeaderValue>)>>,
+    cached: parking_lot::Mutex<Option<(Option<FileStamp>, Option<HeaderValue>)>>,
 }
+
+type FileStamp = (std::time::SystemTime, u64);
 
 impl CspCache {
     pub fn new(web_dir: &Path) -> Self {
@@ -393,7 +431,7 @@ impl CspCache {
         }
     }
 
-    fn stamp(&self) -> Option<(std::time::SystemTime, u64)> {
+    fn stamp(&self) -> Option<FileStamp> {
         let m = std::fs::metadata(self.web_dir.join("index.html")).ok()?;
         Some((m.modified().ok()?, m.len()))
     }
@@ -420,9 +458,15 @@ pub async fn headers(
 ) -> Response {
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
-    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
-    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("same-origin"));
+    h.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("same-origin"),
+    );
     if !h.contains_key(header::CONTENT_SECURITY_POLICY) {
         if let Some(v) = csp.get() {
             h.insert(header::CONTENT_SECURITY_POLICY, v);
@@ -468,7 +512,10 @@ pub fn init_local_token(state: &AppState) {
     let token = crate::cluster::sig::random_hex(32);
     if let Some(path) = local_token_path() {
         if let Err(e) = write_token(&path, &token) {
-            tracing::warn!("could not write {} ({e}); local sidecars need a session", path.display());
+            tracing::warn!(
+                "could not write {} ({e}); local sidecars need a session",
+                path.display()
+            );
         }
     }
     state.sessions.set_local_token(token);
@@ -531,20 +578,44 @@ mod tests {
         let lo: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         let spoof = h(&[("x-forwarded-for", "1.2.3.4")]);
         // A LAN client can't pick its address.
-        assert_eq!(client_ip(Some(lan), &spoof, &[]), Some("192.168.1.9".parse().unwrap()));
+        assert_eq!(
+            client_ip(Some(lan), &spoof, &[]),
+            Some("192.168.1.9".parse().unwrap())
+        );
         // Behind a local proxy the right-most hop (what the proxy saw) counts,
         // not the left-most value the client sent.
         let appended = h(&[("x-forwarded-for", "6.6.6.6, 203.0.113.7")]);
-        assert_eq!(client_ip(Some(lo), &appended, &[]), Some("203.0.113.7".parse().unwrap()));
-        let cf = h(&[("cf-connecting-ip", "198.51.100.2"), ("x-forwarded-for", "6.6.6.6")]);
-        assert_eq!(client_ip(Some(lo), &cf, &[]), Some("198.51.100.2".parse().unwrap()));
+        assert_eq!(
+            client_ip(Some(lo), &appended, &[]),
+            Some("203.0.113.7".parse().unwrap())
+        );
+        let cf = h(&[
+            ("cf-connecting-ip", "198.51.100.2"),
+            ("x-forwarded-for", "6.6.6.6"),
+        ]);
+        assert_eq!(
+            client_ip(Some(lo), &cf, &[]),
+            Some("198.51.100.2".parse().unwrap())
+        );
         // A configured LAN proxy (e.g. a NAS) is trusted too, but not for CF-Connecting-IP.
         let nas = vec!["192.168.1.0/24".to_string()];
-        assert_eq!(client_ip(Some(lan), &appended, &nas), Some("203.0.113.7".parse().unwrap()));
-        assert_eq!(client_ip(Some(lan), &cf, &nas), Some("6.6.6.6".parse().unwrap()));
+        assert_eq!(
+            client_ip(Some(lan), &appended, &nas),
+            Some("203.0.113.7".parse().unwrap())
+        );
+        assert_eq!(
+            client_ip(Some(lan), &cf, &nas),
+            Some("6.6.6.6".parse().unwrap())
+        );
         let chain = h(&[("x-forwarded-for", "203.0.113.7, 192.168.1.2")]);
-        assert_eq!(client_ip(Some(lo), &chain, &nas), Some("203.0.113.7".parse().unwrap()));
-        assert_eq!(client_ip(Some(lo), &h(&[]), &[]), Some("127.0.0.1".parse().unwrap()));
+        assert_eq!(
+            client_ip(Some(lo), &chain, &nas),
+            Some("203.0.113.7".parse().unwrap())
+        );
+        assert_eq!(
+            client_ip(Some(lo), &h(&[]), &[]),
+            Some("127.0.0.1".parse().unwrap())
+        );
         assert_eq!(client_ip(None, &spoof, &[]), None);
     }
 
@@ -574,11 +645,23 @@ mod tests {
     #[test]
     fn websocket_origin() {
         assert!(origin_matches(None, Some("x")));
-        assert!(origin_matches(Some("http://192.168.1.2"), Some("192.168.1.2")));
-        assert!(origin_matches(Some("http://192.168.1.2:8080"), Some("192.168.1.2:8080")));
+        assert!(origin_matches(
+            Some("http://192.168.1.2"),
+            Some("192.168.1.2")
+        ));
+        assert!(origin_matches(
+            Some("http://192.168.1.2:8080"),
+            Some("192.168.1.2:8080")
+        ));
         assert!(origin_matches(Some("http://pp.local"), Some("pp.local:80")));
-        assert!(!origin_matches(Some("http://evil.com"), Some("192.168.1.2")));
-        assert!(!origin_matches(Some("http://192.168.1.2:8088"), Some("192.168.1.2")));
+        assert!(!origin_matches(
+            Some("http://evil.com"),
+            Some("192.168.1.2")
+        ));
+        assert!(!origin_matches(
+            Some("http://192.168.1.2:8088"),
+            Some("192.168.1.2")
+        ));
         assert!(!origin_matches(Some("null"), Some("192.168.1.2")));
         assert!(!origin_matches(Some("http://a"), None));
     }
@@ -588,7 +671,10 @@ mod tests {
         let html = "<html><script>alert(1)</script><script type=module src=\"/x.js\"></script><SCRIPT>b()</SCRIPT></html>";
         let hashes = inline_script_hashes(html);
         assert_eq!(hashes.len(), 2);
-                assert_eq!(hashes[0], "'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='");
+        assert_eq!(
+            hashes[0],
+            "'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='"
+        );
         assert_eq!(base64(b"f"), "Zg==");
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
@@ -608,7 +694,8 @@ mod tests {
         // A rebuild while the daemon runs.
         std::fs::write(&index, "<script>two(2)</script>").unwrap();
         let f = std::fs::File::options().append(true).open(&index).unwrap();
-        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+            .unwrap();
         let second = cache.get().unwrap();
         assert!(second.to_str().unwrap().contains(&hash("two(2)")));
         assert!(!second.to_str().unwrap().contains(&hash("one()")));
