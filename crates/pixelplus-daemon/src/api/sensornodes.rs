@@ -378,7 +378,11 @@ mod tests {
         assert_eq!(n, svc::MAX_DISCOVERED);
         // The newest beacon is kept.
         let last = format!("sn{:08x}", svc::MAX_DISCOVERED * 4 - 1);
-        assert!(d.as_array().unwrap().iter().any(|x| x["id"] == last.as_str()));
+        assert!(d
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["id"] == last.as_str()));
     }
 
     #[tokio::test]

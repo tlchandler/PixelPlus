@@ -87,7 +87,14 @@ fn names_are_filtered_to_what_the_ca_may_sign() {
     assert!(!ca_dns_constraints("pi.example.com").contains(&"pi.example.com".to_string()));
     // Security audit 2: a bare host name that could be a top-level domain
     // is never a constraint (it would let the CA sign `*.christmas`).
-    for tld_like in ["christmas", "shop", "lights", "app", "xn--p1ai", "pixelplus"] {
+    for tld_like in [
+        "christmas",
+        "shop",
+        "lights",
+        "app",
+        "xn--p1ai",
+        "pixelplus",
+    ] {
         let dns = ca_dns_constraints(tld_like);
         assert!(!dns.contains(&tld_like.to_string()), "{tld_like}");
         assert!(!permitted(&format!("bank.{tld_like}"), &dns));

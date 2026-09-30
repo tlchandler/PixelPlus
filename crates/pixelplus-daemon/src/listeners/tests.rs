@@ -140,7 +140,8 @@ fn public_head_routing() {
         !head.contains("Connection: close"),
         "upgrades stay open: {head}"
     );
-    let PublicRoute::Games(head) = route_public_head(b"GET /play/ HTTP/1.1\r\n\r\n", peer, false) else {
+    let PublicRoute::Games(head) = route_public_head(b"GET /play/ HTTP/1.1\r\n\r\n", peer, false)
+    else {
         panic!("games")
     };
     assert_eq!(
@@ -160,7 +161,10 @@ fn public_head_routing() {
         String::from_utf8(head).unwrap(),
         "GET /app.js HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n"
     );
-    assert_eq!(route_public_head(b"\xff\xfe", peer, false), PublicRoute::App);
+    assert_eq!(
+        route_public_head(b"\xff\xfe", peer, false),
+        PublicRoute::App
+    );
 }
 
 /// Security audit 2: a visitor can't choose the address the games
@@ -175,7 +179,10 @@ fn public_head_drops_untrusted_cf_connecting_ip() {
         panic!("games")
     };
     let head = String::from_utf8(head).unwrap();
-    assert!(!head.to_ascii_lowercase().contains("cf-connecting-ip"), "{head}");
+    assert!(
+        !head.to_ascii_lowercase().contains("cf-connecting-ip"),
+        "{head}"
+    );
     assert!(head.contains("Connection: close\r\n"), "{head}");
     let PublicRoute::Games(head) = route_public_head(req, peer, true) else {
         panic!("games")
@@ -216,7 +223,9 @@ async fn public_listener_caps_connections() {
     let mut slow = vec![];
     for _ in 0..2 {
         let mut s = TcpStream::connect(addr).await.unwrap();
-        s.write_all(b"GET /api/v1/public/health HTTP/1.1\r\n").await.unwrap();
+        s.write_all(b"GET /api/v1/public/health HTTP/1.1\r\n")
+            .await
+            .unwrap();
         slow.push(s);
     }
     tokio::time::sleep(Duration::from_millis(200)).await;

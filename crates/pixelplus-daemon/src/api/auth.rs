@@ -422,13 +422,12 @@ async fn set_password(
     let show = state.store.get();
     if let Some(hash) = show.settings.security.password_hash.as_deref() {
         let authed = is_authenticated(&state, &headers, peer.0);
-        let ip =
-            super::security::client_ip(
-        peer.0,
-        &headers,
-        &show.settings.security.trusted_proxies,
-        super::security::cf_trusted(&show.settings),
-    );
+        let ip = super::security::client_ip(
+            peer.0,
+            &headers,
+            &show.settings.security.trusted_proxies,
+            super::security::cf_trusted(&show.settings),
+        );
         if let Err(wait) = state.sessions.throttle.lock().check(ip, Instant::now()) {
             return Err(too_many(wait));
         }

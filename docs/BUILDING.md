@@ -212,12 +212,58 @@ allow-list, reads open, writes need the dedicated upload password as HTTP Basic 
 remembered 10 minutes so 16 MiB chunks don't each cost an Argon2 check) or, without a
 password, a non-CORS-simple request (`PATCH`, JSON body) that no web page can forge.
 
+**Security review of the feature wave** (second audit):
+
+* *Public-only listener* (`listeners.rs`): at most 256 connections at once (then an
+  immediate 503), a page request must arrive within 30 s of connecting, every response
+  closes its connection; `/play/…` is bridged to the games controller with
+  `Connection: close` (WebSocket upgrades only for `Upgrade: websocket`) and the visitor
+  appended to `X-Forwarded-For`. Path tricks (`..`, `//`, `\`, `%2e`, `%2f`, `%5c`) → 404.
+* *Visitor addresses*: `CF-Connecting-IP` is believed (sign-in throttle, song requests,
+  games per-visitor limits) only while a Cloudflare tunnel set up through PixelPlus is
+  the proxy and no Tailscale Funnel shares the public port (`security::cf_trusted`);
+  otherwise the proxy's right-most `X-Forwarded-For` entry counts, and the bridge drops
+  the header before the games controller sees it. Tailscale Funnel passes unknown
+  headers through, so a visitor could otherwise choose their own address.
+* *Local CA* (`services/tls.rs`): name constraints never include a bare host name that
+  could be a top-level domain (letters only, or `xn--`): a dNSName constraint `christmas`
+  would also permit `anything.christmas` on the internet. Such hosts use `<name>.local` /
+  `.lan`; an older CA with such a constraint logs a warning (make a new one under
+  Settings → Secure connection). Keys are written to fresh 0600 files (never into a
+  leftover temp file). A transfer bundle's CA key must match its certificate. No HSTS:
+  `:80` stays for followers, sidecars and old bookmarks.
+* *xLights FPP Connect*: the legacy `GET /api/file/move/<name>` counts as a write (upload
+  password, like the upload); free space is checked before every chunk (not only at
+  offset 0, so parallel uploads can't fill the card) and for legacy uploads; unfinished
+  uploads are deleted after 24 h; the watch folder copies with `O_NOFOLLOW` on a regular
+  file only (a shared folder's file swapped for a symlink is never followed).
+* *Sensor nodes*: unauthenticated beacons fill at most 64 "discovered" entries (oldest
+  forgotten); `sensor-keys.json` is written to a fresh 0600 file.
+* *Signed updates*: an index older than one already seen on that channel is refused
+  (`<data>/updates/index-seen.json`: freeze / replay of an old signed index); versions
+  only ever go up (daemon and helper), each package is verified by the daemon, by
+  followers on what their leader serves, and by the root helper.
+* *Root helper*: files from the service user (packages, signatures, Tailscale auth keys,
+  tunnel tokens) are read by one `open(O_NOFOLLOW|O_NONBLOCK)` + `fstat` (regular file,
+  size-capped, streamed) into a copy created 0600, so no symlink swap between check and
+  read and no FIFO can block it.
+* *CI*: tag / input values reach workflow scripts through the environment, and the
+  release version is checked against `^[0-9][A-Za-z0-9.+-]*$` first.
+* *Web*: `/trust?next=` accepts only same-site paths without control characters or
+  white space (browsers drop tabs/newlines, turning `/\t/evil.com` into `//evil.com`).
+
 Known limits: the first adoption of a new or released controller is trust-on-first-use (someone
 on the LAN could adopt it first; the owner sees who adopted it on the controller's page and in
 its log, and can release it). Plain HTTP on the LAN: a sign-in session cookie and MQTT/SMTP
 traffic without TLS can be sniffed by someone who can already read the LAN's traffic.
 `SameSite=Lax` cookies don't separate ports (the games page on :8088 is "same-site"); the CSRF
-header covers that.
+header covers that. Sensor nodes are adopted trust-on-first-use too, keep their key in
+unencrypted ESP32 flash (physical access reads it), and an unadopted node's `/wifi` and
+`/adopt` accept any LAN client. Tailnet devices (100.64/10) count as the local network.
+With both a Cloudflare tunnel and Tailscale Funnel on, `CF-Connecting-IP` is ignored
+(the right-most `X-Forwarded-For` hop is used). The release index has no expiry (a
+seasonal product can go months without a release); the "never older than seen" rule
+covers replays after a newer index was seen.
 
 Helper verbs (`packaging/bin/pixelplus-helper`), arguments `:`-separated in the instance name:
 

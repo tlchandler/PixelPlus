@@ -880,12 +880,7 @@ pub fn import_ca(
     // key's public point (signing a throwaway leaf alone proves only that the
     // key works, not that phones' trusted certificate is its).
     let public = ca.key.public_key_raw();
-    if public.is_empty()
-        || !ca
-            .cert_der
-            .windows(public.len())
-            .any(|w| w == public)
-    {
+    if public.is_empty() || !ca.cert_der.windows(public.len()).any(|w| w == public) {
         return Err(anyhow!(
             "the certificate authority's key doesn't match its certificate"
         ));

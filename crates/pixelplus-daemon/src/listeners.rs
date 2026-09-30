@@ -490,6 +490,7 @@ pub struct PublicListener {
 impl PublicListener {
     /// `games_port()` gives the games controller port at connection time.
     /// `CF-Connecting-IP` is not passed to the games controller.
+    #[cfg(test)]
     pub fn new(
         tcp: TcpListener,
         games_port: impl Fn() -> u16 + Send + Sync + 'static,
