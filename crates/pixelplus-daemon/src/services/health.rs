@@ -398,7 +398,11 @@ async fn host_checks(state: &AppState) -> Vec<Check> {
         ));
     }
     // Audio device.
-    out.push(audio_check(&show.settings.audio.device).await);
+    out.push(if crate::player::engine::EngineOptions::from_env().audio {
+        audio_check(&show.settings.audio.device).await
+    } else {
+        audio_off_check()
+    });
     // Player / output.
     out.push(match state.services.player.get() {
         None => check(
@@ -442,6 +446,32 @@ pub fn geometry_check(g: &super::geometry::OutputGeometry) -> Option<Check> {
         None
     };
     Some(c)
+}
+
+/// `PIXELPLUS_AUDIO=none`: the player never opens a sound card, so don't look for one.
+fn audio_off_check() -> Check {
+    check(
+        "audio",
+        "Audio output",
+        Status::Warn,
+        "Audio is turned off on this controller (PIXELPLUS_AUDIO=none); shows play without sound",
+    )
+}
+
+/// A real-time clock chip (the difftxlarge's DS3231) registered with the kernel.
+fn board_rtc_present(sys_class_rtc: &std::path::Path) -> bool {
+    std::fs::read_dir(sys_class_rtc)
+        .map(|dir| {
+            dir.flatten().any(|e| {
+                std::fs::read_to_string(e.path().join("name"))
+                    .map(|n| {
+                        let n = n.to_ascii_lowercase();
+                        n.contains("ds1307") || n.contains("ds3231")
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 async fn audio_check(device: &str) -> Check {
@@ -511,7 +541,9 @@ async fn clock_check(state: &AppState) -> Check {
         }
     }
     let (board, _) = super::system::effective_board(state);
-    if board == pixelplus_core::model::BoardKind::Difftxlarge {
+    if board == pixelplus_core::model::BoardKind::Difftxlarge
+        && board_rtc_present(std::path::Path::new("/sys/class/rtc"))
+    {
         return check(
             "clock",
             "Clock",
@@ -646,6 +678,31 @@ mod tests {
         let sched = checks.iter().find(|c| c.id == "schedule").unwrap();
         assert_eq!(sched.status, Status::Warn);
         std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod host_tests {
+    use super::*;
+
+    #[test]
+    fn rtc_is_only_claimed_when_the_chip_is_registered() {
+        let dir = std::env::temp_dir().join(format!("pp-rtc-{}", pixelplus_core::model::new_id()));
+        assert!(!board_rtc_present(&dir));
+        std::fs::create_dir_all(dir.join("rtc0")).unwrap();
+        std::fs::write(dir.join("rtc0/name"), "rtc_cmos\n").unwrap();
+        assert!(!board_rtc_present(&dir), "a PC's CMOS clock isn't the board RTC");
+        std::fs::create_dir_all(dir.join("rtc1")).unwrap();
+        std::fs::write(dir.join("rtc1/name"), "rtc-ds1307 1-0068\n").unwrap();
+        assert!(board_rtc_present(&dir));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn audio_off_is_a_warning_not_a_failure() {
+        let c = audio_off_check();
+        assert_eq!(c.status, Status::Warn);
+        assert!(c.detail.contains("turned off"));
     }
 }
 

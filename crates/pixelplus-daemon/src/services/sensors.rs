@@ -150,7 +150,8 @@ pub fn start(state: &AppState) {
         })
         .await
         .unwrap_or((pixelplus_core::model::BoardKind::Virtual, None));
-        let hub = std::sync::Arc::new(Mutex::new(make_hub(board)));
+        let dev = state.config.dev;
+        let hub = std::sync::Arc::new(Mutex::new(make_hub(board, dev)));
         let mut tick = tokio::time::interval(POLL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -158,7 +159,7 @@ pub fn start(state: &AppState) {
             // Re-create the hub if the board was changed in the wizard.
             let (now_board, _) = super::system::effective_board(&state);
             if now_board != hub.lock().board() {
-                *hub.lock() = make_hub(now_board);
+                *hub.lock() = make_hub(now_board, dev);
             }
             let h = hub.clone();
             let Ok(sensors) = tokio::task::spawn_blocking(move || h.lock().read_all()).await else {
@@ -183,23 +184,45 @@ pub fn start(state: &AppState) {
     });
 }
 
-fn make_hub(board: pixelplus_core::model::BoardKind) -> pixelplus_hw::SensorHub {
+/// The board's sensors on I²C bus 1. Without a bus (a PC) in development mode
+/// (`PIXELPLUS_DEV=1`) the board's sensors are simulated so the UI has data.
+fn make_hub(board: pixelplus_core::model::BoardKind, dev: bool) -> pixelplus_hw::SensorHub {
     #[cfg(target_os = "linux")]
-    {
-        let bus = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS)
-            .ok()
-            .map(|b| Box::new(b) as Box<dyn pixelplus_hw::I2cBus>);
-        pixelplus_hw::SensorHub::new(board, bus)
-    }
+    let bus = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS)
+        .ok()
+        .map(|b| Box::new(b) as Box<dyn pixelplus_hw::I2cBus>);
     #[cfg(not(target_os = "linux"))]
-    {
-        pixelplus_hw::SensorHub::new(board, None)
-    }
+    let bus: Option<Box<dyn pixelplus_hw::I2cBus>> = None;
+    let bus = bus.or_else(|| {
+        dev.then(|| {
+            Box::new(pixelplus_hw::mock::mock_board_bus(board, "A", true))
+                as Box<dyn pixelplus_hw::I2cBus>
+        })
+    });
+    pixelplus_hw::SensorHub::new(board, bus)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn development_mode_simulates_the_board_sensors() {
+        use pixelplus_core::model::BoardKind;
+        let ids = |dev| -> Vec<String> {
+            make_hub(BoardKind::Difftxlarge, dev)
+                .read_all()
+                .into_iter()
+                .map(|s| s.id)
+                .collect()
+        };
+        if pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS).is_err() {
+            let dev = ids(true);
+            assert!(dev.iter().any(|i| i == "inputVoltage"), "{dev:?}");
+            assert!(!ids(false).iter().any(|i| i == "inputVoltage"));
+        }
+    }
 
     #[test]
     fn history_fine_and_coarse() {
