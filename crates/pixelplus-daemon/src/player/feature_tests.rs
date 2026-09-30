@@ -719,3 +719,117 @@ async fn idle_look_pulses_with_the_analysed_song() {
     }
     assert!(bright && dim, "bright {bright} dim {dim}");
 }
+
+fn two_node_plan() -> MapPlan {
+    MapPlan {
+        seed: 3,
+        bit_ms: 120,
+        level: 77,
+        passes: 2,
+        phases: PHASE_A | PHASE_B,
+        targets: vec![
+            MapTarget {
+                node_id: "leader".into(),
+                output: 1,
+                max_pixels: 2,
+            },
+            MapTarget {
+                node_id: "n1".into(),
+                output: 1,
+                max_pixels: 2,
+            },
+        ],
+        pixel_bits: 1,
+        ..Default::default()
+    }
+}
+
+/// Leader and follower draw their mapping codes from the same timeline
+/// position: each node's outputs are exactly `mapcode::render_output` for
+/// that node at that position (so bits line up across controllers).
+#[test]
+fn map_code_frames_are_a_function_of_the_shared_position() {
+    use pixelplus_core::mapping::OutputFrame;
+    let show = base_show();
+    let plan = two_node_plan();
+    let req = TestRequest {
+        mode: "mapCode".into(),
+        map: Some(plan.clone()),
+        map_run_id: Some("r".into()),
+        ..Default::default()
+    };
+    let mut leader = compose::TestLayer::with_plan(&show, "leader", &req, 0.0, None).unwrap();
+    // The follower got only the run id in the sync packet and the plan by command.
+    let by_id = TestRequest {
+        map: None,
+        ..req.clone()
+    };
+    let mut follower =
+        compose::TestLayer::with_plan(&show, "n1", &by_id, 5_000.0, Some(&plan)).unwrap();
+    assert!(compose::TestLayer::with_plan(&show, "n1", &by_id, 0.0, None).is_err());
+    let sched = pixelplus_core::mapcode::schedule(&plan);
+    let mut pos = 0.0;
+    while pos < sched.total_ms as f64 + 500.0 {
+        let (mut a, mut b) = (OutputFrame::new(&[2, 3]), OutputFrame::new(&[2, 3]));
+        leader.render_timeline(pos, 1.0, &mut a);
+        follower.render_timeline(pos, 1.0, &mut b);
+        for (node, frame) in [("leader", &a), ("n1", &b)] {
+            let mut want = vec![0u8; 6];
+            pixelplus_core::mapcode::render_output(&plan, node, 1, pos as u64, &mut want);
+            assert_eq!(frame.output(0), &want[..], "{node} at {pos}");
+            assert_eq!(frame.output(1), &[0u8; 9][..], "{node}: not a target");
+        }
+        pos += 37.0;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn follower_renders_the_leaders_map_code_at_the_anchored_position() {
+    let e = env(LocalRole::Follower, false, |_, _| {}).await;
+    let plan = two_node_plan();
+    let h = &e.engine.handle;
+    // The plan arrives by command first (as `ClusterCommand::TestStart`).
+    h.test_start(TestRequest {
+        mode: "mapCode".into(),
+        map: Some(plan.clone()),
+        map_run_id: Some("run7".into()),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    // Then sync packets with only the run id, the pattern frozen at 1500 ms
+    // (preamble on or phase A: whatever the plan says there).
+    let pos = 1_500.0;
+    let pkt = SyncPacket {
+        surprise: None,
+        leader: "leader".into(),
+        show_version: 1,
+        state: PlayerState::Testing,
+        item: None,
+        pos_ms: pos as u64,
+        sent_at_ms: 0,
+        anchor: Some(Anchor {
+            pos_ms: pos,
+            at_ms: now_ms(&e),
+            rate: 0.0,
+            epoch: 9,
+        }),
+        effect: None,
+        test: Some(TestRequest {
+            mode: "mapCode".into(),
+            map: None,
+            map_run_id: Some("run7".into()),
+            ..Default::default()
+        }),
+        brightness: 100,
+        blackout: false,
+    };
+    h.send(PlayerCmd::Sync(pkt)).await.unwrap();
+    let mut want = vec![0u8; 6];
+    pixelplus_core::mapcode::render_output(&plan, "n1", 1, pos as u64, &mut want);
+    assert!(
+        wait_for(4000, || e.out_pair(0, 1) == (want.clone(), vec![0; 9])).await,
+        "{:?} vs {want:?}",
+        e.out_pair(0, 1)
+    );
+}

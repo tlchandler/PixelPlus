@@ -89,6 +89,9 @@ const CALIBRATION_V2_PREFIX: &str = "v2:";
 const CONTEXT_EVERY: Duration = Duration::from_secs(30);
 /// Mapping plans kept for `mapRunId` references.
 const MAP_PLANS_KEPT: usize = 8;
+/// Mapping plans with up to this many targets (≈ 4 KB of JSON) also travel
+/// in sync packets; larger ones only by command.
+const MAP_INLINE_TARGETS: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -265,6 +268,9 @@ enum CoreEvent {
     },
     /// Master brightness, volume or lights-off changed (saved for restarts).
     Levels(SavedLevels),
+    /// A mapping test started on the leader: its plan goes to every follower
+    /// once by command (sync packets carry only the run id when it is large).
+    PushTest(Box<TestRequest>),
 }
 
 /// Master brightness, volume and lights-off of the leader, kept in
@@ -417,6 +423,22 @@ fn handle_event(
                     tracing::warn!("could not save the brightness and volume: {e}");
                 }
             });
+        }
+        CoreEvent::PushTest(test) => {
+            if let Some(cluster) = state.services.cluster.get().cloned() {
+                tokio::spawn(async move {
+                    let results = cluster
+                        .send_command(None, crate::cluster::ClusterCommand::TestStart { test: *test })
+                        .await;
+                    for r in results.iter().filter(|r| !r.ok) {
+                        tracing::warn!(
+                            "mapping plan not delivered to {}: {}",
+                            r.node_id,
+                            r.error.as_deref().unwrap_or("no answer")
+                        );
+                    }
+                });
+            }
         }
         CoreEvent::PrerenderDj { clip_id, ctx } => {
             let core = core.clone();
@@ -1471,6 +1493,9 @@ impl Core {
                     }
                 }
                 let plan = self.plan_for(&req);
+                if !self.is_follower() && req.mode == "mapCode" && req.map.is_some() {
+                    let _ = self.events.send(CoreEvent::PushTest(Box::new(req.clone())));
+                }
                 let r = match TestLayer::with_plan(
                     &self.show,
                     &self.node_id,
@@ -4143,8 +4168,13 @@ impl Core {
             Some(t) if t.is_look() => (t.look_preset(), None),
             Some(t) => {
                 let mut req = t.req.clone();
-                // Plans can be large: followers got them by command (F6).
-                if req.map_run_id.is_some() {
+                // Large plans don't fit a datagram: followers got them by
+                // command (F6) and look them up by run id.
+                let big = req
+                    .map
+                    .as_ref()
+                    .is_some_and(|m| m.targets.len() > MAP_INLINE_TARGETS);
+                if req.map_run_id.is_some() && big {
                     req.map = None;
                 }
                 (effect, Some(req))

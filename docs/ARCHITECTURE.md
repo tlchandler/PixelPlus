@@ -793,11 +793,11 @@ into the router; each workstream fills in its own; shapes in §12 and `web/src/l
 | `wizard` (WS4) | `POST /wizard/receiver/identify-jack`, `POST /wizard/receiver/:session/{jack,port/:n/light,finish,cancel}` |
 | `profiles` (WS6) | CRUD `/profiles`, `POST /profiles/:id/activate`, `POST /profiles/capture`, `GET /profiles/preview-switch/:id` |
 | `reports` (WS6) | `GET /reports?limit=`, `GET /reports/:date`, `POST /reports/run {date?, send?}` |
-| `remote` (WS5) | `GET /remote/status`, `POST /remote/tailscale/{install,up,serve,funnel,down}`, `POST /remote/cloudflare/{install,quick,token,stop}`, `POST /remote/test` |
+| `remote` (WS5) | `GET /remote/status`, `POST /remote/tailscale/{install,up,serve,funnel,down}`, `POST /remote/cloudflare/{install,quick,token,hosts,stop}`, `POST /remote/test` (§12.12) |
 | `power` (WS3) | CRUD `/power-supplies`, `GET /power/live` (`/power/estimate` gains `simulateLimiter`) |
 | `sensornodes` (WS6) | `GET /sensor-nodes/discovered`, `POST /sensor-nodes/adopt`, CRUD `/sensor-nodes`, `POST /sensor-nodes/:id/release`, `GET /sensor-nodes/:id/live`, `POST /surprises/test`, `GET /cluster/sensor-config/:id` |
 | `fppcompat` (WS6) | **root-mounted** (not `/api/v1`): `GET /config.php`, `/api/system/info`, `/api/sequence/:name/meta`, `/api/media/:name/meta`, `PATCH /api/file/:dir`, … (§12.14) |
-| cluster/system (WS5) | `POST /nodes/:id/replace`, `POST /system/transfer/export`, `GET/POST /system/update` (extended), `PUT /system/update/settings`, `POST /system/update/rollback`, `GET /cluster/update/:file` |
+| cluster/system (WS5) | `POST /nodes/:id/replace`, `POST /nodes/:id/release-retired`, `POST /system/transfer/export` → one-time `GET /system/transfer/download/:token`, `POST /system/setup` multipart restore (§12.9); `GET /system/update[?refresh=true]` (extended), `POST /system/update`, `PUT /system/update/settings`, `POST /system/update/rollback`, `GET /cluster/update/:file` (§12.13); WS `updateJob` |
 
 **Manual playback** (`player/scheduler.rs`): playback started by hand *during* a show window
 ends with that window: at the window's end it ends with the entry's `endBehavior` (finish the
