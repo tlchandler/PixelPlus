@@ -177,6 +177,26 @@ fn direction() -> ParamSpec {
         .help("Which way along the prop's pixels the pattern moves.")
 }
 
+/// Keys of the beat-reactive parameters every look accepts (F2): the
+/// Effects page shows them as "Pulse to a beat" rather than in the list.
+pub const BEAT_PARAMS: [&str; 4] = ["beatBpm", "beatPhaseMs", "beatDepth", "beatDecayMs"];
+
+fn beat_params() -> Vec<ParamSpec> {
+    vec![
+        ParamSpec::number("beatBpm", "Pulse to a beat", 0.0, 300.0, 0.1, 0.0)
+            .unit("BPM")
+            .help("Brightness pulses at this tempo; 0 turns the pulse off."),
+        ParamSpec::number("beatPhaseMs", "Beat offset", 0.0, 60_000.0, 1.0, 0.0)
+            .unit("ms")
+            .help("When the first beat falls, from the start of the look."),
+        ParamSpec::number("beatDepth", "Pulse depth", 0.0, 1.0, 0.05, 0.6)
+            .help("How much of the brightness pulses (1 = dark between beats)."),
+        ParamSpec::number("beatDecayMs", "Pulse decay", 30.0, 2_000.0, 10.0, 220.0)
+            .unit("ms")
+            .help("How quickly each pulse fades."),
+    ]
+}
+
 /// Parameters understood by an effect, in display order.
 pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
     use ParamSpec as P;
@@ -290,6 +310,9 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
         ],
     };
     v.push(brightness());
+    if kind != EffectKind::Countdown {
+        v.extend(beat_params());
+    }
     v
 }
 

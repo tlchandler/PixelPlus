@@ -937,7 +937,7 @@ async fn update_sequence(
 ) -> ApiResult<Json<Sequence>> {
     // Only user-editable fields.
     if let Value::Object(p) = &mut patch {
-        p.retain(|k, _| matches!(k.as_str(), "name" | "mediaId" | "xlightsName"));
+        p.retain(|k, _| matches!(k.as_str(), "name" | "mediaId" | "xlightsName" | "tags"));
     }
     let (seq, _) = state
         .store
@@ -952,6 +952,7 @@ async fn update_sequence(
             let mut seq: Sequence = serde_json::from_value(v)
                 .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
             keep_sequence_facts(&show.sequences[idx], &mut seq);
+            seq.tags = pixelplus_core::smartlist::normalize_tags(&seq.tags);
             if seq.name.trim().is_empty() {
                 return Err(ApiError::bad_request("Please give it a name."));
             }
@@ -984,6 +985,11 @@ async fn delete_sequence(
                 for list in [&mut p.items, &mut p.intro, &mut p.outro] {
                     list.retain(|i| !matches!(i, PlaylistItem::Sequence { sequence_id, .. } if *sequence_id == id));
                 }
+                if let Some(r) = &mut p.smart {
+                    for list in [&mut r.pinned_first, &mut r.pinned_last, &mut r.interleave] {
+                        list.retain(|i| !matches!(i, PlaylistItem::Sequence { sequence_id, .. } if *sequence_id == id));
+                    }
+                }
             }
             Ok(seq)
         })
@@ -1001,6 +1007,7 @@ async fn delete_sequence(
     if let Some(t) = &seq.thumbnail {
         media_svc::trash(&state.config.data_dir, t);
     }
+    crate::services::analysis::forget_sequence(&state, &seq.id);
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1150,7 +1157,7 @@ async fn update_media(
     Json(mut patch): Json<Value>,
 ) -> ApiResult<Json<Media>> {
     if let Value::Object(p) = &mut patch {
-        p.retain(|k, _| matches!(k.as_str(), "name" | "kind" | "gainDb"));
+        p.retain(|k, _| matches!(k.as_str(), "name" | "kind" | "gainDb" | "tags"));
     }
     let (m, _) = state
         .store
@@ -1165,6 +1172,7 @@ async fn update_media(
             let mut m: Media = serde_json::from_value(v)
                 .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
             keep_media_facts(&show.media[idx], &mut m);
+            m.tags = pixelplus_core::smartlist::normalize_tags(&m.tags);
             if m.name.trim().is_empty() {
                 return Err(ApiError::bad_request("Please give it a name."));
             }
@@ -1216,12 +1224,20 @@ async fn delete_media(
                         |i| !matches!(i, PlaylistItem::Media { media_id, .. } if *media_id == id),
                     );
                 }
+                if let Some(r) = &mut p.smart {
+                    for list in [&mut r.pinned_first, &mut r.pinned_last, &mut r.interleave] {
+                        list.retain(
+                            |i| !matches!(i, PlaylistItem::Media { media_id, .. } if *media_id == id),
+                        );
+                    }
+                }
             }
             Ok(m)
         })
         .await?;
     media_svc::trash(&state.config.data_dir, &m.file);
     media_svc::trash(&state.config.data_dir, &format!("media/{}.meta.json", m.id));
+    crate::services::analysis::forget(&state, &m.id);
     Ok(Json(json!({ "ok": true })))
 }
 

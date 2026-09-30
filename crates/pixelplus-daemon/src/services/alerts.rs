@@ -2,6 +2,10 @@
 //! rate limiting. Rules come from `settings.alerts.rules`: board temperature,
 //! 12 V supply voltage, follower offline, show failure (player error) and
 //! failed pre-show checks.
+//!
+//! Also the delivery for the nightly report (F11: [`send_email_html`],
+//! [`send_ntfy_with`] with a click link) and the journal of controller
+//! online/offline transitions and show failures the report counts.
 
 use crate::cluster::ClusterEvent;
 use crate::events::ToastKind;
@@ -135,9 +139,36 @@ pub async fn send_test(state: &AppState, channel: &str) -> Result<String, String
 
 pub async fn send_email(cfg: &EmailSettings, subject: &str, body: &str) -> Result<(), String> {
     use lettre::message::header::ContentType;
-    use lettre::transport::smtp::authentication::Credentials;
-    use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+    let msg = email_builder(cfg, subject)?
+        .header(ContentType::TEXT_PLAIN)
+        .body(body.to_string())
+        .map_err(|e| format!("Couldn't build the email: {e}"))?;
+    deliver(cfg, msg).await
+}
 
+/// Send an email with an HTML body and its plain-text alternative (the
+/// nightly report, F11).
+pub async fn send_email_html(
+    cfg: &EmailSettings,
+    subject: &str,
+    text: &str,
+    html: &str,
+) -> Result<(), String> {
+    use lettre::message::MultiPart;
+    let msg = email_builder(cfg, subject)?
+        .multipart(MultiPart::alternative_plain_html(
+            text.to_string(),
+            html.to_string(),
+        ))
+        .map_err(|e| format!("Couldn't build the email: {e}"))?;
+    deliver(cfg, msg).await
+}
+
+fn email_builder(
+    cfg: &EmailSettings,
+    subject: &str,
+) -> Result<lettre::message::MessageBuilder, String> {
+    use lettre::Message;
     let from_addr = if cfg.from.trim().is_empty() {
         cfg.username.trim()
     } else {
@@ -157,10 +188,12 @@ pub async fn send_email(cfg: &EmailSettings, subject: &str, body: &str) -> Resul
             .parse()
             .map_err(|_| format!("\"{to}\" isn't a valid email address."))?);
     }
-    let msg = builder
-        .header(ContentType::TEXT_PLAIN)
-        .body(body.to_string())
-        .map_err(|e| format!("Couldn't build the email: {e}"))?;
+    Ok(builder)
+}
+
+async fn deliver(cfg: &EmailSettings, msg: lettre::Message) -> Result<(), String> {
+    use lettre::transport::smtp::authentication::Credentials;
+    use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
     let host = cfg.smtp_host.trim();
     let transport = if cfg.tls && cfg.smtp_port == 465 {
         AsyncSmtpTransport::<Tokio1Executor>::relay(host)
@@ -205,6 +238,17 @@ pub async fn send_ntfy(
     body: &str,
     severity: Severity,
 ) -> Result<(), String> {
+    send_ntfy_with(cfg, title, body, severity, None).await
+}
+
+/// [`send_ntfy`] with a link opened when the notification is tapped.
+pub async fn send_ntfy_with(
+    cfg: &NtfySettings,
+    title: &str,
+    body: &str,
+    severity: Severity,
+    click: Option<&str>,
+) -> Result<(), String> {
     let server = if cfg.server.trim().is_empty() {
         "https://ntfy.sh"
     } else {
@@ -221,11 +265,17 @@ pub async fn send_ntfy(
         Severity::Warning => ("high", "warning"),
         Severity::Info => ("default", "christmas_tree"),
     };
-    let resp = http_client()
+    // Header values must be one line of visible ASCII (RFC 7230); ntfy
+    // decodes RFC 2047 encoded words for anything else (emoji, accents).
+    let mut req = http_client()
         .post(&url)
-        .header("Title", title.replace(['\r', '\n'], " "))
+        .header("Title", header_text(title))
         .header("Priority", priority)
-        .header("Tags", tags)
+        .header("Tags", tags);
+    if let Some(c) = click.filter(|c| c.starts_with("http://") || c.starts_with("https://")) {
+        req = req.header("Click", c.replace(['\r', '\n'], ""));
+    }
+    let resp = req
         .body(body.to_string())
         .send()
         .await
@@ -235,6 +285,27 @@ pub async fn send_ntfy(
     } else {
         Err(format!("{server} answered {}", resp.status()))
     }
+}
+
+/// A header-safe title: plain ASCII as is, otherwise an RFC 2047
+/// `=?UTF-8?B?…?=` encoded word (ntfy understands both).
+fn header_text(s: &str) -> String {
+    let one_line = s.replace(['\r', '\n'], " ");
+    if one_line.bytes().all(|b| (0x20..0x7f).contains(&b)) {
+        return one_line;
+    }
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let data = one_line.as_bytes();
+    let mut b64 = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        b64.push(T[(n >> 18) as usize & 63] as char);
+        b64.push(T[(n >> 12) as usize & 63] as char);
+        b64.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        b64.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    format!("=?UTF-8?B?{b64}?=")
 }
 
 /// Apply temperature / voltage rules to a fresh set of readings.
@@ -286,6 +357,25 @@ pub fn start(state: &AppState) {
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => break,
             };
+            // Journal (F11 nightly report): every transition, alert or not.
+            match &ev {
+                ClusterEvent::NodeOffline { node_id, .. } => {
+                    st.services.journal.record(super::journal::Event::NodeOffline {
+                        id: node_id.clone(),
+                    })
+                }
+                ClusterEvent::NodeOnline { node_id, .. } => {
+                    st.services.journal.record(super::journal::Event::NodeOnline {
+                        id: node_id.clone(),
+                    })
+                }
+                ClusterEvent::SyncProblem { message, .. } => {
+                    st.services.journal.record(super::journal::Event::Warn {
+                        code: "files".into(),
+                        msg: message.clone(),
+                    })
+                }
+            }
             if !st.store.get().settings.alerts.rules.follower_offline {
                 continue;
             }
@@ -345,9 +435,23 @@ pub fn start(state: &AppState) {
                 (s.error.clone(), s.state)
             };
             let key = "player:error";
-            if st.services.alerts.rising(key, err.is_some())
-                && st.store.get().settings.alerts.rules.show_failure
-            {
+            let rising = st.services.alerts.rising(key, err.is_some());
+            if rising {
+                // Journal (F11): the nightly report counts show problems.
+                let (level, _) = player_alert(state);
+                let msg = err.clone().unwrap_or_default();
+                st.services.journal.record(match level {
+                    Severity::Critical => super::journal::Event::Error {
+                        code: "show".into(),
+                        msg,
+                    },
+                    _ => super::journal::Event::Warn {
+                        code: "show".into(),
+                        msg,
+                    },
+                });
+            }
+            if rising && st.store.get().settings.alerts.rules.show_failure {
                 let (severity, title) = player_alert(state);
                 raise(
                     &st,
@@ -404,6 +508,46 @@ mod tests {
         }
         assert!(!b.admit("another", t));
         assert!(b.admit("another", t + Duration::from_secs(3601)));
+    }
+
+    #[test]
+    fn push_titles_are_header_safe() {
+        assert_eq!(header_text("Show problem"), "Show problem");
+        assert_eq!(header_text("a\r\nb"), "a  b");
+        let enc = header_text("✅ All good");
+        assert!(enc.starts_with("=?UTF-8?B?") && enc.ends_with("?="));
+        assert!(enc.is_ascii());
+        // "✅ All good" in base64.
+        assert_eq!(enc, "=?UTF-8?B?4pyFIEFsbCBnb29k?=");
+    }
+
+    #[test]
+    fn html_email_builds_with_both_parts() {
+        let cfg = EmailSettings {
+            smtp_host: "smtp.example.com".into(),
+            smtp_port: 587,
+            username: "me@example.com".into(),
+            password: "x".into(),
+            from: String::new(),
+            to: "a@example.com; b@example.com".into(),
+            tls: true,
+        };
+        let msg = email_builder(&cfg, "Report")
+            .unwrap()
+            .multipart(lettre::message::MultiPart::alternative_plain_html(
+                "text".to_string(),
+                "<b>html</b>".to_string(),
+            ))
+            .unwrap();
+        let raw = String::from_utf8(msg.formatted()).unwrap();
+        assert!(raw.contains("multipart/alternative"));
+        assert!(raw.contains("text/html"));
+        assert!(raw.contains("a@example.com") && raw.contains("b@example.com"));
+        let bad = EmailSettings {
+            to: "not an address".into(),
+            ..cfg
+        };
+        assert!(email_builder(&bad, "x").is_err());
     }
 
     #[test]

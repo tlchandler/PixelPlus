@@ -42,6 +42,7 @@
 //! (`{x, y, w, h}`, see above).
 
 mod color;
+pub mod countdown;
 mod geometry;
 mod noise;
 mod params;
@@ -50,7 +51,9 @@ mod test_pattern;
 
 pub use color::{palette_cyclic, palette_linear, ParseColorError, Rgb};
 pub use geometry::WorldBounds;
-pub use params::{param_schema, resolve_params, ParamKind, ParamSpec, MAX_COLORS};
+pub use params::{
+    param_schema, resolve_params, ParamKind, ParamSpec, BEAT_PARAMS, MAX_COLORS,
+};
 pub use presets::builtin_presets;
 pub use test_pattern::{render_test_pattern, TestPattern, DEFAULT_STEP_RATE, DEFAULT_TEST_COLOR};
 
@@ -292,6 +295,40 @@ enum Kernel {
         period: f64,
         min: f32,
     },
+    Countdown(Box<countdown::CountdownKernel>),
+}
+
+/// Beat-reactive brightness (F2): pulses at `bpm` from `phase_ms`, each beat
+/// decaying with `decay_ms`; `depth` is how much of the brightness pulses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeatPulse {
+    pub bpm: f64,
+    pub phase_ms: f64,
+    pub depth: f32,
+    pub decay_ms: f64,
+}
+
+impl BeatPulse {
+    /// From resolved params: `None` when `beatBpm` is 0 or `beatDepth` is 0.
+    fn from_params(p: &Params<'_>) -> Option<BeatPulse> {
+        let bpm = f64::from(p.num("beatBpm"));
+        let depth = p.num("beatDepth");
+        (bpm > 0.0 && depth > 0.0).then(|| BeatPulse {
+            bpm,
+            phase_ms: f64::from(p.num("beatPhaseMs")),
+            depth: depth.clamp(0.0, 1.0),
+            decay_ms: f64::from(p.num("beatDecayMs")).max(10.0),
+        })
+    }
+
+    /// Brightness multiplier at `t_ms`: `(1 − depth) + depth · e^(−(t − b)/decay)`
+    /// with `b` the last beat at or before `t` (a pure function of time).
+    pub fn level(&self, t_ms: f64) -> f32 {
+        let period = 60_000.0 / self.bpm;
+        let since = (t_ms - self.phase_ms).rem_euclid(period);
+        let env = (-since / self.decay_ms).exp() as f32;
+        (1.0 - self.depth) + self.depth * env
+    }
 }
 
 const FIRE_CLASSIC: [Rgb; 5] = [
@@ -335,8 +372,8 @@ impl Kernel {
         let f = |k: &str| f64::from(p.num(k));
         match kind {
             EffectKind::Solid => Kernel::Solid(p.color("color")),
-            // Placeholder until WS3 implements the countdown renderer (F4): dark.
-            EffectKind::Countdown => Kernel::Solid(Rgb::new(0, 0, 0)),
+            // Built from the raw params and the props in `EffectRenderer::new`.
+            EffectKind::Countdown => Kernel::Solid(Rgb::BLACK),
             EffectKind::Chase => Kernel::Chase {
                 colors: p.colors("colors"),
                 background: p.color("background"),
@@ -443,6 +480,7 @@ pub struct EffectRenderer {
     kind: EffectKind,
     kernel: Kernel,
     brightness: f32,
+    beat: Option<BeatPulse>,
     props: Vec<PropCtx>,
     frame_len: usize,
 }
@@ -498,10 +536,19 @@ impl EffectRenderer {
             })
             .collect();
 
+        let kernel = if preset.effect == EffectKind::Countdown {
+            Kernel::Countdown(Box::new(countdown::CountdownKernel::new(
+                &preset.params,
+                props,
+            )))
+        } else {
+            Kernel::new(preset.effect, &p)
+        };
         EffectRenderer {
             kind: preset.effect,
-            kernel: Kernel::new(preset.effect, &p),
+            kernel,
             brightness: p.num("brightness") / 100.0,
+            beat: BeatPulse::from_params(&p),
             props: ctxs,
             frame_len: offset,
         }
@@ -570,7 +617,10 @@ impl EffectRenderer {
 
     /// Render one prop. `out` may be shorter than the prop.
     fn render_ctx(&self, p: &PropCtx, t: f64, out: &mut [u8]) {
-        let bright = self.brightness;
+        let bright = match &self.beat {
+            Some(b) => self.brightness * b.level(t * 1000.0),
+            None => self.brightness,
+        };
         let n = p.n;
         let mut put = |i: usize, c: Rgb| {
             if let Some(px) = out.get_mut(i * 3..i * 3 + 3) {
@@ -889,6 +939,8 @@ impl EffectRenderer {
                 let c = pick(colors, cycle as i64).scale(level);
                 (0..n).for_each(|i| put(i, c));
             }
+
+            Kernel::Countdown(k) => k.render(&p.id, n, |i| p.along(i), t * 1000.0, put),
         }
     }
 }

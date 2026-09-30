@@ -151,6 +151,10 @@ pub fn build(
             })
         })
         .collect();
+    let disabled: Vec<String> = crate::services::profiles::disabled_prop_ids(show)
+        .into_iter()
+        .filter(|id| prop_ids.contains(id.as_str()))
+        .collect();
     let mut node = node.clone();
     node.last_seen = None;
     Ok(NodeManifest {
@@ -172,12 +176,13 @@ pub fn build(
             location: show.schedule.location.clone(),
             oled: show.settings.oled.clone(),
             output: show.settings.output.clone(),
-            // Populated from the active season profile by WS5/WS6 (F8).
-            disabled_prop_ids: Vec::new(),
+            // The active season profile keeps these props dark (F8); only
+            // the ones this node drives matter to it.
+            disabled_prop_ids: disabled,
         },
         mapping_hash,
-        // Populated from `power::node_budget` by WS5/WS3 (F12).
-        power: None,
+        // Power limiter budget of this node's supplies (F12).
+        power: pixelplus_core::power::node_budget(show, node_id),
     })
 }
 
@@ -239,8 +244,31 @@ pub fn follower_show(
             security: current.settings.security.clone(),
             ..ShowSettings::default()
         },
+        // The leader's active season keeps these props dark (F8): carried as
+        // the follower's one active profile, so `profiles::disabled_prop_ids`
+        // answers the same on leader and followers.
+        profiles: leader_profile(&manifest.settings.disabled_prop_ids)
+            .into_iter()
+            .collect(),
+        active_profile_id: (!manifest.settings.disabled_prop_ids.is_empty())
+            .then(|| LEADER_PROFILE_ID.to_string()),
         ..Show::default()
     }
+}
+
+/// Id of the follower-local profile that carries the leader's prop mask.
+pub const LEADER_PROFILE_ID: &str = "leader";
+
+fn leader_profile(disabled: &[String]) -> Option<ShowProfile> {
+    if disabled.is_empty() {
+        return None;
+    }
+    serde_json::from_value(serde_json::json!({
+        "id": LEADER_PROFILE_ID,
+        "name": "Leader's season",
+        "disabledPropIds": disabled,
+    }))
+    .ok()
 }
 
 /// The show a follower shows while it has no leader (dark, own node only).
@@ -466,5 +494,31 @@ pub(crate) mod tests {
         // The follower's own mapping works with the filtered props.
         let map = pixelplus_core::mapping::NodeMap::build(&fs, "f1").unwrap();
         assert_eq!(map.pixels_per_output()[..2], [4, 20]);
+    }
+
+    #[test]
+    fn season_mask_and_power_budget_reach_the_follower() {
+        let mut show = three_node_show();
+        let profile: ShowProfile = serde_json::from_value(serde_json::json!({
+            "id": "xmas", "name": "Christmas", "disabledPropIds": ["a", "b", "gone"]
+        }))
+        .unwrap();
+        show.profiles = vec![profile];
+        show.active_profile_id = Some("xmas".into());
+        let dir = std::env::temp_dir();
+        // Only the masked props this follower drives ("a" is the leader's).
+        let m = build(&show, "leader", "f1", &dir).unwrap();
+        assert_eq!(m.settings.disabled_prop_ids, ["b"]);
+        assert_eq!(m.power, pixelplus_core::power::node_budget(&show, "f1"));
+        let m2 = build(&show, "leader", "f2", &dir).unwrap();
+        assert!(m2.settings.disabled_prop_ids.is_empty());
+        // The follower-local show answers the same question the same way.
+        let fs = follower_show(&m, &HashMap::new(), &Show::default());
+        assert_eq!(crate::services::profiles::disabled_prop_ids(&fs), ["b"]);
+        let fs2 = follower_show(&m2, &HashMap::new(), &Show::default());
+        assert!(fs2.profiles.is_empty() && fs2.active_profile_id.is_none());
+        // Serialized manifests stay compact when nothing is masked.
+        let v = serde_json::to_value(&m2).unwrap();
+        assert!(v["settings"].get("disabledPropIds").is_none());
     }
 }

@@ -477,3 +477,188 @@ fn basic_auth_header_parsing() {
     h.insert(header::AUTHORIZATION, "Basic !!!".parse().unwrap());
     assert_eq!(super::security::basic_auth_password(&h), None);
 }
+
+// ---------------------------------------------------------------------
+// F14: public-only listener allow-list and admin through tunnels
+// ---------------------------------------------------------------------
+
+/// The full app router behind the public-only policy, as the public
+/// listener serves it (WS1 mounts `security::public_only` the same way).
+fn public_app(app: &TestApp) -> axum::Router {
+    std::fs::create_dir_all(&app.state.config.web_dir).unwrap();
+    std::fs::write(
+        app.state.config.web_dir.join("index.html"),
+        "<!doctype html><title>PixelPlus</title>",
+    )
+    .unwrap();
+    super::router(app.state.clone()).layer(axum::middleware::from_fn(super::security::public_only))
+}
+
+async fn public_status(router: &axum::Router, method: &str, path: &str) -> StatusCode {
+    use tower::ServiceExt;
+    let mut r = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", "lights.example.com")
+        .header("x-pixelplus-request", "1")
+        .header("cf-connecting-ip", "203.0.113.5")
+        .body(Body::empty())
+        .unwrap();
+    r.extensions_mut()
+        .insert(ConnectInfo::<SocketAddr>("127.0.0.1:40000".parse().unwrap()));
+    router.clone().oneshot(r).await.unwrap().status()
+}
+
+#[tokio::test]
+async fn public_listener_serves_only_the_public_pages() {
+    let mut app = TestApp::new();
+    leader(&mut app, None).await; // no password: the worst case
+    let router = public_app(&app);
+    // Every admin API route and page is invisible.
+    let admin = [
+        ("GET", "/api/v1/show"),
+        ("GET", "/api/v1/system"),
+        ("POST", "/api/v1/system/setup"),
+        ("POST", "/api/v1/system/reboot"),
+        ("GET", "/api/v1/system/logs"),
+        ("PUT", "/api/v1/show/settings"),
+        ("POST", "/api/v1/auth/login"),
+        ("PUT", "/api/v1/auth/password"),
+        ("GET", "/api/v1/nodes"),
+        ("POST", "/api/v1/nodes/adopt"),
+        ("POST", "/api/v1/nodes/x/replace"),
+        ("GET", "/api/v1/cluster/manifest/x"),
+        ("POST", "/api/v1/cluster/adopt"),
+        ("POST", "/api/v1/cluster/command"),
+        ("GET", "/api/v1/cluster/update/pixelplus_1.0_arm64.deb"),
+        ("POST", "/api/v1/system/transfer/export"),
+        ("POST", "/api/v1/system/update"),
+        ("GET", "/api/v1/remote/status"),
+        ("POST", "/api/v1/remote/tailscale/up"),
+        ("GET", "/api/v1/requests"),
+        ("GET", "/api/v1/snapshots"),
+        ("GET", "/api/v1/ws"),
+        ("GET", "/api/v1/journal"),
+        ("POST", "/api/v1/player/play"),
+        ("GET", "/config.php"),
+        ("PATCH", "/api/file/sequences"),
+        ("GET", "/settings"),
+        ("GET", "/settings/remote"),
+        ("GET", "/setup"),
+        ("GET", "/controllers"),
+        ("GET", "/trust"),
+        ("GET", "/api/v1/public/../show"),
+        ("GET", "/api/v1/public/%2e%2e/show"),
+        ("GET", "//api/v1/show"),
+        ("POST", "/request"),
+    ];
+    for (m, p) in admin {
+        assert_eq!(public_status(&router, m, p).await, StatusCode::NOT_FOUND, "{m} {p}");
+    }
+    // The public page, its assets and API work (under any host name).
+    assert_eq!(public_status(&router, "GET", "/request").await, StatusCode::OK);
+    assert_eq!(
+        public_status(&router, "GET", "/api/v1/public/health").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        public_status(&router, "GET", "/api/v1/public/requests").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        public_status(&router, "GET", "/").await,
+        StatusCode::TEMPORARY_REDIRECT
+    );
+}
+
+#[test]
+fn public_path_policy() {
+    use axum::http::Method;
+    use super::security::public_path_allowed as ok;
+    assert!(ok(&Method::GET, "/request"));
+    assert!(ok(&Method::GET, "/request/thanks"));
+    assert!(!ok(&Method::GET, "/requests"));
+    assert!(ok(&Method::GET, "/_app/immutable/entry/app.js"));
+    assert!(ok(&Method::POST, "/api/v1/public/requests"));
+    assert!(ok(&Method::GET, "/api/v1/public/ca.crt"));
+    assert!(ok(&Method::GET, "/play/controller"));
+    assert!(ok(&Method::POST, "/play/api/join"));
+    assert!(!ok(&Method::GET, "/player"));
+    assert!(!ok(&Method::POST, "/_app/x.js"));
+    assert!(!ok(&Method::GET, "/api/v1/publicx"));
+    assert!(!ok(&Method::GET, "/_app/../api/v1/show"));
+    assert!(!ok(&Method::GET, "/api/v1/public/%2F..%2Fshow"));
+}
+
+#[tokio::test]
+async fn admin_through_a_tunnel_needs_a_password() {
+    let mut app = TestApp::new();
+    leader(&mut app, None).await;
+    let tunnel = |path: &str| {
+        let mut r = req(
+            "GET",
+            path,
+            &[("host", "127.0.0.1"), ("x-forwarded-for", "203.0.113.9")],
+        );
+        r.extensions_mut()
+            .insert(ConnectInfo::<SocketAddr>("127.0.0.1:1".parse().unwrap()));
+        r
+    };
+    let (s, _, body) = app.send(tunnel("/show")).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert!(String::from_utf8_lossy(&body).contains("password_required"));
+    // Public pages stay available through the tunnel.
+    let (s, _, _) = app.send(tunnel("/public/health")).await;
+    assert_eq!(s, StatusCode::OK);
+    // On the home network (no proxy) nothing changes.
+    let (s, _, _) = app.send(req("GET", "/show", &[])).await;
+    assert_eq!(s, StatusCode::OK);
+    // With a password the tunnel reaches the sign-in check instead.
+    let hash = super::auth::hash_password("sleigh-bells").unwrap();
+    app.state
+        .store
+        .update(|s| {
+            s.settings.security.password_hash = Some(hash.clone());
+            Ok(())
+        })
+        .await
+        .unwrap();
+    app.cookie = None;
+    let (s, _, _) = app.send(tunnel("/show")).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn remote_admin_hostnames_are_allowed_only_while_exposed() {
+    use pixelplus_core::model::{CloudflareState, TailscaleState};
+    let app = TestApp::new();
+    let host = |h: &'static str| req("GET", "/show", &[("host", h)]);
+    let (s, _, _) = app.send(host("pp.tail1234.ts.net")).await;
+    assert_eq!(s, StatusCode::MISDIRECTED_REQUEST);
+    app.state
+        .store
+        .update(|s| {
+            s.settings.remote.tailscale = Some(TailscaleState {
+                enabled: true,
+                serve_admin: true,
+                funnel_public: false,
+                dns_name: Some("pp.tail1234.ts.net.".into()),
+            });
+            s.settings.remote.cloudflare = Some(CloudflareState {
+                mode: "token".into(),
+                public_host: Some("lights.example.com".into()),
+                admin_host: Some("admin.example.com".into()),
+                token_set: true,
+            });
+            Ok(())
+        })
+        .await
+        .unwrap();
+    for h in ["pp.tail1234.ts.net", "admin.example.com"] {
+        let (s, _, _) = app.send(host(h)).await;
+        assert_eq!(s, StatusCode::OK, "{h}");
+    }
+    // The public hostname never reaches the admin API.
+    let (s, _, _) = app.send(host("lights.example.com")).await;
+    assert_eq!(s, StatusCode::MISDIRECTED_REQUEST);
+}

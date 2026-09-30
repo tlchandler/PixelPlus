@@ -95,6 +95,7 @@ pub(crate) fn load_local_state(state: &AppState, sh: &Shared) {
     let index: SliceIndex = read_json(&index_path(sh)).unwrap_or_default();
     let mut f = sh.follower.lock();
     f.manifest_version = m.show_version;
+    f.power = m.power.clone();
     f.local_sequences = m
         .sequences
         .iter()
@@ -1197,7 +1198,11 @@ async fn sync_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<()> {
     if install(state, sh, &m, &available).await? {
         tracing::info!("applied show version {} from the leader", m.show_version);
     }
-    sh.follower.lock().manifest_version = m.show_version;
+    {
+        let mut f = sh.follower.lock();
+        f.manifest_version = m.show_version;
+        f.power = m.power.clone();
+    }
 
     let mut first_error: Option<anyhow::Error> = None;
     for s in &pending {

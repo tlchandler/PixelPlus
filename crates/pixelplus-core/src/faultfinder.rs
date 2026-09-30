@@ -244,6 +244,141 @@ impl FaultFinder {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Pixel-count search (F7, manual method)
+// ---------------------------------------------------------------------------
+
+/// One question of a pixel-count search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CountStep {
+    /// 1-based step number.
+    pub number: u32,
+    /// Upper bound on the remaining questions including this one.
+    pub max_remaining: u32,
+    /// Pixels `0..probe` are lit dim green and pixel `probe` (0-based) red:
+    /// "Can you see a red pixel at the end of the green run?"
+    pub probe: u32,
+    pub question: String,
+}
+
+/// Binary search for the number of pixels that respond on an output (F7).
+///
+/// Each question lights pixels `0..k` green and pixel `k` red; the red pixel
+/// is visible exactly when the string has more than `k` pixels, so the
+/// answer halves the range of possible counts `lo..=hi`. `max_probe` pixels
+/// (usually more than configured, to find extra pixels) are searched in at
+/// most ⌈log₂(max_probe + 1)⌉ questions: 12 for 2048.
+///
+/// ```
+/// use pixelplus_core::faultfinder::CountSearch;
+///
+/// let mut s = CountSearch::new(2048);
+/// let real = 48;
+/// while let Some(step) = s.current_step() {
+///     s.answer(step.probe < real); // the red pixel lights iff it exists
+/// }
+/// assert_eq!(s.result(), Some(48));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CountSearch {
+    max_probe: u32,
+    lo: u32,
+    hi: u32,
+    history: Vec<(u32, u32)>,
+}
+
+impl CountSearch {
+    /// Search counts `0..=max_probe`.
+    pub fn new(max_probe: u32) -> Self {
+        CountSearch {
+            max_probe,
+            lo: 0,
+            hi: max_probe,
+            history: Vec::new(),
+        }
+    }
+
+    pub fn max_probe(&self) -> u32 {
+        self.max_probe
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.lo >= self.hi
+    }
+
+    pub fn answers_given(&self) -> u32 {
+        self.history.len() as u32
+    }
+
+    /// Pixel index lit red for the current question.
+    fn probe(&self) -> Option<u32> {
+        if self.is_done() {
+            return None;
+        }
+        // Count c is in lo..=hi. Probing pixel k asks "c > k"; split in half:
+        // k = mid where mid in lo..hi.
+        Some(self.lo + (self.hi - self.lo) / 2)
+    }
+
+    pub fn current_step(&self) -> Option<CountStep> {
+        let k = self.probe()?;
+        let remaining = self.hi - self.lo + 1;
+        let question = if k == 0 {
+            "Only the first pixel should be lit, in red. Can you see it?".to_string()
+        } else {
+            format!(
+                "Pixels 1\u{2013}{k} are dim green and pixel {} should be red. \
+                 Can you see a red pixel at the end of the green run?",
+                k + 1
+            )
+        };
+        Some(CountStep {
+            number: self.answers_given() + 1,
+            max_remaining: ceil_log2(remaining),
+            probe: k,
+            question,
+        })
+    }
+
+    /// `seen = true`: the red pixel lit, so the string has more than `probe` pixels.
+    pub fn answer(&mut self, seen: bool) {
+        let Some(k) = self.probe() else { return };
+        self.history.push((self.lo, self.hi));
+        if seen {
+            self.lo = k + 1;
+        } else {
+            self.hi = k;
+        }
+    }
+
+    pub fn undo(&mut self) -> bool {
+        match self.history.pop() {
+            Some((lo, hi)) => {
+                self.lo = lo;
+                self.hi = hi;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Number of responding pixels once done.
+    pub fn result(&self) -> Option<u32> {
+        self.is_done().then_some(self.lo)
+    }
+}
+
+/// Convenience: run a whole count search against an oracle `responds(k)`
+/// ("does pixel k light?") and return `(count, questions asked)`.
+pub fn count_search(max_probe: u32, mut responds: impl FnMut(u32) -> bool) -> (u32, u32) {
+    let mut s = CountSearch::new(max_probe);
+    while let Some(step) = s.current_step() {
+        s.answer(responds(step.probe));
+    }
+    (s.result().unwrap_or(0), s.answers_given())
+}
+
 /// ⌈log₂ x⌉ for x ≥ 1 (0 for x ≤ 1).
 fn ceil_log2(x: u32) -> u32 {
     if x <= 1 {
@@ -372,5 +507,38 @@ mod tests {
         assert_eq!(v["litRange"]["start"], 0);
         assert_eq!(v["litRange"]["end"], 5);
         assert_eq!(v["maxRemaining"], 4);
+    }
+    #[test]
+    fn count_search_converges_within_12_steps_up_to_2048() {
+        for real in 0..=2048u32 {
+            let (count, steps) = count_search(2048, |k| k < real);
+            assert_eq!(count, real);
+            assert!(steps <= 12, "real={real} steps={steps}");
+        }
+        for max in [1u32, 2, 3, 50, 63, 64, 65] {
+            for real in 0..=max {
+                assert_eq!(count_search(max, |k| k < real).0, real, "max={max}");
+            }
+        }
+        assert_eq!(count_search(0, |_| true), (0, 0));
+    }
+
+    #[test]
+    fn count_search_steps_and_undo() {
+        let mut s = CountSearch::new(100);
+        let first = s.current_step().unwrap();
+        assert_eq!(first.probe, 50);
+        assert_eq!(first.number, 1);
+        assert_eq!(first.max_remaining, 7);
+        assert!(first.question.contains("pixel 51 should be red"));
+        s.answer(false);
+        assert_eq!(s.current_step().unwrap().probe, 25);
+        assert!(s.undo());
+        assert_eq!(s.current_step().unwrap(), first);
+        assert!(!s.undo());
+        // More pixels than probed: count = max_probe.
+        assert_eq!(count_search(100, |_| true).0, 100);
+        let v = serde_json::to_value(first).unwrap();
+        assert_eq!(v["maxRemaining"], 7);
     }
 }

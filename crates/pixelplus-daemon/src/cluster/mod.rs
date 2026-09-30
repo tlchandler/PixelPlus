@@ -385,6 +385,8 @@ pub(crate) struct FollowerRuntime {
     pub last_challenge: Option<Instant>,
     /// Sequences whose slice is on disk and verified.
     pub local_sequences: std::collections::HashSet<String>,
+    /// Power limiter budget from the installed manifest (F12).
+    pub power: Option<pixelplus_core::model::NodePowerBudget>,
 }
 
 /// A ping in flight.
@@ -708,6 +710,13 @@ impl ClusterHandle {
             .get(id)
             .map(|p| p.beacon.name.clone())
             .filter(|n| !n.trim().is_empty())
+    }
+
+    /// Follower: this node's power limiter budget from the leader's manifest
+    /// (F12; `None` on a leader or before the first manifest). A leader
+    /// computes its own with `pixelplus_core::power::node_budget`.
+    pub fn manifest_power(&self) -> Option<pixelplus_core::model::NodePowerBudget> {
+        self.shared.follower.lock().power.clone()
     }
 
     /// Follower: re-check the manifest now.

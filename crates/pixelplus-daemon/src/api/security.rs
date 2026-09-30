@@ -310,8 +310,27 @@ pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> R
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
     if !public {
+        // Admin through a tunnel (F14): only with a password. Remote access
+        // setup refuses to expose the admin without one; this also covers a
+        // password removed later, and hand-made proxies on this machine.
+        let peer = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|c| c.0);
+        if tunnel_request(peer, headers)
+            && state.store.get().settings.security.password_hash.is_none()
+        {
+            return super::ApiError::new(
+                StatusCode::FORBIDDEN,
+                "password_required",
+                "PixelPlus can only be managed through a tunnel or proxy once it has a password. Set one under Settings → Security on your home network.",
+            )
+            .into_response();
+        }
         if let Some(h) = &host {
-            let mut extra = state.store.get().settings.security.allowed_hosts.clone();
+            let show = state.store.get();
+            let mut extra = show.settings.security.allowed_hosts.clone();
+            extra.extend(remote_admin_hosts(&show.settings.remote));
             if let Some(old) = previous_hostname(std::time::Instant::now()) {
                 extra.push(format!("{old}.local"));
                 extra.push(old);
@@ -342,6 +361,114 @@ pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> R
         }
     }
     next.run(req).await
+}
+
+// ---------------------------------------------------------------------------
+// Public-only listener and tunnels (F14, ARCHITECTURE §12.12)
+// ---------------------------------------------------------------------------
+
+/// SPA pages the public listener serves (the song request page).
+const PUBLIC_PAGES: [&str; 1] = ["/request"];
+
+/// **Route allow-list of the public-only listener** (`127.0.0.1:8081`,
+/// `Config::public_port`), the only port tunnels and funnels publish by
+/// default. Everything else answers `404`, so the admin UI and API can never
+/// be reached through a public hostname:
+///
+/// * `GET/HEAD /` (redirected to `/request` by [`public_only`]), the
+///   `/request` page and the built UI's static files (`/_app/…`,
+///   `/favicon.svg`, `/robots.txt`, `/manifest.webmanifest`);
+/// * `/api/v1/public/*` (song requests, health, the local CA certificate),
+///   any method (their handlers check their own input and rate limits);
+/// * the games phone controller, proxied by the listener: `/play` and
+///   `/play/*` (any method, WebSocket upgrade included).
+///
+/// Paths with `..`, `//`, `\` or percent-encoded separators are refused.
+pub fn public_path_allowed(method: &Method, path: &str) -> bool {
+    if path.contains("..")
+        || path.contains("//")
+        || path.contains('\\')
+        || path.to_ascii_lowercase().contains("%2f")
+        || path.to_ascii_lowercase().contains("%5c")
+        || path.contains("%2e")
+        || path.contains("%2E")
+    {
+        return false;
+    }
+    let read = matches!(*method, Method::GET | Method::HEAD);
+    if path.starts_with("/api/v1/public/") {
+        return true;
+    }
+    if path == "/play" || path.starts_with("/play/") {
+        return true;
+    }
+    if !read {
+        return false;
+    }
+    path == "/"
+        || PUBLIC_PAGES
+            .iter()
+            .any(|p| path == *p || path.strip_prefix(p).is_some_and(|r| r.starts_with('/')))
+        || path.starts_with("/_app/")
+        || matches!(
+            path,
+            "/favicon.svg" | "/favicon.ico" | "/robots.txt" | "/manifest.webmanifest"
+        )
+}
+
+/// Middleware for the public-only listener (WS1 layers it on the router it
+/// serves on `Config::public_port`): [`public_path_allowed`] or `404`; `/`
+/// redirects to the song request page. Responses are marked `no-store`
+/// (nothing admin-ish may linger in a CDN cache) except static assets.
+pub async fn public_only(req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    if !public_path_allowed(req.method(), &path) {
+        return super::ApiError::not_found("That page").into_response();
+    }
+    if path == "/" {
+        return (
+            StatusCode::TEMPORARY_REDIRECT,
+            [(header::LOCATION, HeaderValue::from_static("/request"))],
+        )
+            .into_response();
+    }
+    let mut resp = next.run(req).await;
+    if !path.starts_with("/_app/immutable/") {
+        resp.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        );
+    }
+    resp
+}
+
+/// The request came through a tunnel or reverse proxy on this machine
+/// (`cloudflared`, `tailscale serve`/`funnel`, a local Caddy…): a loopback
+/// peer that sends forwarding headers. Local sidecars never send those.
+pub fn tunnel_request(peer: Option<SocketAddr>, headers: &HeaderMap) -> bool {
+    peer.is_some_and(|p| canonical(p.ip()).is_loopback()) && forwarded(headers)
+}
+
+/// Host names PixelPlus manages for remote access (F14), for the Host
+/// allow-list: the tailnet name while `tailscale serve` exposes the admin
+/// UI, and the Cloudflare admin hostname. Public-only names are *not*
+/// listed: public pages answer under any name and the admin must not.
+pub fn remote_admin_hosts(remote: &pixelplus_core::model::RemoteSettings) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(ts) = remote.tailscale.as_ref().filter(|t| t.enabled && t.serve_admin) {
+        if let Some(n) = ts.dns_name.as_deref().filter(|n| !n.is_empty()) {
+            out.push(n.trim_end_matches('.').to_ascii_lowercase());
+        }
+    }
+    if let Some(h) = remote
+        .cloudflare
+        .as_ref()
+        .and_then(|c| c.admin_host.as_deref())
+        .filter(|h| !h.is_empty())
+    {
+        out.push(h.trim_end_matches('.').to_ascii_lowercase());
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

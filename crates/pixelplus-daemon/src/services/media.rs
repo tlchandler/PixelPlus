@@ -436,6 +436,28 @@ pub fn untrash(data_dir: &Path, rel: &str) -> bool {
     std::fs::rename(&src, data_dir.join(rel)).is_ok()
 }
 
+/// Move `src` to `dst` (rename; copy + delete across file systems, e.g. an
+/// upload directory on another mount). `dst`'s directory is created.
+pub async fn move_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if let Some(dir) = dst.parent() {
+        tokio::fs::create_dir_all(dir).await?;
+    }
+    if tokio::fs::rename(src, dst).await.is_ok() {
+        return Ok(());
+    }
+    let tmp = dst.with_extension("moving.tmp");
+    let res = async {
+        tokio::fs::copy(src, &tmp).await?;
+        tokio::fs::rename(&tmp, dst).await
+    }
+    .await;
+    if res.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return res;
+    }
+    tokio::fs::remove_file(src).await
+}
+
 /// Temporary files older than this are leftovers (an upload still in
 /// progress keeps writing to its file).
 pub const STALE_TEMP: Duration = Duration::from_secs(60 * 60);
