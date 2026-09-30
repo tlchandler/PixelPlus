@@ -14,3 +14,9 @@ anyhow.workspace = true
 tracing.workspace = true
 rand.workspace = true
 chrono.workspace = true
+chrono-tz = "0.10"
+qrcode = { version = "0.14", default-features = false }
+zstd = "0.13"
+flate2 = "1"
+sha2 = "0.10"
+roxmltree = "0.20"
