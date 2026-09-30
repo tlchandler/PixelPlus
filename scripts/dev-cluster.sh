@@ -92,6 +92,10 @@ start_one() {
 		echo "$n already running (pid $(cat "$(pidfile "$n")"))"
 		return
 	fi
+	if curl -fsS -m 1 "http://127.0.0.1:$(http_port "$n")/api/v1/public/health" >/dev/null 2>&1; then
+		echo "port $(http_port "$n") is already in use (another cluster? stop it, or set PP_HTTP_BASE)" >&2
+		exit 1
+	fi
 	mkdir -p "$DIR/$n/shm" "$DIR/$n/run"
 	local envs=()
 	while IFS= read -r line; do envs+=("$line"); done < <(node_env "$n")

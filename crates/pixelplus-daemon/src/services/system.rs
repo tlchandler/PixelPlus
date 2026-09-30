@@ -527,6 +527,17 @@ fn parse_active_wifi(text: &str) -> Option<WifiStatus> {
 // ---------------------------------------------------------------------------
 
 /// Body of `GET /system`.
+/// `http://192.168.1.20:80` → `192.168.1.20` (fallback name of a follower's leader).
+fn leader_address(url: &str) -> Option<String> {
+    let host = url
+        .trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/');
+    let host = host.strip_suffix(":80").unwrap_or(host);
+    (!host.is_empty()).then(|| host.to_string())
+}
+
 pub async fn system_info(state: &AppState, authed: bool) -> serde_json::Value {
     let id = state.identity();
     let show = state.store.get();
@@ -563,10 +574,15 @@ pub async fn system_info(state: &AppState, authed: bool) -> serde_json::Value {
         return info;
     }
     let (free, _) = disk_space(&state.config.data_dir).unwrap_or((0, 0));
-    let leader_name = id
-        .leader_url
-        .clone()
-        .map(|u| u.trim_start_matches("http://").to_string());
+    // The leader's friendly name from its beacons; its address until one arrives.
+    let leader_name = id.leader_id.as_deref().and_then(|lid| {
+        state
+            .services
+            .cluster
+            .get()
+            .and_then(|c| c.peer_name(lid))
+            .or_else(|| leader_address(id.leader_url.as_deref()?))
+    });
     let extra = serde_json::json!({
         "uptimeS": uptime_s(state),
         "cpuPct": cpu_pct().await.unwrap_or(0.0),
@@ -699,6 +715,13 @@ fn friendly_audio_name(id: &str, label: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leader_address_fallback() {
+        assert_eq!(leader_address("http://192.168.1.20:80").as_deref(), Some("192.168.1.20"));
+        assert_eq!(leader_address("http://127.0.0.1:18080/").as_deref(), Some("127.0.0.1:18080"));
+        assert_eq!(leader_address("  "), None);
+    }
 
     #[test]
     fn meminfo() {

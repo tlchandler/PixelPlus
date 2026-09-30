@@ -228,6 +228,9 @@ async fn apply(
         .store
         .update(move |s| {
             let mut next = apply_import(s, &preview, &map);
+            for w in drop_impossible_segments(&mut next) {
+                tracing::warn!("xLights import: {w}");
+            }
             pixelplus_core::layout::auto_arrange(&mut next.props);
             next.version = s.version;
             *s = next;
@@ -235,6 +238,32 @@ async fn apply(
         })
         .await?;
     Ok(Json(public_show(&show)))
+}
+
+/// Remove wiring the chosen controllers can't have (an xLights controller with more
+/// ports than the PixelPlus board it was matched to): those pixels are left unwired
+/// (the health check and the props page point them out) instead of creating props
+/// that can't be saved. Returns what was dropped.
+fn drop_impossible_segments(show: &mut Show) -> Vec<String> {
+    let outputs: BTreeMap<String, (String, usize)> = show
+        .nodes
+        .iter()
+        .map(|n| (n.id.clone(), (n.name.clone(), n.outputs.len())))
+        .collect();
+    let mut dropped = Vec::new();
+    for p in &mut show.props {
+        p.segments.retain(|seg| match outputs.get(&seg.node_id) {
+            Some((name, count)) if seg.output == 0 || seg.output as usize > *count => {
+                dropped.push(format!(
+                    "\"{}\" was on port {} but {name} has {count} outputs; those {} pixels are left unwired",
+                    p.name, seg.output, seg.pixel_count
+                ));
+                false
+            }
+            _ => true,
+        });
+    }
+    dropped
 }
 
 pub fn routes() -> Router<AppState> {
@@ -252,6 +281,45 @@ pub fn routes() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn segments_on_missing_outputs_are_left_unwired() {
+        use pixelplus_core::model::{BoardKind, Node, NodeRole, Prop, PropSegment};
+        let mut show = Show::default();
+        show.nodes.push(Node {
+            id: "n1".into(),
+            name: "Porch".into(),
+            hostname: "porch".into(),
+            role: NodeRole::Follower,
+            board: BoardKind::Difftx,
+            board_rev: None,
+            pi_model: None,
+            outputs: BoardKind::Difftx.default_outputs(),
+            adopted: true,
+            last_seen: None,
+            notes: None,
+        });
+        let seg = |output, prop_offset| PropSegment {
+            node_id: "n1".into(),
+            output,
+            start_pixel: 0,
+            pixel_count: 75,
+            prop_offset,
+            reverse: false,
+            null_pixels: 0,
+        };
+        let mut prop: Prop = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "Garage Poly", "kind": "line", "pixelCount": 150, "channelStart": 0
+        }))
+        .unwrap();
+        prop.segments = vec![seg(4, 0), seg(5, 75)];
+        show.props.push(prop);
+        let dropped = drop_impossible_segments(&mut show);
+        assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert!(dropped[0].contains("port 5"), "{}", dropped[0]);
+        assert_eq!(show.props[0].segments.len(), 1);
+        assert_eq!(show.props[0].segments[0].output, 4);
+    }
 
     #[test]
     fn detects_root_elements() {

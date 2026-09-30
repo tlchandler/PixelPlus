@@ -501,6 +501,16 @@ impl ClusterHandle {
         }
     }
 
+    /// Name a peer announces in its beacons (e.g. the follower's leader).
+    pub fn peer_name(&self, id: &str) -> Option<String> {
+        self.shared
+            .peers
+            .read()
+            .get(id)
+            .map(|p| p.beacon.name.clone())
+            .filter(|n| !n.trim().is_empty())
+    }
+
     /// Follower: re-check the manifest now.
     pub fn refresh_manifest(&self) {
         self.shared.manifest_trigger.notify_one();

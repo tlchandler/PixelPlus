@@ -69,6 +69,60 @@ fn list_names(names: &[String]) -> String {
     }
 }
 
+/// Props that aren't (fully) wired, or wired to ports that don't exist.
+fn wiring_check(show: &Show) -> Check {
+    let unwired: Vec<String> = show
+        .props
+        .iter()
+        .filter(|p| p.segments.is_empty())
+        .map(|p| p.name.clone())
+        .collect();
+    let partly: Vec<String> = show
+        .props
+        .iter()
+        .filter(|p| !p.segments.is_empty() && p.unwired_pixels() > 0)
+        .map(|p| format!("{} ({} of {} pixels)", p.name, p.unwired_pixels(), p.pixel_count))
+        .collect();
+    let impossible: Vec<String> = show
+        .props
+        .iter()
+        .flat_map(|p| p.segments.iter().map(move |s| (p, s)))
+        .filter_map(|(p, s)| match show.node(&s.node_id) {
+            None => Some(format!("{} (its controller was removed)", p.name)),
+            Some(n) if s.output == 0 || s.output as usize > n.outputs.len() => Some(format!(
+                "{} (port {} doesn't exist on {})",
+                p.name, s.output, n.name
+            )),
+            Some(_) => None,
+        })
+        .collect();
+    let wiring = |status, detail: String| check("wiring", "Prop wiring", status, detail);
+    if !impossible.is_empty() {
+        return wiring(
+            Status::Fail,
+            format!("Wired to a port that isn't there: {}", list_names(&impossible)),
+        );
+    }
+    let mut problems = Vec::new();
+    if !unwired.is_empty() {
+        problems.push(format!("{} not wired to any port", list_names(&unwired)));
+    }
+    if !partly.is_empty() {
+        problems.push(format!("Partly wired: {}", list_names(&partly)));
+    }
+    if !problems.is_empty() {
+        return wiring(Status::Warn, problems.join(". "));
+    }
+    wiring(
+        Status::Ok,
+        if show.props.is_empty() {
+            "No props yet".to_string()
+        } else {
+            format!("All {} props are wired to a port", show.props.len())
+        },
+    )
+}
+
 /// Checks that only depend on the show and the data directory (pure-ish, testable).
 pub fn content_checks(show: &Show, data_dir: &std::path::Path) -> Vec<Check> {
     let mut out = Vec::new();
@@ -180,32 +234,7 @@ pub fn content_checks(show: &Show, data_dir: &std::path::Path) -> Vec<Check> {
             details.join(". ")
         },
     ));
-    // Wiring.
-    let unwired: Vec<String> = show
-        .props
-        .iter()
-        .filter(|p| p.segments.is_empty())
-        .map(|p| p.name.clone())
-        .collect();
-    out.push(if unwired.is_empty() {
-        check(
-            "wiring",
-            "Prop wiring",
-            Status::Ok,
-            if show.props.is_empty() {
-                "No props yet".to_string()
-            } else {
-                format!("All {} props are wired to a port", show.props.len())
-            },
-        )
-    } else {
-        check(
-            "wiring",
-            "Prop wiring",
-            Status::Warn,
-            format!("{} not wired to any port", list_names(&unwired)),
-        )
-    });
+    out.push(wiring_check(show));
     // Schedule.
     let issues = pixelplus_core::schedule::validate(&show.schedule);
     out.push(if !show.schedule.enabled {
@@ -696,6 +725,62 @@ mod host_tests {
         std::fs::write(dir.join("rtc1/name"), "rtc-ds1307 1-0068\n").unwrap();
         assert!(board_rtc_present(&dir));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn wiring_finds_unwired_partly_wired_and_missing_ports() {
+        use pixelplus_core::model::{BoardKind, Node, NodeRole, Prop, PropSegment};
+        let mut show = Show::default();
+        show.nodes.push(Node {
+            id: "n1".into(),
+            name: "Porch".into(),
+            hostname: "porch".into(),
+            role: NodeRole::Follower,
+            board: BoardKind::Difftx,
+            board_rev: None,
+            pi_model: None,
+            outputs: BoardKind::Difftx.default_outputs(),
+            adopted: true,
+            last_seen: None,
+            notes: None,
+        });
+        let prop = |name: &str, segs: Vec<(u32, u32)>| {
+            let mut p: Prop = serde_json::from_value(serde_json::json!({
+                "id": name, "name": name, "kind": "line", "pixelCount": 100, "channelStart": 0
+            }))
+            .unwrap();
+            let mut off = 0;
+            p.segments = segs
+                .into_iter()
+                .map(|(output, n)| {
+                    let s = PropSegment {
+                        node_id: "n1".into(),
+                        output,
+                        start_pixel: 0,
+                        pixel_count: n,
+                        prop_offset: off,
+                        reverse: false,
+                        null_pixels: 0,
+                    };
+                    off += n;
+                    s
+                })
+                .collect();
+            p
+        };
+        show.props = vec![prop("A", vec![(1, 100)])];
+        assert_eq!(wiring_check(&show).status, Status::Ok);
+        show.props.push(prop("B", vec![(2, 60)]));
+        let c = wiring_check(&show);
+        assert_eq!(c.status, Status::Warn);
+        assert!(c.detail.contains("B (40 of 100 pixels)"), "{}", c.detail);
+        show.props.push(prop("C", vec![]));
+        let c = wiring_check(&show);
+        assert!(c.detail.starts_with("C not wired"), "{}", c.detail);
+        show.props.push(prop("D", vec![(5, 100)]));
+        let c = wiring_check(&show);
+        assert_eq!(c.status, Status::Fail);
+        assert!(c.detail.contains("port 5 doesn't exist on Porch"), "{}", c.detail);
     }
 
     #[test]

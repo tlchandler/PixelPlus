@@ -156,7 +156,7 @@ mod tests {
         );
         let f = tap.snapshot();
         assert_eq!(f.sequence, Some(("s".into(), 3)));
-        let o = outputs(&f, None);
+        let o = outputs(&f);
         assert_eq!(o.len(), 2);
         assert_eq!(o[0].rgb, base64(&[1, 2, 3]));
         assert_eq!(o[1].rgb, base64(&[4, 5, 6, 7, 8, 9]));

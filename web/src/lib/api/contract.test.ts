@@ -63,7 +63,11 @@ const OPTIONAL = new Set([
 	'max',
 	'step',
 	'points',
-	'channelRuns'
+	'channelRuns',
+	'ntfy',
+	'email',
+	'playlistId',
+	'matrixPropId'
 ]);
 
 type Problem = { path: string; kind: 'missing' | 'type'; detail: string };
@@ -72,6 +76,15 @@ function kind(v: unknown): string {
 	if (v === null || v === undefined) return 'null';
 	if (Array.isArray(v)) return 'array';
 	return typeof v;
+}
+
+/** `type` or `kind` when every element is an object carrying it as a string. */
+function discriminator(items: unknown[]): string | null {
+	for (const tag of ['type', 'kind']) {
+		if (items.every((x) => kind(x) === 'object' && typeof (x as Record<string, unknown>)[tag] === 'string'))
+			return tag;
+	}
+	return null;
 }
 
 /** Union of the keys of every object in `items` (so one sparse element doesn't hide fields). */
@@ -95,6 +108,17 @@ export function compareShape(mock: unknown, real: unknown, path: string, out: Pr
 		const m = mock as unknown[];
 		const r = real as unknown[];
 		if (!m.length || !r.length) return;
+		// Tagged unions (playlist items, param specs): compare variant by variant.
+		const tag = discriminator(m) && discriminator(r) ? discriminator(m) : null;
+		if (tag) {
+			const groups = new Set(m.map((x) => (x as Record<string, unknown>)[tag] as string));
+			for (const g of groups) {
+				const mg = m.filter((x) => (x as Record<string, unknown>)[tag] === g);
+				const rg = r.filter((x) => (x as Record<string, unknown>)[tag] === g);
+				if (rg.length) compareShape(mergeObjects(mg), mergeObjects(rg), `${path}[${tag}=${g}]`, out);
+			}
+			return;
+		}
 		const mo = mergeObjects(m);
 		const ro = mergeObjects(r);
 		if (mo && ro) compareShape(mo, ro, path + '[]', out);
@@ -104,6 +128,11 @@ export function compareShape(mock: unknown, real: unknown, path: string, out: Pr
 	if (km !== 'object') return;
 	const m = mock as Record<string, unknown>;
 	const r = real as Record<string, unknown>;
+	for (const tag of ['type', 'kind']) {
+		// Different variants of a tagged union (e.g. a clock vs. a sunset TimeSpec).
+		if (typeof m[tag] === 'string' && typeof r[tag] === 'string' && m[tag] !== r[tag]) return;
+	}
+	if (path.endsWith('.params')) return; // effect parameters are per-effect data
 	if (MAPS.has(path)) {
 		const mv = mergeObjects(Object.values(m));
 		const rv = mergeObjects(Object.values(r));
