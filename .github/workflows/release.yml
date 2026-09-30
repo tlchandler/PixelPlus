@@ -39,6 +39,11 @@ jobs:
           # Pre-release tags (v1.3.0-beta1) become Debian versions that sort BEFORE the
           # release (1.3.0~beta1) and are published on the beta channel only.
           v="${tag/-/\~}"
+          # Later steps splice the version into scripts and file names: only what a
+          # Debian version of ours may contain (1.2.3, 1.3.0~beta1).
+          if ! [[ "$tag" =~ ^[0-9][A-Za-z0-9.+-]{0,63}$ ]]; then
+            echo "::error::'$VERSION' isn't a release version like v1.2.3 or v1.3.0-beta1"; exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "tag=v$tag" >> "$GITHUB_OUTPUT"
 

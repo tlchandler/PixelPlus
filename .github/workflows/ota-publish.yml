@@ -43,6 +43,10 @@ jobs:
           path: pages
       - name: Commit to gh-pages
         if: env.SKIP != '1'
+        env:
+          # Through the environment, never spliced into the script: a tag name may
+          # contain $( ) or backticks.
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           set -euo pipefail
           mkdir -p pages/ota
@@ -56,5 +60,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ota
-          git commit -m "OTA index: ${{ inputs.tag || github.event.release.tag_name }}" || exit 0
+          git commit -m "OTA index: ${TAG}" || exit 0
           git push

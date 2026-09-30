@@ -122,13 +122,39 @@ public_port() { conf_port PIXELPLUS_PUBLIC_PORT 8081; }
 
 # Copy a file the pixelplus user controls into a root-only place: never through
 # a symlink, only a plain file, at most $3 bytes. What was copied is verified after.
+# The check and the read are one open(O_NOFOLLOW) + fstat, so the file can't be
+# swapped for a symlink (e.g. to /etc/shadow) between a test and the read, and the
+# copy is created 0600 from the start (never briefly readable, e.g. in /etc/pixelplus).
 safe_copy() {
-    local src="$1" dst="$2" max="$3" size
-    [[ -f "${src}" && ! -L "${src}" ]] || return 1
-    head -c "$((max + 1))" -- "${src}" >"${dst}" || return 1
-    chmod 0600 "${dst}"
-    size="$(stat -c %s "${dst}")"
-    ((size > 0 && size <= max)) || { rm -f "${dst}"; return 1; }
+    local src="$1" dst="$2" max="$3"
+    "${PIXELPLUS_PYTHON:-/usr/bin/python3}" - "${src}" "${dst}" "${max}" 2>/dev/null <<'PY' || { rm -f "${dst}"; return 1; }
+import os, stat, sys
+src, dst, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_size <= 0 or st.st_size > limit:
+        sys.exit(1)
+    try:
+        os.unlink(dst)
+    except FileNotFoundError:
+        pass
+    out = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    total = 0
+    with os.fdopen(out, "wb") as f:
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                sys.exit(1)
+            f.write(chunk)
+    if total <= 0:
+        sys.exit(1)
+finally:
+    os.close(fd)
+PY
 }
 
 # minisign signature by one of the release keys in $KEYS_DIR.

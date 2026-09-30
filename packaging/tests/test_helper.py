@@ -462,6 +462,35 @@ class FleetVerbTests(unittest.TestCase):
         self.assertFalse(os.path.exists(env))
         self.assertIn("disable --now pixelplus-cloudflared.service", self.calls())
 
+    def test_secret_files_are_read_without_following_links_or_blocking(self):
+        """Security audit 2: the service user's file is opened once with O_NOFOLLOW and checked
+        on that descriptor (no test-then-read race), a FIFO can't hang the root helper, and the
+        root copy is 0600 from the start."""
+        tok = os.path.join(self.data, "remote", "cloudflared.token")
+        os.mkfifo(tok)
+        r = subprocess.run(["bash", HELPER, "cloudflared-token"], env=self.env, capture_output=True,
+                           text=True, timeout=20)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.etc, "cloudflared.env")))
+        self.assertEqual([f for f in os.listdir(self.etc) if f.startswith(".cloudflared")], [])
+        # An auth key that is a symlink to a root-only file is refused too.
+        key = os.path.join(self.data, "remote", "tailscale.authkey")
+        secret = os.path.join(self.tmp, "root-secret")
+        with open(secret, "w") as f:
+            f.write("tskey-auth-kSECRETSECRETSECRET\n")
+        os.symlink(secret, key)
+        r = self.run_helper("tailscale-up")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("--auth-key", self.calls())
+        # A good token: the root env file is 0600.
+        self.assertFalse(os.path.lexists(tok), "the unusable file is removed")
+        with open(tok, "w") as f:
+            f.write("eyJ" + "A" * 60 + "\n")
+        r = self.run_helper("cloudflared-token")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        env = os.path.join(self.etc, "cloudflared.env")
+        self.assertEqual(os.stat(env).st_mode & 0o777, 0o600)
+
     def test_quick_tunnel_uses_its_own_unit(self):
         self.assertEqual(self.run_helper("cloudflared-quick:on").returncode, 0)
         self.assertIn("systemctl restart pixelplus-cloudflared-quick.service", self.calls())
