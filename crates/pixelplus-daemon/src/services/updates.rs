@@ -687,6 +687,48 @@ pub async fn fetch_index(
     Ok(index)
 }
 
+/// Highest index version seen per channel (`<data>/updates/index-seen.json`).
+fn index_seen_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("updates/index-seen.json")
+}
+
+/// Freeze / replay protection for signed indexes: every index is validly
+/// signed, so someone who can answer for the update server (DNS, a captive
+/// network, a compromised Pages branch) could serve an *older* one to hide
+/// newer releases (a fix for a known hole) or steer controllers to an older
+/// signed release. An index whose version is below one already seen on this
+/// channel is refused; a newer one is remembered.
+pub fn check_index_not_older(data_dir: &Path, index: &ReleaseIndex) -> Result<(), String> {
+    let path = index_seen_path(data_dir);
+    let mut seen: std::collections::BTreeMap<String, String> = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    if let Some(prev) = seen.get(&index.channel).filter(|v| valid_version(v)) {
+        match compare_versions(&index.version, prev) {
+            std::cmp::Ordering::Less => {
+                return Err(format!(
+                    "The update server offered an older release list ({}) than it did before ({prev}); it isn't trusted.",
+                    index.version
+                ))
+            }
+            std::cmp::Ordering::Equal => return Ok(()),
+            std::cmp::Ordering::Greater => {}
+        }
+    }
+    seen.insert(index.channel.clone(), index.version.clone());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(b) = serde_json::to_vec_pretty(&seen) {
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, b).is_ok() {
+            let _ = std::fs::rename(tmp, &path);
+        }
+    }
+    Ok(())
+}
+
 /// Make sure `file` (from a verified index) is in `dir`, downloaded,
 /// size- and hash-checked and its own signature verified. Returns its path.
 pub async fn ensure_package(
@@ -841,6 +883,34 @@ mod tests {
             assert_eq!(compare_versions(a, b), o, "{a} vs {b}");
             assert_eq!(compare_versions(b, a), o.reverse(), "{b} vs {a}");
         }
+    }
+
+    /// Security audit 2: a validly signed but older index (replayed by
+    /// whoever answers for the update server) is refused once a newer one
+    /// was seen on that channel.
+    #[test]
+    fn older_signed_index_is_refused() {
+        let dir = std::env::temp_dir().join(format!("pp-idx-{}", pixelplus_core::model::new_id()));
+        let idx = |ch: &str, v: &str| ReleaseIndex {
+            v: 1,
+            channel: ch.into(),
+            version: v.into(),
+            date: None,
+            notes: None,
+            proto_min: 1,
+            proto_max: 1,
+            format_version: 1,
+            files: vec![],
+        };
+        assert!(check_index_not_older(&dir, &idx("stable", "1.2.0")).is_ok());
+        assert!(check_index_not_older(&dir, &idx("stable", "1.2.0")).is_ok());
+        assert!(check_index_not_older(&dir, &idx("stable", "1.3.0")).is_ok());
+        let e = check_index_not_older(&dir, &idx("stable", "1.2.0")).unwrap_err();
+        assert!(e.contains("older"), "{e}");
+        // Channels are separate (beta may be ahead or behind).
+        assert!(check_index_not_older(&dir, &idx("beta", "1.1.0~beta1")).is_ok());
+        assert!(check_index_not_older(&dir, &idx("stable", "1.3.1")).is_ok());
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

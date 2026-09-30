@@ -201,7 +201,8 @@ async fn public_listener_caps_connections() {
         .unwrap();
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp.local_addr().unwrap();
-    let listener = PublicListener::with_options(tcp, || 1, || false, 2).unwrap();
+    let listener =
+        PublicListener::with_options(tcp, || 1, || false, 2, Duration::from_millis(1500)).unwrap();
     let router = public_router(app.state.clone());
     let server = tokio::spawn(async move {
         axum::serve(
@@ -236,6 +237,30 @@ async fn public_listener_caps_connections() {
     )
     .await;
     assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
+    // A visitor trickling a request body loses the connection at the read
+    // deadline (and its slot with it).
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    s.write_all(b"POST /api/v1/public/requests HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\n{")
+        .await
+        .unwrap();
+    let t0 = std::time::Instant::now();
+    let mut sink = Vec::new();
+    let r = tokio::time::timeout(Duration::from_secs(6), async {
+        loop {
+            if s.write_all(b" ").await.is_err() {
+                break;
+            }
+            let mut b = [0u8; 512];
+            match tokio::time::timeout(Duration::from_millis(100), s.read(&mut b)).await {
+                Ok(Ok(0)) | Ok(Err(_)) => break,
+                Ok(Ok(n)) => sink.extend_from_slice(&b[..n]),
+                Err(_) => {}
+            }
+        }
+    })
+    .await;
+    assert!(r.is_ok(), "the trickling connection was closed");
+    assert!(t0.elapsed() < Duration::from_secs(5));
     server.abort();
 }
 

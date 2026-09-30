@@ -77,6 +77,12 @@ describe('secure options', () => {
 		expect(safeNext('//evil.com')).toBe('/calibrate');
 		expect(safeNext('https://evil.com')).toBe('/calibrate');
 		expect(safeNext('/\\evil.com')).toBe('/calibrate');
+		// Security audit 2: browsers strip tabs / newlines, turning these into //evil.com.
+		expect(safeNext('/\t/evil.com')).toBe('/calibrate');
+		expect(safeNext('/\n/evil.com')).toBe('/calibrate');
+		expect(safeNext('/\r/evil.com')).toBe('/calibrate');
+		expect(safeNext(' //evil.com')).toBe('/calibrate');
+		expect(safeNext('/map?x=1#y')).toBe('/map?x=1#y');
 		expect(safeNext(null, '/')).toBe('/');
 	});
 });

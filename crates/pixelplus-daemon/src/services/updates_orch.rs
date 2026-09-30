@@ -1429,7 +1429,12 @@ pub async fn latest(state: &AppState, refresh: bool) -> Result<ReleaseIndex, Str
             UpdateChannel::Stable => "stable",
             UpdateChannel::Beta => "beta",
         };
-        updates::fetch_index(&updates::index_base(), ch, &keys).await
+        updates::fetch_index(&updates::index_base(), ch, &keys)
+            .await
+            .and_then(|idx| {
+                updates::check_index_not_older(&state.config.data_dir, &idx)?;
+                Ok(idx)
+            })
     };
     *state.services.updates_orch.index.lock() = Some((Instant::now(), channel, r.clone()));
     r

@@ -47,6 +47,10 @@ const MAX_HEAD: usize = 16 * 1024;
 /// connections through a tunnel; past this they get a quick 503 instead of
 /// using up the daemon's file descriptors.
 pub const MAX_PUBLIC_CONNS: usize = 256;
+/// A public page request (head and body) must have arrived within this long
+/// of connecting; every such connection serves one request, so a visitor
+/// trickling a request body can't hold a slot for ever.
+pub const PUBLIC_READ_DEADLINE: Duration = Duration::from_secs(30);
 /// Retry a failed bind this often.
 const REBIND_EVERY: Duration = Duration::from_secs(30);
 
@@ -259,6 +263,7 @@ pub struct Prefixed<S> {
     pos: usize,
     inner: S,
     _slot: Option<tokio::sync::OwnedSemaphorePermit>,
+    read_deadline: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl<S> Prefixed<S> {
@@ -268,11 +273,15 @@ impl<S> Prefixed<S> {
             pos: 0,
             inner,
             _slot: None,
+            read_deadline: None,
         }
     }
 
-    fn with_slot(mut self, slot: tokio::sync::OwnedSemaphorePermit) -> Self {
+    /// Hold a public-listener connection slot, and stop reading (error) once
+    /// `deadline` has passed.
+    fn with_slot(mut self, slot: tokio::sync::OwnedSemaphorePermit, deadline: Duration) -> Self {
         self._slot = Some(slot);
+        self.read_deadline = Some(Box::pin(tokio::time::sleep(deadline)));
         self
     }
 }
@@ -283,6 +292,14 @@ impl<S: AsyncRead + Unpin> AsyncRead for Prefixed<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        if let Some(d) = self.read_deadline.as_mut() {
+            if std::future::Future::poll(d.as_mut(), cx).is_ready() {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "request not received in time",
+                )));
+            }
+        }
         if self.pos < self.prefix.len() {
             let n = (self.prefix.len() - self.pos).min(buf.remaining());
             let start = self.pos;
@@ -477,17 +494,25 @@ impl PublicListener {
         tcp: TcpListener,
         games_port: impl Fn() -> u16 + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
-        Self::with_options(tcp, games_port, || false, MAX_PUBLIC_CONNS)
+        Self::with_options(
+            tcp,
+            games_port,
+            || false,
+            MAX_PUBLIC_CONNS,
+            PUBLIC_READ_DEADLINE,
+        )
     }
 
     /// [`PublicListener::new`]; `trust_cf()` says (at connection time) whether
     /// `CF-Connecting-IP` may reach the games controller (see
-    /// [`route_public_head`]); at most `max_conns` connections at once.
+    /// [`route_public_head`]); at most `max_conns` connections at once; a
+    /// page request must be read within `read_deadline`.
     pub fn with_options(
         tcp: TcpListener,
         games_port: impl Fn() -> u16 + Send + Sync + 'static,
         trust_cf: impl Fn() -> bool + Send + Sync + 'static,
         max_conns: usize,
+        read_deadline: Duration,
     ) -> std::io::Result<Self> {
         let local = tcp.local_addr()?;
         let (tx, rx) = mpsc::channel(64);
@@ -532,7 +557,8 @@ impl PublicListener {
                     };
                     match route {
                         PublicRoute::App => {
-                            let _ = tx.send((Prefixed::new(buf, s).with_slot(slot), peer)).await;
+                            let conn = Prefixed::new(buf, s).with_slot(slot, read_deadline);
+                            let _ = tx.send((conn, peer)).await;
                         }
                         PublicRoute::PlayRedirect(to) => {
                             let resp = format!(
@@ -631,7 +657,13 @@ pub async fn serve_public(state: AppState, shutdown: watch::Receiver<bool>) {
         let state = state.clone();
         move || crate::api::security::cf_trusted(&state.store.get().settings)
     };
-    let listener = match PublicListener::with_options(tcp, games_port, trust_cf, MAX_PUBLIC_CONNS) {
+    let listener = match PublicListener::with_options(
+        tcp,
+        games_port,
+        trust_cf,
+        MAX_PUBLIC_CONNS,
+        PUBLIC_READ_DEADLINE,
+    ) {
         Ok(l) => l,
         Err(e) => {
             tracing::warn!("Public listener failed: {e}");

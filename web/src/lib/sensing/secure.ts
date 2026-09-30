@@ -26,7 +26,11 @@ function hostPort(host: string, port: number): string {
 
 /** A same-site path to return to (never another site). */
 export function safeNext(next: string | null | undefined, fallback = '/calibrate'): string {
-	if (!next || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) return fallback;
+	// Browsers drop tabs and newlines inside URLs, so "/<TAB>/evil.com" would become
+	// "//evil.com" (another site): no control characters or white space at all.
+	// eslint-disable-next-line no-control-regex
+	if (!next || /[\u0000-\u0020\u007f\\]/.test(next)) return fallback;
+	if (!next.startsWith('/') || next.startsWith('//')) return fallback;
 	return next;
 }
 
