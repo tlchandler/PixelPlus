@@ -301,7 +301,10 @@
     if (timer) { clearTimeout(timer); timer = null; }
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
     var proto = location.protocol === "https:" ? "wss://" : "ws://";
-    var sock = new WebSocket(proto + location.host + "/ws");
+    // Relative to the page so it also works behind the public listener's
+    // /play/ prefix (tunnels): /ws directly, /play/ws through a tunnel.
+    var base = location.pathname.replace(/[^/]*$/, "");
+    var sock = new WebSocket(proto + location.host + base + "ws");
     ws = sock;
     sock.onopen = function () {
       retry = 500;

@@ -129,7 +129,9 @@ compatible.
 | `/usr/lib/pixelplus/pixelplus-helper` | root helper (see below) |
 | `/usr/lib/pixelplus/tts-capable` | `ExecCondition` for the TTS sidecar (Pi 4/5 ≥ 2 GB, amd64) |
 | `/usr/share/pixelplus/pixelplus.txt.template` | the commented `pixelplus.txt` |
-| `/usr/lib/systemd/system/` | `pixelplusd`, `pixelplus-tts`, `pixelplus-games`, `pixelplus-firstboot`, `pixelplus-reapply.{path,service}`, `pixelplus-netwatch`, `pixelplus-helper@` |
+| `/usr/lib/systemd/system/` | `pixelplusd`, `pixelplus-tts`, `pixelplus-games`, `pixelplus-firstboot`, `pixelplus-reapply.{path,service}`, `pixelplus-netwatch`, `pixelplus-helper@`, `pixelplus-update-verify` (boot-time end of an interrupted update), `pixelplus-cloudflared{,-quick}` (remote access) |
+| `/usr/share/pixelplus/keys/*.pub` | minisign keys signed updates must be signed with (`packaging/keys/`) |
+| `/var/cache/pixelplus/{staged,rollback}`, `/var/lib/pixelplus-helper` | root-only: staged and kept (rollback) packages, the pending-update marker |
 | `/usr/share/polkit-1/rules.d/50-pixelplus.rules` | what the `pixelplus` user may do |
 | `/etc/avahi/services/pixelplus.service` | `_http._tcp` on port 80 (`_pixelplus._tcp` is published by pixelplusd, see below) |
 | `/usr/lib/sysctl.d`, `/usr/lib/udev/rules.d`, `/usr/lib/tmpfiles.d`, `/etc/logrotate.d` | UDP buffers, device groups, `/run/pixelplus`, log rotation |
@@ -155,7 +157,9 @@ hostnamed; timedated `set-timezone` — not `set-time`, NTP keeps the clock):
 | Start/stop/restart `pixelplus-{tts,games,netwatch}`; restart `pixelplusd` | systemd `manage-units` |
 | Board boot config, updates, SSH on/off, re-apply `pixelplus.txt`, Wi-Fi country, `/etc/hosts` | `systemctl start --no-block pixelplus-helper@<verb>.service` (root oneshot, whitelisted verbs) |
 | Board EEPROM read/write | `/dev/i2c-1` (group `i2c`, `I2C_RDWR` works even while at24 is bound); the at24 sysfs file only if it is accessible. `new_device` (root) is never used |
-| Update check | `apt-cache policy pixelplus`; the package lists are refreshed by the helper's `refresh-index` verb when an update check runs (at most every 6 h; the image turns apt's own daily timers off) |
+| Update check | signed release index (`pixelplus-<channel>.json`, below); without a signing key in the build `apt-cache policy pixelplus`, the package lists refreshed by the helper's `refresh-index` verb (at most every 6 h; the image turns apt's own daily timers off) |
+| Install / roll back updates | helper `update-stage`, `update-commit`, `update-rollback`, `update-verify` (re-verify signatures as root, health gate) |
+| Tailscale, Cloudflare Tunnel | helper `tailscale-*`, `cloudflared-*` (secrets through 0600 files, never argv) |
 
 **Sidecars run as their own users, without polkit rights.**
 
@@ -186,6 +190,26 @@ controller can be set up only from the local network, snapshot/WebSocket size li
 --ask` with the Wi-Fi password on stdin (never on a command line), ffmpeg restricted to local
 files (`-protocol_whitelist file,pipe`).
 
+**Remote access** (ARCHITECTURE §12.12): tunnels and funnels point at the **public-only
+listener** (`127.0.0.1:8081`: song requests, games, `/api/v1/public/*`; everything else 404).
+The admin UI is reachable remotely only on explicit opt-in (Tailscale `serve` to the owner's
+tailnet, or a Cloudflare admin hostname), only with a password, and its host name is allowed
+only while exposed. Any admin API call arriving through a proxy on the Pi (loopback peer with
+forwarding headers) is refused while no password is set.
+
+**Signed updates** (ARCHITECTURE §12.13): minisign (Ed25519) signatures by a key compiled into
+the daemon and installed root-owned; verified by the daemon, by followers on packages their
+leader serves, and again by the root helper before `dpkg -i`; only newer versions are
+installed (rollbacks come from the helper's own root-only copies). A new release must start
+healthy within 180 s or the previous package is reinstalled.
+
+**xLights FPP Connect** (WS6, ARCHITECTURE §12.14) is root-mounted, outside `/api/v1`'s guard;
+`security::fpp_compat_authorize` replaces the CSRF header for it: off unless enabled, LAN
+peers without proxy headers only (never through a tunnel or the public listener), Host
+allow-list, reads open, writes need the dedicated upload password as HTTP Basic auth (throttled;
+remembered 10 minutes so 16 MiB chunks don't each cost an Argon2 check) or, without a
+password, a non-CORS-simple request (`PATCH`, JSON body) that no web page can forge.
+
 Known limits: the first adoption of a new or released controller is trust-on-first-use (someone
 on the LAN could adopt it first; the owner sees who adopted it on the controller's page and in
 its log, and can release it). Plain HTTP on the LAN: a sign-in session cookie and MQTT/SMTP
@@ -204,6 +228,15 @@ Helper verbs (`packaging/bin/pixelplus-helper`), arguments `:`-separated in the 
 * `wifi-country:<CC>` – `raspi-config nonint do_wifi_country` (or `iw reg set`).
 * `hosts` – point `/etc/hosts`' `127.0.1.1` line at the current hostname (after the daemon
   renamed the host through hostnamed) and keep cloud-init from resetting it.
+* `update-stage:<ver>`, `update-commit:<ver>`, `update-rollback`, `update-verify`,
+  `update-channel:<stable|beta>` – signed updates (ARCHITECTURE §12.13). Versions with `~`
+  (`1.3.0~beta1`) arrive systemd-escaped (`\x7e`); the polkit rule allows the backslash and the
+  helper validates every argument.
+* `tailscale-install`, `tailscale-up`, `tailscale-serve:<on|off>`, `tailscale-funnel:<on|off>`,
+  `tailscale-down`, `cloudflared-install`, `cloudflared-quick:<on|off>`, `cloudflared-token`,
+  `cloudflared-stop` – remote access (ARCHITECTURE §12.12). Auth keys / tunnel tokens are read
+  from 0600 files in `/var/lib/pixelplus/remote/` (never through a symlink, size- and
+  format-checked, deleted after use).
 
 Each writes `/run/pixelplus/helper-<verb>.json`
 (`{"verb","state":"running|ok|failed","message","updatedAt"}`) for the UI to poll.
@@ -254,12 +287,46 @@ nothing to do, exit 0). All of them work with `--simulate <board>` on a PC.
 ### apt repository (optional)
 
 ```sh
-packaging/apt-repo.sh --repo ./apt --key <GPG-KEYID> dist/*.deb
+packaging/apt-repo.sh --repo ./apt --suite stable --key <GPG-KEYID> dist/*.deb   # a release
+packaging/apt-repo.sh --repo ./apt --suite beta   --key <GPG-KEYID> dist/*.deb   # also beta
 ```
 
-creates `apt/dists/stable/main/binary-{arm64,amd64}/Packages`, signed `Release`/`InRelease`
+creates `apt/dists/<suite>/main/binary-{arm64,amd64}/Packages`, signed `Release`/`InRelease`
 and `pixelplus-archive-keyring.gpg`. Host it on GitHub Pages or any HTTPS server; see the
-script header for the client `sources.list` line.
+script header for the client `sources.list` line. Settings → Updates → Channel switches the
+suite (helper `update-channel`). Controllers on PixelPlus images update through signed
+releases instead and don't need it.
+
+### Signed updates (release key handling)
+
+Over-the-air updates only install packages signed with a key listed in
+`packaging/keys/pixelplus-release.pub` (compiled into pixelplusd, installed to
+`/usr/share/pixelplus/keys/`). Until a key is listed there, builds don't offer signed
+updates (apt still works). One-time setup by the maintainer, on a trusted machine:
+
+```sh
+sudo apt install minisign
+minisign -G -p pixelplus-release.pub -s minisign.key     # choose a strong password
+grep '^RW' pixelplus-release.pub >> packaging/keys/pixelplus-release.pub   # commit this
+```
+
+Store the **contents** of `minisign.key` (it is itself encrypted with the password) as the
+repository secret `MINISIGN_SECRET_KEY` and the password as `MINISIGN_PASSWORD`; keep an
+offline backup of both, and never commit `minisign.key`. The release workflow's `sign` job then
+signs every `.deb`, writes `pixelplus-stable.json` / `pixelplus-beta.json`
+(`packaging/release-index.py`), signs them, checks every signature against the committed
+public key, and attaches everything to the (draft) release; publishing the release runs
+`ota-publish.yml`, which copies the indexes to the `gh-pages` branch under `ota/` (enable
+GitHub Pages for that branch; controllers read `https://<owner>.github.io/PixelPlus/ota`,
+overridable with `PIXELPLUS_UPDATE_URL`). Tags like `v1.3.0-beta1` become `1.3.0~beta1` and
+go to the beta channel only.
+
+**Rotating the key:** add the new public key as a second line, ship a release signed with the
+old key (controllers now trust both), switch the secrets to the new key, and remove the old
+line a release later. **A leaked key:** remove it from the file and ship a release signed with
+a new key through apt / a new image; controllers that still trust the old key can be offered
+packages signed with it until they update. Signing by hand:
+`minisign -S -s minisign.key -m pixelplus_1.2.3_arm64.deb` (creates `.minisig`).
 
 ## SD-card image (pi-gen)
 
@@ -394,6 +461,12 @@ Try the portal page on your PC with fake data:
 python3 image/netwatch/netwatch.py --portal-only 127.0.0.1:8099   # open http://127.0.0.1:8099
 ```
 
+### Signed-update rollback copy
+
+The stage also copies the installed package (and its `.minisig`, if `image/build.sh` was
+given a signed `.deb`) to `/var/cache/pixelplus/rollback/`, so the first signed update can go
+back to the image's version without apt or `dpkg-repack`.
+
 ### Testing
 
 ```sh
@@ -401,7 +474,8 @@ python3 -m pytest image/tests          # parser, scrubbing, keyfiles, firstboot 
 RPI_IMAGER_SCHEMA=/path/to/rpi-imager/doc/json-schema/os-list-schema.json python3 -m pytest image/tests/test_os_list.py
 shellcheck image/*.sh image/stage-pixelplus/*/*.sh packaging/*.sh packaging/bin/*
 node packaging/tests/polkit-rules.test.js
-python3 -m pytest packaging/tests    # root helper: verbs, argument checks, symlink safety
+python3 -m pytest packaging/tests    # root helper: verbs, argument checks, symlink safety,
+                                     # signed updates (fake dpkg/minisign), tunnels; release index
 systemd-analyze verify packaging/systemd/*
 ```
 
@@ -477,4 +551,6 @@ check; Docker build.
 
 `.github/workflows/release.yml` (tag `v*`): `.deb` for amd64/arm64, SD images (Trixie,
 Bookworm) on native arm64 runners, `pixelplus-imager.json`, multi-arch Docker image to
-GHCR, Imager installers, all attached to a draft GitHub release.
+GHCR, Imager installers, the minisign signatures and signed update indexes (job `sign`, see
+"Signed updates"), all attached to a draft GitHub release. `.github/workflows/ota-publish.yml`
+copies the update indexes to GitHub Pages when the release is published.

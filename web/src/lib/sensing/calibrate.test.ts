@@ -64,7 +64,8 @@ function session(o: {
 	});
 }
 
-describe('calibration outcome (synthetic end-to-end)', () => {
+// Signal simulation is CPU-heavy; allow for a busy machine running the whole suite.
+describe('calibration outcome (synthetic end-to-end)', { timeout: 60_000 }, () => {
 	it('measures an FM-like delay within a couple of ms', () => {
 		const out = session({ seed: 11, trueDelay: 312.4, current: 100, radio: true });
 		expect(out.ok).toBe(true);
@@ -75,25 +76,25 @@ describe('calibration outcome (synthetic end-to-end)', () => {
 		expect(out.confidence).toBe('excellent');
 		expect(out.uncertaintyMs).toBeGreaterThanOrEqual(5);
 		expect(out.limitedRange).toBe(false);
-	}, 30_000);
+	});
 
 	it('finds a negative residual (lights too late) and works at 15 fps', () => {
 		const out = session({ seed: 12, trueDelay: 40, current: 250, fps: 15 });
 		expect(out.ok).toBe(true);
 		expect(Math.abs(out.residualMs - -210)).toBeLessThan(3);
-	}, 30_000);
+	});
 
 	it('verifies a correct setting', () => {
 		const out = session({ seed: 13, trueDelay: 180, current: 180 });
 		expect(verified(out)).toBe(true);
 		expect(Math.abs(out.residualMs)).toBeLessThan(2);
-	}, 30_000);
+	});
 
 	it('large radio delays need the radio option', () => {
 		expect(session({ seed: 14, trueDelay: 1500, current: 0, radio: true }).residualMs).toBeCloseTo(1500, -1);
 		// Without it the search range stops at 900 ms: the result is not trusted.
 		expect(session({ seed: 14, trueDelay: 1500, current: 0 }).ok).toBe(false);
-	}, 60_000);
+	});
 
 	it('explains what went wrong', () => {
 		const plan = planFromReply({ seed: 3 });

@@ -762,14 +762,17 @@ struct LocalUpdate {
     message: Option<String>,
 }
 
+/// A release index check: (when, channel, result).
+type IndexCheck = (Instant, UpdateChannel, Result<ReleaseIndex, String>);
+
 /// Runtime state of this service (`state.services.updates_orch`).
 #[derive(Default)]
 pub struct UpdatesOrchState {
     job: Mutex<Option<UpdateJob>>,
     running: AtomicBool,
     local: Mutex<LocalUpdate>,
-    /// Last index check: (when, channel, result).
-    index: Mutex<Option<(Instant, UpdateChannel, Result<ReleaseIndex, String>)>>,
+    /// Last index check.
+    index: Mutex<Option<IndexCheck>>,
     report_cache: Mutex<Option<(Instant, u64, bool)>>,
 }
 

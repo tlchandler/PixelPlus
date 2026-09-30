@@ -308,7 +308,7 @@ fn restore_error(e: std::io::Error) -> ApiError {
             "wrong_passphrase",
             "That passphrase doesn't open this transfer file.",
         )
-    } else if e.kind() == std::io::ErrorKind::StorageFull {
+    } else if transfer::no_space(&e) {
         ApiError::storage_full()
     } else {
         ApiError::bad_request(e.to_string())

@@ -17,6 +17,7 @@
 		Lock
 	} from '@lucide/svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
+	import { initBackend } from '$lib/api/mode';
 	import { tlsApi, type PublicTls } from '$lib/sensing/api';
 	import { safeNext } from '$lib/sensing/secure';
 
@@ -33,6 +34,8 @@
 	onMount(async () => {
 		if (/iPhone|iPad|iPod/.test(navigator.userAgent)) platform = 'ios';
 		try {
+			// Public page: the app shell doesn't boot here, so pick the backend (demo or real).
+			await initBackend();
 			status = await tlsApi.publicStatus();
 		} catch {
 			failed = true;

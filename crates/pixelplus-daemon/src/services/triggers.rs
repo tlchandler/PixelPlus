@@ -641,8 +641,7 @@ mod tests {
     #[test]
     fn surprise_requests_resolve_refs_and_targets() {
         use pixelplus_core::model::*;
-        let mut show = Show::default();
-        show.props = vec![];
+        let show = Show::default();
         let mut a = trigger(TriggerWhen::Always, 0, 0).action;
         // A built-in look id resolves as a look.
         a.r#ref = Some(pixelplus_core::effects::builtin_presets()[0].id.clone());

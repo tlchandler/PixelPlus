@@ -8,7 +8,8 @@
 //! 256-entry table per scaled output.
 //!
 //! The budget comes from `power::node_budget` on the leader and from the
-//! manifest (`NodeManifest.power`) on followers ([`budget_for`]). A snapshot
+//! manifest (`NodeManifest.power`, `ClusterHandle::manifest_power`) on
+//! followers ([`budget_for`]). A snapshot
 //! for `GET /power/live`, the WS `power` message and the follower's beacon
 //! report is kept in a process-wide cell ([`live`], [`follower_report`]).
 
@@ -19,7 +20,6 @@ use pixelplus_core::model::{LimiterMode, NodePowerBudget, PowerGroupKind, Show};
 use pixelplus_core::power::{GroupLive, Limiter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 
 /// A group must be quiet this long before a limiting episode counts as over.
 const EPISODE_GAP_MS: f64 = 2_000.0;
@@ -87,41 +87,31 @@ pub fn follower_report(node_id: &str) -> Option<LimiterReport> {
     })
 }
 
-/// The budget this node runs with: the leader computes it from the show;
-/// a follower reads the one its leader put in its manifest
-/// (`<data>/cluster/manifest.json`, field `power`).
+/// The budget this node runs with: the leader computes it from the show
+/// (`power::node_budget`); a follower uses the one its leader put in its
+/// manifest (`NodeManifest.power`, via [`crate::cluster::ClusterHandle::manifest_power`]).
 pub fn budget_for(
+    state: &crate::state::AppState,
     show: &Show,
     node_id: &str,
     follower: bool,
-    data_dir: &Path,
 ) -> Option<NodePowerBudget> {
     if follower {
-        manifest_field(data_dir, "power")
-            .and_then(|v| serde_json::from_value::<NodePowerBudget>(v).ok())
+        state
+            .services
+            .cluster
+            .get()
+            .and_then(|c| c.manifest_power())
             .filter(|b| b.mode != LimiterMode::Off)
     } else {
         pixelplus_core::power::node_budget(show, node_id)
     }
 }
 
-/// Props the active season profile keeps dark (F8): the leader asks the
-/// profiles service, a follower reads its manifest (`settings.disabledPropIds`).
-pub fn disabled_props(show: &Show, follower: bool, data_dir: &Path) -> Vec<String> {
-    if follower {
-        manifest_field(data_dir, "settings")
-            .and_then(|s| s.get("disabledPropIds").cloned())
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default()
-    } else {
-        crate::services::profiles::disabled_prop_ids(show)
-    }
-}
-
-fn manifest_field(data_dir: &Path, key: &str) -> Option<serde_json::Value> {
-    let text = std::fs::read(data_dir.join("cluster").join("manifest.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&text).ok()?;
-    v.get(key).cloned().filter(|v| !v.is_null())
+/// Props the active season profile keeps dark (F8). The same on both roles:
+/// a follower's local show carries the leader's mask as its active profile.
+pub fn disabled_props(show: &Show) -> Vec<String> {
+    crate::services::profiles::disabled_prop_ids(show)
 }
 
 /// A limiting episode that just ended (for the journal).

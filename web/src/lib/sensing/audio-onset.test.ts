@@ -23,7 +23,8 @@ function errors(found: AudioOnset[], expected: number[], tol = 1): number[] {
 	});
 }
 
-describe('chirp detector (matched filter)', () => {
+// Signal simulation is CPU-heavy; allow for a busy machine running the whole suite.
+describe('chirp detector (matched filter)', { timeout: 60_000 }, () => {
 	const offset = 1234.567; // not a whole sample
 	const events = eventsMs(99)
 		.slice(0, 24)

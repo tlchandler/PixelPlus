@@ -110,6 +110,23 @@ pub fn wrong_passphrase(e: &io::Error) -> bool {
     e.kind() == io::ErrorKind::PermissionDenied
 }
 
+/// Marker for "the show doesn't fit on this SD card" (see [`no_space`]).
+#[derive(Debug)]
+struct NoSpace;
+
+impl std::fmt::Display for NoSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("There isn't enough free space on this controller for that show.")
+    }
+}
+
+impl std::error::Error for NoSpace {}
+
+/// The unpacked show would not fit.
+pub fn no_space(e: &io::Error) -> bool {
+    e.get_ref().is_some_and(|x| x.is::<NoSpace>())
+}
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -608,10 +625,7 @@ pub fn unpack<R: Read>(plain: R, dir: &std::path::Path, budget: u64) -> io::Resu
             _ if crate::services::paths::check(&rel).is_some() => {
                 used = used.saturating_add(entry.header().size()?);
                 if used > budget {
-                    return Err(io::Error::new(
-                        io::ErrorKind::StorageFull,
-                        "There isn't enough free space on this controller for that show.",
-                    ));
+                    return Err(io::Error::other(NoSpace));
                 }
                 let dst = dir.join(&rel);
                 if let Some(p) = dst.parent() {
@@ -821,7 +835,7 @@ mod tests {
         // Too little space.
         let d = Decryptor::new(&file[..], "correct horse battery").unwrap();
         let e = unpack(d, &dir.join("stage2"), 3).unwrap_err();
-        assert_eq!(e.kind(), io::ErrorKind::StorageFull);
+        assert!(no_space(&e), "{e}");
 
         // A plaintext bundle with path tricks: only safe entries are unpacked.
         let mut raw = Vec::new();

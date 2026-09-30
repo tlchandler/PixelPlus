@@ -202,6 +202,8 @@ On your network PixelPlus uses TCP **80** (web page and API), TCP **443** (HTTPS
 camera/microphone pages; 8443 in Docker), UDP **32420** (controllers finding and syncing
 each other), UDP **32421** (live overlay pictures sent to other controllers) and UDP
 **32422** (ESP32 sensor nodes). If you run a firewall between controllers, allow these.
+PixelPlus also listens on **127.0.0.1:8081** (only on the controller itself): the public-only
+port that remote-access tunnels use (song request page and games, nothing else).
 The cluster used UDP 32320 before; that port belongs to FPP / xLights *FPP Connect*, so
 all controllers of a show must run the same PixelPlus version (update them together).
 
@@ -244,9 +246,65 @@ docker compose --profile tts up -d         # + on-device DJ voices (Kokoro TTS)
 
 ## Updating
 
-* **Pi:** Settings → Updates in PixelPlus (installs the new `pixelplus` package; the SD
-  card does not need to be re-written).
+* **Pi:** **Settings → Updates → Update everything** on the show leader. PixelPlus downloads
+  the signed release once, checks its signature, and updates the followers first and then
+  itself (the lights pause for about a minute). Every controller checks that the new
+  version starts properly; if any one doesn't, **all of them go back** to the version they
+  had, by themselves, and you get a message. Also there:
+  * **Channel** – *Stable* (recommended) or *Beta* (new features first).
+  * **Automatic updates** – *Off*, *Tell me* (default) or *Install* inside a daily window
+    (10:00–14:00 by default); never while a show plays or within 2 hours of a show window,
+    and only when every controller is online.
+  * **History** and **Roll back to …** (the previous version, on every controller).
+
+  The SD card never needs to be re-written. Pulling the power in the middle of an update is
+  safe: the controller finishes or undoes it when it starts again.
 * **Docker:** `docker compose pull && docker compose up -d`.
+
+## Replacing a controller
+
+**A follower died** (bad SD card, fried Pi): flash a new SD card with PixelPlus, put it in the
+controller (or a new board), power it up on the same network, and choose *This is a
+follower*. On the leader, open **Controllers**, click **Replace…** on the dead controller and
+pick the new one. It takes over the old one's name, address name, wiring, props and
+sequences in one step and syncs within a minute. A new board whose ID chip is blank is set
+up as the old board type automatically. If the old controller ever turns up again it is
+listed as *retired* — it can no longer take part; **Release it** to reuse it.
+
+**The show leader died:** you need its **transfer file**. Make one now and after big
+changes: **Settings → Updates → Controller transfer file** (or *Replace…* on the leader's
+card). It holds the whole show — sequences, music, the followers' keys and the phones'
+secure-connection certificate — encrypted with a passphrase you choose (at least 10
+characters; without it nobody can open the file, you included). To replace the leader:
+flash a new SD card, open the new Pi in the browser and choose **Replace a show leader?
+Restore a show from a transfer file** in the welcome screen. The new Pi becomes the leader
+under the old name; the followers find it by themselves and phones keep trusting it.
+Remote access (Tailscale / Cloudflare) is set up again on the new Pi.
+
+## Remote access (without port forwarding)
+
+**Settings → Remote access** sets up either (or both):
+
+* **Tailscale** – install, **Connect** (open the login link / scan the QR code with your
+  phone, or paste an auth key), then:
+  * **Admin pages on your tailnet** – `https://<name>.<tailnet>.ts.net` works from your own
+    devices signed in to Tailscale. Turn on *MagicDNS* and *HTTPS certificates* in the
+    Tailscale admin console (DNS page) first. Needs a PixelPlus password.
+  * **Public song request page (Funnel)** – optional: `https://<name>.<tailnet>.ts.net:8443/request`
+    for visitors (allow Funnel for the device in the tailnet's access controls).
+* **Cloudflare Tunnel** – install, then:
+  * **Quick link** – a temporary `https://….trycloudflare.com` address, no account needed; it
+    changes when the controller restarts.
+  * **Your own address** – create a tunnel in the Cloudflare Zero Trust dashboard, add a
+    public hostname (e.g. `lights.example.com`) → `http://localhost:8081`, paste the tunnel
+    token and the host name. Optionally an admin hostname → `http://localhost:80`: that puts
+    the sign-in page on the internet, so PixelPlus requires a password, and you should protect
+    it with **Cloudflare Access** (Access → Applications → self-hosted, email one-time PIN).
+  * **Test** checks each address from the outside.
+
+Only the song request page and the games are ever public by default: tunnels point at
+PixelPlus's public-only port. The song request page's QR codes follow the public address.
+Docker: see `docker/README.md` (compose profile `tunnel`).
 
 ## Troubleshooting
 

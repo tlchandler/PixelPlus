@@ -167,14 +167,19 @@ pub fn follow_song_beat(
         .get("beatFollowSong")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    if !follow || !(bpm.is_finite() && (20.0..=300.0).contains(&bpm)) || !song_start_ms.is_finite() {
+    let usable = follow && (20.0..=300.0).contains(&bpm) && song_start_ms.is_finite();
+    if !usable {
         return None;
     }
     let period = 60_000.0 / f64::from(bpm);
     let phase = (song_start_ms + f64::from(first_beat_ms)).rem_euclid(period);
     let mut p = preset.clone();
-    p.params.insert("beatBpm".into(), serde_json::json!((f64::from(bpm) * 100.0).round() / 100.0));
-    p.params.insert("beatPhaseMs".into(), serde_json::json!(phase.round()));
+    p.params.insert(
+        "beatBpm".into(),
+        serde_json::json!((f64::from(bpm) * 100.0).round() / 100.0),
+    );
+    p.params
+        .insert("beatPhaseMs".into(), serde_json::json!(phase.round()));
     if !p.params.contains_key("beatDepth") {
         p.params.insert("beatDepth".into(), serde_json::json!(0.6));
     }
@@ -1257,10 +1262,19 @@ mod tests {
     #[test]
     fn looks_follow_the_songs_beat() {
         let a = prop("a", PropKind::Line, 2);
-        let mut look = preset(EffectKind::Solid, json!({"color": "#ffffff", "beatDecayMs": 50, "beatDepth": 1.0}));
-        assert!(follow_song_beat(&look, 120.0, 250, 1_000.0).is_none(), "not asked to follow");
+        let mut look = preset(
+            EffectKind::Solid,
+            json!({"color": "#ffffff", "beatDecayMs": 50, "beatDepth": 1.0}),
+        );
+        assert!(
+            follow_song_beat(&look, 120.0, 250, 1_000.0).is_none(),
+            "not asked to follow"
+        );
         look.params.insert("beatFollowSong".into(), json!(true));
-        assert!(follow_song_beat(&look, 0.0, 0, 0.0).is_none(), "unknown tempo");
+        assert!(
+            follow_song_beat(&look, 0.0, 0, 0.0).is_none(),
+            "unknown tempo"
+        );
         // The song started 1 s into the look; its first beat is 250 ms in: beats at
         // look time 1250, 1750, 2250 … (period 500 ms).
         let p = follow_song_beat(&look, 120.0, 250, 1_000.0).unwrap();

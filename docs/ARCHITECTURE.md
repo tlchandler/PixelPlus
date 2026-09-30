@@ -1105,20 +1105,257 @@ says how late the intro starts, and the engine starts the first intro item that 
 begins at the entry's start within a frame.
 
 ### 12.5 Camera prop mapping (F6, WS4)
-_To be written by WS4._ `MapPlan`/`MapTarget` live in `pixelplus-core::mapcode`.
+The phone films the display while every output blinks its own code; the browser decodes which
+output (and which pixel of it) lit up where, then proposes wiring fixes and layout positions. Nothing
+changes until the user applies it (auto snapshot first, Undo = restore).
+
+**Pattern** (`core/mapcode.rs`, mirrored bit for bit in `web/src/lib/cv/mapcode.ts`; shared test
+vectors `crates/pixelplus-core/tests/fixtures/mapcode/vectors.json`, regenerate with
+`MAPCODE_BLESS=1 cargo test -p pixelplus-core mapcode`). A pure function of the plan and the test's
+timeline position, so every node lights its own outputs without talking during the run. Time is
+counted in slots of `bitMs` (default 200; the phone picks 250/320 for cameras under 20/13 fps):
+
+| Part | Slots | Shows |
+|---|---|---|
+| lead-in | 5 | dark |
+| per pass (× `passes`, default 3): preamble | 12 | `1 1 1 0 0 0 1 1 1 0 0 0` — all target pixels at `level` (clock + per-camera-pixel on/off references) |
+| phase A (`phases & 1`) | 12 or 16 | codeword bit *i* (MSB first) of target *k* = `codebook(bits)[k]` |
+| phase B (`phases & 2`) | 2 × `pixelBits` | Gray bit *j* (MSB first) of the pixel index, then its complement |
+| gap | 3 | dark |
+
+Codebooks are constant-weight with pairwise distance ≥ 4: 12 bits = the 132 hexads of the Steiner
+system S(5,6,12) (supports of the weight-6 extended ternary Golay words, sorted; optimal A(12,4,6)),
+16 bits = 870 greedy weight-8 words (runs with more than 132 outputs). Constant weight lets the
+decoder take the top *w* soft values with no global threshold; the differential pairs of phase B
+threshold themselves. Pixels ≥ `maxPixels` stay dark; non-target outputs of nodes in the plan are
+dark. Engine hooks (WS3): `mapcode::render_output(plan, node, output, pos_ms, rgb) -> bool`,
+`frame_for`, `is_done`; `MapPlan.countProbe = k` is a static frame for F7 (pixels `0..k` dim green,
+pixel `k` red). Level is capped at 127 (50 %). With 25 outputs and 2048-pixel strings a pass is
+9.8 s, the run ≈ 30 s.
+
+**Daemon** (`api/mapping.rs`, `services/mapping.rs`; admin only):
+
+| Endpoint | Result |
+|---|---|
+| `POST /mapping/runs {scope:{all}\|{nodeId}\|{propIds}, bitMs?, level?, passes?, force?}` | builds the plan (wired outputs of the scope ordered by `(nodeId, output)`, `maxPixels` = end of the output's last segment), stores `mapping/<id>.json`, starts test mode `mapCode` (`TestRequest.map` + `mapRunId`), stops it `totalMs + 1.5 s` later → `{runId, kind, startedAt, plan, schedule:{bitMs, leadInMs, preambleMs, phaseAms, phaseBms, gapMs, passMs, totalMs, codeBits, pixelBits, passes}, codebook:[[bits]], targets:[{k, nodeId, output, label, propIds, configured}]}`; 409 while a scheduled show plays unless `force` |
+| `POST /mapping/frame {on, force?}` | dim white (`#262626`) on every prop while the user frames the shot (ends by itself after 5 min) |
+| `POST /mapping/runs/:id/stop` | stops the pattern if it is this run's |
+| `POST /mapping/runs/:id/results {detected:[{k, pixels:[[idx, x, y, conf]]}], proposals:[{id, kind, propId?, message, data?}], stats?}` | stored with the run (x, y normalised 0..1; `idx −1` = a region where the output was identified but its pixels were too dense to separate); 16 MB limit |
+| `PUT /mapping/runs/:id/photo` (raw JPEG ≤ 2 MB), `GET …/photo`, `POST …/photo/background` | the still for the review screen; *background* copies it to `<data>/layout/background.jpg` (`GET /mapping/background`) |
+| `POST /mapping/runs/:id/apply {proposalIds}` | dry run, auto snapshot "Before camera mapping", then in one show update: `swap` `{a:{propId, segment}, b:{…}}` exchanges the two segments' node/output/startPixel/nullPixels; `reverse` `{propId, segment}` toggles `reverse`; `pixelCount` `{nodeId, output, count, dead, updatePropCount}` (see §12.6); `layout` `{propId, layout}` sets the layout with `source: "camera"` (points clamped to 0..1, dropped if their count ≠ `pixelCount`); `notSeen`/`info` are information only; overlapping segments are refused → `{show, snapshotId, applied[]}` |
+| `GET /mapping/runs` (newest first, `detected` omitted), `GET/DELETE /mapping/runs/:id` | the newest 30 runs are kept |
+
+**Cluster**: the engine distributes the plan (WS3; spec: the full plan once by `/cluster/command`,
+only `mapRunId` in sync packets). `pos_ms` must be the shared timeline position of the test, so a
+follower's bits line up with the leader's within the sync accuracy (≪ 200 ms bits).
+
+**Browser** (`web/src/lib/cv/`, pure TypeScript, no OpenCV):
+
+- *Capture* (`capture.ts`, on WS1's `sensing/camera.ts` `CameraCapture`): back camera 1280×720,
+  exposure locked (WS1) plus focus and white balance where the phone allows; each frame is drawn at
+  3× the decoder size and **max-pooled** 3×3 to 320-wide luma (a single distant LED keeps its full
+  brightness), stored with its capture timestamp (≤ 40 fps, ≤ 1400 frames); a live "what blinks"
+  overlay (per-pixel max − min); wake lock; device-motion "hold still" warning. The photo is taken
+  while the display is lit dim for framing.
+- *Decode* (`decode.ts`, in `decode.worker.ts`): (1) candidate pixels whose temporal std exceeds
+  1.5 × the sensor noise (median frame-difference noise, robust when reflections make the whole
+  frame blink); (2) clock: mean of the most active pixels Pearson-correlated with the plan's
+  lit-fraction template (±2.5 s around the request time, 20 ms then 2 ms steps); (3) motion: the
+  shift of each preamble "all on" block against the first (±12 px, on the 400 strongest points); a
+  pass whose preamble blocks disagree or whose shift differs from the next preamble's is dropped
+  (the phone moved during it), the others are compensated; (4) per slot, the mean of the frames
+  whose timestamps lie inside it by a guard of `0.3 × frame + 10 ms`, after subtracting a 15×15
+  local background mean (lit snow, walls); (5) passes are soft-combined; references from the
+  preamble, pixels masked unless `on − off ≥ max(6, 4σ_off)`; phase A = top-*w* word, exact
+  codeword or one swap of the least-certain pair (margin ≤ 0.3); phase B = sign of each pair,
+  rejected if `|Δ| < 0.25·contrast` or `< 2.5σ`; phase A without phase B = a *region* of that
+  output; (6) each pass is checked against the combined bits and a disagreeing pass (headlights,
+  someone walking by) is dropped; (7) connected components per (output, pixel) label, the strongest
+  kept (two equally strong → ambiguous, dropped; large low-contrast blobs → reflections, dropped),
+  ghosts (two labels of one string on one spot) and lights far from their string neighbours or alone
+  and weak are dropped.
+- *Analysis* (`analyze.ts`): output pixel → prop pixel through the segments (reverse-aware);
+  image → canvas similarity transform by RANSAC over prop centroids (hypotheses must be upright and
+  get each inlier's size right, so swapped or backwards props can't skew it); proposals: **swap**
+  (A seen where B is in the layout and vice versa; offered only when their segments have equal
+  length or are alone on their outputs), **reverse** (Spearman ρ < −0.6 between decoded index and
+  nearest layout point, per segment), **pixelCount** (highest decoded index + 1 < configured − 1
+  with ≥ 50 % coverage), **notSeen**, **layout** (decoded points through the transform — or scaled
+  into the current layout's bounding box when nothing aligns — missing pixels interpolated along the
+  string; ticked by default only for props without an xLights layout) and **info**.
+- *Simulator* (`simulate.ts`): Gaussian PSF with max-pool sampling, ambient gradient, 99 Hz
+  streetlight, reflections of chosen outputs onto rectangles, occluded runs, AE drift, read + shot
+  noise, 8-bit clipping, exposure integration, rolling shutter, timestamp jitter, dropped frames,
+  hand shake and jumps. `decode.test.ts` holds the decoder to < 1 % wrong IDs and > 95 % of visible
+  lights found at night (30 and 15 fps), distant dim single-pixel lights, reflections + flicker +
+  occlusion, snow glow, bloom, shake and a 10 px move, 60 outputs × 20 lights, 140 outputs (16-bit
+  codes), and the F7 probe; the all-at-once worst case stays under 1 % wrong at ≥ 70 % found.
+- *Page* `/map`: scope (whole display / one controller / some props, time estimate) → camera
+  (`lib/cv/CameraScan.svelte`: frame, lock, scan, decode; behind WS1's `SecureGate`) → review (photo
+  with each prop's outline, grouped proposals with checkboxes, *Apply selected* with Undo, *Use this
+  photo as the layout background*) and earlier runs. In demo mode a simulated yard built from the
+  show's layout (one string deliberately backwards) stands in for the camera
+  (`tests/e2e/mapping.spec.ts`).
+
+**Needs the real yard**: night field test at 10/20/30 m with three phones (incl. a 15 fps one),
+exposure/focus lock behaviour per phone, snow/wall/window reflections, very bright props (bloom:
+`stats.saturatedPct`; lower `level`), the engine wiring's cross-node bit alignment, and real
+xLights layouts vs. the similarity fit (perspective: a 4-corner homography is a possible follow-up).
 
 ### 12.6 Pixel-count check (F7, WS4)
-_To be written by WS4._
+*Props → ruler button* (list view) or *Fault finder → "Only the end stays dark?"*
+(`components/props/PixelCount.svelte`) on one of the prop's segments' outputs.
+
+- **Camera**: `POST /pixelcount/start {nodeId, output, method:"camera", bitMs?, force?}` → a
+  phase-B-only mapping run (`kind: "pixelCount"`) that lights `max(configured × 1.25, configured +
+  64)` pixels (a WS281x string ignores data past its end), clamped to the DPI geometry limit when
+  the output is on this node (`limited: true`) and to 4096; the response adds `configured` and
+  `maxProbe`. Count = highest decoded index + 1; gaps inside the lit run (< 30 %) are dead/hidden
+  suspects. `POST /pixelcount/:runId/result {count, dead[], confidence?}` stores it.
+- **By looking**: `method:"manual"` → session with `faultfinder::CountSearch` (binary search over
+  counts `0..=maxProbe`: pixels `0..k` dim green, pixel `k` red via `MapPlan.countProbe`; "can you
+  see the red pixel?"; ≤ ⌈log₂(maxProbe + 1)⌉ questions — 12 for 2048, tested for every count);
+  `POST /pixelcount/:session/answer {seen}`, `…/undo`, `…/stop` → `{session, nodeId, output,
+  configured, maxProbe, canUndo, step?:{litUntil, ask, number, maxRemaining}, count?}`. Sessions end
+  after 30 min idle; the probe light too.
+- **Current**: 400 — needs a receiver-side sensor (F20 ESP32 + INA226); difftxlarge's INA226 only
+  sees the transmitter's own input.
+- **Apply**: `POST /pixelcount/:id/apply {updatePropCount, count?, dead?}` (session or run id) →
+  auto snapshot, `OutputConfig.measuredPixels = {count, method, at, dead}`, dead output pixels →
+  `Prop.suspectPixels` (reverse-aware); with `updatePropCount` the last prop on the string takes
+  the difference (refused when it continues on another output or the count ends before it starts;
+  layout points of the wrong length are dropped) → `{show, snapshotId, message}`.
+
+**Needs the real yard**: probing past the string end on real strings (no harm expected), camera
+count accuracy on dense strings (a 300-pixel string at 20 m is only regions, not pixels — use the
+manual method there).
 
 ### 12.7 Season profiles (F8, WS6)
-_To be written by WS6._ Followers get the active profile's prop mask as manifest
-`settings.disabledPropIds`.
+`services/profiles.rs`, `api/profiles.rs`; UI `/settings/seasons`, dashboard chip
+`components/dashboard/SeasonChip.svelte` (embedded by the dashboard's owner with one line).
+
+**Model.** `Show.profiles: ShowProfile[]`, `activeProfileId?`, `profileAutoSwitch`. A profile is a
+named copy of the *season-specific* fields; the library (sequences, media, props, playlists, looks) is
+shared and only referenced by id.
+
+| Profile field | Live field it replaces | `None` in the profile |
+|---|---|---|
+| `schedule` (entries, enabled, idle/off looks, quiet hours) | `show.schedule` — **except `location`** (time zone, sunset belong to the place) | — |
+| `requestsPlaylistId` | `settings.requests.playlistId` | all songs |
+| `requestsMessage`, `gamesEnabled`, `power.{dim, maxBrightness}` | `settings.requests.message`, `settings.games.enabled`, `settings.power.{dim, maxBrightness}` | left unchanged |
+| `disabledPropIds` | the render / health mask below | — |
+| `defaultDjVoice`, `tags` | read by the UI from the active profile | — |
+
+**Switching copies.** `POST /profiles/:id/activate {saveCurrent=true}` takes an automatic backup,
+saves the live fields back into the previously active profile (so edits made on the Schedule, Requests,
+Power pages belong to the season that was live), copies the target in, sets `activeProfileId` and
+journals `profileSwitch {from?, to}`. Every schedule entry's playlist, the idle/off looks and the
+request playlist must exist, otherwise 400 ("Edit the season first") and nothing changes. Editing the
+*active* profile (`PUT /profiles/:id`) saves the live fields into it first, then re-applies it.
+`GET /profiles/preview-switch/:id` → `{lines}` (one human line per change, shown in the confirm).
+
+**Prop mask** (contract): `services::profiles::disabled_prop_ids(&show)` = the active profile's
+`disabledPropIds` that still exist. The engine renders them dark (WS3: content → surprise → season
+mask → tests → overlays), health checks skip them, and the leader sends them to followers as manifest
+`settings.disabledPropIds` (WS5, `cluster/manifest.rs`). Suspect pixels of masked props are left out
+of the nightly report.
+
+**Auto-switch.** With `profileAutoSwitch`, once shortly after boot and daily from 12:00 local, and
+never inside a running show window (retried each minute until it ends), the profile whose
+`dateRange` (`MM-DD..MM-DD`, may wrap the year end, e.g. `11-01..01-06`) contains today wins: highest
+`priority`, then the narrowest range (a Thanksgiving week inside Christmas), then list order. No
+match: nothing changes. An automatic switch is announced through the alert channels ("Switched to 🎄
+Christmas"); a failed one raises a warning alert and a `warn {code:"profileSwitch"}` journal entry.
+
+**API** (`/api/v1`): `GET/POST /profiles`, `GET/PUT/DELETE /profiles/:id` (merge patch; deleting the
+active one keeps the live settings), `POST /profiles/capture {name}` (a copy of the live season; the
+first one becomes active), `POST /profiles/:id/activate`, `GET /profiles/preview-switch/:id`,
+`GET /profiles/active` → `{id, name, icon, color, autoSwitch, scheduledId, nextSwitch?{profileId,
+name, date}}`, `PUT /profiles/auto-switch {enabled}` (needs at least one dated profile).
 
 ### 12.8 New receiver wizard (F9, WS4)
-_To be written by WS4._
+*Controllers → Add receiver* (header) or *Guided* on a free jack
+(`components/controllers/ReceiverWizard.svelte`): controller → plug in → find the jack → name →
+per port: which prop lit, which end the chase starts, colours → summary → create.
+
+| Endpoint | Does |
+|---|---|
+| `POST /wizard/receiver/identify-jack {nodeId, force?}` | free jacks (no receiver) → test mode `identify`: port 1 of each blinks `(color, blinks)` from 8 signals — white `#707070` or blue `#0000c0`, 1–4 blinks (`mapcode::identify_on`: n × (350 ms on + 350 ms off) + 1.4 s pause), which look the same whatever the strip's colour order; with > 8 free jacks signals repeat and a second round narrows it. An engine without `identify` falls back to `method:"sequential"` (one jack's port 1 steady at a time) → `{sessionId, method, round, candidates:[{jack, color, blinks}], probeJack}` |
+| `POST …/:s/pick {color, blinks}` | `{done:true, jack}` or the next round |
+| `POST …/:s/probe {jack}`, `POST …/:s/jack {jack}` | sequential method / "I know the jack" |
+| `POST …/:s/port/:n/light {pattern: solid\|chase\|red\|green\|blue\|off}` | raw output test on `(jack − 1) × 4 + n` |
+| `POST …/:s/color-order {port, red, green}` | what pure red and pure green looked like → the strip's real order, accounting for the output's configured order (`services::mapping::detect_color_order`, all 36 combinations tested) → `{colorOrder, configured, changed}` |
+| `POST …/:s/finish {receiver:{name, kind, location?, fuseAmps?, mainFuseAmps?}, ports:[{port, propIds[], reverse, colorOrder?}]}` | dry run, auto snapshot, creates the receiver (fuse defaults to the kind's) and replaces each chosen prop's wiring with one full-length segment, chained in order from pixel 0; sets colour orders; overlaps refused → `{show, receiver, snapshotId}` |
+| `POST …/:s/cancel` | lights off, session gone (sessions also expire after 30 min) |
+
+The wizard's blink animation mirrors `identify_on`. **Needs the real yard**: signal
+distinguishability outdoors (white vs. blue at a distance, counting blinks), and the colour check
+on GRB/BRG strings.
 
 ### 12.9 Controller replacement (F10, WS5)
-_To be written by WS5._
+**A dead follower** (`POST /nodes/:id/replace {candidateId, force?}`, *Replace…* on its card,
+`components/controllers/ReplaceDialog.svelte`): the leader
+1. checks the old node is offline (`409 node_online` unless `force`; forced, it first sends a
+   signed release) and the candidate is a fresh controller (unconfigured, or a follower
+   without leader; not a possible duplicate); a different board that would lose wired
+   outputs is `409 board_mismatch` unless `force` (a blank board — beacon `bare-pi` /
+   `virtual` — counts as the old board: its EEPROM gets written, below);
+2. **revokes the old key** (removed from `cluster/keys.json`, replay state forgotten) and
+   keeps it only in `cluster/retired.json` (0600, never used to authenticate, see 5.);
+3. adopts the candidate with `AdoptCall.assumeId = <old id>`, `hostname`, `name` and, for a
+   PixelPlus board, `board`/`boardRev`. The follower accepts `assumeId` only on trust on first
+   use (unconfigured or released; `409` otherwise): it takes the old id in `node.json`,
+   derives its key for that id, renames itself through hostnamed, and writes a `PPX1` record
+   for `board` when its EEPROM is readable and blank and the I²C devices fit
+   (`eepromWritten` in the reply; a programmed EEPROM is never overwritten). A failed
+   adoption restores the old key; an older follower that ignores `assumeId` answers with its
+   own id and the old node's wiring is renamed to it instead (`leader::rename_node`);
+4. keeps everything that references the old id (outputs, receivers, segments, slices: their
+   keys don't change) and records the old hardware in `Node.hardwareHistory`
+   (`{at, serial, board, piModel, reason: "replaced"}`, last 20) with the new `serial`
+   (board EEPROM serial, else `pi-<CPU serial>`; `net::hardware_serial`, also sent as beacon
+   `hw`). The manifest and slices follow within a manifest poll;
+5. **retired hardware:** a beacon for an adopted id that is unauthenticated, still claims
+   this leader and whose `hw` is the retired serial (or, without `hw`, isn't the
+   replacement's address) is kept out of the peer table and listed in `/nodes/discovered`
+   with `retired: {replacedAt, name}` (`RetiredControllers.svelte`: *Release it*).
+   `POST /nodes/:id/release-retired` signs `POST /cluster/release {"retire": true}` with the
+   retired key; the old controller forgets the leader **and takes a new random id**
+   (unconfigured), so it can be reused.
+
+**A dead leader** is replaced from its **controller transfer file** (`.ppxfer`,
+`services/transfer.rs`): `POST /system/transfer/export {passphrase ≥ 10 chars}` → `{url}` (a
+one-time 10-minute link; `GET /system/transfer/download/:token` streams the file straight from
+the encryptor, nothing is spooled to disk). Contents (zstd tar inside the encryption):
+`transfer.json`, `show.json` (secrets included), `node.json` (id, name, legacy key),
+`cluster/keys.json`, the F1 CA (`tls/ca.{key,crt,json}` via `tls::export_ca`) and every
+referenced sequence, audio file and thumbnail (not tunnel tokens: they belong to the old
+hardware). Container: `"PPXFER\0\x01" | u32 header length | header JSON` then records
+`u32 length | AES-256-GCM(≤ 1 MiB)`; key = Argon2id(passphrase, 16-byte salt, m = 64 MiB,
+t = 3, p = 1, bounds checked on read); nonce = 7-byte random prefix ‖ record counter (u32) ‖
+final flag, magic + header as associated data (STREAM construction: tampering, reordering,
+truncation and trailing data are detected); the header's `check` (tag of an empty message
+under a reserved nonce) tells a wrong passphrase (`400 wrong_passphrase`) from damage.
+
+Restore is the setup wizard's *Restore a show from a transfer file*: multipart
+`POST /system/setup` with `passphrase` then `transfer` (only while unconfigured, local
+network only — like any setup). The upload is decrypted and unpacked while it streams into a
+staging directory (budget: free space − 256 MiB; data files only through `paths::check`,
+no links), and applied only after the final record verified: data files moved into place, CA
+imported (`tls::import_ca`, then `poke`), identity = the old leader's id/name/key, follower keys
+installed, show restored (Tailscale/Cloudflare state cleared: set up again on this hardware),
+the leader node's `hardwareHistory` gets the old hardware (`"replaced from a transfer file"`),
+then `ensure_self_node` and the old host name (hostnamed). Followers need nothing: the new
+leader's unicast beacon copies are MACed with their keys, a follower confirms the new boot id
+with a ping and moves `leaderUrl` to the new address (`follower::on_leader_beacon`).
+
+Tests: `cluster::tests::replacing_a_dead_follower_and_a_dead_leader` (in-process leader,
+follower, replacement, new leader: replace, old key 401 / new key 200, wiring and slices kept,
+refusal of `assumeId` once set up, retired beacon listed and released, transfer export → wrong
+passphrase refused → restore → follower moves over and stays synced),
+`services::snapshots::transfer::tests` (round trip across record sizes, wrong passphrase,
+bit flips, header change, truncation at and inside records, swapped records, trailing data,
+hostile KDF parameters, unsafe tar entries).
 
 ### 12.10 Journal and nightly report (F11)
 **Journal** (`services/journal.rs`, complete): `journal/<YYYY-MM-DD>.jsonl` under the data dir,
@@ -1134,7 +1371,49 @@ and counts when full). Read with `journal::read_day` / `read_range(from, to)` (s
 noon to noon); torn lines are skipped. Files older than 120 days are deleted daily; a day's file
 stops at 16 MiB. `GET /journal?date=&types=` serves a day (admin).
 
-**Nightly report**: _to be written by WS6._
+**Nightly report** (WS6: `services/reports.rs`, `api/reports.rs`, delivery in `services/alerts.rs`;
+UI `/reports`, `/settings/reports`).
+
+*Show night* `D` = `[D 12:00, D+1 12:00)` local (23 or 25 hours across a DST change; the earliest
+instant is used for an ambiguous noon). The report of night `D` is made at `settings.reports.time`:
+`"HH:MM"` before noon = the next morning (default 07:00), from noon = that evening, or `"afterShow"` =
+15 minutes after the night's last show window ends (next noon when nothing was scheduled). A report
+made early covers the night up to that moment (`window.to`).
+
+*Sampler* (leader only, every minute): `metric {nodeId, name: "tempC" | "volts" | "diskFreePct",
+value}` for this controller (hottest board temperature / lowest supply voltage, else the SoC
+temperature) and `syncSample {nodeId, offsetErrorMs, timelineErrorMs?}` for each online adopted
+follower. `alerts.rs` journals `nodeOnline/nodeOffline`, file-sync problems (`warn {code:"files"}`)
+and player failures (`error|warn {code:"show"}`); engine and services journal the rest (§12.10 list).
+
+*Aggregation* (`reports::aggregate`, pure; golden tests on a synthetic journal in
+`crates/pixelplus-daemon/testdata/reports/`): shows (paired `showStart/showEnd` per entry, open ones
+end at the report time), songs (`itemStart` of sequences), requests + top 5, problems (`error`/`warn`
+grouped by code, count, latest wording; plus failing/warning checks of the night's last `health`),
+per-controller temperature min/max, lowest voltage, offline minutes, sync p50/p95 (max of
+offset/timeline error), limiter seconds per node/port, suspect pixels (`Prop.suspectPixels`, masked
+props excluded), disk free, updates, newest backup age, games, triggers, restarts, season, and chart
+series (15-minute buckets: temperature max, sync p95).
+*Status*: `fail` = any error or a controller offline > 10 min; `warn` = warnings, over-temperature /
+low voltage (alert rules), limiter use, suspect pixels, disk < 10 %, newest backup > 30 days, any
+offline minute; else `ok`. *Headline*: "3 shows, 42 songs, 118 requests, 1 problem".
+
+*Storage*: `reports/<date>.json` (`NightReport` in `types.ts` + optional `generatedAt, window,
+runtimeMin, games, gameMinutes, triggers, restarts, season, series{tempC[], syncMs[]}, delivery[]`),
+purged after `keepDays`. A night is made automatically once (a stored report that was delivered is not
+sent again after a restart).
+
+*Delivery*: email = `multipart/alternative` (text + inline-styled HTML, all values escaped) through
+the `alerts.email` SMTP settings; push = ntfy with a short title ("⚠️ Mostly fine: Tuesday, Dec 1",
+RFC 2047-encoded when not ASCII), the headline and worst items, and a `Click` link to
+`<publicUrl origin or http://<hostname>.local>/reports?date=D` — no addresses in the text.
+`onlyWhenProblems` skips sending `ok` nights. Each channel's result is stored in `delivery`.
+
+*API*: `GET /reports?limit=30` → `[{date, status, headline, itemsPlayed, requests, problems,
+runtimeMin, tempMaxC?}]` newest first; `GET /reports/:date` → the report (404 until made);
+`GET /reports/:date/email` → the HTML email (`text/html`, CSP `default-src 'none'`, shown in a
+sandboxed iframe); `POST /reports/run {date?, send?}` → make now (default: the latest night; up to 120
+days back) and optionally send (ignores `onlyWhenProblems`).
 
 ### 12.11 Power limiter and late-night dimming (F12, WS3)
 The INA226 on the difftxlarge measures only the TX board's own input, so the limiter works from **estimated
@@ -1153,8 +1432,11 @@ gamma and master brightness: what the pixels really draw for).
 | `global` | global | `min(globalAmps, globalWatts × 0.85 / V)` (V = first supply's volts, else 12), split pro rata | 1 s |
 
 `mApp[output]` = the output's mean mA/pixel at full white (`Prop.maxMilliampsPerPixel`, default 60).
-**WS5 populates `NodeManifest.power` with `node_budget(show, nodeId)`**; followers read it from their
-`cluster/manifest.json` (`player::limiter::budget_for`), the leader computes its own.
+`NodeManifest.power` carries `node_budget(show, nodeId)` (cluster/manifest.rs); followers run with it
+(`ClusterHandle::manifest_power`, see `player::limiter::budget_for`), the leader computes its own. The season
+prop mask (§12.7) reaches followers as their show's active profile, so the engine asks
+`services::profiles::disabled_prop_ids(show)` on both roles and renders those props dark (after surprises,
+before tests and overlays).
 
 **Limiter** (`power::Limiter`, run by `player/limiter.rs` in the output thread, per frame):
 supplies: `s = min(1, B/I)`; averaged groups (EMA of the current actually drawn, `k = Δt/τ`): the allowed
@@ -1167,8 +1449,8 @@ attack/release, thermal convergence without overshoot, strobe, warn mode, budget
 
 **Reporting.** `PlayerStatus.power {limiting, minScale}` while the mode is not off; followers put
 `report.limiter {activeGroups, minScale (lowest since the last report), secondsLimited}` in their beacon
-(`player::limiter::follower_report`; WS5: please also copy it into `NodeStatus.limiter` so the leader's
-`/power/live` and the dashboard see it). `GET /power/live` → `{nodes:[{nodeId, mode, limiting, minScale,
+(`player::limiter::follower_report`); `/power/live` reads it from `NodeStatus.limiter` when the cluster
+layer exposes it. `GET /power/live` → `{nodes:[{nodeId, mode, limiting, minScale,
 groups:[{id, amps, budget, scale}]}]}` (followers: budget groups with `amps: null` and the reported scale);
 the WS `power` message carries the same every second while the display is lit. Limiting episodes of ≥ 1 s
 are journaled when they end (`limiter {nodeId, port, sec}`, port = the output of a port group, else 0).
@@ -1188,16 +1470,201 @@ maxBrightness}` (§12.7). UI: Settings → Power (supplies, mode, safety, caps, 
 estimate), the props drawer (mA/pixel, estimated draw) and a dashboard badge while limiting.
 
 ### 12.12 Remote access (F14, WS5)
-_To be written by WS5._ Public-only listener: `127.0.0.1:${PIXELPLUS_PUBLIC_PORT:-8081}`.
+**Public-only listener** (`127.0.0.1:${PIXELPLUS_PUBLIC_PORT:-8081}`, bound by WS1's
+`main.rs` with `api::security::public_only`): `/` → `/request`, the `/request` page, the UI's
+static files, `/api/v1/public/*` (song requests, health, CA certificate) and `/play/*` (games
+controller); everything else, every admin route and the root-mounted FPP Connect API
+included, is `404` (`security::public_path_allowed`; tested against the full router in
+`security_tests::public_listener_serves_only_the_public_pages`). Funnels and tunnels only ever
+point there, so a public hostname can't reach the admin UI whatever its Host header.
+
+**Admin exposure** is explicit: Tailscale `serve` (tailnet members only) or a Cloudflare
+*admin hostname*; both need a password (`409 password_required`), and while exposed the name
+is allowed by the Host allow-list (`security::remote_admin_hosts`, computed from
+`settings.remote`, so it disappears when turned off). Independently, `security::guard` refuses
+every admin API call that arrives through a local proxy (`tunnel_request`: loopback peer with
+forwarding headers) while no password is set (`403 password_required`). Client addresses of
+tunnelled requests come from `CF-Connecting-IP` / `X-Forwarded-For` of the local proxy as
+before (rate limits, sign-in throttle).
+
+`services/remote.rs`, `api/remote.rs`:
+
+| Endpoint | Does |
+|---|---|
+| `GET /remote/status[?fresh=true]` | `{tailscale:{installed, state, dnsName, httpsOk, serve, funnel, loginUrl?, ips}, cloudflare:{installed, running, mode, urls[], publicHost, adminHost, tokenSet}, publicListener, publicPort, passwordSet, canManage, message?}` (3 s cache; `tailscale status --json`, `tailscale serve status --json`, `systemctl is-active`, the quick tunnel's `127.0.0.1:20241/quicktunnel`) |
+| `POST /remote/tailscale/install\|up\|serve\|funnel\|down` | helper verbs below; `up {authKey?}` (write-only, 0600 file the helper consumes), `serve`/`funnel` `{on}` |
+| `POST /remote/cloudflare/install\|quick\|token\|hosts\|stop` | `quick {on}`; `token {token, publicHost?, adminHost?}` (token write-only; hosts validated); `hosts` saves the names only |
+| `POST /remote/test {url}` | `GET <url>/api/v1/public/health` through the tunnel, only for this controller's own remote names (no open proxy) |
+
+Turning a public address on points `requests.publicUrl` / `games.publicUrl` (QR codes) at it
+unless the owner set their own. Helper verbs (`pixelplus-helper`, root): `tailscale-install`
+(pkgs.tailscale.com signed repo), `tailscale-up` (auth key file → `--auth-key=file:`; else a
+transient `pixelplus-tailscale-login` unit runs `tailscale up` and the login URL is reported),
+`tailscale-serve:on|off` (`--https=443 http://127.0.0.1:<http port>`; a missing HTTPS/MagicDNS
+setting is explained), `tailscale-funnel:on|off` (`--https=8443 http://127.0.0.1:<public
+port>`, never port 80), `tailscale-down`, `cloudflared-install` (pkg.cloudflare.com signed
+repo), `cloudflared-quick:on|off` (`pixelplus-cloudflared-quick.service`: DynamicUser,
+`--url http://127.0.0.1:<public port>`, metrics on `127.0.0.1:20241`), `cloudflared-token`
+(the token goes into `/etc/pixelplus/cloudflared.env` 0600 as `TUNNEL_TOKEN=`, read by systemd
+for `pixelplus-cloudflared.service`, never on a command line), `cloudflared-stop`. Secret files
+the daemon writes are copied without following links, size-limited and format-checked before
+use, then deleted. Docker: run cloudflared / Tailscale next to the container (compose profile
+`tunnel`, `docker/README.md`).
 
 ### 12.13 Signed OTA updates and cluster coordination (F15, WS5)
-_To be written by WS5._ `Show.formatVersion` (1) is bumped only by a migration older
-releases cannot read.
+`Show.formatVersion` (1) is bumped only by a migration older releases cannot read.
+
+**Signed releases.** CI (`release.yml` job `sign`) signs every `.deb` with minisign and writes
+a signed index per channel, `pixelplus-<stable|beta>.json` (+ `.minisig`;
+`packaging/release-index.py`: `{v:1, channel, version, date, notes, protoMin, protoMax,
+formatVersion, files:[{arch, name, size, sha256, url}]}`), published to GitHub Pages `ota/`
+when the release is published (`ota-publish.yml`). Controllers read
+`${PIXELPLUS_UPDATE_URL:-https://tlchandler.github.io/PixelPlus/ota}/pixelplus-<channel>.json`.
+Trusted keys: `packaging/keys/pixelplus-release.pub` (compiled in and installed to
+`/usr/share/pixelplus/keys/`; several keys = rotation). The daemon verifies the index and
+every package (size, SHA-256 from the signed index, and the package's own signature —
+pre-hashed minisign streamed, legacy mode read whole); the **root helper verifies again**
+with the installed keys before `dpkg -i`, only installs versions newer than the installed
+one (no downgrade attacks; rollbacks come from its own root-only copies), so neither a
+compromised daemon user nor a compromised leader can install unsigned code. Pre-release tags
+(`v1.3.0-beta1`) become Debian versions `1.3.0~beta1` on the beta channel only. apt
+(`apt-repo.sh --suite stable|beta`, helper `update-channel`) stays for hand installs; without
+a signing key in the build, `GET/POST /system/update` fall back to apt as before.
+
+**Per node** (helper verbs): `update-stage:<ver>` takes
+`/var/lib/pixelplus/updates/incoming/pixelplus_<ver>_<arch>.deb` (+ `.minisig`), verifies it,
+checks the package name/version/arch and the free space, makes sure the *installed* version
+is in `/var/cache/pixelplus/rollback/` (image-seeded, else `apt-get download` or
+`dpkg-repack`; no copy → no update) and keeps it in `staged/` (both 0700 root).
+`update-commit:<ver>` writes `/var/lib/pixelplus-helper/pending-verify`, arms a 6-minute late
+check, `dpkg -i`s (postinst restarts pixelplusd), keeps the package for the next rollback (3
+versions) and runs the **health gate**: within 180 s the new daemon must write
+`/run/pixelplus/healthy.json` `{version, engine, output, cluster, at}` (once the player and the
+cluster socket are up; `updates_orch::write_health`) and answer
+`/api/v1/public/health`; otherwise the previous package is reinstalled
+(`--force-downgrade`). Either way `/run/pixelplus/update-result.json` tells the daemon
+(`{from, to, ok, kind, message, at}`): a failed update raises an alert, sets the node's update
+phase to `failed`, and restores the "Before update to X" snapshot if the show's
+`formatVersion` is newer than this release reads. `update-verify` (boot unit
+`pixelplus-update-verify.service`, conditioned on `pending-verify`; `dpkg --configure -a`
+first) finishes an update interrupted by a power cut. `update-rollback` reinstalls the newest
+kept version older than the installed one.
+
+**Cluster** (`services/updates_orch.rs`, leader or standalone controller): `POST
+/system/update {version?, scope: "cluster"|"this", force?}` → preflight (every adopted node
+online and able to update, nothing playing, no show window now or within
+`avoidShowHours`, a package for every node's architecture, 3× package + 256 MB free, protocol
+ranges overlap (`negotiate(protoMin..protoMax)`), else `409` with the reasons) → download the
+packages for all architectures (followers often have no internet) → snapshot → job:
+
+1. **stage** everywhere in parallel: followers get `/cluster/command {type: "updateStage",
+   version, file, size, sha256, sig}`, fetch `GET /cluster/update/:file` from the leader
+   (signed with their own key), check size, SHA-256 and signature themselves and run
+   `update-stage`; progress in their beacon report (`report.update {arch, canApply,
+   diskFreeMb, phase, version, message}`). Any failure stops the job: nothing was installed;
+2. **commit the followers** in parallel (`updateCommit`) and wait until each runs the new
+   version (online, not `failed`; 8 min);
+3. **commit the leader** last (the job is persisted in `updates/job.json` first; its own
+   restart resumes it: `resume`);
+4. **verify**: every node on the new version → `done`. If any node fails at any point, the
+   leader **rolls back every committed node** (`updateRollback`, followers first, the leader
+   last) → `rolledBack` (`failed` if a node couldn't be put back).
+
+Progress: `GET /system/update` (`run`, `nodes[]` with version / phase, `problems[]`,
+`history[]`, `previous`), WS `updateJob`; history in `updates/history.json`, journal
+`update {from, to, ok}`, alerts on failure. `POST /system/update/rollback {scope}` puts every
+controller back to the version before the last successful update. `PUT
+/system/update/settings` (`UpdateSettings`: channel, `auto` off / notify / install, window
+`{from, to, days[]}` wrapping midnight, `avoidShowHours`); the automatic updater checks every
+10 minutes (index cached 6 h), notifies once per version, and installs only inside the window,
+never during or within `avoidShowHours` of a show window, one attempt per version and day.
+
+**Version tolerance**: beacons carry `protoMin`/`protoMax` (`PROTOCOL_MIN..=PROTOCOL_MAX`,
+today 2..2). Nodes whose ranges overlap interoperate (`protocol_mismatch` only warns when they
+don't); a future release that changes the wire format keeps speaking the previous protocol
+while its peers are older, so the short mixed-version window of a cluster update is safe.
+
+Tests: `updates_orch::tests` (fake fleet: happy path order, bad signature → nothing installed,
+follower health failure → everyone back, follower never returning, leader failure → followers
+back, resume after the leader's restart, preflight, update window / show times, helper verb
+escaping), `updates::tests` (Debian version order, package names, signatures good / bad /
+wrong key / rotation, the pre-hashed fixture made by
+`packaging/tests/fixtures/make_minisign_fixture.py`, index validation, fetch + download from a
+local release server incl. a forged index and a wrong hash), `packaging/tests/test_helper.py`
+(stage / commit / health-gated rollback / power-cut verify / downgrade and symlink refusal
+with fake dpkg, minisign and health), `test_release_index.py`, `polkit-rules.test.js`.
 
 ### 12.14 xLights FPP Connect (F16, WS6)
-_To be written by WS6._ Routes are root-mounted (`api/fppcompat.rs`), outside `/api/v1` auth
-and CSRF; the upload password is `settings.xlights.passwordHash` (write-only; stripped from
-`PUT /show/settings`, returned as `""` when set).
+`api/fppcompat.rs` (+ `api/fppcompat/tests.rs`); UI `/settings/xlights`. Routes are root-mounted,
+outside `/api/v1` auth and CSRF; the upload password is `settings.xlights.passwordHash` (write-only;
+stripped from `PUT /show/settings`, returned as `""` when set; set with `PUT /xlights/password`).
+Matched against xLights master (2026-09) `src-core/controllers/FPP.cpp` and
+`src-ui-wx/controllers/FPPConnectDialog.cpp`; tested version: xLights 2025.x/2026.x.
+
+**Detection.** `GET /config.php` (`text/javascript`) has `settings['Title'] = "PixelPlus (Falcon
+Player compatible upload)";` — xLights' `parseConfig` treats a target as FPP only if the title contains
+"Falcon Player" (a nominative compatibility statement; values are stripped of `" ; ' \ < >`).
+`GET /api/system/info` → `{HostName, HostDescription (show name), Platform:"PixelPlus", Variant (Pi
+model), Mode:"player", Version:"9.0", majorVersion:9, minorVersion:0, typeId:1, typId:1, uuid:
+"PixelPlus-<nodeId>", multisync:false, IPs}` — `uuid` is required by discovery, `typeId` < 0x80 selects
+the FPP ≥ 7 upload path (`typId` satisfies a misspelled key check in xLights), version ≥ 7.1 and < 9.3
+keeps the plain behaviour, and there is **no `channelRanges`**, so xLights uploads whole files.
+"Add FPP" by address also reads `GET /api/fppd/multiSyncSystems` → `{systems:[{hostname, address (the
+IPv4 xLights used, ≤ 16 chars), type, model, version, majorVersion, minorVersion, typeId:1, uuid,
+fppModeString:"player", channelRanges:""}]}`.
+
+**Skip unchanged.** `GET /api/sequence/<xlightsName>/meta` → `{Name, Version:"2.0", ID (fseq unique id,
+decimal string), StepTime, NumFrames, MaxChannel, ChannelCount, CompressionType (0 none, 1 zstd, 2
+zlib), Ranges? (sparse only), variableHeaders{mf?}}` from the stored file (imports keep the original
+file, so an unchanged re-render compares equal); `GET /api/media/<originalName>/meta` → `{format:{size
+(original upload size, as a string), filename, duration}}`. 404 = upload it.
+
+**Upload.** `PATCH /api/file/<dir>` with `Upload-Offset`, `Upload-Length`, `Upload-Name`
+(xLights: 16 MiB chunks, `Content-Type: application/offset+octet-stream`, restarts from 0 on any
+non-200, 3 tries). Parts go to `uploads/xlights/<sha256(dir,name)>.part` (+ `.json` with name, dir,
+length). Offset 0 starts over (disk check: length + 256 MiB free, else 507); another offset must equal
+the bytes received for the same name *and* length, else 409; more data than announced → 413; a broken
+chunk is cut back to its offset. One request per file at a time (409). Caps: sequences 4 GiB, audio
+512 MiB. The last chunk imports: `sequences` → WS2 `content::import_sequence_file` (a sequence with
+the same `xlightsName` is **replaced in place**, id/tags/playlists kept; the song is linked by the fseq
+`mf` header), `music` → `content::import_media_file` (`replaceSameName`), and the response is 200
+only after a successful import (422 with the reason otherwise, which xLights shows).
+`virtualdisplay_assets` → 200, dropped; `videos`, `effects` → 415 with a reason. Legacy (FPP < 7)
+`POST /api/file/uploads/<name>` + `GET /api/file/move/<name>` also work.
+
+**Playlists.** `GET /api/playlists` (names), `GET /api/playlist/<name>` → FPP JSON (`mainPlaylist`
+entries `type:"both"|"sequence"`, `sequenceName`, `mediaName`, `duration`, `playlistInfo`); `POST
+/api/playlist/<name>` (with `settings.xlights.addToPlaylists`) adds the named sequences that exist to
+the PixelPlus playlist of that name (created when missing; smart playlists refused), never removes;
+the answer's `Message` lists names not uploaded yet.
+
+**Ignored controller config.** `GET /api/channel/output/*` → `{channelOutputs:[]}`, `GET
+/api/proxies`/`/api/models` → `[]`, `GET /api/cape` and `/api/configfile/*` → 404; `POST/PUT` to
+`/api/models`, `/api/proxies*`, `/api/channel/output/*`, `/api/configfile/*`, `/api/settings/*` and
+`GET /api/system/fppd/restart` → 200, logged "PixelPlus manages its own wiring". Tell users to leave
+"Upload outputs"/"Models" off and choose FSEQ type "V2 zstd".
+
+**Security.** Every route first runs WS5's `security::fpp_compat_authorize` (an extractor
+`FppAuth`): feature off → 404; non-LAN peer or proxy headers (tunnels, the public listener) → 404;
+Host allow-list → 421; reads pass; writes need HTTP Basic with the upload password (any user name;
+verified passwords cached 10 min; sign-in throttle; 401 `WWW-Authenticate: Basic`), or, without an
+upload password, must not be CORS-simple. Additionally, **while the show has a sign-in password,
+writes are refused (403) until an upload password is set** (LAN-trust mode only for password-less
+shows). The UI requires the password before enabling in that case.
+
+**Admin API** (`/api/v1`, merged via `api/profiles.rs`): `GET /xlights/status` → `{enabled,
+passwordSet, adminPasswordSet, ready, reason?, addresses[], hostname, uploads[{at, name,
+kind:"sequence"|"song"|"ignored", ok, message, bytes, source:"xlights"|"folder", sequenceId?,
+mediaId?, replaced}], watch{folder, exists, suggested, lastScan?, error?}}`; `PUT /xlights/password
+{password}` (6+ chars, no `:`; `""` removes); `DELETE /xlights/uploads` (clear the log, 50 kept in
+`uploads/xlights/log.json`).
+
+**Watch folder** (`settings.xlights.watchFolder`, absolute, not a system directory; suggested
+`<data>/xlights-drop`, created when under the data dir): scanned every 10 s (task started from
+`services::profiles::start`); `.fseq` and audio files are imported once their size and mtime are
+unchanged between two scans and ≥ 5 s old (copied into the data dir first), then moved to `imported/`
+or `failed/` (read-only shares: remembered instead). Serving the folder over SMB is packaging's job
+(WS5); phase 2: answer FPP multisync pings on UDP 32320 for auto-discovery.
 
 ### 12.15 Library tags and smart playlists (F18, WS2)
 
@@ -1242,4 +1709,67 @@ Vec<Fired{triggerId, ok, message}>` — call it for every authenticated input ch
 on the rising edge through their gates. `services::triggers::run_action(&state, &TriggerAction)` carries out
 an action without gates (for `POST /surprises/test {action}`); `surprise_request(show, id, action)` validates
 one.
+
+**Sensor nodes (WS6).** `services/sensornodes.rs`, `api/sensornodes.rs`, firmware
+`firmware/esp32-sensor/` (PlatformIO, Arduino-ESP32; ESP32-C3/S3/classic; README with wiring);
+UI `/settings/sensors` and `/settings/triggers` (`components/triggers/TriggerEditor.svelte`, moved out
+of the main Settings page; old `#triggers` links redirect).
+
+*Identity.* Node id = `"sn"` + the last 4 bytes of its Wi-Fi MAC in lowercase hex (10 characters,
+`24:6F:28:9C:1E:2A` → `sn289c1e2a`). A fresh node opens the captive-portal hotspot
+`PixelPlus-Sensor-XXXX` (Wi-Fi + name, stored in NVS), then broadcasts beacons.
+
+*Datagrams* (UDP 32422, one JSON object each, MAC canonicalization §7.5, `sensornodes::seal/verify`):
+
+| `t` | From → to | MAC | Fields |
+|---|---|---|---|
+| `sbeacon` | node → broadcast, every 2 s (10 s adopted) | no | `id, name, hw, ver, http, adoptedBy, inputs[], proto:1` |
+| `sevent` | node → leader | yes | `id, input, state (1 = active after activeLow), ms (uptime), lb` |
+| `sstatus` | node → leader, every `statusEverySec` (10) | yes | `id, rssi, uptime, ver, cfg, inputs{id: state}, amps{id: A}, volts{id: V}` |
+| `sack` | leader → node | yes | `id, ack (acknowledged sq), sb (node boot echo), ok, lb (leader boot), now (unix s), cfg (config version)` |
+| `scmd` | leader → node | yes | `id, cmd:"identify"` |
+
+*Replay.* The leader keeps a `ReplayGuard` per node (boot id, highest `sq`, 64-packet window). Events
+carry `lb`, the leader boot id from the node's last `sack`: an event with another `lb` fires nothing
+(`sack ok:false` with the current `lb`; the node resends at once with a new `sq`) — so events captured
+before a leader restart can't be replayed. A new node boot id is accepted from a heartbeat or from an
+event with the current `lb`; replaced boot ids never again. A replayed `sq` is acknowledged again but
+acts once. Nodes retry events at 100/200/400 ms until acknowledged (`sb` + `ack` must match), accept
+`scmd` only for the current leader boot with growing `sq`, and learn the leader's clock from `now`.
+
+*Adoption* (TOFU): the leader POSTs `http://<node>/adopt {leaderId, leaderUrl ("http://<ipv4>:<port>",
+the leader address that routes to the node), sensorPort, dh (X25519 public, hex)}` → `{id, dh, proof,
+hw, ver, inputs[{id, pin, kind, activeLow}]}`; both derive `key = hex(HMAC-SHA256(shared, "pixelplus-
+sensor-key-v1\n<leaderId>\n<sensorId>\n<leaderPub>\n<sensorPub>"))` and the leader checks `proof =
+hex(HMAC(key, "pixelplus-sensor-adopted-v1\n<leaderId>\n<sensorId>"))`. Keys: leader
+`<data>/sensor-keys.json` (0600, never in `show.json`/backups), node NVS. An adopted node answers other
+leaders 409 until released, reset (BOOT held 10 s) or a short BOOT press opens a 10-minute window
+(re-adoption by the current leader may also be signed). Release: `POST http://<node>/release`
+signed `X-PixelPlus-Auth` by the leader (monotonic timestamp on the node); the leader forgets the key
+and the node even when the node is unreachable (then the UI says to reset it).
+
+*Configuration*: the node fetches `GET /api/v1/cluster/sensor-config/<id>` signed with its key
+(`X-PixelPlus-Auth` as §7.5, sender = node id; open path, checked by the handler; a skewed clock gets
+`401` + `X-PixelPlus-Time`) → `{version (8 hex of sha256(name, inputs)), name, inputs[SensorInput],
+statusEverySec}` with `X-PixelPlus-Reply`; it refetches when a `sack` names another `cfg`.
+`SensorInput.kind` `motion|button|beam|contact` use `pin` as GPIO with `debounceMs` (level must hold)
+and `holdMs` (reported active at least this long after the last activity: merges PIR re-triggers);
+`current` uses `pin` as the INA219/INA226 I²C address (0x40–0x4F) and `shuntMilliohms` (model
+addition, WS6); the node reports amps (INA226 shunt LSB 2.5 µV, INA219 10 µV) and bus volts.
+
+*Leader side*: discovery list (30 s), live state (`online` = heartbeat in the last 35 s, RSSI, uptime,
+inputs, amps, volts, event and rejected counters), WebSocket `sensorInput {sensorNodeId, input, state,
+at}` on each change, and `triggers::sensor_input` on each activation. **Contract for WS3**:
+`services::sensornodes::amps(&state, &SensorRef) -> Option<f64>` (latest current of a `kind:"current"`
+input, ≤ 30 s old) for `PowerSupply.sensor`.
+
+*API* (`/api/v1`): `GET /sensor-nodes`, `GET /sensor-nodes/discovered`, `POST /sensor-nodes/adopt
+{id}`, `GET/PUT /sensor-nodes/:id` (merge patch: name, location, inputs; validated: ids `[a-z0-9_]`, ≤ 8
+inputs, GPIO ≤ 48 and unique, INA address and shunt range), `POST /sensor-nodes/:id/release` (= `DELETE`)
+→ `{ok, message?}`, `POST /sensor-nodes/:id/identify`, `GET /sensor-nodes/:id/live`, `GET
+/sensor-nodes/live` → `{id: live}`, `POST /surprises/test {action}`.
+
+*Tests*: `firmware/esp32-sensor/test/vectors.json` (generated independently in Python, incl. RFC 7748
+X25519) is checked by the Rust tests (`sensornodes.rs`) and the firmware's `pio test -e native`
+(`test_protocol`, plus `test_debounce`).
 

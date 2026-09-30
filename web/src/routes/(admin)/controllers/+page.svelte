@@ -51,11 +51,22 @@
 		Camera
 	} from '@lucide/svelte';
 	import { slide } from 'svelte/transition';
-	// WS4 (F9): guided "Add receiver". WS5's ReplaceDialog (F10) is embedded here once it exists.
+	// WS4 (F9): guided "Add receiver". WS5 (F10): replace a controller, retired controllers.
 	import ReceiverWizard from '$lib/components/controllers/ReceiverWizard.svelte';
+	import ReplaceDialog from '$lib/components/controllers/ReplaceDialog.svelte';
+	import RetiredControllers from '$lib/components/controllers/RetiredControllers.svelte';
 
 	const show = $derived(app.show);
 	let discovered = $state<DiscoveredNode[]>([]);
+	/** Controllers waiting to join (replaced controllers that came back are listed apart). */
+	const fresh = $derived(discovered.filter((d) => !d.retired));
+	let replacing = $state<Node | null>(null);
+	let replaceOpen = $state(false);
+	/** Offline for more than 5 minutes: "Replace…" is offered prominently. */
+	function longOffline(n: Node): boolean {
+		const live = app.nodes.find((x) => x.id === n.id);
+		return !!live && !live.online && Date.now() - Date.parse(live.lastSeen) > 5 * 60_000;
+	}
 	let scanning = $state(false);
 	let adopting = $state<DiscoveredNode | null>(null);
 	let adoptName = $state('');
@@ -80,12 +91,9 @@
 		scanning = true;
 		try {
 			discovered = await api.discovered();
+			const n = discovered.filter((d) => !d.retired).length;
 			if (manual)
-				toasts.info(
-					discovered.length
-						? `Found ${discovered.length} new controller${discovered.length > 1 ? 's' : ''}`
-						: 'No new controllers on the network'
-				);
+				toasts.info(n ? `Found ${n} new controller${n > 1 ? 's' : ''}` : 'No new controllers on the network');
 		} catch {
 			/* ignore */
 		} finally {
@@ -286,7 +294,7 @@
 
 	<GeometryBanner />
 
-	{#if discovered.length}
+	{#if fresh.length}
 		<section class="found card" transition:slide>
 			<div class="found-head">
 				<span class="radar"><Radar size={20} /></span>
@@ -297,7 +305,7 @@
 					</p>
 				</div>
 			</div>
-			{#each discovered as d (d.id)}
+			{#each fresh as d (d.id)}
 				<div class="found-row">
 					<div class="mini-board"><BoardDiagram board={d.board} compact /></div>
 					<div class="grow">
@@ -325,6 +333,7 @@
 			{/each}
 		</section>
 	{/if}
+	<RetiredControllers {discovered} onreleased={() => scan()} />
 
 	{#if !show}
 		<div class="card card-pad"><Skeleton count={6} /></div>
@@ -390,6 +399,14 @@
 								renameValue = n.name;
 							}}
 							aria-label="Rename {n.name}"><Pencil size={14} /></button
+						>
+						<button
+							class="btn sm {longOffline(n) ? 'soft' : 'ghost'}"
+							onclick={() => {
+								replacing = n;
+								replaceOpen = true;
+							}}
+							title="Move this controller's name, wiring and props to new hardware">Replace…</button
 						>
 						{#if n.role === 'follower'}<button
 								class="btn sm ghost icon"
@@ -773,6 +790,17 @@
 </Modal>
 
 <ReceiverWizard bind:open={wizardOpen} nodeId={wizardNode} />
+{#if replacing}
+	<ReplaceDialog
+		bind:open={replaceOpen}
+		node={replacing}
+		online={app.nodes.find((x) => x.id === replacing?.id)?.online ?? false}
+		onreplaced={() => {
+			app.reloadShow();
+			scan();
+		}}
+	/>
+{/if}
 
 <Modal bind:open={rxModal} title={rxDraft.id ? `Edit ${rxDraft.name}` : 'Add a receiver'} size="sm">
 	<form id="rxform" class="col" style="gap:14px" onsubmit={saveReceiver}>

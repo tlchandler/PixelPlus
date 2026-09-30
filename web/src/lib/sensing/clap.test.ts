@@ -34,7 +34,8 @@ function clapMotion(contactsMs: number[], durationMs: number, fps = 30, phase = 
 	return out;
 }
 
-describe('clap test', () => {
+// Signal simulation is CPU-heavy; allow for a busy machine running the whole suite.
+describe('clap test', { timeout: 60_000 }, () => {
 	const claps = [1000, 2150, 3320, 4400, 5610, 6700, 7890, 9010, 10100, 11300].map((t) => t + 0.4);
 
 	it('detects clap onsets in the sound to within a millisecond', () => {

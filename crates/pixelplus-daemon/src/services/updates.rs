@@ -1005,12 +1005,18 @@ mod tests {
     #[tokio::test]
     async fn fetch_verify_and_download_from_a_release_server() {
         use axum::routing::get;
-        let fx = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packaging/tests/fixtures");
+        let fx = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packaging/tests/fixtures"
+        );
         let deb = std::fs::read(format!("{fx}/minisign/pixelplus_9.9.9_arm64.deb")).unwrap();
-        let deb_sig = std::fs::read_to_string(format!("{fx}/minisign/pixelplus_9.9.9_arm64.deb.minisig")).unwrap();
+        let deb_sig =
+            std::fs::read_to_string(format!("{fx}/minisign/pixelplus_9.9.9_arm64.deb.minisig"))
+                .unwrap();
         // The committed index (made by packaging/release-index.py) parses and validates.
         let committed: ReleaseIndex =
-            serde_json::from_slice(&std::fs::read(format!("{fx}/pixelplus-stable.json")).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(format!("{fx}/pixelplus-stable.json")).unwrap())
+                .unwrap();
         committed.validate().unwrap();
         assert_eq!(committed.files[0].size, deb.len() as u64);
 
@@ -1026,21 +1032,51 @@ mod tests {
         let e2 = evil.clone();
         let (ij, deb2) = (index_json.clone(), deb.clone());
         let app = axum::Router::new()
-            .route("/ota/pixelplus-stable.json", get(move || { let v = ij.clone(); async move { v } }))
-            .route("/ota/pixelplus-stable.json.minisig", get(move || {
-                let s = if *e2.lock() { bad_sig.clone() } else { index_sig.clone() };
-                async move { s }
-            }))
-            .route("/files/pixelplus_9.9.9_arm64.deb", get(move || { let v = deb2.clone(); async move { v } }))
-            .route("/files/pixelplus_9.9.9_arm64.deb.minisig", get(move || { let v = deb_sig.clone(); async move { v } }));
+            .route(
+                "/ota/pixelplus-stable.json",
+                get(move || {
+                    let v = ij.clone();
+                    async move { v }
+                }),
+            )
+            .route(
+                "/ota/pixelplus-stable.json.minisig",
+                get(move || {
+                    let s = if *e2.lock() {
+                        bad_sig.clone()
+                    } else {
+                        index_sig.clone()
+                    };
+                    async move { s }
+                }),
+            )
+            .route(
+                "/files/pixelplus_9.9.9_arm64.deb",
+                get(move || {
+                    let v = deb2.clone();
+                    async move { v }
+                }),
+            )
+            .route(
+                "/files/pixelplus_9.9.9_arm64.deb.minisig",
+                get(move || {
+                    let v = deb_sig.clone();
+                    async move { v }
+                }),
+            );
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let base = format!("http://127.0.0.1:{port}/ota");
         let mut keys = signer.keys();
-        keys.extend(parse_keys(&std::fs::read_to_string(format!("{fx}/minisign/test.pub")).unwrap()));
+        keys.extend(parse_keys(
+            &std::fs::read_to_string(format!("{fx}/minisign/test.pub")).unwrap(),
+        ));
 
         let got = fetch_index(&base, "stable", &keys).await.unwrap();
         assert_eq!(got.version, "9.9.9");
-        assert!(fetch_index(&base, "beta", &keys).await.is_err(), "no such channel");
+        assert!(
+            fetch_index(&base, "beta", &keys).await.is_err(),
+            "no such channel"
+        );
         // An index signed by anyone else is refused.
         *evil.lock() = true;
         let e = fetch_index(&base, "stable", &keys).await.unwrap_err();
@@ -1058,7 +1094,9 @@ mod tests {
         assert!(ensure_package(&dir, &wrong, &keys).await.is_err());
         assert!(!p.exists());
         // Signed by a key we don't trust: refused.
-        assert!(ensure_package(&dir, &got.files[0], &signer.keys()).await.is_err());
+        assert!(ensure_package(&dir, &got.files[0], &signer.keys())
+            .await
+            .is_err());
         std::fs::remove_dir_all(dir).ok();
     }
 }

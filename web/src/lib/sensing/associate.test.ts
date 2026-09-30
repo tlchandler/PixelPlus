@@ -4,7 +4,8 @@ import { eventsMs } from './schedule';
 import { gaussian, rng } from './dsp';
 
 /** Spec test: random offset, jitter, 30 % drop-outs and false positives → error < 2 ms. */
-describe('schedule association', () => {
+// Signal simulation is CPU-heavy; allow for a busy machine running the whole suite.
+describe('schedule association', { timeout: 60_000 }, () => {
 	it('finds the offset through drop-outs, false positives and jitter', () => {
 		for (let trial = 0; trial < 40; trial++) {
 			const u = rng(100 + trial);

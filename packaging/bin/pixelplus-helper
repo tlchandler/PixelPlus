@@ -104,6 +104,7 @@ valid_version() { [[ "$1" =~ ^[0-9][A-Za-z0-9.+~-]{0,63}$ ]]; }
 on_off() { [[ "$1" =~ ^(on|off)$ ]] || fail "expected on or off"; [[ -z "${arg2:-}" ]] || fail "too many arguments"; }
 
 deb_arch() { echo "${PIXELPLUS_ARCH:-$("${DPKG}" --print-architecture)}"; }
+# shellcheck disable=SC2016 # ${Version} is dpkg-query's format, not a shell expansion
 installed_version() { "${PIXELPLUS_DPKG_QUERY:-dpkg-query}" -W -f='${Version}' pixelplus 2>/dev/null || true; }
 
 os_codename() {

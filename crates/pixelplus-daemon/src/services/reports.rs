@@ -1398,8 +1398,10 @@ mod tests {
     }
 
     fn show() -> Show {
-        let mut s = Show::default();
-        s.name = "Chandler Lights".into();
+        let mut s = Show {
+            name: "Chandler Lights".into(),
+            ..Show::default()
+        };
         s.schedule.location.timezone = "America/Chicago".into();
         for (id, name) in [("nmain00001", "Main Controller"), ("ngarage001", "Garage")] {
             s.nodes.push(

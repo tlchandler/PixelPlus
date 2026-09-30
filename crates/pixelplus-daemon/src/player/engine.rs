@@ -509,10 +509,9 @@ fn compute_context(state: &AppState) -> EngineContext {
     let show = state.store.get();
     let id = state.identity();
     let follower = id.role == LocalRole::Follower;
-    let data = &state.config.data_dir;
     EngineContext {
-        budget: super::limiter::budget_for(&show, &id.id, follower, data),
-        disabled: super::limiter::disabled_props(&show, follower, data),
+        budget: super::limiter::budget_for(state, &show, &id.id, follower),
+        disabled: super::limiter::disabled_props(&show),
         smart: if follower {
             HashMap::new()
         } else {
@@ -2728,8 +2727,13 @@ impl Core {
         let preset = match &song {
             Some((_, an, pos)) => {
                 let start = (now_ms - l.started_ms) - pos;
-                pixelplus_core::effects::follow_song_beat(&original, an.bpm, an.first_beat_ms, start)
-                    .unwrap_or(original)
+                pixelplus_core::effects::follow_song_beat(
+                    &original,
+                    an.bpm,
+                    an.first_beat_ms,
+                    start,
+                )
+                .unwrap_or(original)
             }
             None => original,
         };

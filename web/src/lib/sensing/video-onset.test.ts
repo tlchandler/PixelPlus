@@ -24,7 +24,8 @@ const flashes = eventsMs(3)
 	.slice(0, 20)
 	.map((e) => e + 777.7);
 
-describe('flash detection', () => {
+// Signal simulation is CPU-heavy; allow for a busy machine running the whole suite.
+describe('flash detection', { timeout: 60_000 }, () => {
 	it('recovers onsets to a few ms at 30 fps (sub-frame interpolation)', () => {
 		const found = run(
 			{ fps: 30, durationMs: 18000, flashesMs: flashes, flashMs: 80, phaseMs: 3.3, noise: 2 },
@@ -34,7 +35,7 @@ describe('flash detection', () => {
 		expect(found.length).toBe(flashes.length);
 		const worst = Math.max(...err.map(Math.abs));
 		expect(worst).toBeLessThan(4);
-	}, 30_000);
+	});
 
 	it('works at 15 fps with a small lit area, drift and timestamp jitter', () => {
 		const found = run(
@@ -55,7 +56,7 @@ describe('flash detection', () => {
 		const mean = err.reduce((a, b) => a + b, 0) / err.length;
 		expect(Math.abs(mean)).toBeLessThan(4);
 		expect(Math.max(...err.map(Math.abs))).toBeLessThan(10);
-	}, 30_000);
+	});
 
 	it('corrects for a rolling shutter using where the lights are', () => {
 		const sim: VideoSim = {
@@ -73,7 +74,7 @@ describe('flash detection', () => {
 		const avg = (e: number[]) => e.reduce((a, b) => a + b, 0) / e.length;
 		// Reference: the frame's centre row.
 		expect(Math.abs(avg(corrected) - 12.5)).toBeLessThan(Math.abs(avg(naive) - 12.5));
-	}, 30_000);
+	});
 
 	it('ignores noise-only video and weak blips', () => {
 		expect(run({ fps: 30, durationMs: 5000, flashesMs: [], flashMs: 80 }, 0)).toEqual([]);

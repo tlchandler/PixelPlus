@@ -1134,7 +1134,7 @@ pub fn signed_config(
     id: &str,
     auth: Option<&str>,
     path: &str,
-) -> Result<(NodeConfig, String, String), (sig::Refusal, Option<(String, String)>)> {
+) -> Result<(NodeConfig, String, String), sig::CheckError> {
     let key_for = |sender: &str| (sender == id).then(|| key_of(state, sender)).flatten();
     let (signed, key) = sig::check(
         auth,
