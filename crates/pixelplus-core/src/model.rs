@@ -2237,7 +2237,6 @@ mod tests {
             "cooldownS",
             "\"when\"",
             "activeWindow",
-            "maxPerHour",
             "target",
             "extraNames",
             "passwordHash",
@@ -2255,6 +2254,11 @@ mod tests {
         }
         // Always-present settings carry their documented defaults.
         let v = serde_json::to_value(&show).unwrap();
+        // `maxPerHour` is also a (always present) song-request setting.
+        assert!(v["settings"]["triggers"][0].get("maxPerHour").is_none());
+        assert_eq!(v["settings"]["requests"]["maxPerHour"], 60);
+        assert_eq!(v["settings"]["requests"]["perVisitorPerHour"], 6);
+        assert_eq!(v["settings"]["games"]["maxQueuePerVisitor"], 3);
         assert_eq!(v["formatVersion"], SHOW_FORMAT_VERSION);
         assert_eq!(v["settings"]["https"]["enabled"], true);
         assert_eq!(v["settings"]["reports"]["time"], "07:00");

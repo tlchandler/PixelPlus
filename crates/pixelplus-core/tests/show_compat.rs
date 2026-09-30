@@ -44,6 +44,10 @@ const ADDED_KEYS: &[&str] = &[
     "/settings/remote",
     "/settings/updates",
     "/settings/xlights",
+    // Per-visitor caps (F14): new fields of existing settings.
+    "/settings/games/maxQueuePerVisitor",
+    "/settings/requests/maxPerHour",
+    "/settings/requests/perVisitorPerHour",
 ];
 
 /// Every value of `old` is present, unchanged, in `new`; keys only in `new`

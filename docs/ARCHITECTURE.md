@@ -778,8 +778,8 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `GET/POST/DELETE /system/join-show` | {open, secondsLeft, leaderAddress}; POST {leaderUrl?}: for 15 min another leader may adopt this controller ("Join another show" / "Allow a new leader") |
 | `GET /journal?date=YYYY-MM-DD&types=a,b` | one local day of the show journal (§12.10): `[{ts, ev, …fields}]` |
 
-**Feature-wave endpoints** (route modules exist as stubs in `api/<module>.rs`, already merged
-into the router; each workstream fills in its own; shapes in §12 and `web/src/lib/api/types.ts`):
+**Feature-wave endpoints** (one route module per feature in `api/<module>.rs`; shapes in §12
+and `web/src/lib/api/types.ts`, checked against the daemon by `web/src/lib/api/contract.test.ts`):
 
 | Module (owner) | Endpoints |
 |---|---|
@@ -907,14 +907,16 @@ ROMs are uploaded in the UI (Settings → Games) and stored in `/var/lib/pixelpl
 ## 12. Feature wave (F1–F20)
 
 Design: the feature spec (features 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 18, 20).
-The shared contracts were created up front by WS0 and are frozen: `model.rs` (§4.0),
+The shared contracts were created up front by WS0: `model.rs` (§4.0),
 `player/types.rs` (`TestRequest.{map, mapRunId, identify, cal}`, `PlayRequest.loopUntilStopped`,
 `PlayerStatus.power`, `SurpriseAnchor`), `cluster/proto.rs` / `manifest.rs` fields (§7.4.1),
-`api/mod.rs` + `services/mod.rs` (stub modules, one file per owner), `Cargo.toml` dependencies
+`api/mod.rs` + `services/mod.rs` (one module per feature), `Cargo.toml` dependencies
 (`rustfft`, `rcgen` + `tokio-rustls` on *ring*, `minisign-verify`, `aes-gcm`),
-`web/src/lib/api/types.ts`, the mock (`web/src/lib/mock/feat/<module>.ts`, one per owner), nav
-and placeholder pages. Changes to a shared contract go through WS0. Each workstream writes only
-inside its own section below.
+`web/src/lib/api/types.ts` and the demo mock (`web/src/lib/mock/feat/<module>.ts`). The table
+names the owning workstream of each part; the cross-feature hand-offs (follower limiter reports on
+the leader, sensor events into triggers, the countdown editor in playlists, season chip on the
+dashboard, replacement on the controllers page, the public listener's `/play` proxy) are covered
+end to end by `scripts/e2e/run.mjs` (phases `engine`, `public`, `sensors`).
 
 | § | Feature | Owner | Daemon | Web |
 |---|---|---|---|---|
@@ -1486,6 +1488,23 @@ forwarding headers) while no password is set (`403 password_required`). Client a
 tunnelled requests come from `CF-Connecting-IP` / `X-Forwarded-For` of the local proxy as
 before (rate limits, sign-in throttle).
 
+**Remote sign-in alerts.** A successful admin sign-in that did not come from the home network
+raises a *Remote sign-in* warning (`api::auth::remote_via` → `services::alerts::remote_sign_in`,
+deduplicated per address): through Cloudflare Tunnel (`CF-Connecting-IP` via a local proxy),
+Tailscale (a `100.64/10` / `fd7a:115c:a1e0::/48` address, or `tailscale serve` identity
+headers), another local tunnel or reverse proxy, or directly from a public address. LAN and
+same-machine sign-ins without forwarding headers raise nothing.
+
+**Per-visitor caps** (the visitor is the client address above, so every phone behind a
+tunnel is still told apart, and forwarding headers from anyone else are ignored):
+song requests allow 3 per visitor per 10 minutes plus `settings.requests.perVisitorPerHour`
+(default 6) and `maxPerHour` for everyone together (default 60; 0 = no limit) → `429
+rate_limited` / `429 busy`; the games controller lets at most `settings.games.maxQueuePerVisitor`
+phones (default 3; 0 = no limit) from one address wait or play at once (phase `limited` on the
+phone). The public listener appends the TCP peer to `X-Forwarded-For` for `/play`, and the games
+sidecar reads it only from a loopback or LAN peer (`games/pixelplus_games/web.py`
+`client_address`).
+
 `services/remote.rs`, `api/remote.rs`:
 
 | Endpoint | Does |
@@ -1758,7 +1777,8 @@ addition, WS6); the node reports amps (INA226 shunt LSB 2.5 µV, INA219 10 µV) 
 
 *Leader side*: discovery list (30 s), live state (`online` = heartbeat in the last 35 s, RSSI, uptime,
 inputs, amps, volts, event and rejected counters), WebSocket `sensorInput {sensorNodeId, input, state,
-at}` on each change, and `triggers::sensor_input` on each activation. **Contract for WS3**:
+at}` and `triggers::sensor_input(active = state ≠ 0)` on each change (triggers fire on the rising
+edge only). **Contract for WS3**:
 `services::sensornodes::amps(&state, &SensorRef) -> Option<f64>` (latest current of a `kind:"current"`
 input, ≤ 30 s old) for `PowerSupply.sensor`.
 

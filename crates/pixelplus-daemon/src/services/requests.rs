@@ -554,7 +554,10 @@ mod tests {
             assert!(q.check_rate(ip, at, CAPS).is_ok(), "request {i}");
         }
         let third_burst = t + Duration::from_secs(22 * 60);
-        assert_eq!(q.check_rate(ip, third_burst, CAPS), Err(RateLimited::Visitor));
+        assert_eq!(
+            q.check_rate(ip, third_burst, CAPS),
+            Err(RateLimited::Visitor)
+        );
         // No hourly cap: only the burst limit.
         let open = HourlyCaps {
             per_visitor: 0,
