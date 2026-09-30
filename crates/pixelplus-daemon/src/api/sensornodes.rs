@@ -363,6 +363,24 @@ mod tests {
         assert!(!keys.contains(KEY));
     }
 
+    /// Security audit 2: unauthenticated beacons with made-up ids can't grow
+    /// the discovered list without bound.
+    #[tokio::test]
+    async fn beacon_flood_is_bounded() {
+        let app = TestApp::new();
+        let from: std::net::SocketAddr = "192.168.1.66:32422".parse().unwrap();
+        for i in 0..(svc::MAX_DISCOVERED * 4) {
+            let beacon = json!({"t":"sbeacon","id":format!("sn{i:08x}"),"proto":1});
+            svc::on_datagram(&app.state, beacon.to_string().as_bytes(), from).await;
+        }
+        let (_, d) = app.json("GET", "/sensor-nodes/discovered", None).await;
+        let n = d.as_array().unwrap().len();
+        assert_eq!(n, svc::MAX_DISCOVERED);
+        // The newest beacon is kept.
+        let last = format!("sn{:08x}", svc::MAX_DISCOVERED * 4 - 1);
+        assert!(d.as_array().unwrap().iter().any(|x| x["id"] == last.as_str()));
+    }
+
     #[tokio::test]
     async fn sensor_config_is_signed_both_ways() {
         let app = TestApp::new();

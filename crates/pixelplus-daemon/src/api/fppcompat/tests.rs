@@ -771,3 +771,86 @@ async fn watch_folder_imports_finished_files() {
     assert_eq!(log.len(), 2);
     assert!(log.iter().all(|e| e.source == "folder"));
 }
+
+/// Security audit 2: the legacy `GET /api/file/move/<name>` imports a file,
+/// so it needs the upload password like the upload (it used to pass as a
+/// "read"), and is refused while the show has only a sign-in password.
+#[tokio::test]
+async fn legacy_move_is_a_write() {
+    let app = TestApp::new();
+    enable(&app, Some("upload-pw-1"), true).await;
+    let data = fseq_bytes(&app, 20, 10, None);
+    let req = xreq(Method::POST, "/api/file/uploads/Staged.fseq")
+        .header("content-type", "application/octet-stream")
+        .header("authorization", basic("upload-pw-1"))
+        .body(Body::from(data))
+        .unwrap();
+    let (st, _, _) = app.send(req).await;
+    assert_eq!(st, StatusCode::OK);
+    // Anyone on the LAN (or a web page's <img>) without the password: refused.
+    let (st, h, _) = get(&app, "/api/file/move/Staged.fseq").await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert!(h.contains_key("www-authenticate"));
+    let req = xreq(Method::GET, "/api/file/move/Staged.fseq")
+        .header("authorization", basic("wrong-password"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.send(req).await.0, StatusCode::UNAUTHORIZED);
+    assert!(app.state.store.get().sequences.is_empty());
+    // xLights with the password: imported.
+    let req = xreq(Method::GET, "/api/file/move/Staged.fseq")
+        .header("authorization", basic("upload-pw-1"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.send(req).await.0, StatusCode::OK);
+    assert_eq!(app.state.store.get().sequences.len(), 1);
+    // Sign-in password but no upload password: moves are refused too.
+    enable(&app, None, true).await;
+    let (st, _, _) = get(&app, "/api/file/move/Staged.fseq").await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+/// Security audit 2: abandoned partial uploads are cleaned up after a day.
+#[tokio::test]
+async fn stale_partial_uploads_are_removed() {
+    let app = TestApp::new();
+    let base = upload_dir(&app.state);
+    std::fs::create_dir_all(base.join("legacy")).unwrap();
+    let old = SystemTime::now() - Duration::from_secs(25 * 3600);
+    let mk = |p: PathBuf, age: Option<SystemTime>| {
+        std::fs::write(&p, b"x").unwrap();
+        if let Some(t) = age {
+            std::fs::File::options()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        }
+        p
+    };
+    let stale = mk(base.join("aaaa.part"), Some(old));
+    let stale_meta = mk(base.join("aaaa.json"), Some(old));
+    let stale_legacy = mk(base.join("legacy/bbbb.part"), Some(old));
+    let fresh = mk(base.join("cccc.part"), None);
+    let log = mk(base.join("log.json"), Some(old));
+    cleanup_stale_parts(&app.state).await;
+    assert!(!stale.exists() && !stale_meta.exists() && !stale_legacy.exists());
+    assert!(fresh.exists(), "an upload in progress stays");
+    assert!(log.exists(), "the uploads log stays");
+}
+
+/// Security audit 2: a watch-folder file swapped for a symlink (e.g. on a
+/// shared folder) is never followed.
+#[cfg(unix)]
+#[tokio::test]
+async fn watch_folder_never_follows_symlinks() {
+    let app = TestApp::new();
+    let secret = app.dir.join("secret.fseq");
+    make_fseq(&secret, 10, 5, None);
+    let link = app.dir.join("link.fseq");
+    std::os::unix::fs::symlink(&secret, &link).unwrap();
+    let dst = app.dir.join("copy.part");
+    assert!(copy_nofollow(&link, &dst).await.is_err());
+    assert!(copy_nofollow(&secret, &dst).await.unwrap() > 0);
+}

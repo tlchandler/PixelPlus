@@ -100,10 +100,24 @@ impl FromRequestParts<AppState> for FppAuth {
             .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
             .map(|c| c.0);
         super::security::fpp_compat_authorize(state, peer, &parts.method, &parts.headers).await?;
-        let write = !matches!(
-            parts.method,
-            axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
-        );
+        // The legacy `GET /api/file/move/<name>` imports a file: a write,
+        // although a GET (reads pass without the upload password).
+        let legacy_move = parts.uri.path().starts_with("/api/file/move/");
+        let write = legacy_move
+            || !matches!(
+                parts.method,
+                axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+            );
+        if legacy_move && has_upload_password(state) {
+            // Same rule as the upload itself: HTTP Basic with the upload password.
+            super::security::fpp_compat_authorize(
+                state,
+                peer,
+                &axum::http::Method::PATCH,
+                &parts.headers,
+            )
+            .await?;
+        }
         if write {
             let s = state.store.get();
             let has_upload_pw = s
@@ -121,6 +135,17 @@ impl FromRequestParts<AppState> for FppAuth {
         }
         Ok(FppAuth)
     }
+}
+
+fn has_upload_password(state: &AppState) -> bool {
+    state
+        .store
+        .get()
+        .settings
+        .xlights
+        .password_hash
+        .as_deref()
+        .is_some_and(|h| !h.is_empty())
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +515,47 @@ fn cap_for(dir: Dir) -> u64 {
     }
 }
 
+/// Is there room for `bytes` more (keeping [`KEEP_FREE`] free)?
+fn room_for(state: &AppState, bytes: u64) -> bool {
+    crate::services::system::disk_space(&state.config.data_dir)
+        .map(|(f, _)| f)
+        .unwrap_or(u64::MAX)
+        >= bytes.saturating_add(KEEP_FREE)
+}
+
+/// Unfinished uploads are dropped after this long (xLights restarts a
+/// failed file from offset 0 at once).
+const STALE_PART: Duration = Duration::from_secs(24 * 3600);
+
+/// Delete unfinished uploads (`*.part` and their `*.json` resume records,
+/// staged legacy files, watch-folder copies) older than [`STALE_PART`], so
+/// abandoned uploads can't pile up on the SD card.
+async fn cleanup_stale_parts(state: &AppState) {
+    let base = upload_dir(state);
+    for dir in [base.clone(), base.join("legacy"), base.join("watch")] {
+        let Ok(mut rd) = tokio::fs::read_dir(&dir).await else {
+            continue;
+        };
+        while let Ok(Some(e)) = rd.next_entry().await {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !(name.ends_with(".part") || (name.ends_with(".json") && name != "log.json")) {
+                continue;
+            }
+            let old = e
+                .metadata()
+                .await
+                .ok()
+                .filter(|m| m.is_file())
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > STALE_PART);
+            if old {
+                let _ = tokio::fs::remove_file(e.path()).await;
+            }
+        }
+    }
+}
+
 /// Stream `body` into `file`; returns the bytes written or an error text.
 async fn write_body(file: &mut tokio::fs::File, body: Body, max: u64) -> Result<u64, String> {
     let mut stream = body.into_data_stream();
@@ -586,10 +652,8 @@ async fn upload_patch(
         length,
     };
     if offset == 0 {
-        let free = crate::services::system::disk_space(&state.config.data_dir)
-            .map(|(f, _)| f)
-            .unwrap_or(u64::MAX);
-        if free < length.saturating_add(KEEP_FREE) {
+        cleanup_stale_parts(&state).await;
+        if !room_for(&state, length - offset) {
             return fpp_error(
                 StatusCode::INSUFFICIENT_STORAGE,
                 "PixelPlus is out of storage space for that file.",
@@ -626,6 +690,14 @@ async fn upload_patch(
         return fpp_error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "That chunk goes past Upload-Length.",
+        );
+    }
+    // Several uploads may run at once: check before every chunk, not only
+    // at the start, so together they can't fill the SD card.
+    if !room_for(&state, room) {
+        return fpp_error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "PixelPlus is out of storage space for that file.",
         );
     }
     let mut file = match tokio::fs::OpenOptions::new()
@@ -793,8 +865,16 @@ async fn legacy_upload(
     let tag = &crate::cluster::sig::sha256_hex(name.as_bytes())[..20];
     let path = dir.join(format!("{tag}.part"));
     let max = content::FSEQ_MAX;
-    if header_u64(&headers, header::CONTENT_LENGTH.as_str()).is_some_and(|c| c > max) {
+    let announced = header_u64(&headers, header::CONTENT_LENGTH.as_str());
+    if announced.is_some_and(|c| c > max) {
         return fpp_error(StatusCode::PAYLOAD_TOO_LARGE, "That file is too large.");
+    }
+    cleanup_stale_parts(&state).await;
+    if !room_for(&state, announced.unwrap_or(max)) {
+        return fpp_error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "PixelPlus is out of storage space for that file.",
+        );
     }
     let mut f = match tokio::fs::File::create(&path).await {
         Ok(f) => f,
@@ -1313,7 +1393,7 @@ async fn scan_once(state: &AppState, folder: &FsPath, seen: &mut Seen) -> Result
         let tmp_dir = upload_dir(state).join("watch");
         let _ = tokio::fs::create_dir_all(&tmp_dir).await;
         let tmp = tmp_dir.join(format!("{}.part", new_id()));
-        let entry = match tokio::fs::copy(&path, &tmp).await {
+        let entry = match copy_nofollow(&path, &tmp).await {
             Ok(_) => finish(state, kind, tmp, &name, size, "folder").await,
             Err(err) => {
                 let _ = tokio::fs::remove_file(&tmp).await;
@@ -1353,6 +1433,31 @@ async fn scan_once(state: &AppState, folder: &FsPath, seen: &mut Seen) -> Result
     }
     *seen = now_seen;
     Ok(())
+}
+
+/// Copy a regular file, never through a symlink: the watch folder may be a
+/// network share others can write to, and a file swapped for a link to a
+/// daemon-only file (keys, the show) between the scan and the copy must not
+/// be imported. Returns the bytes copied.
+pub async fn copy_nofollow(src: &FsPath, dst: &FsPath) -> std::io::Result<u64> {
+    let (src, dst) = (src.to_path_buf(), dst.to_path_buf());
+    tokio::task::spawn_blocking(move || {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let mut f = opts.open(&src)?;
+        if !f.metadata()?.is_file() {
+            return Err(std::io::Error::other("not a regular file"));
+        }
+        let mut out = std::fs::File::create(&dst)?;
+        std::io::copy(&mut f, &mut out)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 /// Start the watch-folder task (called from `services::profiles::start`).

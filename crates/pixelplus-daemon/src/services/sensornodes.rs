@@ -80,6 +80,9 @@ pub const OFFLINE_AFTER: Duration = Duration::from_secs(35);
 const AMPS_FRESH: Duration = Duration::from_secs(30);
 /// Most inputs per node.
 pub const MAX_INPUTS: usize = 8;
+/// Most not-yet-adopted nodes remembered at once: beacons are unauthenticated,
+/// so a flood of made-up ids from the LAN must not grow memory without end.
+pub const MAX_DISCOVERED: usize = 64;
 
 const MAC_HEX_LEN: usize = 64;
 /// `,"mac":"` + 64 hex + `"}`
@@ -661,10 +664,12 @@ fn save_keys(state: &AppState, f: impl FnOnce(&mut HashMap<String, String>)) -> 
     let path = keys_path(&state.config.data_dir);
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(&*map).map_err(ApiError::internal)?;
+    // A leftover temp file may be readable: never write keys into it.
+    let _ = std::fs::remove_file(&tmp);
     {
         use std::io::Write;
         let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
+        opts.write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -753,7 +758,21 @@ pub async fn on_datagram(state: &AppState, bytes: &[u8], from: SocketAddr) -> Op
             if b.proto != 0 && b.proto != PROTO {
                 tracing::debug!("sensor node {} speaks protocol {}", b.id, b.proto);
             }
-            st.discovered.lock().insert(
+            let mut map = st.discovered.lock();
+            if !map.contains_key(&b.id) && map.len() >= MAX_DISCOVERED {
+                map.retain(|_, d| d.seen.elapsed() < DISCOVERY_TTL);
+                if map.len() >= MAX_DISCOVERED {
+                    // Still full of live beacons: forget the one heard least recently.
+                    if let Some(oldest) = map
+                        .iter()
+                        .min_by_key(|(_, d)| d.seen)
+                        .map(|(k, _)| k.clone())
+                    {
+                        map.remove(&oldest);
+                    }
+                }
+            }
+            map.insert(
                 b.id.clone(),
                 Discovered {
                     ip: from.ip(),
