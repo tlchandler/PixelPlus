@@ -197,6 +197,8 @@ PropSegment {                   // a run of consecutive prop pixels on one outpu
 }
 
 PropLayout { x: number, y: number, w: number, h: number, rotation: number, points?: [number,number][] }
+// Coordinates: y-down canvas ("world units"; imported layouts keep xLights world units). x,y = top-left of the
+// box, rotation = degrees clockwise around the box centre, points normalized with [0,0] = top-left of the box.
 // points = normalized (0..1) per-pixel positions within the w×h box; if absent, derived from `kind`.
 
 PropGroup { id, name, propIds: string[], color?: string }
@@ -378,6 +380,8 @@ frames: zstd-compressed blocks, each block = up to 64 frames; block index table 
 The leader uses the same renderer for its own outputs (it plays from the full fseq directly).
 
 ### 7.4 Sync
+* Effects sent to followers (sync packets, commands, manifests) must be copies passed through
+  `effects::stamp_world_bounds(&mut copy, &show.props)` so display-wide effects line up across nodes.
 * Leader broadcasts (UDP 32320, and unicast to adopted followers) **sync packets** every 250 ms
   while playing and on every state change:
   `{"t":"sync","leader":id,"showVersion","state":"playing|paused|stopped|effect","item":{type,id},"startedAtMs":<leader monotonic ms>,"posMs":number,"sentAtMs":number,"effect"?:EffectPreset,"brightness":number}`
@@ -415,7 +419,7 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `PUT /nodes/:id/outputs/:index` | OutputConfig |
 | CRUD `/receivers`, `/props`, `/prop-groups`, `/effects`, `/playlists`, `/dj-clips` | `GET` list, `POST` create, `GET/PUT/DELETE /:id` |
 | `POST /props/bulk` | {ops:[{op:"update"|"delete", id, patch?}]} |
-| `POST /import/xlights` | multipart `rgbeffects` (+`networks`) → `ImportPreview` {props, controllers:[{name, suggestedNodeId, ports}], warnings[]} |
+| `POST /import/xlights` | multipart `rgbeffects` (+`networks`) → `ImportPreview` {props, controllers:[{name, suggestedNodeId, ip, protocol, ports, propCount}], groups, warnings[]}. In the preview, `segments[].nodeId` holds the **xLights controller name** (placeholder) until applied |
 | `POST /import/xlights/apply` | {preview, controllerMap:{xlightsControllerName: nodeId}} → Show |
 | `GET /sequences`, `POST /sequences` (multipart fseq + optional audio) , `GET/PUT/DELETE /sequences/:id` | |
 | `GET /sequences/:id/thumbnail` | PNG |
@@ -433,6 +437,7 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `GET /health` | HealthReport {ok, checks:[{id, label, status:"ok"|"warn"|"fail", detail}]} |
 | `POST /health/run` | run pre-show check now |
 | `GET /snapshots`, `POST /snapshots {label}`, `POST /snapshots/:id/restore`, `GET /snapshots/:id/download`, `POST /snapshots/import` (multipart), `DELETE /snapshots/:id` | |
+| `GET /effects/catalog` | `effect_catalog()` → [{kind, label, description, params: ParamSpec[]}]; `GET /effects/schema` → {kind: ParamSpec[]} ; `GET /effects/builtin` → builtin presets |
 | `GET /tts/status` | {mode:"device"|"browser", available:boolean, voices:[{id, name, language, gender}] } |
 | `POST /tts/render` | {lines, speed} → audio/mpeg (device mode) |
 | `POST /dj-clips/:id/render` | render on device → updates mediaId |

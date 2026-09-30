@@ -38,8 +38,8 @@
 		class:sel
 		class:clickable={!!onjack}
 		transform="translate({x} {y})"
-		role={onjack ? 'button' : undefined}
-		tabindex={onjack ? 0 : undefined}
+		role="button"
+		tabindex={onjack ? 0 : -1}
 		aria-label={onjack ? `Jack ${jack}${receivers[jack] ? `, ${receivers[jack]} receiver` : ''}` : undefined}
 		onclick={() => onjack?.(jack)}
 		onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onjack?.(jack))}

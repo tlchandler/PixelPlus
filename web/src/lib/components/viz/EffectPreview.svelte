@@ -3,7 +3,7 @@
 	import { renderEffect } from '$lib/effects/render';
 	import { derivePoints } from '$lib/util/geometry';
 
-	let { effect, params, height = 120, animate = true }: { effect: EffectKind; params: EffectParams; height?: number; animate?: boolean } =
+	let { kind: effectKind, params, height = 120, animate = true }: { kind: EffectKind; params: EffectParams; height?: number; animate?: boolean } =
 		$props();
 
 	let canvas: HTMLCanvasElement | undefined = $state();
@@ -46,7 +46,7 @@
 		if (!canvas || !visible) return;
 		const c = canvas;
 		const ctx = c.getContext('2d')!;
-		const kind = effect;
+		const kind = effectKind;
 		const prm = $state.snapshot(params) as EffectParams;
 		const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 		let raf = 0;
@@ -86,7 +86,7 @@
 	});
 </script>
 
-<canvas bind:this={canvas} style:height="{height}px" role="img" aria-label="Animated preview of the {effect} effect"></canvas>
+<canvas bind:this={canvas} style:height="{height}px" aria-label="Animated preview of the {effectKind} effect"></canvas>
 
 <style>
 	canvas {

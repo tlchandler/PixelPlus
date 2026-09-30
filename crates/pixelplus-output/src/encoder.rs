@@ -616,7 +616,6 @@ mod tests {
             .unwrap();
         assert!(!r.full_rewrite);
         assert_eq!((r.data_lines, r.lines_written), (1, 8));
-        drop(fb);
         let fresh = enc.encode_to_vec(&OutputFrameRef::new(vec![&short])).unwrap();
         assert_eq!(words, fresh, "incremental result must equal a fresh encode");
     }

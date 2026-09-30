@@ -66,7 +66,9 @@ fn attr<'a>(n: Node<'a, 'a>, name: &str) -> Option<&'a str> {
 }
 
 fn attr_u32(n: Node, name: &str) -> Option<u32> {
-    attr(n, name).and_then(|s| s.parse::<i64>().ok()).map(|v| v.clamp(0, u32::MAX as i64) as u32)
+    attr(n, name)
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|v| v.clamp(0, u32::MAX as i64) as u32)
 }
 
 impl Networks {
@@ -165,7 +167,11 @@ impl Networks {
         self.controllers
             .iter()
             .find(|c| c.name == name)
-            .or_else(|| self.controllers.iter().find(|c| c.name.eq_ignore_ascii_case(name)))
+            .or_else(|| {
+                self.controllers
+                    .iter()
+                    .find(|c| c.name.eq_ignore_ascii_case(name))
+            })
     }
 
     /// Controller whose channel range contains absolute channel `ch` (1-based).
@@ -182,11 +188,15 @@ impl Networks {
             .flat_map(|c| c.outputs.iter())
             .find(|o| {
                 o.universe == universe
-                    && ip.map_or(true, |ip| {
-                        o.ip.as_deref().is_some_and(|oip| oip.eq_ignore_ascii_case(ip))
-                    })
+                    && match ip {
+                        None => true,
+                        Some(ip) => {
+                            o.ip.as_deref()
+                                .is_some_and(|oip| oip.eq_ignore_ascii_case(ip))
+                        }
+                    }
             })
-            .map(|o| o.start + ch.saturating_sub(1))
+            .map(|o| o.start.saturating_add(ch.saturating_sub(1)))
     }
 
     /// Total channels of all controllers.

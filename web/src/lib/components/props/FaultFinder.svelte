@@ -1,0 +1,147 @@
+<script lang="ts">
+	import type { FaultStep, Prop } from '$lib/api/types';
+	import { api } from '$lib/api/client';
+	import Modal from '$lib/components/ui/Modal.svelte';
+	import { Search, CircleCheck, ThumbsUp, ThumbsDown, Wrench } from '@lucide/svelte';
+
+	let { open = $bindable(false), prop }: { open?: boolean; prop: Prop | null } = $props();
+
+	let step = $state<FaultStep | null>(null);
+	let busy = $state(false);
+	let error = $state('');
+
+	async function start() {
+		if (!prop) return;
+		busy = true;
+		error = '';
+		try {
+			step = await api.faultStart(prop.id);
+		} catch (e) {
+			error = (e as Error).message;
+		} finally {
+			busy = false;
+		}
+	}
+	async function answer(lit: boolean) {
+		if (!step) return;
+		busy = true;
+		try {
+			step = await api.faultAnswer(step.session, lit);
+		} catch (e) {
+			error = (e as Error).message;
+		} finally {
+			busy = false;
+		}
+	}
+	function close() {
+		if (step && !step.done) api.faultStop().catch(() => {});
+		step = null;
+		open = false;
+	}
+	$effect(() => {
+		if (!open) step = null;
+	});
+</script>
+
+<Modal bind:open title="Find a faulty pixel" subtitle={prop?.name} size="md" onclose={close}>
+	{#if !step}
+		<div class="intro">
+			<div class="halo"><Search size={26} /></div>
+			<p>When part of a prop flickers, shows the wrong colors or stays dark, one pixel (or the joint just before it) is usually to blame.</p>
+			<p class="muted">PixelPlus lights the prop a section at a time and asks you whether it looks right. It takes about {Math.ceil(Math.log2((prop?.pixelCount ?? 2) + 1))} questions. Stand where you can see <strong>{prop?.name}</strong>.</p>
+			{#if error}<p class="err small">{error}</p>{/if}
+		</div>
+	{:else if step.done}
+		<div class="intro">
+			<div class="halo {step.result?.pixelIndex == null ? 'ok' : ''}">{#if step.result?.pixelIndex == null}<CircleCheck size={26} />{:else}<Wrench size={26} />{/if}</div>
+			{#if step.result?.pixelIndex != null}
+				<div class="found">Pixel <span class="num">{step.result.pixelIndex + 1}</span></div>
+			{/if}
+			<p>{step.result?.message}</p>
+		</div>
+	{:else}
+		<div class="q">
+			<div class="row between small faint"><span>Question {step.step} of about {step.totalSteps}</span><span class="num">{Math.round((step.step / step.totalSteps) * 100)}%</span></div>
+			<div class="progress"><span style:width="{(step.step / step.totalSteps) * 100}%"></span></div>
+			<div class="strip" aria-hidden="true">
+				{#each Array(Math.min(60, prop?.pixelCount ?? 0)) as _, i (i)}
+					{@const idx = Math.floor((i / Math.min(60, prop?.pixelCount ?? 1)) * (prop?.pixelCount ?? 1))}
+					<span class:lit={idx >= step.litFrom && idx < step.litTo}></span>
+				{/each}
+			</div>
+			<p class="question">{step.question}</p>
+		</div>
+	{/if}
+	{#snippet footer()}
+		{#if !step}
+			<button class="btn ghost" onclick={close}>Cancel</button>
+			<button class="btn primary" onclick={start} disabled={busy}>Start — light the prop</button>
+		{:else if step.done}
+			<button class="btn primary" onclick={close}>Done</button>
+		{:else}
+			<button class="btn ghost" onclick={close}>Stop</button>
+			<button class="btn" disabled={busy} onclick={() => answer(false)}><ThumbsDown size={16} /> No, something’s wrong</button>
+			<button class="btn primary" disabled={busy} onclick={() => answer(true)}><ThumbsUp size={16} /> Yes, all good</button>
+		{/if}
+	{/snippet}
+</Modal>
+
+<style>
+	.intro {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 12px;
+		padding: 8px 8px 0;
+	}
+	.halo {
+		width: 60px;
+		height: 60px;
+		border-radius: 18px;
+		display: grid;
+		place-items: center;
+		background: var(--accent-soft);
+		color: var(--accent);
+	}
+	.halo.ok {
+		background: var(--green-soft);
+		color: var(--green);
+	}
+	.found {
+		font-size: 32px;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+	}
+	.q {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.strip {
+		display: flex;
+		gap: 2px;
+		padding: 14px;
+		border-radius: 12px;
+		background: #060608;
+		margin: 6px 0;
+	}
+	.strip span {
+		flex: 1;
+		height: 10px;
+		border-radius: 3px;
+		background: #1a1b20;
+		transition: background 200ms;
+	}
+	.strip span.lit {
+		background: #fff;
+		box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+	}
+	.question {
+		font-size: 15px;
+		font-weight: 540;
+	}
+	.err {
+		color: var(--red);
+	}
+</style>

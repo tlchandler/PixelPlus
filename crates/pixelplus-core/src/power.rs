@@ -184,7 +184,11 @@ struct Plan {
 
 fn lut_for(brightness: u8, gamma: f32) -> [u16; 256] {
     let b = brightness.min(100) as f32 / 100.0;
-    let g = if gamma.is_finite() && gamma > 0.0 { gamma } else { 1.0 };
+    let g = if gamma.is_finite() && gamma > 0.0 {
+        gamma
+    } else {
+        1.0
+    };
     let mut lut = [0u16; 256];
     for (v, slot) in lut.iter_mut().enumerate() {
         // Scaled by 256 to keep precision in integer sums.
@@ -208,7 +212,10 @@ fn build_plan(show: &Show) -> (Plan, Vec<String>) {
         }
         let ma = prop.ma_per_pixel();
         if !(ma.is_finite() && ma >= 0.0) {
-            warnings.push(format!("prop '{}' has an invalid milliamps-per-pixel value", prop.name));
+            warnings.push(format!(
+                "prop '{}' has an invalid milliamps-per-pixel value",
+                prop.name
+            ));
             continue;
         }
         for seg in &prop.segments {
@@ -317,7 +324,10 @@ impl Accum {
             }
             let end = (t.src + t.len).min(frame.len());
             let lut = &plan.outputs[t.out].lut;
-            let units: u64 = frame[t.src..end].iter().map(|&b| lut[b as usize] as u64).sum();
+            let units: u64 = frame[t.src..end]
+                .iter()
+                .map(|&b| lut[b as usize] as u64)
+                .sum();
             let ma = units as f64 * t.ma_per_unit;
             self.frame_out[t.out] += ma;
             self.frame_prop[t.prop] += ma;
@@ -588,7 +598,8 @@ mod tests {
         let mut s = show();
         s.props[0].max_milliamps_per_pixel = Some(80.0); // 8 A full white on port 1
         s.nodes[0].outputs[1].brightness = 50;
-        let mut w = FseqWriter::new(Cursor::new(Vec::new()), FseqWriterOptions::new(450, 25)).unwrap();
+        let mut w =
+            FseqWriter::new(Cursor::new(Vec::new()), FseqWriterOptions::new(450, 25)).unwrap();
         for f in 0..100u32 {
             // Odd frames full white, even frames black.
             let v = if f % 2 == 1 { 255 } else { 0 };
@@ -596,20 +607,43 @@ mod tests {
         }
         let bytes = w.finish().unwrap().into_inner();
         let mut fseq = FseqFile::from_reader(Cursor::new(bytes)).unwrap();
-        let e = estimate_power(&s, &mut fseq, &PowerOptions { sample_every: Some(1), target_samples: 0 }).unwrap();
+        let e = estimate_power(
+            &s,
+            &mut fseq,
+            &PowerOptions {
+                sample_every: Some(1),
+                target_samples: 0,
+            },
+        )
+        .unwrap();
         assert_eq!(e.frames_sampled, 100);
         let o1 = &e.per_output[0];
         assert!((o1.peak_amps - 8.0).abs() < 0.01);
         assert!((o1.avg_amps - 4.0).abs() < 0.01);
         let o2 = &e.per_output[1];
-        assert!((o2.peak_amps - 1.5).abs() < 0.02, "brightness 50% halves 3 A: {}", o2.peak_amps);
+        assert!(
+            (o2.peak_amps - 1.5).abs() < 0.02,
+            "brightness 50% halves 3 A: {}",
+            o2.peak_amps
+        );
         let ports = &e.per_receiver_port;
         assert_eq!(ports[0].status, PowerStatus::Warn); // peak 8 A > 6 A, avg 4 A < 6 A
         assert_eq!(ports[1].status, PowerStatus::Ok);
-        assert!(e.warnings.iter().any(|w| w.contains("Garage") && w.contains("port 1")));
+        assert!(e
+            .warnings
+            .iter()
+            .any(|w| w.contains("Garage") && w.contains("port 1")));
 
         // Sampling every 2nd frame from frame 0 sees only black frames.
-        let e2 = estimate_power(&s, &mut fseq, &PowerOptions { sample_every: Some(2), target_samples: 0 }).unwrap();
+        let e2 = estimate_power(
+            &s,
+            &mut fseq,
+            &PowerOptions {
+                sample_every: Some(2),
+                target_samples: 0,
+            },
+        )
+        .unwrap();
         assert_eq!(e2.frames_sampled, 50);
         assert_eq!(e2.per_output[0].peak_amps, 0.0);
 

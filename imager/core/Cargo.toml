@@ -1,0 +1,40 @@
+[package]
+name = "pixelplus-imager-core"
+description = "PixelPlus Imager core: image writing, verification and pixelplus.txt injection (no GUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "pixelplus_imager_core"
+
+[[bin]]
+name = "pixelplus-imager-cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
+fatfs = "0.3.6"
+lzma-rs = "0.3"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+plist = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_Security",
+] }
+
+[dev-dependencies]
+tempfile = "3"

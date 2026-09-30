@@ -43,7 +43,7 @@
 	});
 </script>
 
-<canvas bind:this={canvas} style:height="{height}px" aria-label="Live preview of {prop.name}" role="img"></canvas>
+<canvas bind:this={canvas} style:height="{height}px" aria-label="Live preview of {prop.name}"></canvas>
 
 <style>
 	canvas {

@@ -3,7 +3,7 @@ export interface Toast {
 	kind: 'info' | 'success' | 'warning' | 'error';
 	message: string;
 	detail?: string;
-	action?: { label: string; run: () => void | Promise<void> };
+	action?: { label: string; run: () => unknown };
 	timeout: number;
 }
 

@@ -59,7 +59,7 @@ pub fn default_points(kind: PropKind, pixel_count: u32) -> Vec<[f32; 2]> {
         PropKind::Spinner => {
             let arms = [8usize, 6, 12, 4, 5, 3, 2]
                 .into_iter()
-                .find(|a| n % a == 0 && n / a >= 2)
+                .find(|&a| divides(a, n) && n / a >= 2)
                 .unwrap_or(1);
             spinner_points(n, arms)
         }
@@ -89,7 +89,10 @@ pub fn default_size(kind: PropKind, pixel_count: u32) -> (f32, f32) {
         }
         PropKind::Matrix | PropKind::Custom | PropKind::Other => {
             let (w, h) = grid_dims(pixel_count);
-            ((w as f32 * s).clamp(20.0, 600.0), (h as f32 * s).clamp(20.0, 600.0))
+            (
+                (w as f32 * s).clamp(20.0, 600.0),
+                (h as f32 * s).clamp(20.0, 600.0),
+            )
         }
         PropKind::Circle | PropKind::Star | PropKind::Spinner => {
             let d = (n * s / PI).clamp(40.0, 300.0);
@@ -182,7 +185,11 @@ pub fn bounds(props: &[Prop]) -> Option<(f32, f32, f32, f32)> {
 /// but no points keep their box. Returns the number of props placed.
 pub fn auto_arrange(props: &mut [Prop]) -> usize {
     let (left, top, width) = match bounds(props) {
-        Some((x0, _, x1, y1)) => (x0, y1 + ARRANGE_GAP * 2.0, (x1 - x0).max(DEFAULT_CANVAS_WIDTH)),
+        Some((x0, _, x1, y1)) => (
+            x0,
+            y1 + ARRANGE_GAP * 2.0,
+            (x1 - x0).max(DEFAULT_CANVAS_WIDTH),
+        ),
         None => (0.0, 0.0, DEFAULT_CANVAS_WIDTH),
     };
     let mut x = left;
@@ -223,14 +230,21 @@ pub fn normalize(points: &[[f32; 2]]) -> ([f32; 2], [f32; 2], Vec<[f32; 2]>) {
     }
     let mut min = [f32::INFINITY; 2];
     let mut max = [f32::NEG_INFINITY; 2];
-    for p in points.iter().filter(|p| p[0].is_finite() && p[1].is_finite()) {
+    for p in points
+        .iter()
+        .filter(|p| p[0].is_finite() && p[1].is_finite())
+    {
         for a in 0..2 {
             min[a] = min[a].min(p[a]);
             max[a] = max[a].max(p[a]);
         }
     }
     if !min[0].is_finite() {
-        return ([0.0, 0.0], [MIN_EDGE, MIN_EDGE], vec![[0.5, 0.5]; points.len()]);
+        return (
+            [0.0, 0.0],
+            [MIN_EDGE, MIN_EDGE],
+            vec![[0.5, 0.5]; points.len()],
+        );
     }
     let mut size = [max[0] - min[0], max[1] - min[1]];
     let mut origin = min;
@@ -294,8 +308,12 @@ fn tree_points(n: usize, strands: usize, per: usize) -> Vec<[f32; 2]> {
         .map(|i| {
             let s = (i / per).min(strands - 1);
             let k = i % per;
-            let up = if s % 2 == 0 { k } else { per - 1 - k };
-            let t = if per > 1 { up as f32 / (per - 1) as f32 } else { 0.5 };
+            let up = if s & 1 == 0 { k } else { per - 1 - k };
+            let t = if per > 1 {
+                up as f32 / (per - 1) as f32
+            } else {
+                0.5
+            };
             let xb = (s as f32 + 0.5) / strands as f32 * 2.0 - 1.0;
             [xb * (1.0 - t * 0.9), -t * 2.0]
         })
@@ -314,7 +332,11 @@ fn ring_points(n: usize, r: f32) -> Vec<[f32; 2]> {
 /// Points evenly spaced along the outline of a star with `tips` points.
 pub(crate) fn star_points(n: usize, tips: usize, ratio: f32) -> Vec<[f32; 2]> {
     let tips = tips.max(2);
-    let ratio = if ratio.is_finite() && ratio > 0.1 { ratio } else { 2.618 };
+    let ratio = if ratio.is_finite() && ratio > 0.1 {
+        ratio
+    } else {
+        2.618
+    };
     let verts: Vec<[f32; 2]> = (0..tips * 2)
         .map(|v| {
             let r = if v % 2 == 0 { 1.0 } else { 1.0 / ratio };
@@ -392,7 +414,11 @@ pub(crate) fn along_path(path: &[[f32; 2]], n: usize, closed: bool) -> Vec<[f32;
             let mut d = t * total;
             for (s, &l) in seg_len.iter().enumerate() {
                 if d <= l || s == seg_len.len() - 1 {
-                    let f = if l > 0.0 { (d / l).clamp(0.0, 1.0) } else { 0.0 };
+                    let f = if l > 0.0 {
+                        (d / l).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
                     let a = path[s];
                     let b = path[s + 1];
                     return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
@@ -410,11 +436,11 @@ fn grid_dims(n: u32) -> (usize, usize) {
     // Prefer an exact factorization near sqrt(2n).
     let target = ((2 * n) as f32).sqrt().round() as usize;
     let mut best = None;
-    for w in (1..=n).filter(|w| n % w == 0) {
+    for w in (1..=n).filter(|&w| divides(w, n)) {
         let h = n / w;
         if w >= h {
             let score = w.abs_diff(target);
-            if best.map_or(true, |(_, _, s)| score < s) {
+            if !matches!(best, Some((_, _, s)) if score >= s) {
                 best = Some((w, h, score));
             }
         }
@@ -428,9 +454,14 @@ fn grid_dims(n: u32) -> (usize, usize) {
     }
 }
 
+/// `d` divides `n` (written without `is_multiple_of` to keep the crate's MSRV at 1.80).
+fn divides(d: usize, n: usize) -> bool {
+    d != 0 && n - (n / d) * d == 0
+}
+
 fn pick_strands(n: u32) -> usize {
     for s in [16u32, 12, 24, 8, 32, 10, 20, 6, 4] {
-        if n % s == 0 && n / s >= 4 {
+        if divides(s as usize, n as usize) && n / s >= 4 {
             return s as usize;
         }
     }
@@ -533,8 +564,10 @@ mod tests {
             assert_eq!(l.points.as_ref().unwrap().len(), 400);
         }
         // Rows wrap: not all on one line.
-        let ys: std::collections::BTreeSet<i32> =
-            props[1..].iter().map(|p| p.layout.as_ref().unwrap().y as i32).collect();
+        let ys: std::collections::BTreeSet<i32> = props[1..]
+            .iter()
+            .map(|p| p.layout.as_ref().unwrap().y as i32)
+            .collect();
         assert!(ys.len() > 1);
         assert_eq!(auto_arrange(&mut props), 0);
     }

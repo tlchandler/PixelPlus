@@ -230,6 +230,9 @@ pub struct FseqFile<R = BufReader<File>> {
     cache: BlockCache,
     /// Scratch buffer holding one stored (compact) frame of a sparse uncompressed file.
     scratch: Vec<u8>,
+    /// Reader position when known, so sequential reads skip the seek (and keep any
+    /// read-ahead buffer of the underlying reader).
+    pos: Option<u64>,
 }
 
 impl<R> std::fmt::Debug for FseqFile<R> {
@@ -300,7 +303,9 @@ impl<R: Read + Seek> FseqFile<R> {
             )));
         }
         if data_offset as u64 > file_len {
-            return Err(FseqError::Format("channel data offset beyond end of file".into()));
+            return Err(FseqError::Format(
+                "channel data offset beyond end of file".into(),
+            ));
         }
         let mut raw = vec![0u8; data_offset];
         reader.seek(SeekFrom::Start(0))?;
@@ -329,7 +334,8 @@ impl<R: Read + Seek> FseqFile<R> {
 
         if major == 1 {
             let var_start = (u16le(&raw, 8) as usize).clamp(FIXED_V1_HEADER, data_offset);
-            header.variable_headers = parse_variable_headers(&raw, var_start, &mut reader, file_len)?;
+            header.variable_headers =
+                parse_variable_headers(&raw, var_start, &mut reader, file_len)?;
         } else {
             let compression = Compression::from_code(raw[20] & 0x0F).ok_or_else(|| {
                 FseqError::Format(format!("unknown compression type {}", raw[20] & 0x0F))
@@ -381,7 +387,8 @@ impl<R: Read + Seek> FseqFile<R> {
                 header.sparse_ranges.push(SparseRange { start, len });
             }
             let var_start = (u16le(&raw, 8) as usize).clamp(pos, data_offset);
-            header.variable_headers = parse_variable_headers(&raw, var_start, &mut reader, file_len)?;
+            header.variable_headers =
+                parse_variable_headers(&raw, var_start, &mut reader, file_len)?;
 
             if compression != Compression::None {
                 if blocks.is_empty() {
@@ -441,6 +448,7 @@ impl<R: Read + Seek> FseqFile<R> {
             blocks,
             cache: BlockCache::default(),
             scratch,
+            pos: None,
         })
     }
 
@@ -506,14 +514,13 @@ impl<R: Read + Seek> FseqFile<R> {
         let sparse = !self.header.sparse_ranges.is_empty();
 
         if self.header.compression == Compression::None {
-            let pos = self.header.channel_data_offset + idx as u64 * cc as u64;
-            self.reader.seek(SeekFrom::Start(pos))?;
+            let at = self.header.channel_data_offset + idx as u64 * cc as u64;
             if sparse {
-                self.reader.read_exact(&mut self.scratch)?;
+                read_at(&mut self.reader, &mut self.pos, at, &mut self.scratch)?;
                 scatter_sparse(&self.header.sparse_ranges, &self.scratch, buf);
             } else {
                 let n = cc.min(buf.len());
-                self.reader.read_exact(&mut buf[..n])?;
+                read_at(&mut self.reader, &mut self.pos, at, &mut buf[..n])?;
                 buf[n..].fill(0);
             }
             return Ok(());
@@ -595,8 +602,12 @@ impl<R: Read + Seek> FseqFile<R> {
         let len = usize::try_from(b.len)
             .map_err(|_| FseqError::Format("compressed block too large".into()))?;
         self.cache.compressed.resize(len, 0);
-        self.reader.seek(SeekFrom::Start(b.offset))?;
-        self.reader.read_exact(&mut self.cache.compressed)?;
+        read_at(
+            &mut self.reader,
+            &mut self.pos,
+            b.offset,
+            &mut self.cache.compressed,
+        )?;
 
         self.cache.data.clear();
         self.cache.data.reserve(expected);
@@ -659,6 +670,27 @@ impl<R: Read + Seek> FseqFile<R> {
         self.cache.block = Some(block);
         Ok(())
     }
+}
+
+/// Read exactly `buf.len()` bytes at `at`, seeking only when the tracked position
+/// differs. On failure the position becomes unknown.
+fn read_at<R: Read + Seek>(
+    reader: &mut R,
+    pos: &mut Option<u64>,
+    at: u64,
+    buf: &mut [u8],
+) -> io::Result<()> {
+    let res = (|| {
+        if *pos != Some(at) {
+            reader.seek(SeekFrom::Start(at))?;
+        }
+        reader.read_exact(buf)
+    })();
+    *pos = match res {
+        Ok(()) => Some(at + buf.len() as u64),
+        Err(_) => None,
+    };
+    res
 }
 
 /// Copy a compact sparse frame into absolute channel space.
@@ -867,7 +899,9 @@ impl<W: Write + Seek> FseqWriter<W> {
             return Err(FseqError::Writer("frame_ms must be at least 1".into()));
         }
         if opts.frames_per_block == 0 {
-            return Err(FseqError::Writer("frames_per_block must be at least 1".into()));
+            return Err(FseqError::Writer(
+                "frames_per_block must be at least 1".into(),
+            ));
         }
         if opts.max_blocks == 0 || opts.max_blocks > 4095 {
             return Err(FseqError::Writer("max_blocks must be 1..=4095".into()));
@@ -1134,7 +1168,10 @@ mod tests {
             f.media_filename().as_deref(),
             Some("C:\\Show\\Audio\\Jingle Bells.mp3")
         );
-        assert_eq!(f.header().media_basename().as_deref(), Some("Jingle Bells.mp3"));
+        assert_eq!(
+            f.header().media_basename().as_deref(),
+            Some("Jingle Bells.mp3")
+        );
         assert_eq!(f.header().producer().as_deref(), Some("PixelPlus"));
         if compression != Compression::None {
             assert_eq!(f.block_count(), 8);
@@ -1172,7 +1209,10 @@ mod tests {
         let mut opts = FseqWriterOptions::new(1000, 50);
         opts.sparse_ranges = vec![
             SparseRange { start: 10, len: 30 },
-            SparseRange { start: 600, len: 90 },
+            SparseRange {
+                start: 600,
+                len: 90,
+            },
         ];
         opts.frames_per_block = 4;
         let bytes = write_mem(opts, 10);
@@ -1223,7 +1263,10 @@ mod tests {
         let mut w = FseqWriter::new(Cursor::new(Vec::new()), opts).unwrap();
         w.write_frame(&[1, 2, 3]).unwrap();
         w.write_frame(&[1, 2, 3]).unwrap();
-        assert!(matches!(w.write_frame(&[1, 2, 3]), Err(FseqError::Writer(_))));
+        assert!(matches!(
+            w.write_frame(&[1, 2, 3]),
+            Err(FseqError::Writer(_))
+        ));
     }
 
     #[test]
@@ -1252,7 +1295,10 @@ mod tests {
         let mut buf = [0u8; 3];
         assert!(matches!(
             f.frame(2, &mut buf),
-            Err(FseqError::FrameOutOfRange { frame: 2, frame_count: 2 })
+            Err(FseqError::FrameOutOfRange {
+                frame: 2,
+                frame_count: 2
+            })
         ));
     }
 
@@ -1340,7 +1386,10 @@ mod tests {
             sha256_file(&p).unwrap(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        assert_eq!(to_hex(&sha256_file_bytes(&p).unwrap()), sha256_file(&p).unwrap());
+        assert_eq!(
+            to_hex(&sha256_file_bytes(&p).unwrap()),
+            sha256_file(&p).unwrap()
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

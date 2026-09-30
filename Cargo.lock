@@ -543,6 +543,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpiocdev"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ae5319702c7dc34334b9f5e2b73d4ffedb0544675b5931af61b3b13a13f928e"
+dependencies = [
+ "gpiocdev-uapi",
+ "thiserror",
+]
+
+[[package]]
+name = "gpiocdev-uapi"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbb160ed63d4235176759e49b7e26aa063603ec4547e458ab1ea98483040028c"
+dependencies = [
+ "bitflags",
+ "ioctl-sys",
+ "libc",
+ "thiserror",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -651,6 +673,12 @@ checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
 ]
+
+[[package]]
+name = "ioctl-sys"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bd11f3a29434026f5ff98c730b668ba74b1033637b8817940b54d040696133c"
 
 [[package]]
 name = "itoa"
@@ -954,8 +982,11 @@ dependencies = [
 name = "pixelplus-hw"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
+ "crc32fast",
+ "gpiocdev",
+ "libc",
+ "pixelplus-core",
  "rand 0.8.8",
  "serde",
  "serde_json",

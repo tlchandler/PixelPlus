@@ -71,7 +71,7 @@ impl DpiSoc {
 
     /// Longest string (LEDs per output) this SoC can carry in one frame.
     pub fn max_pixels_per_output(self) -> u32 {
-        // Reset lines are constant (10) for the default geometry.
+        // Reset lines are constant (7) for the default geometry.
         let reset = DpiGeometry::default().reset_lines;
         self.max_lines().saturating_sub(reset)
     }
@@ -264,7 +264,7 @@ mod tests {
     fn difftx_fragment() {
         let g = DpiGeometry::for_pixels(800).unwrap();
         let s = config_txt(BoardKind::Difftx, DpiSoc::Bcm283x, &g).unwrap();
-        assert!(s.contains("dtoverlay=pixelplus-dpi,vactive=810\n"), "{s}");
+        assert!(s.contains("dtoverlay=pixelplus-dpi,vactive=807\n"), "{s}");
         assert!(s.contains("gpio=4-7=op,dl\n"));
         assert!(s.contains("dtparam=i2c_arm=on"));
         assert!(!s.contains("ds3231"));
@@ -275,7 +275,7 @@ mod tests {
     fn difftxlarge_pi5_fragment() {
         let g = DpiGeometry::for_pixels(1600).unwrap();
         let s = config_txt(BoardKind::Difftxlarge, DpiSoc::Bcm2712, &g).unwrap();
-        assert!(s.contains("dtoverlay=pixelplus-dpi-pi5,vactive=1610"), "{s}");
+        assert!(s.contains("dtoverlay=pixelplus-dpi-pi5,vactive=1607"), "{s}");
         assert!(s.contains("gpio=4-23,25-27=op,dl"));
         assert!(s.contains("dtoverlay=i2c-rtc,ds3231"));
         assert!(s.contains("usb_max_current_enable=1"));
@@ -295,17 +295,17 @@ mod tests {
         let g = DpiGeometry::for_pixels(3000).unwrap();
         assert!(config_txt(BoardKind::Difftx, DpiSoc::Bcm283x, &g).is_err());
         assert!(config_txt(BoardKind::Difftx, DpiSoc::Bcm2711, &g).is_ok());
-        assert_eq!(DpiSoc::Bcm283x.max_pixels_per_output(), 2038);
+        assert_eq!(DpiSoc::Bcm283x.max_pixels_per_output(), 2041);
     }
 
     #[test]
     fn overlay_parameters_only_when_changed() {
         let mut g = DpiGeometry::for_pixels(100).unwrap();
-        assert_eq!(overlay_line(DpiSoc::Bcm2711, &g), "dtoverlay=pixelplus-dpi,vactive=110");
+        assert_eq!(overlay_line(DpiSoc::Bcm2711, &g), "dtoverlay=pixelplus-dpi,vactive=107");
         g.h_front_porch = 16;
         assert_eq!(
             overlay_line(DpiSoc::Bcm2711, &g),
-            "dtoverlay=pixelplus-dpi,hfp=16,vactive=110"
+            "dtoverlay=pixelplus-dpi,hfp=16,vactive=107"
         );
         assert!(DpiSoc::Bcm2712.overlay_source().contains("rp1_dpi"));
         assert!(DpiSoc::Bcm2711.overlay_source().contains("target = <&dpi>"));

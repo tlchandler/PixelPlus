@@ -71,7 +71,9 @@ impl OutputFrame {
 
     /// Pixel counts of all outputs.
     pub fn pixels_per_output(&self) -> Vec<u32> {
-        (0..self.output_count()).map(|i| self.pixels(i) as u32).collect()
+        (0..self.output_count())
+            .map(|i| self.pixels(i) as u32)
+            .collect()
     }
 
     /// RGB bytes of output `index0` (0-based). Empty if out of range.
@@ -452,7 +454,11 @@ impl PropMap {
             .node(node_id)
             .ok_or_else(|| MappingError::UnknownNode(node_id.to_string()))?;
         let layout = NodeMap::build_for_node(node, &show.props);
-        Ok(Self::build_with_layout(node, &show.props, layout.pixels_per_output()))
+        Ok(Self::build_with_layout(
+            node,
+            &show.props,
+            layout.pixels_per_output(),
+        ))
     }
 
     /// Build against an explicit output layout (e.g. a node map's pixel counts).
@@ -680,9 +686,11 @@ mod tests {
             vec![seg("n1", 1, 2, 6, 0, false), seg("n1", 2, 0, 4, 6, true)],
         ));
         // Prop B: 5 px at channel 30, chained after A on output 1.
-        show.props.push(prop("b", 5, 30, vec![seg("n1", 1, 8, 5, 0, false)]));
+        show.props
+            .push(prop("b", 5, 30, vec![seg("n1", 1, 8, 5, 0, false)]));
         // Prop C lives on another node.
-        show.props.push(prop("c", 5, 45, vec![seg("n2", 1, 0, 5, 0, false)]));
+        show.props
+            .push(prop("c", 5, 45, vec![seg("n2", 1, 0, 5, 0, false)]));
 
         let map = NodeMap::build(&show, "n1").unwrap();
         assert_eq!(map.pixels_per_output(), &[13, 4, 0, 0]);
@@ -697,12 +705,18 @@ mod tests {
             assert_eq!(&o1[(2 + k) * 3..(3 + k) * 3], &frame[k * 3..k * 3 + 3]);
         }
         for k in 0..5 {
-            assert_eq!(&o1[(8 + k) * 3..(9 + k) * 3], &frame[(10 + k) * 3..(11 + k) * 3]);
+            assert_eq!(
+                &o1[(8 + k) * 3..(9 + k) * 3],
+                &frame[(10 + k) * 3..(11 + k) * 3]
+            );
         }
         let o2 = out.output(1);
         for k in 0..4 {
             // prop pixel 6+k -> output pixel 3-k
-            assert_eq!(&o2[(3 - k) * 3..(4 - k) * 3], &frame[(6 + k) * 3..(7 + k) * 3]);
+            assert_eq!(
+                &o2[(3 - k) * 3..(4 - k) * 3],
+                &frame[(6 + k) * 3..(7 + k) * 3]
+            );
         }
 
         // PropMap agrees with NodeMap and with prop_pixel_location.
@@ -738,9 +752,9 @@ mod tests {
             0,
             vec![
                 seg("n1", 1, 0, 10, 0, true),
-                seg("n1", 9, 0, 10, 0, false),   // missing output
-                seg("n1", 2, 0, 50, 5, false),   // past the prop's end
-                seg("n1", 0, 0, 5, 0, false),    // output 0 is invalid
+                seg("n1", 9, 0, 10, 0, false), // missing output
+                seg("n1", 2, 0, 50, 5, false), // past the prop's end
+                seg("n1", 0, 0, 5, 0, false),  // output 0 is invalid
             ],
         ));
         let map = NodeMap::build(&show, "n1").unwrap();
@@ -757,15 +771,20 @@ mod tests {
         // Rendering into a mismatched (smaller) frame is clipped, not a panic.
         let mut small = OutputFrame::new(&[2]);
         map.render(&[1; 90], &mut small);
-        assert_eq!(NodeMap::build(&show, "zz").unwrap_err(), MappingError::UnknownNode("zz".into()));
+        assert_eq!(
+            NodeMap::build(&show, "zz").unwrap_err(),
+            MappingError::UnknownNode("zz".into())
+        );
     }
 
     #[test]
     fn adjacent_runs_are_merged() {
         let mut show = Show::default();
         show.nodes.push(node("n1", BoardKind::Difftx));
-        show.props.push(prop("a", 5, 0, vec![seg("n1", 1, 0, 5, 0, false)]));
-        show.props.push(prop("b", 5, 15, vec![seg("n1", 1, 5, 5, 0, false)]));
+        show.props
+            .push(prop("a", 5, 0, vec![seg("n1", 1, 0, 5, 0, false)]));
+        show.props
+            .push(prop("b", 5, 15, vec![seg("n1", 1, 5, 5, 0, false)]));
         let map = NodeMap::build(&show, "n1").unwrap();
         assert_eq!(map.runs().len(), 1);
         assert_eq!(map.runs()[0].pixels, 10);
@@ -776,7 +795,12 @@ mod tests {
     fn identity_slice_map_reproduces_frame() {
         let mut show = Show::default();
         show.nodes.push(node("n1", BoardKind::Difftx));
-        show.props.push(prop("a", 8, 12, vec![seg("n1", 1, 1, 4, 0, true), seg("n1", 3, 0, 4, 4, false)]));
+        show.props.push(prop(
+            "a",
+            8,
+            12,
+            vec![seg("n1", 1, 1, 4, 0, true), seg("n1", 3, 0, 4, 4, false)],
+        ));
         let map = NodeMap::build(&show, "n1").unwrap();
         let fseq_frame = frame_with_pixel_ids(20);
         let mut direct = map.new_frame();
@@ -828,10 +852,16 @@ mod tests {
         eprintln!("NodeMap::render 60×1600 px: {per_frame:?} per frame");
         // Generous bound so unoptimised debug builds on slow CI pass; release builds
         // run in well under a millisecond.
-        assert!(per_frame < std::time::Duration::from_millis(25), "{per_frame:?}");
+        assert!(
+            per_frame < std::time::Duration::from_millis(25),
+            "{per_frame:?}"
+        );
         // Spot-check one normal and one reversed prop.
         assert_eq!(&out.output(0)[0..3], &frame[0..3]);
         let rev_start = 3 * 300; // prop p1_3
-        assert_eq!(&out.output(0)[399 * 3..400 * 3], &frame[rev_start..rev_start + 3]);
+        assert_eq!(
+            &out.output(0)[399 * 3..400 * 3],
+            &frame[rev_start..rev_start + 3]
+        );
     }
 }

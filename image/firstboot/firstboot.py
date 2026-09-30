@@ -181,6 +181,16 @@ def apply_country(sysops: Sys, cc: str) -> None:
     sysops.run(["nmcli", "radio", "wifi", "on"])
 
 
+def ensure_radio(sysops: Sys, s: pptxt.Settings) -> None:
+    """Raspberry Pi OS keeps Wi-Fi soft-blocked until a country is set. PixelPlus needs the
+    radio for the setup hotspot and for Wi-Fi given without a country; without a country the
+    kernel uses the conservative world regulatory domain (2.4 GHz channels 1-11)."""
+    if not (s.hotspot or s.wifi_ssid or s.wifi2_ssid):
+        return
+    sysops.run(["rfkill", "unblock", "wifi"])
+    sysops.run(["nmcli", "radio", "wifi", "on"])
+
+
 def apply_hostname(sysops: Sys, name: str) -> None:
     LOG.info("hostname -> %s", name)
     if not sysops.run(["hostnamectl", "set-hostname", name]):
@@ -490,6 +500,8 @@ def apply(sysops: Sys, force: bool = False, allow_reboot: bool = True) -> int:
             s = apply_settings(sysops, boot_dir, path, text, state)
     else:
         s = pptxt.Settings()
+
+    ensure_radio(sysops, s)
 
     board = s.board if s.board != "auto" else None
     need_reboot = board_config(sysops, boot_dir, board, None, state, allow_reboot)

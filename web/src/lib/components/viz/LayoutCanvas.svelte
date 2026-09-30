@@ -280,7 +280,7 @@
 	}}
 	onwheel={wheel}
 	aria-label="Live display preview. Drag to pan, scroll or pinch to zoom{edit ? ', drag a prop to move it' : ''}."
-	role="img"
+
 ></canvas>
 
 <style>

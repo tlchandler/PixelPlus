@@ -1,0 +1,17 @@
+# Runtime dependencies of PixelPlus (installed without recommends to keep the image small).
+network-manager
+dnsmasq-base
+nftables
+iw
+rfkill
+avahi-daemon
+alsa-utils
+ffmpeg
+i2c-tools
+python3
+python3-venv
+python3-numpy
+python3-qrcode
+libretro-nestopia
+polkitd
+logrotate

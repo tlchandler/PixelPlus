@@ -18,7 +18,10 @@ pub(crate) struct Attrs<'a, 'i>(pub Node<'a, 'i>);
 
 impl<'a, 'i> Attrs<'a, 'i> {
     pub fn str(&self, name: &str) -> Option<&'a str> {
-        self.0.attribute(name).map(str::trim).filter(|s| !s.is_empty())
+        self.0
+            .attribute(name)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 
     pub fn raw(&self, name: &str) -> Option<&'a str> {
@@ -69,6 +72,22 @@ pub(crate) fn strtol(s: &str) -> i64 {
     } else {
         v
     }
+}
+
+/// Upper bound on the pixels of one model; anything larger is treated as corrupt input
+/// (the largest real props have tens of thousands of pixels).
+pub(crate) const MAX_MODEL_PIXELS: u64 = 1_000_000;
+
+/// Product of counts if it stays within [`MAX_MODEL_PIXELS`].
+fn pixels(parts: &[u32]) -> Option<u32> {
+    let p = parts
+        .iter()
+        .try_fold(1u64, |acc, &v| acc.checked_mul(v as u64))?;
+    (p <= MAX_MODEL_PIXELS).then_some(p as u32)
+}
+
+fn too_big() -> Shape {
+    Shape::skipped("pixel count is unreasonably large (corrupt file?)", 0)
 }
 
 fn clamp_count(v: i64) -> u32 {
@@ -190,7 +209,9 @@ pub(crate) fn shape(a: Attrs) -> Shape {
         "Icicles" => icicles(a),
         "Custom" => custom(a),
         "Sphere" => {
-            let (s, _) = grid_model(a, true);
+            let Some((s, _)) = grid_model(a, true) else {
+                return too_big();
+            };
             Shape {
                 kind: PropKind::Other,
                 points: Vec::new(),
@@ -203,11 +224,13 @@ pub(crate) fn shape(a: Attrs) -> Shape {
             }
         }
         "Cube" => {
-            let n = clamp_count(
-                a.named("CubeWidth", "parm1", 1)
-                    * a.named("CubeHeight", "parm2", 1)
-                    * a.named("CubeDepth", "parm3", 1),
-            );
+            let Some(n) = pixels(&[
+                clamp_count(a.named("CubeWidth", "parm1", 1)),
+                clamp_count(a.named("CubeHeight", "parm2", 1)),
+                clamp_count(a.named("CubeDepth", "parm3", 1)),
+            ]) else {
+                return too_big();
+            };
             let mut s = Shape::new(PropKind::Other, n, 1);
             s.placement = Placement::Boxed {
                 render_w: 1.0,
@@ -238,13 +261,12 @@ pub(crate) fn shape(a: Attrs) -> Shape {
             ));
         }
         // Smart-receiver "ts" (strings per physical port).
-        let ts = a
-            .0
-            .children()
-            .find(|c| c.has_tag_name("ControllerConnection"))
-            .and_then(|c| c.attribute("ts"))
-            .map(strtol)
-            .unwrap_or(0);
+        let ts =
+            a.0.children()
+                .find(|c| c.has_tag_name("ControllerConnection"))
+                .and_then(|c| c.attribute("ts"))
+                .map(strtol)
+                .unwrap_or(0);
         if ts > 1 {
             s.physical_strings = ((s.physical_strings as i64 / ts).max(1)) as u32;
         }
@@ -258,7 +280,7 @@ fn is_ltor(a: Attrs) -> bool {
 
 /// Bottom-to-top start (xLights default when `StartSide` is absent).
 fn is_btot(a: Attrs) -> bool {
-    a.str("StartSide").map_or(true, |s| s == "B")
+    !matches!(a.str("StartSide"), Some(s) if s != "B")
 }
 
 fn reverse_if(mut pts: Vec<[f32; 2]>, rev: bool) -> Vec<[f32; 2]> {
@@ -274,12 +296,20 @@ fn arches(a: Attrs) -> Shape {
     let layers: Vec<u32> = layer_sizes(a);
     let arches = clamp_count(a.named("NumArches", "parm1", 1)).max(1);
     let per = clamp_count(a.named("NodesPerArch", "parm2", 1)).max(1);
-    let arc = a.int("Arc").or_else(|| a.int("arc")).unwrap_or(180).clamp(1, 360) as f32;
+    let arc = a
+        .int("Arc")
+        .or_else(|| a.int("arc"))
+        .unwrap_or(180)
+        .clamp(1, 360) as f32;
     let sweep = arc.to_radians();
+    let Some(total) = pixels(&[arches, per]) else {
+        return too_big();
+    };
+    let layered = !layers.is_empty() && layers.iter().map(|&l| l as u64).sum::<u64>() == per as u64;
     let mut s;
-    if layers.is_empty() {
-        s = Shape::new(PropKind::Arch, arches * per, arches);
-        let mut pts = Vec::with_capacity((arches * per) as usize);
+    if !layered {
+        s = Shape::new(PropKind::Arch, total, arches);
+        let mut pts = Vec::with_capacity(total as usize);
         for arch in 0..arches {
             for p in layout::arc_points(per as usize, sweep) {
                 // arc_points is y-down around (0,0) radius 1.
@@ -313,7 +343,10 @@ fn candy_canes(a: Attrs) -> Shape {
     let per = clamp_count(a.named("NodesPerCane", "parm2", 1)).max(1);
     let reverse = a.flag("CandyCaneReverse");
     let sticks = a.flag("CandyCaneSticks");
-    let mut s = Shape::new(PropKind::Candycane, canes * per, canes);
+    let Some(total) = pixels(&[canes, per]) else {
+        return too_big();
+    };
+    let mut s = Shape::new(PropKind::Candycane, total, canes);
     let (stick, r) = (2.5f32, 0.5f32);
     let total = if sticks { 3.0 } else { stick + PI * r };
     let mut pts = Vec::new();
@@ -338,16 +371,24 @@ fn candy_canes(a: Attrs) -> Shape {
     s
 }
 
+/// Buffer coordinates of a matrix-like model.
+struct Grid {
+    /// `(bufX, bufY)` per node in channel order (bufY = 0 is the bottom row).
+    coords: Vec<(u32, u32)>,
+    width: u32,
+    height: u32,
+}
+
 /// Matrix-like models (matrix, tree, sphere): returns the shape (nodes/strings set) and
-/// the node buffer coordinates `(bufX, bufY)` in channel order, plus (width, height).
-fn grid_model(a: Attrs, vertical: bool) -> (Shape, (Vec<(u32, u32)>, u32, u32)) {
+/// the node buffer coordinates in channel order.
+fn grid_model(a: Attrs, vertical: bool) -> Option<(Shape, Grid)> {
     let strings = clamp_count(a.named("NumStrings", "parm1", 1)).max(1);
     let nps = clamp_count(a.named("NodesPerString", "parm2", 1)).max(1);
     let sps = clamp_count(a.named("StrandsPerString", "parm3", 1)).clamp(1, nps);
     let pps = nps / sps; // pixels per strand
-    let strands = strings * sps;
     let per_string = pps * sps;
-    let nodes = strings * per_string;
+    let nodes = pixels(&[strings, per_string])?;
+    let strands = strings * sps;
     let alternate = a.flag("AlternateNodes");
     let no_zig = a.flag("NoZig");
     let ltor = is_ltor(a);
@@ -378,7 +419,7 @@ fn grid_model(a: Attrs, vertical: bool) -> (Shape, (Vec<(u32, u32)>, u32, u32)) 
                     } else {
                         pps - 1 - y
                     }
-                } else if btot == (seg % 2 == 0) {
+                } else if btot == (seg & 1 == 0) {
                     y
                 } else {
                     pps - 1 - y
@@ -391,7 +432,14 @@ fn grid_model(a: Attrs, vertical: bool) -> (Shape, (Vec<(u32, u32)>, u32, u32)) 
             render_w: strands as f32,
             render_h: pps as f32,
         };
-        (s, (coords, strands, pps))
+        Some((
+            s,
+            Grid {
+                coords,
+                width: strands,
+                height: pps,
+            },
+        ))
     } else {
         for y in 0..strands {
             let seg = y % sps;
@@ -405,7 +453,7 @@ fn grid_model(a: Attrs, vertical: bool) -> (Shape, (Vec<(u32, u32)>, u32, u32)) 
                     } else {
                         pps - 1 - x
                     }
-                } else if ltor != (seg % 2 == 0) {
+                } else if ltor != (seg & 1 == 0) {
                     pps - 1 - x
                 } else {
                     x
@@ -418,7 +466,14 @@ fn grid_model(a: Attrs, vertical: bool) -> (Shape, (Vec<(u32, u32)>, u32, u32)) 
             render_w: pps as f32,
             render_h: strands as f32,
         };
-        (s, (coords, pps, strands))
+        Some((
+            s,
+            Grid {
+                coords,
+                width: pps,
+                height: strands,
+            },
+        ))
     }
 }
 
@@ -444,7 +499,17 @@ fn matrix_from_coords(coords: &[(u32, u32)], w: u32, h: u32) -> Option<MatrixInf
 
 fn matrix(a: Attrs, display: &str) -> Shape {
     let vertical = display == "Vert Matrix" || (display == "Matrix" && a.flag("Vertical"));
-    let (mut s, (coords, w, h)) = grid_model(a, vertical);
+    let Some((
+        mut s,
+        Grid {
+            coords,
+            width: w,
+            height: h,
+        },
+    )) = grid_model(a, vertical)
+    else {
+        return too_big();
+    };
     s.points = coords.iter().map(|&(x, y)| [x as f32, y as f32]).collect();
     s.matrix = matrix_from_coords(&coords, w, h);
     s
@@ -462,7 +527,17 @@ fn tree(a: Attrs, display: &str) -> Shape {
             _ => (false, false, a.int("TreeDegrees").unwrap_or(360)),
         },
     };
-    let (mut s, (coords, w, h)) = grid_model(a, true);
+    let Some((
+        mut s,
+        Grid {
+            coords,
+            width: w,
+            height: h,
+        },
+    )) = grid_model(a, true)
+    else {
+        return too_big();
+    };
     s.kind = PropKind::Tree;
     let (w_f, h_f) = (w as f32, h as f32);
     if degrees > 0 {
@@ -471,7 +546,14 @@ fn tree(a: Attrs, display: &str) -> Shape {
         let rad = (degrees.min(360) as f32).to_radians();
         let radius = render_w / 2.0;
         let ratio = a.float("TreeBottomTopRatio").unwrap_or(6.0);
-        let (mut rb, mut rt) = (radius, if ratio != 0.0 { radius / ratio.abs() } else { radius });
+        let (mut rb, mut rt) = (
+            radius,
+            if ratio != 0.0 {
+                radius / ratio.abs()
+            } else {
+                radius
+            },
+        );
         if ratio < 0.0 {
             std::mem::swap(&mut rb, &mut rt);
         }
@@ -491,10 +573,7 @@ fn tree(a: Attrs, display: &str) -> Shape {
                 [xb + (xt - xb) * t, render_h * t]
             })
             .collect();
-        s.placement = Placement::Boxed {
-            render_w,
-            render_h,
-        };
+        s.placement = Placement::Boxed { render_w, render_h };
     } else {
         let scale = if ribbon { 5.0 } else { 4.0 };
         let render_h = h_f * 2.0;
@@ -521,7 +600,9 @@ fn tree(a: Attrs, display: &str) -> Shape {
 fn single_line(a: Attrs) -> Shape {
     let strings = clamp_count(a.named("NumStrings", "parm1", 1)).max(1);
     let per = clamp_count(a.named("NodesPerString", "parm2", 50)).max(1);
-    let n = strings * per;
+    let Some(n) = pixels(&[strings, per]) else {
+        return too_big();
+    };
     let mut s = Shape::new(PropKind::Line, n, strings);
     s.points = (0..n).map(|i| [i as f32 + 0.5, 0.0]).collect();
     s.len_units = n as f32;
@@ -534,7 +615,7 @@ fn parse_drops(a: Attrs, default: &str) -> Vec<i64> {
         .str("DropPattern")
         .unwrap_or(default)
         .split(',')
-        .map(strtol)
+        .map(|v| strtol(v).clamp(-10_000, 10_000))
         .filter(|&v| v != 0)
         .collect();
     if d.is_empty() {
@@ -582,6 +663,9 @@ fn poly_line(a: Attrs) -> Shape {
     let mut di = 0usize;
     match &seg_sizes {
         Some(sizes) => {
+            if sizes.iter().map(|&n| n as u64).sum::<u64>() > MAX_MODEL_PIXELS {
+                return too_big();
+            }
             for &n in sizes {
                 for _ in 0..n {
                     drop_lights.push(drops[di % drops.len()].unsigned_abs() as u32);
@@ -599,7 +683,12 @@ fn poly_line(a: Attrs) -> Shape {
             }
         }
     }
-    let nodes: u32 = drop_lights.iter().sum();
+    let Some(nodes) = u32::try_from(drop_lights.iter().map(|&d| d as u64).sum::<u64>())
+        .ok()
+        .filter(|&n| n as u64 <= MAX_MODEL_PIXELS)
+    else {
+        return too_big();
+    };
     let strings = clamp_count(a.int("PolyStrings").unwrap_or(1)).max(1);
     let mut s = Shape::new(PropKind::Line, nodes, strings);
     if strings > 1 && a.str("PolyNode1").is_some() {
@@ -689,11 +778,18 @@ fn ring_layers(n: u32, layers: &[u32]) -> Vec<u32> {
 fn circle(a: Attrs) -> Shape {
     let strings = clamp_count(a.named("NumStrings", "parm1", 1)).max(1);
     let per = clamp_count(a.named("NodesPerString", "parm2", 1)).max(1);
-    let n = strings * per;
+    let Some(n) = pixels(&[strings, per]) else {
+        return too_big();
+    };
     let mut s = Shape::new(PropKind::Circle, n, strings);
     let layers = match a.str("circleSizes") {
         Some(c) => {
-            let mut v: Vec<u32> = c.split(',').map(strtol).filter(|&v| v > 0).map(clamp_count).collect();
+            let mut v: Vec<u32> = c
+                .split(',')
+                .map(strtol)
+                .filter(|&v| v > 0)
+                .map(clamp_count)
+                .collect();
             v.reverse();
             v
         }
@@ -715,7 +811,11 @@ fn circle(a: Attrs) -> Shape {
         } else {
             c as f32 / (count - 1) as f32
         };
-        let r = if count == 1 { 1.0 } else { inner + (1.0 - inner) * (1.0 - frac) };
+        let r = if count == 1 {
+            1.0
+        } else {
+            inner + (1.0 - inner) * (1.0 - frac)
+        };
         pts.extend(ring(sz, r * max_layer / 2.0, start_bottom, cw));
     }
     s.points = pts;
@@ -741,7 +841,9 @@ fn ring(n: u32, r: f32, start_bottom: bool, clockwise: bool) -> Vec<[f32; 2]> {
 fn wreath(a: Attrs) -> Shape {
     let strings = clamp_count(a.named("NumStrings", "parm1", 1)).max(1);
     let per = clamp_count(a.named("NodesPerString", "parm2", 50)).max(1);
-    let n = strings * per;
+    let Some(n) = pixels(&[strings, per]) else {
+        return too_big();
+    };
     let mut s = Shape::new(PropKind::Circle, n, strings);
     s.points = ring(n, n as f32 / 2.0, false, true);
     s.placement = Placement::Boxed {
@@ -756,7 +858,9 @@ fn star(a: Attrs) -> Shape {
     let per = clamp_count(a.named("NodesPerString", "parm2", 1)).max(1);
     let tips = a.named("StarPoints", "parm3", 5).clamp(2, 64) as usize;
     let ratio = a.float("starRatio").unwrap_or(2.618);
-    let n = strings * per;
+    let Some(n) = pixels(&[strings, per]) else {
+        return too_big();
+    };
     let mut s = Shape::new(PropKind::Star, n, strings);
     let raw_layers = if a.str("starSizes").is_some() {
         a.str("starSizes")
@@ -798,8 +902,10 @@ fn spinner(a: Attrs) -> Shape {
     let start = a.int("StartAngle").unwrap_or(0) as f32;
     let arc = a.int("Arc").unwrap_or(360).clamp(1, 360) as f32;
     let zig = a.flag("ZigZag");
+    let Some(n) = pixels(&[strings, arms_per, per_arm]) else {
+        return too_big();
+    };
     let arms = strings * arms_per;
-    let n = arms * per_arm;
     let mut s = Shape::new(PropKind::Spinner, n, strings);
     let inner = hollow / 100.0;
     let step = if arc >= 360.0 {
@@ -813,7 +919,11 @@ fn spinner(a: Attrs) -> Shape {
         let deg = start + arm as f32 * step * if cw { 1.0 } else { -1.0 };
         let ang = (90.0 - deg).to_radians();
         for k in 0..per_arm {
-            let k = if zig && arm % 2 == 1 { per_arm - 1 - k } else { k };
+            let k = if zig && arm % 2 == 1 {
+                per_arm - 1 - k
+            } else {
+                k
+            };
             let r = inner + (1.0 - inner) * (k as f32 + 0.5) / per_arm as f32;
             pts.push([r * ang.cos(), r * ang.sin()]);
         }
@@ -831,7 +941,12 @@ fn window(a: Attrs) -> Shape {
     let top = clamp_count(a.named("TopNodes", "parm1", 0));
     let side = clamp_count(a.named("SideNodes", "parm2", 0));
     let bottom = clamp_count(a.named("BottomNodes", "parm3", 0));
-    let n = top + 2 * side + bottom;
+    let Some(n) = u32::try_from(top as u64 + 2 * side as u64 + bottom as u64)
+        .ok()
+        .filter(|&n| n as u64 <= MAX_MODEL_PIXELS)
+    else {
+        return too_big();
+    };
     let mut s = Shape::new(PropKind::Window, n, 1);
     let w = top.max(bottom) as f32 + 2.0;
     let h = side.max(1) as f32;
@@ -839,7 +954,10 @@ fn window(a: Attrs) -> Shape {
         (0..k)
             .map(|i| {
                 let t = (i as f32 + 0.5) / k.max(1) as f32;
-                [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]
+                [
+                    from[0] + (to[0] - from[0]) * t,
+                    from[1] + (to[1] - from[1]) * t,
+                ]
             })
             .collect()
     };
@@ -872,7 +990,9 @@ fn icicles(a: Attrs) -> Shape {
         .iter()
         .map(|d| d.unsigned_abs().min(10_000) as u32)
         .collect();
-    let n = strings * per;
+    let Some(n) = pixels(&[strings, per]) else {
+        return too_big();
+    };
     let mut s = Shape::new(PropKind::Icicles, n, strings);
     let pts = layout::icicle_points(n as usize, &drops);
     let width = pts.last().map(|p| p[0] + 1.0).unwrap_or(1.0);
@@ -936,8 +1056,12 @@ fn custom(a: Attrs) -> Shape {
     let grid = custom_grid(a);
     let data_h = grid.len() as u32;
     let data_w = grid.iter().map(|r| r.len()).max().unwrap_or(0) as u32;
-    let width = clamp_count(a.named("CustomWidth", "parm1", data_w as i64)).max(data_w).max(1);
-    let height = clamp_count(a.named("CustomHeight", "parm2", data_h as i64)).max(data_h).max(1);
+    let width = clamp_count(a.named("CustomWidth", "parm1", data_w as i64))
+        .max(data_w)
+        .max(1);
+    let height = clamp_count(a.named("CustomHeight", "parm2", data_h as i64))
+        .max(data_h)
+        .max(1);
     let nodes = grid.iter().flatten().copied().max().unwrap_or(0);
     let strings = clamp_count(a.int("CustomStrings").unwrap_or(1)).max(1);
     let mut s = Shape::new(PropKind::Custom, nodes, strings);
@@ -1007,8 +1131,7 @@ pub(crate) fn world_points(s: &Shape, a: Attrs) -> Vec<[f32; 2]> {
         Placement::Boxed { render_w, render_h } => {
             // Fit the local points into the render box (uniform scale, centred), then
             // scale and rotate like xLights' BoxedScreenLocation.
-            let (lo, size, norm) = layout::normalize(&s.points);
-            let _ = lo;
+            let (_, size, norm) = layout::normalize(&s.points);
             let aspect_pts = size[0] / size[1];
             let aspect_box = render_w.max(1e-3) / render_h.max(1e-3);
             let (fw, fh) = if aspect_pts > aspect_box {
@@ -1030,8 +1153,16 @@ pub(crate) fn world_points(s: &Shape, a: Attrs) -> Vec<[f32; 2]> {
             let x2 = a.float("X2").unwrap_or(0.0);
             let y2 = a.float("Y2").unwrap_or(0.0);
             let len = (x2 * x2 + y2 * y2).sqrt();
-            let (ux, uy) = if len > 1e-6 { (x2 / len, y2 / len) } else { (1.0, 0.0) };
-            let len = if len > 1e-6 { len } else { s.len_units.max(1.0) };
+            let (ux, uy) = if len > 1e-6 {
+                (x2 / len, y2 / len)
+            } else {
+                (1.0, 0.0)
+            };
+            let len = if len > 1e-6 {
+                len
+            } else {
+                s.len_units.max(1.0)
+            };
             let scale = len / s.len_units.max(1e-6);
             let yscale = if s.placement == Placement::ThreePoint {
                 scale * a.float("Height").unwrap_or(1.0)
@@ -1121,11 +1252,11 @@ mod tests {
     fn custom_compressed_and_plain_agree() {
         let plain = with_model(
             r#"DisplayAs="Custom" parm1="3" parm2="2" CustomModel="1,,2;,3,""#,
-            |a| shape(a),
+            shape,
         );
         let comp = with_model(
             r#"DisplayAs="Custom" CustomWidth="3" CustomHeight="2" CustomModelCompressed="1,0,0;2,0,2;3,1,1""#,
-            |a| shape(a),
+            shape,
         );
         assert_eq!(plain.nodes, 3);
         assert_eq!(plain.matrix, comp.matrix);
@@ -1135,16 +1266,66 @@ mod tests {
     #[test]
     fn counts_for_common_types() {
         let cases = [
-            (r#"DisplayAs="Arches" parm1="3" parm2="25""#, 75, PropKind::Arch, 1),
-            (r#"DisplayAs="Candy Canes" NumCanes="4" NodesPerCane="18""#, 72, PropKind::Candycane, 1),
-            (r#"DisplayAs="Tree 360" parm1="16" parm2="50" parm3="1""#, 800, PropKind::Tree, 16),
-            (r#"DisplayAs="Single Line" parm1="1" parm2="100""#, 100, PropKind::Line, 1),
-            (r#"DisplayAs="Circle" parm1="1" parm2="60""#, 60, PropKind::Circle, 1),
-            (r#"DisplayAs="Star" parm1="1" parm2="50" parm3="5""#, 50, PropKind::Star, 1),
-            (r#"DisplayAs="Spinner" parm1="2" parm2="10" parm3="4""#, 80, PropKind::Spinner, 2),
-            (r#"DisplayAs="Window Frame" parm1="20" parm2="10" parm3="20""#, 60, PropKind::Window, 1),
-            (r#"DisplayAs="Icicles" parm1="1" parm2="80""#, 80, PropKind::Icicles, 1),
-            (r#"DisplayAs="Wreath" parm1="1" parm2="40""#, 40, PropKind::Circle, 1),
+            (
+                r#"DisplayAs="Arches" parm1="3" parm2="25""#,
+                75,
+                PropKind::Arch,
+                1,
+            ),
+            (
+                r#"DisplayAs="Candy Canes" NumCanes="4" NodesPerCane="18""#,
+                72,
+                PropKind::Candycane,
+                1,
+            ),
+            (
+                r#"DisplayAs="Tree 360" parm1="16" parm2="50" parm3="1""#,
+                800,
+                PropKind::Tree,
+                16,
+            ),
+            (
+                r#"DisplayAs="Single Line" parm1="1" parm2="100""#,
+                100,
+                PropKind::Line,
+                1,
+            ),
+            (
+                r#"DisplayAs="Circle" parm1="1" parm2="60""#,
+                60,
+                PropKind::Circle,
+                1,
+            ),
+            (
+                r#"DisplayAs="Star" parm1="1" parm2="50" parm3="5""#,
+                50,
+                PropKind::Star,
+                1,
+            ),
+            (
+                r#"DisplayAs="Spinner" parm1="2" parm2="10" parm3="4""#,
+                80,
+                PropKind::Spinner,
+                2,
+            ),
+            (
+                r#"DisplayAs="Window Frame" parm1="20" parm2="10" parm3="20""#,
+                60,
+                PropKind::Window,
+                1,
+            ),
+            (
+                r#"DisplayAs="Icicles" parm1="1" parm2="80""#,
+                80,
+                PropKind::Icicles,
+                1,
+            ),
+            (
+                r#"DisplayAs="Wreath" parm1="1" parm2="40""#,
+                40,
+                PropKind::Circle,
+                1,
+            ),
         ];
         for (attrs, nodes, kind, strings) in cases {
             with_model(attrs, |a| {
@@ -1191,9 +1372,10 @@ mod tests {
                 assert_eq!(s.channels(), 4);
             },
         );
-        with_model(r#"DisplayAs="Arches" parm1="1" parm2="10" StringType="RGBW Nodes""#, |a| {
-            assert_eq!(shape(a).channels(), 40)
-        });
+        with_model(
+            r#"DisplayAs="Arches" parm1="1" parm2="10" StringType="RGBW Nodes""#,
+            |a| assert_eq!(shape(a).channels(), 40),
+        );
     }
 
     #[test]

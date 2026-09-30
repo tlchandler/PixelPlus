@@ -1,0 +1,14 @@
+
+# --- PixelPlus base settings (all boards) ---------------------------------------
+# Board-specific lines (DPI pixel output overlay, RTC, ...) are added automatically
+# in a managed block at the end of this file on first boot, after the board is
+# detected ("pixelplus config-txt --board <id>"). Set board= in pixelplus.txt to
+# override detection.
+[all]
+# i2c-1 on GPIO2/3: board EEPROM (0x50), temperature/power sensors, RTC, OLED
+dtparam=i2c_arm=on
+# GPIO14/15 are pixel data lines on the 60-port board - keep the serial console off
+enable_uart=0
+# Faster, quieter boot
+disable_splash=1
+boot_delay=0

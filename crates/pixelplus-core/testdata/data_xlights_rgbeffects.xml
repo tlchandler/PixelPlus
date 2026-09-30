@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xrgb>
+  <models>
+    <!-- Leader, port 1: two chained arches (second has 2 null pixels). -->
+    <model DisplayAs="Arches" StringType="RGB Nodes" StartSide="B" Dir="L" Antialias="1" PixelSize="2" Transparency="0" parm1="1" parm2="50" parm3="1" name="Arch 1" LayoutGroup="Default" StartChannel="!PixelPlus Leader:1" Controller="PixelPlus Leader" WorldPosX="-400.0000" WorldPosY="0.0000" WorldPosZ="0.0000" ScaleX="1.0000" ScaleY="1.0000" ScaleZ="1.0000" RotateX="0" RotateY="0" RotateZ="0" X2="200.0000" Y2="0.0000" Z2="0.0000" Height="1.0" Angle="0" Arc="180" TagColour="#FF0000" versionNumber="7">
+      <ControllerConnection Port="1" Protocol="WS2811"/>
+    </model>
+    <model DisplayAs="Arches" StringType="RGB Nodes" StartSide="B" Dir="L" NumArches="1" NodesPerArch="50" LightsPerNode="1" name="Arch 2" LayoutGroup="Default" StartChannel="&gt;Arch 1:1" ModelChain="&gt;Arch 1" Controller="PixelPlus Leader" WorldPosX="-150.0000" WorldPosY="0.0000" ScaleX="1.0000" ScaleY="1.0000" X2="200.0000" Y2="0.0000" Height="1.0" Arc="180" versionNumber="7">
+      <ControllerConnection Port="1" Protocol="WS2811" nullNodes="2"/>
+    </model>
+    <!-- Shadow model: shares Arch 1's channels, must be skipped. -->
+    <model DisplayAs="Arches" StringType="RGB Nodes" parm1="1" parm2="50" parm3="1" name="Arch 1 Shadow" StartChannel="!PixelPlus Leader:1" ShadowModelFor="Arch 1" Controller="PixelPlus Leader" WorldPosX="0" WorldPosY="0" X2="10" Y2="0"/>
+    <!-- Leader, port 3: 20 x 10 horizontal matrix starting top-left. -->
+    <model DisplayAs="Horiz Matrix" StringType="RGB Nodes" StartSide="T" Dir="L" parm1="1" parm2="200" parm3="10" name="Matrix" LayoutGroup="Default" StartChannel="!PixelPlus Leader:301" Controller="PixelPlus Leader" WorldPosX="300.0000" WorldPosY="150.0000" ScaleX="5.0000" ScaleY="5.0000" RotateZ="0" versionNumber="7">
+      <ControllerConnection Port="3" Protocol="WS2811"/>
+    </model>
+    <!-- Leader, port 4: candy canes (1 end null) then icicles chained by start channel. -->
+    <model DisplayAs="Candy Canes" StringType="RGB Nodes" StartSide="B" Dir="R" NumCanes="2" NodesPerCane="18" LightsPerNode="1" name="Candy Canes" StartChannel="901" Controller="PixelPlus Leader" WorldPosX="-400.0000" WorldPosY="-200.0000" X2="120.0000" Y2="0.0000" Height="1.0" CandyCaneHeight="1.0">
+      <ControllerConnection Port="4" Protocol="WS2811" endNullNodes="1"/>
+    </model>
+    <model DisplayAs="Icicles" StringType="RGB Nodes" parm1="1" parm2="60" name="Icicles" StartChannel="&gt;Candy Canes:1" Controller="PixelPlus Leader" WorldPosX="-400.0000" WorldPosY="300.0000" X2="600.0000" Y2="0.0000" Height="1.0" DropPattern="3,4,5,4">
+      <ControllerConnection Port="4" Protocol="WS2811"/>
+    </model>
+    <!-- Legacy model without controller or port: controller inferred from its channel. -->
+    <model DisplayAs="Single Line" StringType="RGB Nodes" parm1="1" parm2="30" parm3="1" name="Old Line" StartChannel="1201" WorldPosX="-400.0000" WorldPosY="-300.0000" X2="300.0000" Y2="0.0000"/>
+    <!-- Leader, port 2, reversed: spinner positioned relative to Old Line. -->
+    <model DisplayAs="Spinner" StringType="RGB Nodes" StartSide="B" Dir="L" NumStrings="1" NodesPerArm="10" ArmsPerString="3" Hollow="20" name="Spinner" StartChannel="@Old Line:91" Controller="PixelPlus Leader" WorldPosX="0.0000" WorldPosY="-250.0000" ScaleX="4.0000" ScaleY="4.0000">
+      <ControllerConnection Port="2" Protocol="WS2811" Reverse="1"/>
+    </model>
+    <!-- F16: 8-string mega tree on ports 1-8, addressed by IP/universe. -->
+    <model DisplayAs="Tree 360" StringType="RGB Nodes" StartSide="B" Dir="L" parm1="8" parm2="50" parm3="1" name="Mega Tree" StartChannel="#10.0.0.9:1:1" Controller="Garage F16" WorldPosX="0.0000" WorldPosY="100.0000" ScaleX="3.0000" ScaleY="3.0000" TreeBottomTopRatio="6.0" TreeRotation="3.0" versionNumber="7">
+      <ControllerConnection Port="1" Protocol="WS2811"/>
+    </model>
+    <!-- F16 port 9 with smart remotes: Star on remote A, Snowflake on remote B. -->
+    <model DisplayAs="Custom" StringType="RGB Nodes" CustomWidth="5" CustomHeight="5" name="Snowflake" StartChannel="#4:1" Controller="Garage F16" WorldPosX="200.0000" WorldPosY="-250.0000" ScaleX="10.0000" ScaleY="10.0000" CustomModel="" CustomModelCompressed="1,0,2;2,1,1;3,1,2;4,1,3;5,2,0;6,2,1;7,2,2;8,2,3;9,2,4;10,3,1;11,3,3;12,4,2">
+      <ControllerConnection Port="9" Protocol="WS2811" SmartRemote="2"/>
+    </model>
+    <model DisplayAs="Star" StringType="RGB Nodes" StartSide="B" Dir="L" parm1="1" parm2="40" parm3="5" name="Star" StartChannel="#4:37" Controller="Garage F16" WorldPosX="0.0000" WorldPosY="400.0000" ScaleX="2.0000" ScaleY="2.0000" starRatio="2.618034">
+      <ControllerConnection Port="9" Protocol="WS2811" SmartRemote="1"/>
+    </model>
+    <!-- F16 port 10, reversed window frame. -->
+    <model DisplayAs="Window Frame" StringType="RGB Nodes" parm1="10" parm2="5" parm3="10" name="Window" StartChannel="&gt;Star:1" Controller="Garage F16" Rotation="CW" WorldPosX="400.0000" WorldPosY="-100.0000" ScaleX="10.0000" ScaleY="10.0000">
+      <ControllerConnection Port="10" Protocol="WS2811" Reverse="1"/>
+    </model>
+    <!-- DMX flood: not a pixel prop. -->
+    <model DisplayAs="DmxGeneral" StringType="RGB Nodes" parm1="7" name="Flood" StartChannel="#5:1" Controller="Garage F16" WorldPosX="0" WorldPosY="0">
+      <ControllerConnection Port="1" Protocol="DMX"/>
+    </model>
+    <!-- Plain custom model data, no controller. -->
+    <model DisplayAs="Custom" StringType="RGB Nodes" parm1="3" parm2="2" name="Face" StartChannel="8000" Controller="No Controller" WorldPosX="-200.0000" WorldPosY="500.0000" ScaleX="10.0000" ScaleY="10.0000" CustomModel="1,,2;,3,"/>
+  </models>
+  <modelGroups>
+    <modelGroup name="Arches" models="Arch 1,Arch 2" layout="minimalGrid" GridSize="400" TagColour="#00FF00"/>
+    <modelGroup name="Everything" models="Arches,Mega Tree,Matrix/Top Half,Ghost Model" layout="minimalGrid" GridSize="400"/>
+    <modelGroup name="Loop A" models="Loop B,Star"/>
+    <modelGroup name="Loop B" models="Loop A,Window"/>
+  </modelGroups>
+  <view_objects/>
+  <settings/>
+</xrgb>

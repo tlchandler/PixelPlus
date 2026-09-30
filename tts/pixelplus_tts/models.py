@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -104,7 +106,19 @@ def download(mf: ModelFile, dest_dir: str, base_url: str = BASE_URL, retries: in
         if have > mf.size:
             os.remove(part)
             have = 0
-        if have < mf.size:
+        if have < mf.size and shutil.which("curl") and not os.environ.get("PIXELPLUS_TTS_NO_CURL"):
+            # curl: resumable (-C -), honors proxies/CA bundles the same way the rest of the OS does
+            r = subprocess.run(["curl", "-fL", "--retry", "3", "--connect-timeout", "30", "-C", "-",
+                                *(["-sS"] if quiet else ["-#"]), "-o", part, url])
+            if r.returncode not in (0, 33):  # 33: server can't resume -> retry below from scratch
+                if attempt == retries:
+                    raise RuntimeError(f"download of {mf.name} failed (curl exit {r.returncode})")
+                print(f"{mf.name}: curl exit {r.returncode}; retrying ({attempt}/{retries})", file=sys.stderr)
+                if r.returncode == 33 and os.path.exists(part):
+                    os.remove(part)
+                time.sleep(min(2 ** attempt, 30))
+                continue
+        elif have < mf.size:
             req = urllib.request.Request(url, headers={"User-Agent": "pixelplus-tts"})
             if have:
                 req.add_header("Range", f"bytes={have}-")

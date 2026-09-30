@@ -10,7 +10,7 @@
 //!   `DisplayAs` parameters, `channelStart` from its `StartChannel` (all xLights forms:
 //!   absolute, `!Controller:ch`, `@Model:ch`, `>Model:ch`, `#universe:ch`,
 //!   `#ip:universe:ch`), kind, preview geometry and — for matrices, custom models and
-//!   flat trees — a [`MatrixInfo`] grid map.
+//!   flat trees — a [`MatrixInfo`](crate::model::MatrixInfo) grid map.
 //! * `ControllerConnection` ports become [`PropSegment`]s: model port → node output,
 //!   models chained on one port get consecutive pixels in start-channel order (after
 //!   start/end null pixels), multi-string models continue on the following ports, and
@@ -146,7 +146,10 @@ impl Resolver<'_, '_, '_> {
             Resolve::Pending => {}
         }
         self.state[i] = Resolve::Visiting;
-        let expr = Attrs(self.models[i].node).str("StartChannel").unwrap_or("1").to_string();
+        let expr = Attrs(self.models[i].node)
+            .str("StartChannel")
+            .unwrap_or("1")
+            .to_string();
         let v = self.eval(i, &expr);
         self.state[i] = Resolve::Done(v);
         v
@@ -156,15 +159,16 @@ impl Resolver<'_, '_, '_> {
         let name = self.models[self_idx].name.clone();
         let expr = expr.trim();
         let fail = |w: &mut Vec<String>, why: String| {
-            w.push(format!("'{name}': cannot resolve start channel '{expr}': {why}"));
+            w.push(format!(
+                "'{name}': cannot resolve start channel '{expr}': {why}"
+            ));
             None
         };
         let Some((head, rest)) = expr.split_once(':') else {
             let v = strtol(expr);
-            return if v >= 1 {
-                u32::try_from(v).ok()
-            } else {
-                fail(&mut self.warnings, "not a positive channel number".into())
+            return match u32::try_from(v) {
+                Ok(v) if v >= 1 => Some(v),
+                _ => fail(&mut self.warnings, "not a valid channel number".into()),
             };
         };
         let ch = strtol(rest);
@@ -178,13 +182,16 @@ impl Resolver<'_, '_, '_> {
                     return fail(&mut self.warnings, "refers to itself".into());
                 }
                 let Some(s) = self.start(j) else {
-                    return fail(&mut self.warnings, format!("'{other}' has no start channel"));
+                    return fail(
+                        &mut self.warnings,
+                        format!("'{other}' has no start channel"),
+                    );
                 };
                 if c == '@' {
-                    s as i64 - 1 + ch
+                    (s as i64 - 1).saturating_add(ch)
                 } else {
                     let chans = self.models[j].shape.channels() as i64;
-                    s as i64 + chans + ch - 1
+                    (s as i64 + chans - 1).saturating_add(ch)
                 }
             }
             Some('!') => {
@@ -196,7 +203,7 @@ impl Resolver<'_, '_, '_> {
                 };
                 let cname = head[1..].trim();
                 match nets.controller(cname) {
-                    Some(c) => c.start as i64 - 1 + ch,
+                    Some(c) => (c.start as i64 - 1).saturating_add(ch),
                     None => {
                         return fail(&mut self.warnings, format!("no controller named '{cname}'"))
                     }
@@ -211,12 +218,12 @@ impl Resolver<'_, '_, '_> {
                 };
                 let parts: Vec<&str> = expr[1..].split(':').map(str::trim).collect();
                 let found = match parts.as_slice() {
-                    [u, c] => nets.universe_channel(None, strtol(u).max(0) as u32, strtol(c).max(1) as u32),
-                    [ip, u, c] => nets.universe_channel(
-                        Some(ip),
-                        strtol(u).max(0) as u32,
-                        strtol(c).max(1) as u32,
-                    ),
+                    [u, c] => {
+                        nets.universe_channel(None, to_u32(strtol(u)), to_u32(strtol(c)).max(1))
+                    }
+                    [ip, u, c] => {
+                        nets.universe_channel(Some(ip), to_u32(strtol(u)), to_u32(strtol(c)).max(1))
+                    }
                     _ => None,
                 };
                 match found {
@@ -226,12 +233,19 @@ impl Resolver<'_, '_, '_> {
             }
             _ => ch,
         };
-        if result >= 1 {
-            u32::try_from(result).ok()
-        } else {
-            fail(&mut self.warnings, "resolves to a channel before 1".into())
+        if result < 1 {
+            return fail(&mut self.warnings, "resolves to a channel before 1".into());
+        }
+        match u32::try_from(result) {
+            Ok(v) => Some(v),
+            Err(_) => fail(&mut self.warnings, "channel number is too large".into()),
         }
     }
+}
+
+/// Clamp a parsed integer into `u32`.
+fn to_u32(v: i64) -> u32 {
+    v.clamp(0, u32::MAX as i64) as u32
 }
 
 fn parse_conn(model: Node) -> Conn {
@@ -248,7 +262,9 @@ fn parse_conn(model: Node) -> Conn {
         protocol: a.str("Protocol").map(str::to_string),
         smart_remote: u(a.int("SmartRemote")),
         sr_max_cascade: u(a.int("SRMaxCascade")).max(1),
-        sr_cascade_on_port: a.str("SRCascadeOnPort").is_some_and(|s| s.eq_ignore_ascii_case("true")),
+        sr_cascade_on_port: a
+            .str("SRCascadeOnPort")
+            .is_some_and(|s| s.eq_ignore_ascii_case("true")),
         nulls: u(a.int("nullNodes")),
         end_nulls: u(a.int("endNullNodes")),
         reverse: a.int("Reverse").or_else(|| a.int("reverse")).unwrap_or(0) != 0,
@@ -293,16 +309,28 @@ fn is_pixel_protocol(p: Option<&str>) -> bool {
         return true;
     };
     let p = p.to_ascii_lowercase();
-    !["dmx", "pixelnet", "renard", "lor", "opendmx", "genericserial", "pwm", "virtual matrix", "led panel matrix"]
-        .iter()
-        .any(|s| p.starts_with(s))
+    ![
+        "dmx",
+        "pixelnet",
+        "renard",
+        "lor",
+        "opendmx",
+        "genericserial",
+        "pwm",
+        "virtual matrix",
+        "led panel matrix",
+    ]
+    .iter()
+    .any(|s| p.starts_with(s))
 }
 
 fn smart_letter(sr: u32) -> String {
     if sr == 0 {
         String::new()
     } else {
-        char::from_u32('A' as u32 + (sr - 1).min(25)).map(String::from).unwrap_or_default()
+        char::from_u32('A' as u32 + (sr - 1).min(25))
+            .map(String::from)
+            .unwrap_or_default()
     }
 }
 
@@ -347,7 +375,8 @@ pub fn import_preview(
     let mut warnings = Vec::new();
     let nets = match networks_xml {
         Some(x) if !x.trim().is_empty() => Some(
-            Networks::parse(x, &mut warnings).map_err(|e| ImportError::NetworksXml(e.to_string()))?,
+            Networks::parse(x, &mut warnings)
+                .map_err(|e| ImportError::NetworksXml(e.to_string()))?,
         ),
         _ => None,
     };
@@ -381,7 +410,9 @@ pub fn import_preview(
             continue;
         }
         if !seen.insert(name.to_string()) {
-            warnings.push(format!("duplicate model name '{name}': only the first one is imported"));
+            warnings.push(format!(
+                "duplicate model name '{name}': only the first one is imported"
+            ));
             continue;
         }
         models.push(XModel {
@@ -394,7 +425,11 @@ pub fn import_preview(
 
     // ---- resolve start channels ------------------------------------------------------
     let mut resolver = Resolver {
-        by_name: models.iter().enumerate().map(|(i, m)| (m.name.as_str(), i)).collect(),
+        by_name: models
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.name.as_str(), i))
+            .collect(),
         models: &models,
         nets: nets.as_ref(),
         state: vec![Resolve::Pending; models.len()],
@@ -452,7 +487,11 @@ pub fn import_preview(
         }
         let has_pos = a.str("WorldPosX").is_some() || m.shape.placement == Placement::World;
         any_position |= has_pos;
-        let layout = if has_pos { make_layout(&m.shape, a) } else { None };
+        let layout = if has_pos {
+            make_layout(&m.shape, a)
+        } else {
+            None
+        };
         let id = existing
             .get(m.name.as_str())
             .map(|p| p.id.clone())
@@ -610,18 +649,21 @@ pub fn import_preview(
                 letters.into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(", ")
             ));
         }
-        let mut cursor = 0u32;
-        let mut last_end: Option<u64> = None;
-        for e in entries {
-            if let Some(le) = last_end {
-                if e.start_ch < le {
-                    warnings.push(format!(
-                        "'{}' overlaps the previous prop on controller '{ctrl}' port {port}",
-                        props[e.prop].name
-                    ));
-                }
+        let mut by_channel: Vec<(u64, u64, usize)> = entries
+            .iter()
+            .map(|e| (e.start_ch, e.start_ch + e.count as u64 * 3, e.prop))
+            .collect();
+        by_channel.sort_unstable();
+        for w in by_channel.windows(2) {
+            if w[1].0 < w[0].1 {
+                warnings.push(format!(
+                    "'{}' and '{}' use overlapping channels on controller '{ctrl}' port {port}",
+                    props[w[0].2].name, props[w[1].2].name
+                ));
             }
-            last_end = Some(e.start_ch + e.count as u64 * 3);
+        }
+        let mut cursor = 0u32;
+        for e in entries {
             cursor = cursor.saturating_add(e.nulls);
             props[e.prop].segments.push(PropSegment {
                 node_id: ctrl.clone(),
@@ -655,7 +697,14 @@ pub fn import_preview(
         .collect();
 
     // ---- groups -----------------------------------------------------------------------
-    let groups = parse_groups(root, &models, &prop_by_name, &mut props, show, &mut warnings);
+    let groups = parse_groups(
+        root,
+        &models,
+        &prop_by_name,
+        &mut props,
+        show,
+        &mut warnings,
+    );
 
     // ---- layout finishing -----------------------------------------------------------
     if let Some((x0, y0, _, _)) = layout::bounds(&props) {
@@ -731,7 +780,11 @@ fn parse_groups(
             defs.push((name.to_string(), members, color));
         }
     }
-    let by_name: HashMap<&str, usize> = defs.iter().enumerate().map(|(i, d)| (d.0.as_str(), i)).collect();
+    let by_name: HashMap<&str, usize> = defs
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.0.as_str(), i))
+        .collect();
     let model_names: HashSet<&str> = models.iter().map(|m| m.name.as_str()).collect();
     let mut submodel_refs = 0;
     let mut out = Vec::new();
@@ -840,8 +893,16 @@ pub fn apply_import(
         let existing = p
             .xlights_model
             .as_deref()
-            .and_then(|m| out.props.iter().position(|e| e.xlights_model.as_deref() == Some(m)))
-            .or_else(|| out.props.iter().position(|e| e.id == p.id && e.xlights_model.is_none()));
+            .and_then(|m| {
+                out.props
+                    .iter()
+                    .position(|e| e.xlights_model.as_deref() == Some(m))
+            })
+            .or_else(|| {
+                out.props
+                    .iter()
+                    .position(|e| e.id == p.id && e.xlights_model.is_none())
+            });
         match existing {
             Some(i) => {
                 let e = &mut out.props[i];
@@ -998,13 +1059,71 @@ mod tests {
           <model name="G" DisplayAs="Single Line" parm1="1" parm2="10" StartChannel="0"/>
         </models></xrgb>"#;
         let p = import_preview(xml, None, &Show::default()).unwrap();
-        let cs: HashMap<&str, u32> = p.props.iter().map(|p| (p.name.as_str(), p.channel_start)).collect();
+        let cs: HashMap<&str, u32> = p
+            .props
+            .iter()
+            .map(|p| (p.name.as_str(), p.channel_start))
+            .collect();
         assert_eq!(cs["A"], 0);
         assert_eq!(cs["B"], 30);
         assert_eq!(cs["C"], 33);
         assert!(!cs.contains_key("D") && !cs.contains_key("E"));
         assert!(!cs.contains_key("F") && !cs.contains_key("G"));
-        assert!(p.warnings.iter().any(|w| w.contains("refers back to itself")));
-        assert!(p.warnings.iter().any(|w| w.contains("need xlights_networks.xml")));
+        assert!(p
+            .warnings
+            .iter()
+            .any(|w| w.contains("refers back to itself")));
+        assert!(p
+            .warnings
+            .iter()
+            .any(|w| w.contains("need xlights_networks.xml")));
+    }
+
+    #[test]
+    fn hostile_input_does_not_panic() {
+        let xml = r##"<xrgb><models>
+          <model name="A" DisplayAs="Matrix" parm1="99999999" parm2="99999999" parm3="0" StartChannel="1"/>
+          <model name="B" DisplayAs="Spinner" parm1="1000000" parm2="1000000" parm3="1000000" StartChannel="99999999999999999999"/>
+          <model name="C" DisplayAs="Poly Line" parm2="100000" DropPattern="-9223372036854775808,5" NumPoints="2" PointData="nan,inf,0,1,1,1" StartChannel="@G:99999999999999999999"/>
+          <model name="D" DisplayAs="Custom" CustomModelCompressed="5,99999,3;1,-1,2;x;2,0,0,1" StartChannel="!:1"/>
+          <model name="E" DisplayAs="Window Frame" parm1="1000000" parm2="1000000" parm3="1000000" StartChannel="#:"/>
+          <model name="F" DisplayAs="Arches" parm1="2" parm2="10" LayerSizes="999999,999999" StartChannel="&gt;F:1"/>
+          <model name="G" DisplayAs="Poly Line" NumPoints="3" PointData="0,0,0,1,0,0,2,0,0" Seg1="1000000" Seg2="1000000" StartChannel="1"/>
+          <model name="H" DisplayAs="Cube" parm1="1000000" parm2="1000000" parm3="1000000" StartChannel="1"/>
+          <model name="I" DisplayAs="Tree" TreeType="0" TreeDegrees="-5" parm1="3" parm2="0" StartChannel="1" Controller="X">
+            <ControllerConnection Port="99999999999" SmartRemote="30" SRMaxCascade="0" nullNodes="-4"/></model>
+          <model name="J" DisplayAs="Circle" parm1="2" parm2="5" circleSizes="3,3,3,1" StartChannel="4294967295"/>
+          <model name="K" DisplayAs="Star" parm1="1" parm2="7" parm3="1" starRatio="0" StartChannel="-5"/>
+          <model DisplayAs="Arches"/>
+          <model name="L" DisplayAs="Wreath" StartChannel="#1.2.3.4:x:y" ScaleX="-1" RotateZ="1e30" WorldPosX="1e39"/>
+        </models>
+        <modelGroups><modelGroup name="G1" models=",,,A,,G1"/><modelGroup models="A"/></modelGroups></xrgb>"##;
+        let p = import_preview(xml, Some("<Networks/>"), &Show::default()).unwrap();
+        assert!(p.warnings.iter().any(|w| w.contains("unreasonably large")));
+        for prop in &p.props {
+            let l = prop.layout.as_ref().unwrap();
+            assert!(l.x.is_finite() && l.y.is_finite() && l.w.is_finite() && l.h.is_finite());
+            assert_eq!(l.points.as_ref().unwrap().len(), prop.pixel_count as usize);
+        }
+        let s = apply_import(&Show::default(), &p, &BTreeMap::new());
+        assert_eq!(s.props.len(), p.props.len());
+    }
+
+    #[test]
+    fn overlapping_models_on_a_port_are_reported() {
+        let xml = r#"<xrgb><models>
+          <model name="A" DisplayAs="Single Line" parm1="1" parm2="10" StartChannel="1" Controller="C">
+            <ControllerConnection Port="1"/></model>
+          <model name="B" DisplayAs="Single Line" parm1="1" parm2="10" StartChannel="16" Controller="C">
+            <ControllerConnection Port="1" Protocol="ws2811"/></model>
+        </models></xrgb>"#;
+        let p = import_preview(xml, None, &Show::default()).unwrap();
+        assert!(p
+            .warnings
+            .iter()
+            .any(|w| w.contains("overlapping channels")));
+        assert_eq!(p.props[1].segments[0].start_pixel, 10);
+        assert_eq!(p.controllers[0].name, "C");
+        assert_eq!(p.controllers[0].ip, None);
     }
 }

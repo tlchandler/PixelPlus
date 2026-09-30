@@ -199,7 +199,8 @@ impl<W: Write + Seek> PpseqWriter<W> {
             self.out.write_all(&len.to_le_bytes())?;
             self.out.write_all(&first.to_le_bytes())?;
         }
-        self.out.write_all(&(self.index.len() as u32).to_le_bytes())?;
+        self.out
+            .write_all(&(self.index.len() as u32).to_le_bytes())?;
         self.out.write_all(MAGIC)?;
         let end = self.out.stream_position()?;
         self.out.seek(SeekFrom::Start(6))?;
@@ -342,7 +343,8 @@ impl<R: Read + Seek> PpseqFile<R> {
         if version != VERSION {
             return Err(PpseqError::Format(format!("unsupported version {version}")));
         }
-        let rd32 = |b: &[u8], at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+        let rd32 =
+            |b: &[u8], at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
         let frame_count = rd32(&fixed, 6);
         let frame_us = rd32(&fixed, 10);
         let frame_bytes = rd32(&fixed, 14);
@@ -391,7 +393,9 @@ impl<R: Read + Seek> PpseqFile<R> {
             let len = rd32(e, 8);
             let first = rd32(e, 12);
             if offset < header_len || offset + len as u64 > index_start {
-                return Err(PpseqError::Format(format!("block {i} lies outside the data area")));
+                return Err(PpseqError::Format(format!(
+                    "block {i} lies outside the data area"
+                )));
             }
             if let Some(prev) = blocks.last() {
                 if first <= prev.first {
@@ -581,13 +585,23 @@ mod tests {
     fn show() -> Show {
         let mut s = Show::default();
         s.nodes.push(node("f1"));
-        s.props.push(prop("a", 50, 0, vec![seg("f1", 1, 0, 30, 0, false), seg("f1", 2, 5, 20, 30, true)]));
-        s.props.push(prop("b", 40, 150, vec![seg("f1", 4, 0, 40, 0, false)]));
+        s.props.push(prop(
+            "a",
+            50,
+            0,
+            vec![seg("f1", 1, 0, 30, 0, false), seg("f1", 2, 5, 20, 30, true)],
+        ));
+        s.props
+            .push(prop("b", 40, 150, vec![seg("f1", 4, 0, 40, 0, false)]));
         s
     }
 
     fn fseq_bytes(frames: u32, channels: u32) -> Vec<u8> {
-        let mut w = FseqWriter::new(Cursor::new(Vec::new()), FseqWriterOptions::new(channels, 25)).unwrap();
+        let mut w = FseqWriter::new(
+            Cursor::new(Vec::new()),
+            FseqWriterOptions::new(channels, 25),
+        )
+        .unwrap();
         for f in 0..frames {
             let fr: Vec<u8> = (0..channels).map(|c| (c * 3 + f * 11) as u8).collect();
             w.write_frame(&fr).unwrap();

@@ -1,0 +1,4 @@
+# PixelPlus (Bookworm images): compressed RAM swap instead of an SD-card swap file.
+ALGO=zstd
+PERCENT=50
+PRIORITY=100

@@ -23,6 +23,7 @@ use crate::pi_config::DpiSoc;
 use crate::pinmux::PinMux;
 use crate::timing::DpiGeometry;
 use drm::buffer::{Buffer as _, DrmFourcc};
+use drm::Device as _;
 use drm::control::{
     connector, crtc, dumbbuffer::DumbBuffer, framebuffer, Device as ControlDevice, Event, Mode,
     ModeTypeFlags, PageFlipFlags,

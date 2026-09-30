@@ -1,0 +1,9 @@
+
+  PixelPlus pixel controller
+  ---------------------------
+  Web UI:      http://<this-hostname>.local
+  Service:     sudo systemctl status pixelplusd     logs: journalctl -u pixelplusd -f
+  CLI:         pixelplus --help                     (status, doctor, eeprom, test patterns)
+  Settings:    /boot/firmware/pixelplus.txt         (applied at boot and when saved)
+  First boot:  /var/log/pixelplus-firstboot.log
+

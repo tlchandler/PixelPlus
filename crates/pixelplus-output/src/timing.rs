@@ -240,7 +240,7 @@ impl DpiGeometry {
             v_sync: vs,
             v_back_porch: vbp,
         };
-        g.reset_lines = g.lines_for_ns(RESET_TARGET_NS);
+        g.reset_lines = g.reset_lines_needed();
         g.validate()?;
         Ok(g)
     }
@@ -310,11 +310,7 @@ impl DpiGeometry {
             v_sync: vsync_end - vsync_start,
             v_back_porch: vtotal - vsync_end,
         };
-        // Count vertical blanking toward the reset, but always keep at least
-        // one zero line inside the active area in case a display engine holds
-        // the last line's value during blanking.
-        let needed = g.lines_for_ns(RESET_TARGET_NS);
-        g.reset_lines = needed.saturating_sub(g.v_blank_lines()).max(1);
+        g.reset_lines = g.reset_lines_needed();
         if vdisplay <= g.reset_lines {
             return Err(OutputError::InvalidTiming(format!(
                 "display is only {vdisplay} lines tall; need more than {} for the reset",
@@ -412,13 +408,18 @@ impl DpiGeometry {
         self.hactive() as usize * self.vactive() as usize * 4
     }
 
-    fn lines_for_ns(&self, ns: f64) -> u32 {
-        (ns / self.line_ns()).ceil() as u32
+    /// Zero lines needed at the bottom of the active area so that, together
+    /// with the vertical blanking, the reset reaches [`RESET_TARGET_NS`].
+    /// At least one is always kept inside the active area in case a display
+    /// engine holds the last line's value during blanking.
+    fn reset_lines_needed(&self) -> u32 {
+        let total = (RESET_TARGET_NS / self.line_ns()).ceil() as u32;
+        total.saturating_sub(self.v_blank_lines()).max(1)
     }
 }
 
 impl Default for DpiGeometry {
-    /// 800 LEDs per output at about 40 fps.
+    /// 800 LEDs per output at about 40 fps (1152 × 807 active, 40.3 Hz).
     fn default() -> Self {
         let (hfp, hs, hbp) = DEFAULT_H_BLANK;
         let (vfp, vs, vbp) = DEFAULT_V_BLANK;
@@ -426,7 +427,7 @@ impl Default for DpiGeometry {
             pixel_clock_hz: PIXEL_CLOCK_HZ,
             bit: BitTiming::STANDARD,
             pixels_per_output: 800,
-            reset_lines: 10,
+            reset_lines: 7,
             h_front_porch: hfp,
             h_sync: hs,
             h_back_porch: hbp,
@@ -468,6 +469,7 @@ mod tests {
         assert_eq!(g.htotal(), 1176);
         assert!((g.line_ns() - 30_625.0).abs() < 0.01);
         assert!(g.reset_ns() >= RESET_MIN_NS);
+        assert_eq!(g.vactive(), 807);
         assert!(g.refresh_hz() > 40.0 && g.refresh_hz() < 40.5, "{}", g.refresh_hz());
         let big = DpiGeometry::for_pixels(1600).unwrap();
         assert!(big.refresh_hz() > 20.0 && big.refresh_hz() < 20.5);
@@ -501,11 +503,7 @@ mod tests {
             g.vtotal(),
         )
         .unwrap();
-        // Vertical blanking counts toward the reset, so the mode may carry
-        // slightly more data lines than requested, never fewer.
-        assert!(m.pixels_per_output >= 500);
-        assert!(m.reset_ns() >= RESET_MIN_NS);
-        assert_eq!(m.vactive(), v);
+        assert_eq!(m, g, "a generated mode must round-trip exactly");
     }
 
     #[test]
