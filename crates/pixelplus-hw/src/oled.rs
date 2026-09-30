@@ -344,7 +344,7 @@ mod tests {
         assert_eq!(ellipsize("abc", 2), "ab");
         assert_eq!(wrap("Wizards in Winter by TSO", 12, 2), vec!["Wizards in", "Winter by.."]);
         assert_eq!(wrap("short", 12, 2), vec!["short"]);
-        assert_eq!(wrap("abcdefghijklmnop", 5, 3), vec!["abcde", "fghij", "klmnop".chars().take(3).collect::<String>() + ".."]);
+        assert_eq!(wrap("abcdefghijklmnop", 5, 3), vec!["abcde", "fghij", "klm.."]);
         assert!(wrap("", 5, 2).is_empty());
     }
 
