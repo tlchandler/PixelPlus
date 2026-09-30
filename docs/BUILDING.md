@@ -137,11 +137,14 @@ compatible.
 ### Security model (decided)
 
 `pixelplusd` runs as the **unprivileged system user `pixelplus`** with supplementary
-groups `video render i2c gpio spi audio netdev dialout` and only two capabilities:
-`CAP_NET_BIND_SERVICE` (port 80) and `CAP_SYS_NICE` (the output thread switches itself
-to `SCHED_FIFO`; `LimitRTPRIO=95`, `LimitMEMLOCK=infinity`). It is sandboxed
-(`NoNewPrivileges`, `ProtectSystem=full`, `ProtectHome`, `PrivateTmp`). Privileged
-operations go through system services, authorised by polkit for that user only:
+groups `video render i2c gpio spi audio netdev dialout pixelplus-overlay` and only two
+capabilities: `CAP_NET_BIND_SERVICE` (port 80) and `CAP_SYS_NICE` (the output thread switches
+itself to `SCHED_FIFO`; `LimitRTPRIO=95`, `LimitMEMLOCK=infinity`). It is sandboxed
+(`NoNewPrivileges`, `ProtectSystem=full`, `ProtectHome`, `PrivateTmp`, `UMask=0027`). Privileged
+operations go through system services, authorised by polkit for that user only, and only for
+what it uses (`packaging/polkit/50-pixelplus.rules`: NetworkManager `network-control`,
+`settings.modify.system/own`, `wifi.scan`, `enable-disable-wifi`; logind reboot/power-off;
+hostnamed; timedated `set-timezone` — not `set-time`, NTP keeps the clock):
 
 | Operation | How |
 |---|---|
@@ -152,6 +155,42 @@ operations go through system services, authorised by polkit for that user only:
 | Board boot config, updates, SSH on/off, re-apply `pixelplus.txt`, Wi-Fi country, `/etc/hosts` | `systemctl start --no-block pixelplus-helper@<verb>.service` (root oneshot, whitelisted verbs) |
 | Board EEPROM read/write | `/dev/i2c-1` (group `i2c`, `I2C_RDWR` works even while at24 is bound); the at24 sysfs file only if it is accessible. `new_device` (root) is never used |
 | Update check | `apt-cache policy pixelplus` (lists refreshed daily by apt and by the `update` verb) |
+
+**Sidecars run as their own users, without polkit rights.**
+
+| Service | User / groups | Sees of `/var/lib/pixelplus` | Talks to pixelplusd |
+|---|---|---|---|
+| `pixelplus-games` (internet-facing web page on :8088) | `pixelplus-games`, primary group `pixelplus-overlay`, `audio` | only `games/` (`TemporaryFileSystem` + `BindPaths`; 2770 `pixelplus:pixelplus-overlay`, setgid) | HTTP on loopback with the local token (below); control socket `/run/pixelplus-games/games.sock` (its `RuntimeDirectory`, 0770 → pixelplusd via the group); overlay buffers in `/dev/shm` (0660, group `pixelplus-overlay`) |
+| `pixelplus-tts` (loopback :7081) | `pixelplus-tts`, `pixelplus` (to read music beds) | only `media/` (read-only) and `tts/` (its own) | pixelplusd calls it |
+
+The **local token** replaces the old `X-PixelPlus-Local: 1` loopback trust: pixelplusd writes a
+random token to `/run/pixelplus/local-token` at every start (0640, group `pixelplus-overlay`); the
+games sidecar sends `X-PixelPlus-Local: <token>` (re-reading the file after a 401). pixelplusd
+accepts it only from loopback, never together with proxy headers (so a reverse proxy or tunnel on
+the Pi can't be used to reach the API), and only for the sidecar's routes (show, player
+pause/resume/stop, overlays, events) — no settings, network, SSH or updates. The show it reads
+has its secrets redacted.
+
+**Cluster keys** are per follower and authenticate only cluster calls (ARCHITECTURE §7.5): no
+bearer key on the wire, signed requests with replay protection, X25519 at adoption, clear rules
+for who may adopt a controller (a leader only after its owner chose *Join another show*).
+
+**Browser side** (ARCHITECTURE §8): Host allow-list against DNS rebinding (tunnel / own domains
+under Settings → Security → *Other names for this controller*), `X-PixelPlus-Request: 1` on every
+state-changing call against CSRF, WebSocket origin check, CSP with the UI's inline-script hashes,
+`nosniff`, no framing, write-only SMTP/MQTT passwords, sign-in throttling (6+ character
+passwords; Argon2 on at most two blocking threads), song-request limits per real client address
+(forwarding headers only from this machine or `settings.security.trustedProxies`), a new
+controller can be set up only from the local network, snapshot/WebSocket size limits, `nmcli
+--ask` with the Wi-Fi password on stdin (never on a command line), ffmpeg restricted to local
+files (`-protocol_whitelist file,pipe`).
+
+Known limits: the first adoption of a new or released controller is trust-on-first-use (someone
+on the LAN could adopt it first; the owner sees who adopted it on the controller's page and in
+its log, and can release it). Plain HTTP on the LAN: a sign-in session cookie and MQTT/SMTP
+traffic without TLS can be sniffed by someone who can already read the LAN's traffic.
+`SameSite=Lax` cookies don't separate ports (the games page on :8088 is "same-site"); the CSRF
+header covers that.
 
 Helper verbs (`packaging/bin/pixelplus-helper`), arguments `:`-separated in the instance name:
 
