@@ -446,13 +446,13 @@ pub async fn run_helper(
     }
 
     if is_root() && !in_docker() && cfg!(target_os = "linux") {
+        direct_precheck(&verb)?;
         if !state.services.helpers.claim(&verb, &initial) {
             return Err(ApiError::conflict(format!(
                 "{} is already in progress.",
                 verb.describe()
             )));
         }
-        direct_precheck(&verb)?;
         publish(state, &initial);
         let st = state.clone();
         let v = verb.clone();
@@ -570,6 +570,14 @@ fn direct_precheck(verb: &HelperVerb) -> ApiResult<()> {
             Err(ApiError::forbidden(
                 "This PixelPlus can't update itself. Run: sudo apt install --only-upgrade pixelplus",
             ))
+        }
+        HelperVerb::SshOn | HelperVerb::SshOff
+            if !(have("raspi-config") || (has_systemd() && have("systemctl"))) =>
+        {
+            Err(not_possible_here("change SSH"))
+        }
+        HelperVerb::WifiCountry(_) if !(have("raspi-config") || have("iw")) => {
+            Err(not_possible_here("set the Wi-Fi country"))
         }
         _ => Ok(()),
     }
