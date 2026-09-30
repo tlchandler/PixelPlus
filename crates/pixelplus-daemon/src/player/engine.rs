@@ -551,6 +551,9 @@ fn compute_context(state: &AppState) -> EngineContext {
     let show = state.store.get();
     let id = state.identity();
     let follower = id.role == LocalRole::Follower;
+    if !follower {
+        prepare_countdown_ticks(&state.config.data_dir, &show);
+    }
     EngineContext {
         budget: super::limiter::budget_for(state, &show, &id.id, follower),
         disabled: super::limiter::disabled_props(&show),
@@ -2165,7 +2168,7 @@ impl Core {
                 let msg = format!("Skipped “{name}”: {e}");
                 tracing::info!("{msg}");
                 self.journal(JournalEvent::Warn {
-                    code: "featureOff".into(),
+                    code: crate::services::reports::FEATURE_OFF_CODE.into(),
                     msg,
                 });
                 attempts += 1;
@@ -2487,7 +2490,9 @@ impl Core {
                 let layer = EffectLayer::new(&show, &preset);
                 let mut a = Active::new(iref, ActiveKind::Effect(Box::new(layer)), now_ms);
                 a.duration_ms = Some(dur);
-                if let Some(clip) = dj_clip_id {
+                // DJ Studio off: its clips are skipped, the countdown ticks instead.
+                let clip = dj_clip_id.as_ref().filter(|_| show.feature(FeatureId::Dj));
+                if let Some(clip) = clip {
                     // The clip ends at zero (+ offset): "Showtime in 3, 2, 1…".
                     match self.dj_audio(clip) {
                         Ok((path, gain, clip_ms)) => {
@@ -2506,7 +2511,7 @@ impl Core {
                             false,
                         ),
                     }
-                } else if *tick {
+                } else if *tick || dj_clip_id.is_some() {
                     match countdown_ticks(&self.app.config.data_dir, dur) {
                         Ok(path) => a.audio_src = Some((path, 0.0)),
                         Err(e) => tracing::warn!("countdown tick sound: {e}"),
@@ -4321,6 +4326,54 @@ fn countdown_ticks(data_dir: &Path, duration_ms: u64) -> std::io::Result<PathBuf
     std::fs::write(&tmp, wav_mono16(RATE, &pcm))?;
     std::fs::rename(&tmp, &path)?;
     Ok(path)
+}
+
+/// Countdown lengths (ms) whose tick sound the show's countdowns use.
+fn countdown_tick_lengths(show: &Show) -> HashSet<u64> {
+    show.playlists
+        .iter()
+        .flat_map(|p| p.intro.iter().chain(&p.items).chain(&p.outro))
+        .filter_map(|i| match i {
+            PlaylistItem::Countdown {
+                duration_ms,
+                tick,
+                dj_clip_id,
+                ..
+            } if *tick || dj_clip_id.is_some() => {
+                Some((*duration_ms).clamp(countdown::MIN_DURATION_MS, countdown::MAX_DURATION_MS))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Write the tick sounds the show's countdowns need ahead of time (off the
+/// output thread: a 10-minute tick track is 19 MB) and delete the ones no
+/// countdown uses any more, so editing a countdown's length doesn't leave a
+/// file per length behind.
+pub(super) fn prepare_countdown_ticks(data_dir: &Path, show: &Show) {
+    let wanted = countdown_tick_lengths(show);
+    for ms in &wanted {
+        if let Err(e) = countdown_ticks(data_dir, *ms) {
+            tracing::debug!("countdown tick sound: {e}");
+        }
+    }
+    let Ok(rd) = std::fs::read_dir(data_dir.join("cache")) else {
+        return;
+    };
+    for e in rd.filter_map(Result::ok) {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some(ms) = name
+            .strip_prefix("countdown-")
+            .and_then(|n| n.strip_suffix(".wav"))
+            .and_then(|n| n.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if !wanted.contains(&ms) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 fn wav_mono16(rate: u32, pcm: &[i16]) -> Vec<u8> {

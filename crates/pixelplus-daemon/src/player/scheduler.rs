@@ -109,9 +109,19 @@ pub fn facts_for(show: &Show, now: DateTime<Utc>) -> ScheduleFacts {
 pub fn intro_lead_ms(show: &Show, pl: &pixelplus_core::model::Playlist) -> u64 {
     pl.intro
         .iter()
+        // Items of a feature turned off (Settings → Features) are skipped by
+        // the engine, so they take no time: the first song still starts on
+        // the dot.
+        .filter(|i| {
+            pixelplus_core::features::playlist_item_feature(i).map_or(true, |f| show.feature(f))
+        })
         .map(|i| match i {
-            PlaylistItem::Countdown { duration_ms, .. }
-            | PlaylistItem::Pause { duration_ms, .. } => *duration_ms,
+            // The engine plays a countdown for its clamped length.
+            PlaylistItem::Countdown { duration_ms, .. } => (*duration_ms).clamp(
+                pixelplus_core::effects::countdown::MIN_DURATION_MS,
+                pixelplus_core::effects::countdown::MAX_DURATION_MS,
+            ),
+            PlaylistItem::Pause { duration_ms, .. } => *duration_ms,
             PlaylistItem::Effect { duration_ms, .. } => {
                 if *duration_ms == 0 {
                     30_000
@@ -706,6 +716,27 @@ mod tests {
         assert!(facts_for(&exact_show(false), at(17, 29, 55, 0))
             .active
             .is_none());
+    }
+
+    #[test]
+    fn exact_start_leaves_out_items_the_engine_skips() {
+        use pixelplus_core::model::FeatureId;
+        let mut show = exact_show(true);
+        // Countdown turned off in Settings → Features: the engine skips it,
+        // so only the 2 s pause leads the first song.
+        show.settings.features.set(FeatureId::Countdown, false);
+        assert_eq!(intro_lead_ms(&show, &show.playlists[0]), 2_000);
+        let at = |s| Utc.with_ymd_and_hms(2026, 12, 1, 17, 29, s).unwrap();
+        assert!(facts_for(&show, at(50)).active.is_none(), "not 10 s early");
+        assert!(facts_for(&show, at(58)).active.is_some());
+        // A countdown plays for its clamped length (at most 10 minutes).
+        let mut show = exact_show(true);
+        if let pixelplus_core::model::PlaylistItem::Countdown { duration_ms, .. } =
+            &mut show.playlists[0].intro[1]
+        {
+            *duration_ms = 3_600_000;
+        }
+        assert_eq!(intro_lead_ms(&show, &show.playlists[0]), 602_000);
     }
 
     #[test]

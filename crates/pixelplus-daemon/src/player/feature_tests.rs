@@ -956,3 +956,40 @@ async fn power_limiter_stops_while_its_feature_is_off() {
     );
     assert!(wait_for(4000, || e.status().power.is_none()).await);
 }
+
+/// Countdown tick sounds are written ahead of time (not on the output thread
+/// when the countdown starts) and only for lengths the show still uses.
+#[test]
+fn countdown_tick_sounds_are_prepared_and_pruned() {
+    let dir = std::env::temp_dir().join(format!("pp-cd-ticks-{}", new_id()));
+    let cache = dir.join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    // Left over from an earlier length, and an unrelated cache file.
+    std::fs::write(cache.join("countdown-7000.wav"), b"old").unwrap();
+    std::fs::write(cache.join("cal-1.wav"), b"keep").unwrap();
+    let mut show = Show::default();
+    let mut pl = playlist("p1", &[], 0);
+    let mut ticking = countdown_item(5_000, CountdownOthers::Fill, CountdownFinale::None);
+    if let PlaylistItem::Countdown { tick, .. } = &mut ticking {
+        *tick = true;
+    }
+    pl.intro = vec![
+        ticking,
+        // No tick, no DJ clip: nothing to prepare.
+        countdown_item(9_000, CountdownOthers::Fill, CountdownFinale::None),
+    ];
+    show.playlists = vec![pl];
+    super::engine::prepare_countdown_ticks(&dir, &show);
+    let mut names: Vec<String> = std::fs::read_dir(&cache)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["cal-1.wav", "countdown-5000.wav"]);
+    // 16 kHz mono 16-bit, 5 s.
+    let len = std::fs::metadata(cache.join("countdown-5000.wav"))
+        .unwrap()
+        .len();
+    assert_eq!(len, 44 + 5 * 16_000 * 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}

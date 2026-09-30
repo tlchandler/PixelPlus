@@ -338,6 +338,10 @@ fn plural(n: u32, one: &str, many: &str) -> String {
     }
 }
 
+/// Journal `warn` code of a playlist item skipped because its feature is off
+/// in Settings → Features (the engine's `featureOff`).
+pub const FEATURE_OFF_CODE: &str = "featureOff";
+
 /// Build the report of one night from its journal records (any order).
 pub fn aggregate(ctx: &ReportContext, records: &[Record]) -> NightReport {
     let show = ctx.show;
@@ -422,6 +426,9 @@ pub fn aggregate(ctx: &ReportContext, records: &[Record]) -> NightReport {
                 game_s += u64::from(*s);
             }
             Event::Error { code, msg } => add_problem("error", code, msg),
+            // Items skipped because the owner turned their feature off
+            // (Settings → Features) are a choice, not a problem.
+            Event::Warn { code, .. } if code == FEATURE_OFF_CODE => {}
             Event::Warn { code, msg } => add_problem("warn", code, msg),
             Event::Health { checks } => last_health = Some(checks),
             Event::NodeOffline { id } => {
@@ -1738,6 +1745,23 @@ mod tests {
         );
         assert_eq!(quiet.status, "ok");
         assert!(quiet.headline.starts_with("No show tonight"));
+        // DJ clips skipped because the owner turned DJ Studio off are not a
+        // problem: the night stays "ok".
+        let skipped = aggregate(
+            &ReportContext {
+                show: &s2,
+                ..ctx(&s2)
+            },
+            &[rec(
+                "2026-12-01T19:00:00-06:00",
+                Event::Warn {
+                    code: FEATURE_OFF_CODE.into(),
+                    msg: "Skipped “Intro”: DJ Studio is turned off".into(),
+                },
+            )],
+        );
+        assert_eq!(skipped.status, "ok", "{skipped:#?}");
+        assert!(skipped.problems.is_empty());
         let err = aggregate(
             &c,
             &[rec(

@@ -1281,4 +1281,31 @@ mod platform_api_tests {
             .await;
         assert!(s.is_client_error());
     }
+    /// Two presses at the same moment pass a trigger's cooldown only once, and
+    /// a firing whose action fails doesn't use up the cooldown.
+    #[tokio::test]
+    async fn trigger_cooldown_holds_for_simultaneous_presses() {
+        let app = TestApp::new();
+        let (s, _) = app
+            .json("PUT", "/show/settings", Some(json!({"triggers": [
+                {"id": "tcool1", "name": "Doorbell", "kind": "http", "cooldownS": 60, "action": {"type": "stop"}},
+                {"id": "tcool2", "name": "Broken", "kind": "http", "cooldownS": 60, "action": {"type": "playPlaylist", "ref": "nope"}}
+            ]})))
+            .await;
+        assert_eq!(s, StatusCode::OK);
+        let (a, b) = tokio::join!(
+            app.json("POST", "/triggers/tcool1/fire", None),
+            app.json("POST", "/triggers/tcool1/fire", None)
+        );
+        let mut codes = [a.0, b.0];
+        codes.sort();
+        assert_eq!(codes, [StatusCode::OK, StatusCode::CONFLICT], "{a:?} {b:?}");
+        assert_eq!(app.commands_matching("Stop").await, 1);
+        // The failing action is reported each time, never "cooling down".
+        for _ in 0..2 {
+            let (s, v) = app.json("POST", "/triggers/tcool2/fire", None).await;
+            assert_ne!(s, StatusCode::OK);
+            assert!(!v.to_string().contains("cooling down"), "{v}");
+        }
+    }
 }

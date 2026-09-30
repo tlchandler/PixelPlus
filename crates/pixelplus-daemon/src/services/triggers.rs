@@ -313,31 +313,43 @@ pub async fn fire_trigger(state: &AppState, t: &Trigger, source: &str) -> ApiRes
         .as_ref()
         .map_or(true, |w| in_window(&show, w, chrono::Utc::now()));
     let now = now_s();
-    let stats = STATS
-        .lock()
-        .get_or_insert_with(HashMap::new)
-        .get(&t.id)
-        .cloned()
-        .unwrap_or_default();
-    if let Err(b) = check(t, &m, &stats, now) {
-        return Err(ApiError::conflict(format!(
-            "“{}” didn't fire: {}.",
-            t.name,
-            b.message()
-        )));
+    // Check and take the slot under one lock: two presses arriving together
+    // (a double click, two HTTP calls) must not both pass the cooldown.
+    {
+        let mut g = STATS.lock();
+        let stats = g
+            .get_or_insert_with(HashMap::new)
+            .entry(t.id.clone())
+            .or_default();
+        if let Err(b) = check(t, &m, stats, now) {
+            return Err(ApiError::conflict(format!(
+                "“{}” didn't fire: {}.",
+                t.name,
+                b.message()
+            )));
+        }
+        stats.record(now);
     }
-    let msg = if t.action.kind == TriggerActionType::Surprise {
-        let req = surprise_request(&show, &t.id, &t.action)?;
-        surprise_message(&player.surprise(req).await?)
+    let result = if t.action.kind == TriggerActionType::Surprise {
+        match surprise_request(&show, &t.id, &t.action) {
+            Ok(req) => player.surprise(req).await.map(|s| surprise_message(&s)),
+            Err(e) => Err(e),
+        }
     } else {
-        run_action(state, &t.action).await?
+        run_action(state, &t.action).await
     };
-    STATS
-        .lock()
-        .get_or_insert_with(HashMap::new)
-        .entry(t.id.clone())
-        .or_default()
-        .record(now);
+    let msg = match result {
+        Ok(m) => m,
+        Err(e) => {
+            // It didn't happen: give the slot back.
+            if let Some(s) = STATS.lock().as_mut().and_then(|m| m.get_mut(&t.id)) {
+                if let Some(pos) = s.fired.iter().rposition(|&f| f == now) {
+                    s.fired.remove(pos);
+                }
+            }
+            return Err(e);
+        }
+    };
     state
         .services
         .journal
