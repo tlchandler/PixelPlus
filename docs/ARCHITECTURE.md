@@ -253,6 +253,7 @@ PlaylistItem =
   | { id, type: "effect", effectId, durationMs }
   | { id, type: "media", mediaId }                 // audio only
   | { id, type: "pause", durationMs }
+  | { id, type: "command", command: string, args?: any }   // e.g. games.invite, overlay.text
 
 Schedule {
   enabled: boolean
@@ -485,3 +486,40 @@ Design language: dark "studio" theme default + light theme; Inter font; 8-px gri
 (#F5A524) with semantic green/red/blue; large touch targets (≥44 px); every destructive action has
 confirm + undo toast; empty states with guidance; skeleton loaders; keyboard shortcuts (space =
 play/pause, `/` = search).
+
+---
+
+## 10. Overlays (live content on props)
+
+An **overlay** temporarily replaces a prop's pixels with live content: games, scrolling text,
+QR codes, the fault finder, test patterns. Overlays are composited after sequence/effect
+rendering, before output-config (colour order, brightness, gamma).
+
+* Matrix props carry `matrix: {width, height, pixelMap}` (computed by the xLights importer from
+  the model's strings/nodes/start corner/direction, or edited in the UI). `pixelMap[y*width+x]`
+  = prop pixel index or -1.
+* **Shared-memory fast path** (local processes such as the games sidecar):
+  `POST /api/v1/overlay/:propId/open` → `{shm: "/dev/shm/pixelplus-overlay-<propId>", width, height}`.
+  Layout = 12-byte header of three native-endian u32 (width, height, flags) + width×height×3 RGB,
+  row-major from top-left. Writer sets flags bit 0 after writing a frame; pixelplusd copies the
+  frame on its next output pass and clears the bit. (Same shape as FPP's overlay buffers so the
+  mario port changes minimally.)
+* HTTP: `PUT /api/v1/overlay/:propId/frame` (body = raw RGB width×height×3),
+  `POST /api/v1/overlay/:propId {enabled: bool}`, `POST /api/v1/overlay/:propId/text {text, color, scroll, durationMs}`,
+  `POST /api/v1/overlay/:propId/qr {url, durationMs}`.
+* If the matrix prop's pixels live on a follower, the leader forwards overlay frames to that
+  follower over UDP 32321 (`u8 'O' | propId len-prefixed | frameNo u32 | RGB`).
+
+## 11. Games (port of tlchandler/fpp-mariobros)
+
+`games/` is a Python sidecar (`pixelplus-games.service`) that lets passers-by play Super Mario
+Bros. (random level, Santa hat, 60 s turns, cooldown, queue, invites) or an NES **Arcade mode**
+on a matrix prop, using their phone as a gamepad (port 8088 by default). It uses:
+* `GET /api/v1/show` → `settings.games` + matrix prop geometry.
+* `POST /api/v1/player/pause` / `resume` to pause the show around a game.
+* Overlay API (§10) to draw frames; audio via ALSA on the leader's audio device.
+* `POST /api/v1/games/invite`, `POST /api/v1/games/stop` exposed by pixelplusd (proxied to the
+  sidecar's local control socket `/run/pixelplus/games.sock`) so playlists/schedule/triggers can
+  show the invite. PlaylistItem gains `{type:"command", command:"games.invite"|"games.stop", args}`.
+* Status: `GET /api/v1/games/status` → {enabled, running, arcade, queueLength, cooldownS, player?, lastError?}.
+ROMs are uploaded in the UI (Settings → Games) and stored in `/var/lib/pixelplus/games/roms/`.

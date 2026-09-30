@@ -368,6 +368,9 @@ pub struct Prop {
     pub group_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<PropLayout>,
+    /// Present for matrix-like props: maps a width×height grid onto prop pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix: Option<MatrixInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -429,6 +432,16 @@ pub struct PropLayout {
     /// Normalized (0..1) per-pixel positions inside the w×h box.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub points: Option<Vec<[f32; 2]>>,
+}
+
+/// Grid geometry of a matrix prop, used by overlays (games, text, QR codes).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MatrixInfo {
+    pub width: u32,
+    pub height: u32,
+    /// Row-major from the top-left, `width*height` entries: prop pixel index, or -1 if no pixel.
+    pub pixel_map: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -653,6 +666,14 @@ pub enum PlaylistItem {
     Media { id: String, media_id: String },
     #[serde(rename_all = "camelCase")]
     Pause { id: String, duration_ms: u64 },
+    /// Run a command, e.g. "games.invite", "games.stop", "overlay.text".
+    #[serde(rename_all = "camelCase")]
+    Command {
+        id: String,
+        command: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
 }
 
 impl PlaylistItem {
@@ -662,7 +683,8 @@ impl PlaylistItem {
             | PlaylistItem::Dj { id, .. }
             | PlaylistItem::Effect { id, .. }
             | PlaylistItem::Media { id, .. }
-            | PlaylistItem::Pause { id, .. } => id,
+            | PlaylistItem::Pause { id, .. }
+            | PlaylistItem::Command { id, .. } => id,
         }
     }
 }
@@ -816,6 +838,96 @@ pub struct ShowSettings {
     pub security: SecuritySettings,
     #[serde(default)]
     pub triggers: Vec<Trigger>,
+    #[serde(default)]
+    pub games: GameSettings,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum GamePlayWindow {
+    #[default]
+    DuringShow,
+    Anytime,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum InviteStyle {
+    #[default]
+    Text,
+    Qr,
+    Alternate,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ScaleMode {
+    #[default]
+    Fit,
+    Stretch,
+}
+
+/// Visitor-playable games on a matrix prop (port of tlchandler/fpp-mariobros).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GameSettings {
+    pub enabled: bool,
+    /// Matrix prop the game is shown on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matrix_prop_id: Option<String>,
+    pub port: u16,
+    pub game_seconds: u32,
+    pub cooldown_minutes: u32,
+    /// e.g. "1-1,1-2,4-1"; empty = all levels.
+    #[serde(default)]
+    pub levels: String,
+    pub play_window: GamePlayWindow,
+    pub pause_show: bool,
+    pub santa_hat: bool,
+    pub arcade_mode: bool,
+    pub arcade_minutes: u32,
+    pub arcade_idle_seconds: u32,
+    #[serde(default)]
+    pub public_url: String,
+    pub invite_every_minutes: u32,
+    pub invite_style: InviteStyle,
+    pub invite_flashes: u32,
+    pub invite_color: String,
+    pub scale_mode: ScaleMode,
+    pub output_fps: u32,
+    pub brightness: u8,
+    pub volume: u8,
+    /// left, top, right, bottom of the NES screen shown in Mario mode.
+    pub crop: [u32; 4],
+}
+
+impl Default for GameSettings {
+    fn default() -> Self {
+        GameSettings {
+            enabled: false,
+            matrix_prop_id: None,
+            port: 8088,
+            game_seconds: 60,
+            cooldown_minutes: 5,
+            levels: String::new(),
+            play_window: GamePlayWindow::DuringShow,
+            pause_show: true,
+            santa_hat: true,
+            arcade_mode: false,
+            arcade_minutes: 0,
+            arcade_idle_seconds: 600,
+            public_url: String::new(),
+            invite_every_minutes: 5,
+            invite_style: InviteStyle::Text,
+            invite_flashes: 3,
+            invite_color: "#ff0000".into(),
+            scale_mode: ScaleMode::Fit,
+            output_fps: 40,
+            brightness: 100,
+            volume: 80,
+            crop: [8, 32, 256, 224],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
