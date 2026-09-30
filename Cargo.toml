@@ -20,7 +20,7 @@ rust-version = "1.80"
 pixelplus-core = { path = "crates/pixelplus-core" }
 pixelplus-output = { path = "crates/pixelplus-output" }
 pixelplus-hw = { path = "crates/pixelplus-hw" }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"

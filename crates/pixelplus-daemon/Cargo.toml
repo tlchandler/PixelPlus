@@ -1,12 +1,20 @@
 [package]
 name = "pixelplus-daemon"
+description = "PixelPlus show daemon: API, playback, scheduling, cluster sync"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "pixelplusd"
+path = "src/main.rs"
+
 [dependencies]
+pixelplus-core.workspace = true
+pixelplus-output.workspace = true
+pixelplus-hw.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -14,3 +22,12 @@ anyhow.workspace = true
 tracing.workspace = true
 rand.workspace = true
 chrono.workspace = true
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws", "multipart", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip", "cors", "set-header"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+futures = "0.3"
+bytes = "1"
+argon2 = "0.5"
+parking_lot = "0.12"
