@@ -320,7 +320,7 @@ ShowSettings {
 
 Every field below is `#[serde(default)]`; optional ones are omitted while empty, so a
 `show.json` from an older version loads unchanged and saves with only these new keys:
-`formatVersion` and `settings.{https,reports,power,remote,updates,xlights}` (test:
+`formatVersion` and `settings.{https,reports,power,remote,updates,xlights,features}` (test:
 `crates/pixelplus-core/tests/show_compat.rs`, fixture `testdata/show-head-2026-09.json`).
 Details per feature in §12.
 
@@ -345,7 +345,8 @@ ShowSettings += { https: {enabled=true, extraNames?}, reports: {enabled, time="0
                   power: {mode:"off"|"warn"(default)|"limit", safety=0.9, globalAmps?, globalWatts?, dim: DimWindow[], maxBrightness=100},
                   remote: {publicListener, tailscale?, cloudflare?},
                   updates: {channel:"stable"|"beta", auto:"off"|"notify"(default)|"install", window:{from="10:00", to="14:00", days}, avoidShowHours=2},
-                  xlights: {fppConnect, passwordHash? /*write-only: "" when set*/, addToPlaylists=true, watchFolder?} }
+                  xlights: {fppConnect, passwordHash? /*write-only: "" when set*/, addToPlaylists=true, watchFolder?},
+                  features: {disabled: FeatureId[] /*[] = everything on, §12.17*/} }
 Trigger += { kind:"sensor", sensor?: {sensorNodeId, input}, cooldownS?, when?:"always"|"showOnly"|"idleOnly"|"offOnly",
              activeWindow?: {from: TimeSpec, to: TimeSpec}, maxPerHour? }
 TriggerAction += { type:"surprise", target?: Target, durationMs?, source?:"sequence"|"effect" }
@@ -858,6 +859,15 @@ Left sidebar (collapses to bottom tab bar on phones):
    Settings → *More*: `/settings/{seasons,power,sensors,reports,xlights,https,remote,updates}`.
    The dashboard's *Play show now* has a **Loop** switch ("Loop until I stop", §8 *Manual playback*).
 
+12. **Features** (`/settings/features`, first entry of the Settings list and *Customize what you
+   see* at the foot of the sidebar / the phone's More sheet): optional features on and off
+   (§12.17). Everything above that belongs to a feature that is off is left out — sidebar, tab
+   bar, More sheet, keyboard shortcuts, dashboard cards and badges, settings sections and
+   *More* links, playlist item kinds, and the buttons that lead to it from other pages; its
+   route renders a "turned off — Turn on" state instead of the page. Always there: Dashboard,
+   Props, Controllers, Sequences & Audio, Playlists, Schedule, Settings (network, audio,
+   security, backups, updates, hardware, logs) and the Features page itself.
+
 Public page `/request` (no auth, mobile-first): song request/vote page with QR code shown in Settings.
 
 Design language: dark "studio" theme default + light theme; Inter font; 8-px grid; accent = warm amber
@@ -936,6 +946,7 @@ end to end by `scripts/e2e/run.mjs` (phases `engine`, `public`, `sensors`).
 | 12.14 | F16 xLights FPP Connect | WS6 | `api/fppcompat.rs` (root-mounted) | `/settings/xlights` |
 | 12.15 | F18 tags, smart playlists | WS2 | `api/library.rs`, `core/smartlist.rs` | sequences / playlists pages |
 | 12.16 | F20 surprises + ESP32 sensor nodes | WS3 (engine), WS6 | `services/sensornodes.rs`, `api/sensornodes.rs` | `/settings/sensors` |
+| 12.17 | Feature toggles (Settings → Features) | — | `core/features.rs`, `api/features.rs`, `services/features.rs` | `lib/features.ts`, `/settings/features` |
 
 ### 12.1 A/V auto-calibration and HTTPS (F1, WS1)
 
@@ -1792,3 +1803,77 @@ inputs, GPIO ≤ 48 and unique, INA address and shunt range), `POST /sensor-node
 X25519) is checked by the Rust tests (`sensornodes.rs`) and the firmware's `pio test -e native`
 (`test_protocol`, plus `test_debounce`).
 
+### 12.17 Feature toggles (Settings → Features)
+
+The owner turns optional parts of PixelPlus on and off so the interface (other than the Features
+page) shows only what this display uses. Model: `ShowSettings.features: FeatureSettings
+{disabled: string[]}` (`pixelplus_core::features`). The list holds the ids that are **off**, so a
+show without the key — every show written before this — has everything on; ids are strings so
+a show from a newer version (with features this one doesn't know) still loads and keeps them.
+`Show::feature(FeatureId)` answers "is it on?". New shows get the setup wizard's choice
+(`POST /system/setup {…, features}`), *Essentials* by default.
+
+| Group | `FeatureId` (name) | Needs |
+|---|---|---|
+| Show extras | `dj` (DJ Studio), `effects` (Effects & looks — the editor; idle looks keep working), `autoShows` (Light shows from music, F2), `smartPlaylists` (Smart playlists & tags, F18), `countdown` (F4, incl. *Start exactly on time*), `seasons` (F8), `requests` (Song requests, yard sign), `games` | — |
+| Setup tools | `layout` (Layout & preview, F3), `faultFinder`, `pixelCount` (F7), `receiverWizard` (F9), `mapYard` (F6), `soundSync` (F1 calibration), `phoneTrust` (F1 HTTPS / trust page) | `mapYard`, `soundSync` → `phoneTrust` |
+| Running the show | `reports` (F11), `alerts` (email/ntfy), `power` (F12 limiter + dimming), `triggers` (GPIO/HTTP), `sensors` (F20 nodes), `surprises` (F20), `mqtt`, `remote` (F14), `xlightsUpload` (F16) | `sensors`, `surprises` → `triggers` |
+
+Always on (not toggleable): Dashboard, Props, Controllers (incl. F10 replacement), Sequences &
+Audio, Playlists, Schedule, Settings sections, signed updates (F15) and backups — safety first.
+Presets: *Everything* = `[]`; *Essentials* = only `effects, layout, faultFinder, pixelCount,
+receiverWizard, power` on; anything else is *Custom*.
+
+*Dependencies* are kept consistent everywhere: `FeatureSettings::set(id, on)` turns on what `id`
+needs, or turns off what needs `id`, and `normalize()` (applied on every write) turns off any
+feature whose requirement is off. The web mirror (`web/src/lib/features.ts`: catalogue with
+icons, descriptions and routes, `isEnabled()`, `setFeature`, `normalize`, `presetOf`, `usage`,
+`itemFeature`, `featureForApi`) has the same rules and is tested against the same cases.
+
+*API*: `GET /features` → `{features: [{id, name, group, requires, enabled}], disabled}`;
+`PUT /features {id, enabled}` (one switch) or `{disabled: [...]}` (a preset) → the same plus
+`changed` (every feature whose state changed, catalogue order). The state is also in `GET /show`
+(`settings.features`) and follows the normal `show` WebSocket event.
+
+*Enforcement* (daemon): `api::features::guard` (on `/api/v1`, after auth) maps each request to a
+feature (`feature_for(method, path)`, unit-tested) and answers `409 {error: {code:
+"feature_disabled", message: "<Name> is turned off on this controller. Turn it on in Settings →
+Features."}}` — `404` for public paths (`/public/requests`, `/public/ca.crt`, `/public/tls`…);
+the root-mounted xLights paths (F16) get `404` through `root_guard`; on the public listener
+(F14) `/play/` answers `404` while Games (or Remote access) is off and nothing is served while
+Remote access is off (tunnel host names also leave the Host allow-list). Custom looks stay
+readable (`GET /effects`), only the editor's writes are the feature. Services read
+`show.feature(..)` wherever they decide to do work, so changes apply live, without a restart:
+MQTT disconnects; alerts only toast (no email/ntfy); the nightly report scheduler and the xLights
+drop folder pause; analysis/auto-show jobs of a feature that is off wait in the queue; the sensor
+node UDP port closes (and reopens); GPIO lines are released and triggers/surprises refuse to fire;
+the HTTPS listener stops (`tls::active`); the power limiter has no budget and late-night dimming
+stops (warned in the UI: protection is off); season prop masks and auto-switching stop;
+`services/features.rs` tells the games sidecar to stop and reload (the sidecar also treats
+`"games"` in `features.disabled` as games off) and publishes a `features {turnedOff, turnedOn}`
+WebSocket event. *Engine*: a playlist item whose feature is off (`playlist_item_feature`: `dj`,
+`countdown`, `effect`, `command games.*`) is skipped with a journal `warn {code: "featureOff"}`;
+dynamic DJ clips aren't pre-rendered; a smart playlist has no songs while `smartPlaylists` is off
+(intro/outro still play); the health check ignores DJ clips while DJ Studio is off. Followers get
+the leader's `features` in `ManifestSettings` (omitted while everything is on) and their
+follower-local show carries it, so the limiter and the rest behave the same on every controller.
+
+*Web*: `isEnabled(id)` is reactive (bound to the app's show); `visibleNav()` filters the sidebar,
+tab bar, More sheet and keyboard shortcuts; the admin layout renders `FeatureOff` for a route of
+a feature that is off (`featureForPath`); `features-actions.ts` turns features on/off with a
+confirmation when something in use is affected ("DJ clips in 2 playlists are skipped while it's
+off. Nothing is deleted…", dependents named, power/remote warnings, HTTPS warning when on
+https) and a toast with Undo. The Features page shows presets, search, one card per group with a
+44 px switch, "in use" facts computed from the show (`usage()`: clips, voices, playlists using an
+item kind, seasons, supplies, triggers, sensor nodes, ROMs…) and dependency notes. The playlist
+editor marks items the show will skip ("Skipped · DJ Studio is off"). The demo backend serves the
+same API and guard (`mock/server.ts`).
+
+*Tests*: `core/features.rs` + `tests/show_compat.rs` (old shows: everything on), `api/features.rs`
+(routes → features, GET/PUT, guard answers, xLights root paths, triggers refuse),
+`listeners/tests.rs` (public `/play/` and requests 404, remote off), `player/feature_tests.rs`
+(countdown skipped and journaled, back on plays it; limiter stops), `cluster/manifest.rs`
+(features reach followers), `games/tests/test_logic.py`, `web/src/lib/features.test.ts`,
+`web/tests/e2e/features.spec.ts` (nav/route/dashboard/buttons, presets, dependencies, wizard,
+390 px, axe) and `scripts/e2e/run.mjs` (phase `public`: Games and Song requests off → public
+endpoints 404, on → they work).

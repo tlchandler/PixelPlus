@@ -49,6 +49,10 @@ Pi or in Docker as a show director.
   the next song.
 - **Alerts & integrations** — email and push (ntfy) alerts, MQTT with Home Assistant
   discovery, physical button triggers, OLED status screen.
+- **Only what you use** — Settings → Features turns optional parts on and off (presets:
+  Essentials, Everything, Custom), so menus and pages show just what this display uses.
+  Nothing is deleted; turned-off features stop their background work and their playlist items
+  are skipped.
 - **Secure by default** — optional password, per-controller keys with signed cluster
   traffic, hardened against hostile uploads and cross-site attacks.
 

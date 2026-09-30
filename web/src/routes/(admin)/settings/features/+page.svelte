@@ -132,7 +132,7 @@
 					<span class="p-label">{p.label}</span>
 					<span class="p-blurb">{p.blurb}</span>
 				</span>
-				<span class="p-count">{p.count}</span>
+				{#if p.id !== 'custom' || selected}<span class="p-count">{p.count}</span>{/if}
 				{#if selected}<span class="p-tick" aria-hidden="true"><Check size={12} strokeWidth={3} /></span>{/if}
 			</button>
 		{/each}

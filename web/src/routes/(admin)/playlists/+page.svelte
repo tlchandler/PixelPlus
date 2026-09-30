@@ -496,7 +496,7 @@
 <div class="page">
 	<PageHeader
 		title="Playlists"
-		subtitle="Mix songs, DJ breaks, effects and pauses. Changes save automatically."
+		subtitle={`Mix songs${djOn ? ', DJ breaks' : ''}${looksOn ? ', effects' : ''} and pauses. Changes save automatically.`}
 	>
 		{#snippet actions()}
 			<button class="btn primary" onclick={createPlaylist}><Plus size={16} /> New playlist</button>

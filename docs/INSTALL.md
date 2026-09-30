@@ -219,7 +219,10 @@ the Imager or `pixelplus.txt` is filled in):
    blank chip), pick it; PixelPlus can write the chip for you. Changing the board
    restarts the controller once.
 3. **Show name, location and time zone** – used for sunset-based schedules.
-4. **Password** (optional) for the web page.
+4. **What will you use?** – *Essentials* (recommended), *Everything*, or *Let me choose*.
+   Features you don't pick stay out of the menus; see
+   [Customize what you see](#customize-what-you-see).
+5. **Password** (optional) for the web page.
 
 Then import your xLights layout and sequences (see the in-app guide).
 
@@ -368,6 +371,38 @@ Where to find what, once the show is running. Everything is on the show leader's
   surprise over the song that is playing; **Test** tries it without walking outside. The
   sensor talks to the leader on UDP port 32422 with its own key, so nobody else on the network
   can fake it.
+
+## Customize what you see
+
+PixelPlus can do a lot, and most displays use only part of it. **Settings → Features** (also
+*Customize what you see* at the bottom of the menu, or under **More** on a phone) turns
+optional features on and off for this show, so the rest of the interface shows only what you
+actually use:
+
+* **Presets** – *Essentials* (props, controllers, sequences, playlists and schedule, plus
+  Effects & looks, Layout & preview, the fault finder, pixel count check, receiver wizard and
+  the power limiter), *Everything*, or *Custom* (your own mix). New shows start with the choice
+  from the setup wizard; a show from an older version keeps everything on.
+* **Groups** – *Show extras* (DJ Studio, Effects & looks, Light shows from music, Smart
+  playlists & tags, Countdown, Seasons, Song requests, Games), *Setup tools* (Layout & preview,
+  Fault finder, Pixel count check, Receiver wizard, Map my yard, Sync to sound, Phone trust
+  (HTTPS)) and *Running the show* (Nightly report, Alerts, Power limiter, Buttons & triggers,
+  Sensor nodes, Surprises, Home Assistant & MQTT, Remote access, Upload from xLights). Each
+  shows what it's used for right now ("4 clips · used in 2 playlists").
+* **Some features need others** – *Map my yard* and *Sync to sound* need *Phone trust (HTTPS)*;
+  *Sensor nodes* and *Surprises* need *Buttons & triggers*. Turning one on turns on what it
+  needs; turning one off turns off what needs it (PixelPlus tells you first).
+* **Nothing is deleted.** A feature that's off disappears from the menus, pages, dashboard and
+  playlist editor, its background work stops (MQTT disconnects, games close, tunnels stop
+  answering, the sensor port closes, the power limiter and nightly report pause) and playlist
+  items of its kind (DJ clips, countdowns, looks, game invites) are **skipped** during the show
+  and noted in the journal. Turn it back on and everything is exactly as you left it.
+* Turning off the **Power limiter** also turns off its protection of fuses and supplies, and
+  turning off **Remote access** makes the show unreachable from outside your home network
+  (your tunnel settings are kept). **Updates**, **Backups** and the core pages are always there.
+
+Opening the address of a feature that's off shows a short explanation with a **Turn on**
+button; its public pages (song requests, games) answer "not available" to visitors.
 
 ## Troubleshooting
 
