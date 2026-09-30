@@ -301,7 +301,10 @@ describe.skipIf(!BASE)('daemon JSON matches the UI contract', () => {
 	});
 
 	it('GET /reports/:date (F11 night report)', async () => {
-		const [mockList, list] = await Promise.all([fromMock('/reports?limit=1'), fromDaemon('/reports?limit=1')]);
+		const [mockList, list] = await Promise.all([
+			fromMock('/reports?limit=1'),
+			fromDaemon('/reports?limit=1')
+		]);
 		if (!list.length || !mockList?.length) return;
 		const [m, r] = await Promise.all([
 			fromMock(`/reports/${mockList[0].date}`),
