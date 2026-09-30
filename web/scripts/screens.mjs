@@ -29,7 +29,7 @@ const viewports = [
 ];
 
 const browser = await chromium.launch();
-for (const [vname, vp] of viewports) {
+for (const [vname, vp] of viewports.filter(([n]) => !process.env.VP || process.env.VP === n)) {
 	for (const [name, path] of pages) {
 		if (filter && !name.includes(filter)) continue;
 		const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: vname === 'phone' ? 2 : 1, colorScheme: 'dark' });

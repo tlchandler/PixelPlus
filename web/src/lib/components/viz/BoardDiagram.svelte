@@ -61,13 +61,13 @@
 		<rect class="mouth" x={w * 0.18} y="10" width={w * 0.64} height="26" rx="2" />
 		<rect class="clip" x={w * 0.36} y="30" width={w * 0.28} height="8" rx="1" />
 		{#if !compact}
-			<text class="lbl" x={w / 2} y="62" text-anchor="middle">{label}</text>
+			<text class="lbl" x={w / 2} y="68" text-anchor="middle">{label}</text>
 		{/if}
 	</g>
 {/snippet}
 
 {#if board === 'difftxlarge'}
-	<svg viewBox="0 0 1300 560" class="board" role="img" aria-label="60-port transmitter board diagram with 15 jacks">
+	<svg viewBox="0 0 1300 560" class="board large" role="img" aria-label="60-port transmitter board diagram with 15 jacks">
 		<defs>
 			<linearGradient id="pcb-{uid}" x1="0" y1="0" x2="0" y2="1">
 				<stop offset="0" stop-color="#153524" />
@@ -87,7 +87,7 @@
 		<!-- Pi footprint -->
 		<rect x="50" y="46" width="340" height="190" rx="10" fill="none" stroke="#6fa587" stroke-dasharray="6 6" opacity=".6" />
 		<text x="220" y="136" class="silk" text-anchor="middle">RASPBERRY PI 3B+ / 4 / 5</text>
-		<text x="220" y="158" class="silk small" text-anchor="middle">face up on standoffs</text>
+		<text x="220" y="164" class="silk small" text-anchor="middle">face up on standoffs</text>
 		<rect x="450" y="210" width="210" height="28" rx="3" fill="#0b0b0d" stroke="#333" />
 		{#each Array(20) as _, i (i)}<circle cx={462 + i * 9.6} cy="224" r="2.4" fill="#c9a24a" />{/each}
 		<!-- chips -->
@@ -104,12 +104,12 @@
 		<rect x="940" y="40" width="70" height="26" rx="3" fill="#2a2a2a" /><text x="975" y="84" class="silk small" text-anchor="middle">FUSE 5A</text>
 		<circle cx="880" cy="200" r="22" fill="#9aa3ad" stroke="#666" /><text x="880" y="240" class="silk small" text-anchor="middle">RTC</text>
 		<text x="760" y="215" class="silk title" text-anchor="middle">difftxlarge{rev ? ` rev ${rev}` : ''}</text>
-		<text x="760" y="238" class="silk small" text-anchor="middle">60 outputs · 15 × RJ45 differential</text>
+		<text x="760" y="248" class="silk small" text-anchor="middle">60 outputs · 15 × RJ45 differential</text>
 		<!-- jacks -->
 		{#each Array(15) as _, i (i)}
 			{@render rj45(64 + i * 80, 380, i + 1)}
 			{#if receivers[i + 1] && !compact}
-				<text x={92 + i * 80} y="468" class="rx" text-anchor="middle">{receivers[i + 1].length > 9 ? receivers[i + 1].slice(0, 8) + '…' : receivers[i + 1]}</text>
+				<text x={92 + i * 80} y="478" class="rx" text-anchor="middle">{receivers[i + 1].length > 8 ? receivers[i + 1].slice(0, 7) + '…' : receivers[i + 1]}</text>
 			{/if}
 		{/each}
 		<text x="650" y="516" class="silk small" text-anchor="middle">BANK 1: J1–J5 · BANK 2: J6–J10 · BANK 3: J11–J15</text>
@@ -192,6 +192,21 @@
 	.silk.title {
 		font-size: 22px;
 		letter-spacing: 0;
+	}
+	.large .silk {
+		font-size: 24px;
+	}
+	.large .silk.small {
+		font-size: 17px;
+	}
+	.large .silk.title {
+		font-size: 32px;
+	}
+	.large .lbl {
+		font-size: 21px;
+	}
+	.large .rx {
+		font-size: 15px;
 	}
 	.oled {
 		fill: #7fd3ff;

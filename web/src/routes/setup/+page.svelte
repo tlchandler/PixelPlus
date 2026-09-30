@@ -270,9 +270,8 @@
 	}
 	.glow {
 		position: absolute;
-		inset: -30% -10% auto;
-		height: 70vh;
-		background: radial-gradient(ellipse at 50% 60%, rgba(245, 165, 36, 0.14), transparent 60%);
+		inset: 0;
+		background: radial-gradient(ellipse 55% 45% at 50% 22%, rgba(245, 165, 36, 0.13), transparent 100%);
 		pointer-events: none;
 	}
 	.top {

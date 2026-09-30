@@ -394,6 +394,7 @@
 		height: 100%;
 	}
 	.name {
+		flex: none;
 		height: 50px;
 		padding: 0 14px;
 		border-radius: 14px;

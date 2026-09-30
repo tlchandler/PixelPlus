@@ -572,8 +572,11 @@
 			gap: 10px;
 		}
 		.filter {
-			flex: 1;
+			flex: 1 1 calc(50% - 4px);
 			min-width: 0;
+		}
+		.toolbar > .grow {
+			display: none;
 		}
 		.search {
 			max-width: none;

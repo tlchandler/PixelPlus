@@ -51,7 +51,7 @@
 		padding-bottom: env(safe-area-inset-bottom);
 		display: grid;
 		grid-template-columns: repeat(5, 1fr);
-		background: color-mix(in srgb, var(--sidebar) 96%, transparent);
+		background: var(--sidebar);
 		backdrop-filter: blur(20px) saturate(1.5);
 		-webkit-backdrop-filter: blur(20px) saturate(1.5);
 		border-top: 1px solid var(--border);
