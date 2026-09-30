@@ -13,7 +13,7 @@ using their phone as the controller. A sidecar service for `pixelplusd`, ported 
 * Optional **Arcade mode**: a full-time NES emulator. The matrix lists every game you uploaded
   (with a scroll bar), visitors take turns picking and playing any of them.
 
-Everything is configured in the PixelPlus web UI: **Settings → Games**.
+Everything is configured in the PixelPlus web UI: the **Games** page.
 
 ## What you need
 
@@ -46,7 +46,7 @@ It writes frames into the prop's overlay buffer `/dev/shm/pixelplus-overlay-<pro
 by pixelplusd, mode 0660) and listens on the control socket `/run/pixelplus/games.sock`
 (`/run/pixelplus` is created by tmpfiles.d, owned by `pixelplus`).
 
-Then open **Settings → Games** in PixelPlus:
+Then open the **Games** page in PixelPlus:
 
 1. Upload your Super Mario Bros. ROM (stored as `/var/lib/pixelplus/games/roms/smb.nes`) and,
    for Arcade mode, any other `.nes` games (stored next to it).
@@ -84,7 +84,7 @@ those headers are ignored on connections from the internet.
 
 Short URLs read best on an 80×40 matrix (about 20 characters fit; longer ones scroll).
 
-## Settings (Settings → Games)
+## Settings (the Games page)
 
 Stored in the show as `settings.games` (`GameSettings` in `pixelplus-core`); changes apply live.
 

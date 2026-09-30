@@ -940,7 +940,7 @@ pub async fn replace(
         .ok_or_else(|| ApiError::not_found("The controller to replace"))?;
     if old.role == NodeRole::Leader {
         return Err(ApiError::bad_request(
-            "The show leader is replaced with a transfer file: download it under Settings → Updates & transfer, then choose “Restore a show” when setting up the new controller.",
+            "The show leader is replaced with a transfer file: download it under Settings → Updates (Controller transfer file), then choose “Restore a show” when setting up the new controller.",
         ));
     }
     if req.candidate_id == old_id {

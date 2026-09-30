@@ -1,7 +1,7 @@
 <!--
 	F10 (WS5): download the passphrase-encrypted controller transfer file (.ppxfer): the whole
 	show, its sequences and media, the cluster keys and the HTTPS certificate authority. Used by
-	Settings → Updates & transfer and by "Replace…" on the show leader's card.
+	Settings → Updates (Controller transfer file) and by "Replace…" on the show leader's card.
 -->
 <script lang="ts">
 	import { Download, Eye, EyeOff, KeyRound, TriangleAlert } from '@lucide/svelte';

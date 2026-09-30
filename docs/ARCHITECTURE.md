@@ -910,7 +910,7 @@ on a matrix prop, using their phone as a gamepad (port 8088 by default). It uses
   sidecar's local control socket `/run/pixelplus/games.sock`) so playlists/schedule/triggers can
   show the invite. PlaylistItem gains `{type:"command", command:"games.invite"|"games.stop", args}`.
 * Status: `GET /api/v1/games/status` → {enabled, running, arcade, queueLength, cooldownS, player?, lastError?}.
-ROMs are uploaded in the UI (Settings → Games) and stored in `/var/lib/pixelplus/games/roms/`.
+ROMs are uploaded in the UI (the Games page) and stored in `/var/lib/pixelplus/games/roms/`.
 
 ---
 

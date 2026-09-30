@@ -318,7 +318,7 @@ Docker: see `docker/README.md` (compose profile `tunnel`).
   network's shared address) may request up to **6 songs an hour** (never more than 3 in
   10 minutes), and everyone together up to **60 an hour** (**Settings → Song requests**;
   0 = no limit). In the games, at most **3 phones** from one address wait in line or play at
-  the same time (**Games → Settings → Phones per visitor in line**). Behind a tunnel PixelPlus
+  the same time (**Games → Game → Phones per visitor in line**). Behind a tunnel PixelPlus
   still tells visitors apart by their real address; forwarded addresses are believed only from
   the tunnel on the controller itself (or a proxy listed in `security.trustedProxies`).
 

@@ -166,6 +166,7 @@ jobs:
             packaging/ci/install-arm64-cross-deps.sh scripts/dev-cluster.sh
           shellcheck -s sh packaging/bin/tts-capable packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm
           if [ -f games/install.sh ]; then shellcheck -s sh games/install.sh; fi
+          shellcheck tts/install.sh
       - name: bash -n
         run: for f in image/*.sh image/stage-pixelplus/*/*.sh packaging/*.sh packaging/bin/pixelplus-helper; do bash -n "$f"; done
       - name: systemd units
