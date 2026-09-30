@@ -109,7 +109,6 @@ pub fn smart_expansion(
 
 /// The items a smart playlist plays now (see the module docs); None when the
 /// playlist doesn't exist or isn't smart.
-#[allow(dead_code)] // contract for WS3 (engine)
 pub fn smart_items(state: &AppState, playlist_id: &str) -> Option<Vec<PlaylistItem>> {
     let tz = tz_of(&state.store.get());
     smart_expansion(state, playlist_id, Utc::now().with_timezone(&tz), None).map(|e| e.items)

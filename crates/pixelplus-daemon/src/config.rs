@@ -24,13 +24,10 @@ pub struct Config {
     /// UDP cluster port (beacons, sync, clock); overlay frames use +1.
     pub cluster_port: u16,
     /// UDP port for ESP32 sensor nodes (F20).
-    #[allow(dead_code)] // contract: services/sensornodes.rs (WS6)
     pub sensor_port: u16,
     /// HTTPS listener port (F1); 0 = no HTTPS listener.
-    #[allow(dead_code)] // contract: main.rs HTTPS listener (WS1)
     pub https_port: u16,
     /// Public-only listener on 127.0.0.1 for tunnels (F14); 0 = off.
-    #[allow(dead_code)] // contract: main.rs public listener (WS1/WS5)
     pub public_port: u16,
     pub output: OutputMode,
     pub tts_url: String,

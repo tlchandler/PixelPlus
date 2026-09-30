@@ -17,6 +17,7 @@ export const ENDPOINTS: string[] = [
 	'/reports?limit=30', // WS6
 	'/sensor-nodes', // WS6
 	'/sensor-nodes/discovered', // WS6
+	'/sensor-nodes/live', // WS6 (a map by node id: see MAPS in contract.test.ts)
 	'/xlights/status', // WS6
 	'/remote/status', // WS5
 	'/power-supplies', // WS3

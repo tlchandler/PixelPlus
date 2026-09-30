@@ -352,7 +352,6 @@ pub async fn fire(state: &AppState, id: &str) -> ApiResult<String> {
 }
 
 /// One trigger fired (or blocked) by a sensor input.
-#[allow(dead_code)] // contract for WS6 (services/sensornodes.rs)
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Fired {
@@ -366,7 +365,6 @@ pub struct Fired {
 /// inversion); triggers fire on the rising edge (`active == true`) only.
 /// Returns one result per matching `kind: "sensor"` trigger (empty when none
 /// matches or on a release).
-#[allow(dead_code)] // contract for WS6 (services/sensornodes.rs)
 pub async fn sensor_input(
     state: &AppState,
     sensor_node_id: &str,

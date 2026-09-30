@@ -7,7 +7,11 @@
 // tools (tests, fault finder, blackout, brightness, looks, overlays, requests,
 // snapshots, health, power, sensors, games/TTS without sidecars), password,
 // follower restart mid-show, leader crash, live prop changes, remove + re-adopt;
-// engine features: countdown, power limiter + dimming, surprises, calibration v2, identify.
+// engine features: countdown, power limiter + dimming (a follower's limiting seen by the leader),
+// surprises, calibration v2, identify; fleet (updates, remote access, transfer file);
+// the public-only listener (public pages only, /play proxied over HTTP and WebSocket,
+// per-visitor request caps); and a simulated ESP32 sensor node (adoption key exchange,
+// MACed heartbeats and events firing a sensor surprise, forged packets ignored).
 //
 //   cargo build -p pixelplus-daemon && (cd web && pnpm build)
 //   node scripts/e2e/run.mjs            # fresh cluster in a temp dir, stopped afterwards
@@ -15,7 +19,7 @@
 //                                       # suite: cd web && pnpm test:real)
 //   node scripts/e2e/run.mjs --only=sync,tools   # stop after the named phases
 //
-// Environment: PP_BIN, PP_WEB_DIR, PP_HTTP_BASE, PP_CLUSTER_BASE, PP_CLUSTER_DIR
+// Environment: PP_BIN, PP_WEB_DIR, PP_HTTP_BASE, PP_CLUSTER_BASE, PP_PUBLIC_BASE, PP_CLUSTER_DIR
 // (see scripts/dev-cluster.sh). Needs Node >= 22.15 (zstd, WebSocket).
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -24,6 +28,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { channelCount, fillFrame, MARKER_B, nodeFrame, readPpseq, writeFseq, writeWav } from './media.mjs';
+import { fakeGames, SimSensor } from './sims.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const args = new Set(process.argv.slice(2));
@@ -95,9 +100,9 @@ async function step(name, fn) {
 function client(node) {
 	const base = `http://127.0.0.1:${URL_OF[node]}/api/v1`;
 	let cookie = '';
-	async function call(method, p, body, { expect = 200, raw = false } = {}) {
+	async function call(method, p, body, { expect = 200, raw = false, headers: extra = {} } = {}) {
 		// Like the web UI: mark API calls as coming from our own client (CSRF guard).
-		const headers = { 'X-PixelPlus-Request': '1' };
+		const headers = { 'X-PixelPlus-Request': '1', ...extra };
 		if (cookie) headers.cookie = cookie;
 		let payload;
 		if (body instanceof FormData) payload = body;
@@ -902,7 +907,21 @@ async function phaseTools() {
 		await L.put('/player/brightness', { brightness: 100 });
 		await L.post('/auth/logout');
 		await L.get('/show', { expect: 401 });
+		// A sign-in through a tunnel on this machine (loopback + forwarding header) raises an alert.
+		const logFile = path.join(DIR, 'leader.log');
+		const logBefore = fs.readFileSync(logFile, 'utf8').length;
+		await L.post('/auth/login', { password: 'e2e-secret' }, { headers: { 'X-Forwarded-For': '203.0.113.50' } });
+		await until('remote sign-in alert', async () =>
+			/Remote sign-in: Someone signed in to PixelPlus from 203\.0\.113\.50 through a tunnel or reverse proxy/.test(
+				fs.readFileSync(logFile, 'utf8').slice(logBefore)
+			)
+		);
+		await L.post('/auth/logout');
 		await L.post('/auth/login', { password: 'e2e-secret' });
+		check(
+			!/Remote sign-in: Someone signed in to PixelPlus from 127\.0\.0\.1/.test(fs.readFileSync(logFile, 'utf8')),
+			'no alert for a local sign-in'
+		);
 		await L.put('/auth/password', { current: 'e2e-secret', password: null });
 		L.cookie = '';
 		await L.get('/show');
@@ -1141,6 +1160,38 @@ async function phaseEngine() {
 		});
 		check((await statusOf(L)).power?.limiting, 'warn mode still reports');
 		await L.del(`/power-supplies/${psu.id}`);
+		// A follower's limiter: its report reaches the leader (/nodes limiter, /power/live).
+		await L.put('/show/settings', { power: { mode: 'limit' } });
+		const ft = await tap(F1);
+		const fout = ft.wire.findIndex((w) => w.length && w.every((b) => b === 255));
+		check(fout >= 0, 'a fully white follower output');
+		const fpsu = await L.post('/power-supplies', {
+			name: 'E2E porch PSU',
+			volts: 12,
+			amps: (ft.ppo[fout] * 0.06 * 0.5) / 0.9,
+			receiverIds: [],
+			directOutputs: [{ nodeId: S.ids.f1, output: fout + 1 }]
+		});
+		await until('the follower output dimmed', async () => (await tap(F1)).wire[fout].every((b) => b > 110 && b < 146), {
+			timeout: 8000
+		});
+		await until(
+			'the leader sees the follower limiting',
+			async () => {
+				const n = (await L.get('/nodes')).find((x) => x.id === S.ids.f1);
+				const lv = (await L.get('/power/live')).nodes.find((x) => x.nodeId === S.ids.f1);
+				return (
+					n?.limiter?.minScale < 0.6 &&
+					n.limiter.activeGroups.includes(`supply:${fpsu.id}`) &&
+					lv?.limiting &&
+					lv.groups.some((g) => g.id === `supply:${fpsu.id}` && g.scale < 0.6)
+				);
+			},
+			{ timeout: 10000 }
+		);
+		check(!(await L.get('/nodes')).find((x) => x.id === S.ids.f2)?.limiter?.activeGroups?.length, 'f2 not limiting');
+		await L.del(`/power-supplies/${fpsu.id}`);
+		await L.put('/show/settings', { power: { mode: 'warn' } });
 	});
 
 	await step('late-night dimming lowers the brightness on every controller', async () => {
@@ -1288,6 +1339,148 @@ async function phaseFleet() {
 	});
 }
 
+async function phasePublic() {
+	const PUB = `http://127.0.0.1:${Number(process.env.PP_PUBLIC_BASE ?? 18090)}`;
+	const games = await fakeGames();
+	try {
+		await step('public listener: off until enabled, then public pages only', async () => {
+			eq((await fetch(PUB + '/api/v1/public/health')).status, 503, 'off by default');
+			await L.put('/show/settings', { remote: { publicListener: true }, games: { port: games.port } });
+			const h = await fetch(PUB + '/api/v1/public/health');
+			eq(h.status, 200, 'public health');
+			eq(h.headers.get('connection'), 'close', 'every response closes its connection');
+			eq((await fetch(PUB + '/api/v1/show')).status, 404, 'admin API hidden');
+			eq((await fetch(PUB + '/settings')).status, 404, 'admin pages hidden');
+			const login = await fetch(PUB + '/api/v1/auth/login', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', 'X-PixelPlus-Request': '1' },
+				body: '{"password":"x"}'
+			});
+			eq(login.status, 404, 'no sign-in on the public listener');
+			const root = await fetch(PUB + '/', { redirect: 'manual' });
+			eq([root.status, root.headers.get('location')], [307, '/request'], '/ goes to the request page');
+			const page = await fetch(PUB + '/request');
+			eq(page.status, 200, 'request page');
+			check(/<html/i.test(await page.text()), 'request page is HTML');
+			eq((await fetch(PUB + '/api/v1/public/requests')).status, 200, 'public requests API');
+		});
+
+		await step('public listener: /play proxied to the games controller (HTTP and WebSocket)', async () => {
+			const redirect = await fetch(PUB + '/play', { redirect: 'manual' });
+			eq([redirect.status, redirect.headers.get('location')], [308, '/play/'], '/play → /play/');
+			const page = await fetch(PUB + '/play/');
+			eq(page.status, 200, 'games page through the proxy');
+			check(/fake games controller/.test(await page.text()), 'games page body');
+			check(
+				games.seen.some((x) => x.url === '/' && /127\.0\.0\.1/.test(x.xff)),
+				`path rewritten, visitor forwarded: ${JSON.stringify(games.seen)}`
+			);
+			const ws = new WebSocket(PUB.replace('http', 'ws') + '/play/ws');
+			const reply = await new Promise((resolve, reject) => {
+				const t = setTimeout(() => reject(new Fail('no WebSocket echo through /play/ws')), 5000);
+				ws.onopen = () => ws.send('hello lights');
+				ws.onmessage = (e) => {
+					clearTimeout(t);
+					resolve(String(e.data));
+				};
+				ws.onerror = () => {
+					clearTimeout(t);
+					reject(new Fail('WebSocket through /play/ws failed'));
+				};
+			});
+			ws.close();
+			eq(reply, 'echo:hello lights', 'WebSocket frames pass both ways');
+			check(games.seen.some((x) => x.upgrade && x.url === '/ws'), 'upgrade reached the games controller');
+		});
+
+		await step('visitor caps: hourly song requests per visitor and for everyone (forwarded address)', async () => {
+			await L.put('/show/settings', { requests: { enabled: true, maxQueue: 5, perVisitorPerHour: 2, maxPerHour: 60 } });
+			const request = async (ip) => {
+				const r = await fetch(PUB + '/api/v1/public/requests', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json', 'X-PixelPlus-Request': '1', 'X-Forwarded-For': ip },
+					body: JSON.stringify({ sequenceId: S.seq2.id })
+				});
+				const body = await r.json();
+				for (const q of await L.get('/requests')) await L.del(`/requests/${q.id}`);
+				return [r.status, body.error?.code ?? 'ok'];
+			};
+			eq(await request('198.51.100.7'), [200, 'ok'], 'first request');
+			eq(await request('198.51.100.7'), [200, 'ok'], 'second request');
+			eq(await request('198.51.100.7'), [429, 'rate_limited'], 'third request from the same visitor');
+			eq(await request('198.51.100.8'), [200, 'ok'], 'another visitor');
+			await L.put('/show/settings', { requests: { maxPerHour: 1 } });
+			eq(await request('198.51.100.9'), [429, 'busy'], 'everyone together: hourly cap');
+			await L.put('/show/settings', { requests: { perVisitorPerHour: 6, maxPerHour: 60 } });
+		});
+	} finally {
+		games.close();
+		await L.put('/show/settings', { remote: { publicListener: false } }).catch(() => {});
+	}
+}
+
+async function phaseSensors() {
+	const sensorPort = Number(process.env.PP_CLUSTER_BASE ?? 33420) + 2;
+	const sim = await new SimSensor({ id: 'sne2e00001', sensorPort }).start();
+	try {
+		await step('sensor node: discovered, adopted with a key exchange, heartbeats show it live', async () => {
+			await until('the sensor is discovered', async () =>
+				(await L.get('/sensor-nodes/discovered')).some((d) => d.id === sim.id && d.inputs.includes('pir1'))
+			);
+			const node = await L.post('/sensor-nodes/adopt', { id: sim.id });
+			eq([node.id, node.inputs.map((i) => [i.id, i.kind])], [sim.id, [['pir1', 'motion']]], 'adopted node');
+			check(sim.key?.length === 64, 'the sensor derived its key');
+			check((await L.get('/sensor-nodes')).some((n) => n.id === sim.id), 'listed');
+			const ack = await sim.status();
+			check(ack?.ok, `heartbeat acknowledged ${JSON.stringify(ack)}`);
+			await until('live and online', async () => {
+				const live = (await L.get('/sensor-nodes/live'))[sim.id];
+				return live?.online && live.rssi === -58 && live.inputs.pir1 === 0;
+			});
+		});
+
+		await step('sensor surprise: motion fires the trigger on the rising edge; forged packets are ignored', async () => {
+			const red = (await L.get('/effects')).find((e) => e.name === 'E2E surprise red');
+			check(red, 'the surprise look from the engine phase');
+			const arch = S.props['Big Arch'];
+			const archRed = (t) => t.rgb[0].subarray(0, 50 * 3).every((v, i) => (i % 3 === 0 ? v === 255 : v === 0));
+			await L.post('/player/play', { sequenceId: S.seq.id });
+			await until('song playing', async () => (await L.get('/player')).item?.id === S.seq.id);
+			const show = await L.get('/show');
+			const action = { type: 'surprise', ref: red.id, source: 'effect', target: { propIds: [arch.id] }, durationMs: 1200 };
+			await L.put('/show/settings', {
+				triggers: [
+					...(show.settings.triggers ?? []),
+					{ id: 'e2emotion', name: 'E2E motion', kind: 'sensor', sensor: { sensorNodeId: sim.id, input: 'pir1' }, action }
+				]
+			});
+			const ack = await sim.event('pir1', 1);
+			check(ack?.ok, `event acknowledged ${JSON.stringify(ack)}`);
+			await until('Big Arch red on f1', async () => archRed(await tap(F1)), { timeout: 5000, every: 30 });
+			await until('the surprise ends', async () => !archRed(await tap(F1)), { timeout: 5000 });
+			// Release (falling edge): nothing fires.
+			check((await sim.event('pir1', 0))?.ok, 'release acknowledged');
+			await sleep(800);
+			check(!archRed(await tap(F1)), 'a release fires nothing');
+			// A forged packet (wrong key) is dropped and counted.
+			const forged = await sim.event('pir1', 1, { key: 'ab'.repeat(32) });
+			eq(forged, null, 'no ack for a forged event');
+			await sleep(800);
+			check(!archRed(await tap(F1)), 'a forged event fires nothing');
+			const live = (await L.get('/sensor-nodes/live'))[sim.id];
+			check(live.events >= 1 && live.rejected >= 1, `live counters ${JSON.stringify(live)}`);
+			// The "Test" button runs the action without the trigger gates.
+			const t = await L.post('/surprises/test', { action });
+			check(t.ok !== false, `surprise test ${JSON.stringify(t)}`);
+			await until('Big Arch red again (test)', async () => archRed(await tap(F1)), { timeout: 5000, every: 30 });
+			await L.put('/show/settings', { triggers: show.settings.triggers ?? [] });
+			await L.post('/player/stop');
+		});
+	} finally {
+		sim.stop();
+	}
+}
+
 // ---------------------------------------------------------------------------
 
 const PHASES = [
@@ -1298,7 +1491,9 @@ const PHASES = [
 	['tools', phaseTools],
 	['engine', phaseEngine],
 	['fleet', phaseFleet],
-	['resilience', phaseResilience]
+	['public', phasePublic],
+	['resilience', phaseResilience],
+	['sensors', phaseSensors]
 ];
 
 console.log(`PixelPlus e2e — cluster in ${DIR}`);

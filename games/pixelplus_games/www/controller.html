@@ -236,7 +236,7 @@
   }
 
   function wantsStart() {
-    return phase === "idle" || phase === "yourturn" || phase === "over" || phase === "watching";
+    return phase === "idle" || phase === "yourturn" || phase === "over" || phase === "watching" || phase === "limited";
   }
 
   var coolUntil = 0;
@@ -289,6 +289,8 @@
         break;
       case "error":
         setScreen("OOPS", s.message || "Something went wrong", false); break;
+      case "limited":
+        setScreen("PLEASE WAIT", (s.message || "Your network has phones in line already.") + " Press START to try again.", false); break;
     }
   }
 

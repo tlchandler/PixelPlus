@@ -818,7 +818,6 @@ pub fn start(state: &AppState) {
 
 /// The CA files for the passphrase-encrypted controller transfer bundle:
 /// `(ca.key PEM, ca.crt PEM, ca.json)`. `None` if no CA exists yet.
-#[allow(dead_code)] // used by the F10 transfer export (WS5)
 pub fn export_ca(data_dir: &Path) -> anyhow::Result<Option<(String, String, String)>> {
     let dir = tls_dir(data_dir);
     if !dir.join("ca.key").exists() {
@@ -833,7 +832,6 @@ pub fn export_ca(data_dir: &Path) -> anyhow::Result<Option<(String, String, Stri
 
 /// Restore a CA from a transfer bundle (validated first); the leaf is
 /// re-issued on the next check. Call [`TlsState::poke`] afterwards.
-#[allow(dead_code)] // used by the F10 transfer restore (WS5)
 pub fn import_ca(
     data_dir: &Path,
     key_pem: &str,

@@ -10,8 +10,17 @@ import { ENDPOINTS as FEATURE_ENDPOINTS } from './contract-endpoints';
 
 const BASE = process.env.PIXELPLUS_E2E_URL?.replace(/\/$/, '');
 
-/** Paths whose object keys are data (ids, effect kinds), not field names. */
-const MAPS = new Set(['/effects/schema', '/system/sensors/history.series']);
+/** Paths whose object keys are data (ids, effect kinds, input ids), not field names: their
+ *  values are compared with each other instead of key by key. `{}` in a path is "any key". */
+const MAPS = new Set([
+	'/effects/schema',
+	'/system/sensors/history.series',
+	// F20: live state by sensor node id, then per input id.
+	'/sensor-nodes/live',
+	'/sensor-nodes/live{}.inputs',
+	'/sensor-nodes/live{}.amps',
+	'/sensor-nodes/live{}.volts'
+]);
 
 /** Keys the daemon may leave out (optional in types.ts and in the model). */
 const OPTIONAL = new Set([
@@ -103,7 +112,12 @@ const OPTIONAL = new Set([
 	'when',
 	'activeWindow',
 	'maxPerHour',
-	'power'
+	'power',
+	// Omitted while unknown: no update installed yet (F15), no temperature readings (F11).
+	'previous',
+	'tempMaxC',
+	// F12: absent while a node's limiter is off.
+	'limiter'
 ]);
 
 type Problem = { path: string; kind: 'missing' | 'type'; detail: string };
@@ -133,7 +147,13 @@ function mergeObjects(items: unknown[]): Record<string, unknown> | undefined {
 	return out;
 }
 
-export function compareShape(mock: unknown, real: unknown, path: string, out: Problem[]) {
+export function compareShape(
+	mock: unknown,
+	real: unknown,
+	path: string,
+	out: Problem[],
+	maps: ReadonlySet<string> = MAPS
+) {
 	const km = kind(mock);
 	const kr = kind(real);
 	if (km === 'null' || kr === 'null') return; // optional / nullable
@@ -152,14 +172,14 @@ export function compareShape(mock: unknown, real: unknown, path: string, out: Pr
 			for (const g of groups) {
 				const mg = m.filter((x) => (x as Record<string, unknown>)[tag] === g);
 				const rg = r.filter((x) => (x as Record<string, unknown>)[tag] === g);
-				if (rg.length) compareShape(mergeObjects(mg), mergeObjects(rg), `${path}[${tag}=${g}]`, out);
+				if (rg.length) compareShape(mergeObjects(mg), mergeObjects(rg), `${path}[${tag}=${g}]`, out, maps);
 			}
 			return;
 		}
 		const mo = mergeObjects(m);
 		const ro = mergeObjects(r);
-		if (mo && ro) compareShape(mo, ro, path + '[]', out);
-		else compareShape(m[0], r[0], path + '[]', out);
+		if (mo && ro) compareShape(mo, ro, path + '[]', out, maps);
+		else compareShape(m[0], r[0], path + '[]', out, maps);
 		return;
 	}
 	if (km !== 'object') return;
@@ -170,15 +190,20 @@ export function compareShape(mock: unknown, real: unknown, path: string, out: Pr
 		if (typeof m[tag] === 'string' && typeof r[tag] === 'string' && m[tag] !== r[tag]) return;
 	}
 	if (path.endsWith('.params')) return; // effect parameters are per-effect data
-	if (MAPS.has(path)) {
-		const mv = mergeObjects(Object.values(m));
-		const rv = mergeObjects(Object.values(r));
-		if (mv && rv) compareShape(mv, rv, path + '{}', out);
-		else {
-			const a = Object.values(m)[0];
-			const b = Object.values(r)[0];
-			if (a !== undefined && b !== undefined) compareShape(a, b, path + '{}', out);
+	if (maps.has(path)) {
+		const mvals = Object.values(m);
+		const rvals = Object.values(r);
+		// Every value of a map has one shape: primitives must agree in type, objects are merged.
+		const types = (xs: unknown[]) => new Set(xs.map(kind).filter((k) => k !== 'null'));
+		const [tm, tr] = [types(mvals), types(rvals)];
+		if (tm.size === 1 && tr.size === 1 && [...tm][0] !== [...tr][0]) {
+			out.push({ path: path + '{}', kind: 'type', detail: `mock ${[...tm][0]}, daemon ${[...tr][0]}` });
+			return;
 		}
+		const mv = mergeObjects(mvals);
+		const rv = mergeObjects(rvals);
+		if (mv && rv) compareShape(mv, rv, path + '{}', out, maps);
+		else if (mvals.length && rvals.length) compareShape(mvals[0], rvals[0], path + '{}', out, maps);
 		return;
 	}
 	for (const [k, v] of Object.entries(m)) {
@@ -191,7 +216,7 @@ export function compareShape(mock: unknown, real: unknown, path: string, out: Pr
 				});
 			continue;
 		}
-		compareShape(v, r[k], `${path}.${k}`, out);
+		compareShape(v, r[k], `${path}.${k}`, out, maps);
 	}
 }
 
@@ -274,6 +299,25 @@ describe.skipIf(!BASE)('daemon JSON matches the UI contract', () => {
 });
 
 describe('compareShape', () => {
+	it('compares map-shaped responses (keys are ids) value by value, nested maps too', () => {
+		const maps = new Set(['/live', '/live{}.inputs']);
+		const mock = { sn1: { online: true, rssi: -60, inputs: { pir1: 0, btn1: 1 } } };
+		const same = { snAbc: { online: false, rssi: -70, inputs: { beam: 1 } } };
+		const out: Problem[] = [];
+		compareShape(mock, same, '/live', out, maps);
+		expect(out).toEqual([]);
+		compareShape(mock, { snX: { online: 'yes', inputs: { a: 'on' } } }, '/live', out, maps);
+		expect(out.map((p) => `${p.path}: ${p.kind}`).sort()).toEqual([
+			'/live{}.inputs{}: type',
+			'/live{}.online: type',
+			'/live{}.rssi: missing'
+		]);
+		// An empty map on either side has nothing to compare.
+		const none: Problem[] = [];
+		compareShape(mock, {}, '/live', none, maps);
+		expect(none).toEqual([]);
+	});
+
 	it('reports missing keys and type mismatches, tolerates nulls and optional keys', () => {
 		const out: Problem[] = [];
 		compareShape(

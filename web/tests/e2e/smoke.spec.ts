@@ -11,7 +11,7 @@ const pages: [string, string | RegExp][] = [
 	['/dj', 'DJ Studio'],
 	['/effects', 'Effects'],
 	['/games', 'Games'],
-	// Feature wave (placeholders until their workstreams land).
+	// Feature wave.
 	['/reports', 'Reports'],
 	['/map', 'Map my yard'],
 	['/settings/seasons', 'Seasons'],
@@ -23,11 +23,12 @@ const SETTINGS_PAGES: [string, string][] = [
 	['/settings/https', 'Secure connection'],
 	['/settings/remote', 'Remote access'],
 	['/settings/power', 'Power'],
-	['/settings/updates', 'Update everything'],
+	['/settings/updates', 'Updates'],
 	['/settings/xlights', 'xLights'],
 	['/settings/seasons', 'Seasons'],
 	['/settings/sensors', 'Sensors'],
-	['/settings/reports', 'Nightly report']
+	['/settings/reports', 'Nightly report'],
+	['/settings/triggers', 'Triggers']
 ];
 
 test('settings "More" links open their pages', async ({ page, isMobile }) => {

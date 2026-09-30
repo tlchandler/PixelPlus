@@ -739,7 +739,9 @@ export function buildDemoShow(): Show {
 				playlistId: 'plmain0001',
 				title: 'Request a song',
 				message: 'Pick a song and it plays next. Merry Christmas from the Chandlers!',
-				radioFrequency: '88.3 FM'
+				radioFrequency: '88.3 FM',
+				perVisitorPerHour: 6,
+				maxPerHour: 60
 			},
 			tts: { mode: 'auto' },
 			oled: { enabled: true },
@@ -776,7 +778,8 @@ export function buildDemoShow(): Show {
 				outputFps: 40,
 				brightness: 100,
 				volume: 80,
-				crop: [8, 32, 256, 224]
+				crop: [8, 32, 256, 224],
+				maxQueuePerVisitor: 3
 			}
 		}
 	};
@@ -816,7 +819,9 @@ export function buildEmptyShow(): Show {
 				enabled: false,
 				maxQueue: 5,
 				title: 'Request a song',
-				message: 'Pick a song and it will play next. Merry Christmas!'
+				message: 'Pick a song and it will play next. Merry Christmas!',
+				perVisitorPerHour: 6,
+				maxPerHour: 60
 			},
 			triggers: [],
 			games: { ...demo.settings.games, enabled: false, matrixPropId: undefined, publicUrl: '' }

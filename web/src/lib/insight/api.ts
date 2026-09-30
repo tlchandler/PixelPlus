@@ -19,33 +19,10 @@ const put = <R>(p: string, b?: unknown) => request<R>('PUT', p, b ?? {});
 const del = <R>(p: string) => request<R>('DELETE', p);
 
 // ------------------------------------------------------------------ F11 reports
-/** One charted series (`[unix ms, value]` points). */
-export interface ReportSeries {
-	nodeId: string;
-	name: string;
-	points: [number, number][];
-}
-/** `NightReport` plus the optional fields the daemon adds. */
-export interface NightReportFull extends NightReport {
-	generatedAt?: string;
-	window?: { from: string; to: string };
-	runtimeMin?: number;
-	games?: number;
-	gameMinutes?: number;
-	triggers?: number;
-	restarts?: number;
-	season?: string;
-	series?: { tempC: ReportSeries[]; syncMs: ReportSeries[] };
-	suspectPixels: { propId: string; name?: string; pixels: number[] }[];
-	delivery?: string[];
-}
-export interface ReportSummaryFull extends ReportSummary {
-	itemsPlayed?: number;
-	requests?: number;
-	problems?: number;
-	runtimeMin?: number;
-	tempMaxC?: number;
-}
+export type { ReportSeries } from '$lib/api/types';
+/** Kept as names for the reports UI; the full shapes live in `$lib/api/types`. */
+export type NightReportFull = NightReport;
+export type ReportSummaryFull = ReportSummary;
 
 export const reportsApi = {
 	list: (limit = 30) => get<ReportSummaryFull[]>(`/reports?limit=${limit}`),

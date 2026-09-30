@@ -111,6 +111,7 @@ class GameConfig:
     volume: int = 80
     crop: Tuple[int, int, int, int] = DEFAULT_CROP
     turn_timeout: int = DEFAULT_TURN_TIMEOUT
+    max_queue_per_visitor: int = 3       # phones from one address in line or playing; 0 = no limit
     # from elsewhere in the show
     audio_device: str = "default"
     matrix: Optional[Matrix] = None      # the matrix prop, if one is configured and usable
@@ -238,6 +239,7 @@ def from_show(show):
         volume=_int(g, "volume", d.volume, 0, 100),
         crop=_crop(g.get("crop", DEFAULT_CROP)),
         turn_timeout=_int(g, "turnTimeoutSeconds", d.turn_timeout, 5, 120),
+        max_queue_per_visitor=_int(g, "maxQueuePerVisitor", d.max_queue_per_visitor, 0, 100),
         audio_device=_str(audio, "device") or "default",
         matrix=matrix,
         matrix_problem=problem,

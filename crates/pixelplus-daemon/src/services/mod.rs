@@ -44,7 +44,6 @@ use std::sync::OnceLock;
 
 /// Registry of service handles. Every field is set exactly once during startup.
 #[derive(Default)]
-#[allow(dead_code)] // feature-wave fields are read once their workstreams land
 pub struct Services {
     /// Latest JSON payload per WebSocket message type (`status`, `nodes`,
     /// `sensors`), replayed to newly connected clients.

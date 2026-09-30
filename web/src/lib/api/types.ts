@@ -560,6 +560,11 @@ export interface RequestSettings {
 	radioFrequency?: string;
 	/** Internet address of the request page (e.g. through a tunnel); QR codes use it when set. */
 	publicUrl?: string;
+	/** Most requests one visitor (address) may make per hour; 0 = no limit (a burst limit of
+	 *  3 per 10 minutes always applies). */
+	perVisitorPerHour: number;
+	/** Most requests from everyone together per hour; 0 = no limit. */
+	maxPerHour: number;
 }
 export type TtsMode = 'auto' | 'device' | 'browser';
 export interface TriggerAction {
@@ -615,6 +620,8 @@ export interface GameSettings {
 	brightness: number;
 	volume: number;
 	crop: [number, number, number, number];
+	/** Most phones from one visitor address in line or playing at once; 0 = no limit. */
+	maxQueuePerVisitor: number;
 }
 
 export interface ShowSettings {
@@ -1036,6 +1043,19 @@ export interface NodeStatus {
 	protocol?: number;
 	problem?: string | null;
 	version?: string | null;
+	/** Power limiter activity from the node's report (F12); absent while its limiter is off
+	 *  or the node is offline. */
+	limiter?: LimiterReport;
+}
+
+/** What a node's power limiter did (F12, follower beacon report). */
+export interface LimiterReport {
+	/** Budget groups currently scaling. */
+	activeGroups: Id[];
+	/** Lowest scale applied in the last report period (1 = none). */
+	minScale: number;
+	/** Seconds spent limiting since the daemon started. */
+	secondsLimited: number;
 }
 
 export interface LogLine {
@@ -1194,10 +1214,24 @@ export interface PreviewHeader {
 }
 /** F11 reports. */
 export type ReportStatus = 'ok' | 'warn' | 'fail';
+/** `GET /reports` entry. */
 export interface ReportSummary {
 	date: string;
 	status: ReportStatus;
 	headline: string;
+	itemsPlayed: number;
+	requests: number;
+	/** Problem occurrences (sum of `problems[].count`). */
+	problems: number;
+	runtimeMin: number;
+	/** Hottest board of the night (absent without temperature readings). */
+	tempMaxC?: number;
+}
+/** One charted report series (`[unix ms, value]` points). */
+export interface ReportSeries {
+	nodeId: Id;
+	name: string;
+	points: [number, number][];
 }
 export interface NightReport {
 	date: string;
@@ -1219,10 +1253,27 @@ export interface NightReport {
 		syncP95Ms?: number;
 	}[];
 	limiter: { nodeId: Id; port: number; seconds: number }[];
-	suspectPixels: { propId: Id; pixels: number[] }[];
+	suspectPixels: { propId: Id; name: string; pixels: number[] }[];
 	diskFreePct?: number;
 	updates: string[];
 	backupAgeDays?: number;
+	/** RFC 3339. */
+	generatedAt: string;
+	/** The part of the night covered, RFC 3339 `[from, to)`. */
+	window: { from: string; to: string };
+	/** Total show-window minutes. */
+	runtimeMin: number;
+	games: number;
+	gameMinutes: number;
+	/** Triggers / sensor surprises fired. */
+	triggers: number;
+	/** Daemon starts during the night. */
+	restarts: number;
+	/** Active season, if any. */
+	season?: string;
+	series: { tempC: ReportSeries[]; syncMs: ReportSeries[] };
+	/** What happened when it was sent ("Email sent to …"). */
+	delivery?: string[];
 }
 /** F11 show journal (GET /journal). */
 export interface JournalRecord {

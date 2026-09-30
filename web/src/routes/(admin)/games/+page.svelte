@@ -340,6 +340,15 @@
 							'min',
 							'No invites and no new games for this long; phones show a countdown. 0 = none.'
 						)}
+						{@render num(
+							'Phones per visitor in line',
+							'maxQueuePerVisitor',
+							0,
+							100,
+							1,
+							'phones',
+							'How many phones from one address (a household, or a mobile network) may wait or play at once. 0 = no limit.'
+						)}
 						<div class="setting stack">
 							<div class="text">
 								<div class="title">Levels</div>

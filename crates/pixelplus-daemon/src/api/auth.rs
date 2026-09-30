@@ -11,6 +11,9 @@
 //!   the few routes in [`super::security::sidecar_route`].
 //! * Sign-in is throttled per client address and globally, and password
 //!   hashing runs on at most two blocking threads.
+//! * A sign-in from outside the home network (Cloudflare Tunnel, Tailscale,
+//!   another tunnel or proxy, or a public address; F14) raises an alert
+//!   ([`remote_via`], `services::alerts::remote_sign_in`).
 
 use super::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -330,6 +333,9 @@ async fn login(
         ));
     }
     state.sessions.throttle.lock().success(ip);
+    if let Some(via) = remote_via(peer.0, &headers, ip) {
+        crate::services::alerts::remote_sign_in(&state, ip, via);
+    }
     let token = state.sessions.create();
     let cookie = format!(
         "{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
@@ -341,6 +347,42 @@ async fn login(
         HeaderValue::from_str(&cookie).map_err(ApiError::internal)?,
     );
     Ok(resp)
+}
+
+/// How a sign-in reached this controller from outside the home network, or
+/// `None` for one from the LAN. `client` is the visitor's address as
+/// `security::client_ip` sees it (forwarding headers only from trusted proxies).
+pub fn remote_via(
+    peer: Option<SocketAddr>,
+    headers: &HeaderMap,
+    client: Option<IpAddr>,
+) -> Option<&'static str> {
+    let tunnel = super::security::tunnel_request(peer, headers);
+    let tailscale_headers =
+        headers.contains_key("tailscale-user-login") || headers.contains_key("tailscale-user-name");
+    let tailnet = client.is_some_and(tailnet_addr) || peer.is_some_and(|p| tailnet_addr(p.ip()));
+    if tunnel && headers.contains_key("cf-connecting-ip") {
+        Some("Cloudflare Tunnel")
+    } else if tailnet || (tunnel && tailscale_headers) {
+        Some("Tailscale")
+    } else if tunnel {
+        Some("a tunnel or reverse proxy")
+    } else if client.is_some_and(|ip| !super::security::lan_peer(ip)) {
+        Some("the internet")
+    } else {
+        None
+    }
+}
+
+/// A Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`).
+fn tailnet_addr(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => tailnet_addr(IpAddr::V4(v4)),
+            None => v6.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0],
+        },
+    }
 }
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -467,6 +509,54 @@ mod tests {
         }
         assert!(t.check(Some(b), now).is_err());
         assert!(t.check(Some(b), now + GLOBAL_LOCKOUT).is_ok());
+    }
+
+    #[test]
+    fn remote_sign_ins_are_recognised() {
+        let loopback: Option<SocketAddr> = Some("127.0.0.1:50000".parse().unwrap());
+        let lan: Option<SocketAddr> = Some("192.168.1.20:50000".parse().unwrap());
+        let ip = |s: &str| Some(s.parse::<IpAddr>().unwrap());
+        let mut h = HeaderMap::new();
+        // From the LAN: no alert.
+        assert_eq!(remote_via(lan, &h, ip("192.168.1.20")), None);
+        // Direct from a public address (port forward): alert.
+        let public: Option<SocketAddr> = Some("203.0.113.9:4000".parse().unwrap());
+        assert_eq!(
+            remote_via(public, &h, ip("203.0.113.9")),
+            Some("the internet")
+        );
+        // Over the tailnet directly.
+        let ts: Option<SocketAddr> = Some("100.101.102.103:4000".parse().unwrap());
+        assert_eq!(remote_via(ts, &h, ip("100.101.102.103")), Some("Tailscale"));
+        // `tailscale serve` (loopback + forwarding + identity headers).
+        h.insert("x-forwarded-for", HeaderValue::from_static("100.90.1.2"));
+        h.insert(
+            "tailscale-user-login",
+            HeaderValue::from_static("me@example.com"),
+        );
+        assert_eq!(
+            remote_via(loopback, &h, ip("100.90.1.2")),
+            Some("Tailscale")
+        );
+        // cloudflared.
+        let mut h = HeaderMap::new();
+        h.insert("cf-connecting-ip", HeaderValue::from_static("198.51.100.4"));
+        assert_eq!(
+            remote_via(loopback, &h, ip("198.51.100.4")),
+            Some("Cloudflare Tunnel")
+        );
+        // Some other local proxy.
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", HeaderValue::from_static("192.168.1.30"));
+        assert_eq!(
+            remote_via(loopback, &h, ip("192.168.1.30")),
+            Some("a tunnel or reverse proxy")
+        );
+        // Local sidecars and the UI on this machine: no proxy headers, no alert.
+        assert_eq!(
+            remote_via(loopback, &HeaderMap::new(), ip("127.0.0.1")),
+            None
+        );
     }
 
     #[test]

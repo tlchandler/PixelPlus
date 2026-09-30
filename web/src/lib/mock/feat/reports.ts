@@ -17,6 +17,12 @@ function series(date: string, base: number, amp: number, seed: number): [number,
 	]);
 }
 
+function nextDay(date: string): string {
+	const d = new Date(`${date}T00:00:00Z`);
+	d.setUTCDate(d.getUTCDate() + 1);
+	return d.toISOString().slice(0, 10);
+}
+
 function report(date: string, i: number): NightReportFull {
 	const status: NightReport['status'] = i === 2 ? 'warn' : i === 5 ? 'fail' : 'ok';
 	const songs = 38 + ((i * 7) % 11);
@@ -65,6 +71,7 @@ function report(date: string, i: number): NightReportFull {
 		updates: [],
 		backupAgeDays: 1,
 		generatedAt: `${date}T13:00:00Z`,
+		window: { from: `${date}T12:00:00Z`, to: `${nextDay(date)}T12:00:00Z` },
 		runtimeMin: 285,
 		games: 3,
 		gameMinutes: 6,
@@ -89,7 +96,9 @@ const summary = (r: NightReportFull): ReportSummaryFull => ({
 	requests: r.requests,
 	problems: r.problems.reduce((a, p) => a + p.count, 0),
 	runtimeMin: r.runtimeMin,
-	tempMaxC: Math.max(...r.nodes.map((n) => n.tempMaxC ?? 0))
+	tempMaxC: r.nodes.some((n) => n.tempMaxC !== undefined)
+		? Math.max(...r.nodes.flatMap((n) => (n.tempMaxC === undefined ? [] : [n.tempMaxC])))
+		: undefined
 });
 
 export function register(ctx: FeatureContext) {

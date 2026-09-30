@@ -1790,6 +1790,15 @@ pub struct GameSettings {
     pub volume: u8,
     /// left, top, right, bottom of the NES screen shown in Mario mode.
     pub crop: [u32; 4],
+    /// Most phones from one visitor address (a household, or a mobile
+    /// network's shared address) that may wait in line or play at once
+    /// (0 = no limit).
+    #[serde(default = "default_games_queue_per_visitor")]
+    pub max_queue_per_visitor: u32,
+}
+
+fn default_games_queue_per_visitor() -> u32 {
+    3
 }
 
 impl Default for GameSettings {
@@ -1817,6 +1826,7 @@ impl Default for GameSettings {
             brightness: 100,
             volume: 80,
             crop: [8, 32, 256, 224],
+            max_queue_per_visitor: default_games_queue_per_visitor(),
         }
     }
 }
@@ -1962,6 +1972,21 @@ pub struct RequestSettings {
     /// Internet address of the request page (e.g. through a tunnel), used for QR codes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    /// Most requests one visitor (address) may make per hour (0 = no limit;
+    /// a burst limit of 3 per 10 minutes always applies).
+    #[serde(default = "default_requests_per_visitor_per_hour")]
+    pub per_visitor_per_hour: u32,
+    /// Most requests from everyone together per hour (0 = no limit).
+    #[serde(default = "default_requests_max_per_hour")]
+    pub max_per_hour: u32,
+}
+
+fn default_requests_per_visitor_per_hour() -> u32 {
+    6
+}
+
+fn default_requests_max_per_hour() -> u32 {
+    60
 }
 
 impl Default for RequestSettings {
@@ -1974,6 +1999,8 @@ impl Default for RequestSettings {
             message: "Pick a song and it will play next. Merry Christmas!".into(),
             radio_frequency: None,
             public_url: None,
+            per_visitor_per_hour: default_requests_per_visitor_per_hour(),
+            max_per_hour: default_requests_max_per_hour(),
         }
     }
 }

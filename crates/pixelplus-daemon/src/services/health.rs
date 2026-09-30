@@ -1039,6 +1039,7 @@ mod geometry_tests {
             pi_model: None,
             hostname: String::new(),
             problem: None,
+            limiter: None,
         };
         let good = SyncQuality {
             offset_error_ms: 0.4,

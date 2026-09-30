@@ -23,6 +23,8 @@
 #                    sensor nodes = port + 2) (default: 33420, clear of a real
 #                    daemon's 32420-32422 on the same machine)
 #   PP_HTTPS_BASE    leader HTTPS port; f1 = +1, f2 = +2  (default: 18443)
+#   PP_PUBLIC_BASE   leader public-only listener port (127.0.0.1; tunnels point
+#                    here); f1 = +1, f2 = +2 (default: 18090)
 #   PP_AUDIO         PIXELPLUS_AUDIO for the leader (default: none)
 #   PP_LOG           PIXELPLUS_LOG filter     (default: info,tower_http=warn)
 #   PP_SIM_REFRESH   simulated pixel refresh (Hz) per node, e.g. "40,40,80": the
@@ -36,6 +38,7 @@ WEB="${PP_WEB_DIR:-$ROOT/web/build}"
 HTTP_BASE="${PP_HTTP_BASE:-18080}"
 UDP_BASE="${PP_CLUSTER_BASE:-33420}"
 HTTPS_BASE="${PP_HTTPS_BASE:-18443}"
+PUBLIC_BASE="${PP_PUBLIC_BASE:-18090}"
 NODES=(leader f1 f2)
 
 idx() {
@@ -83,7 +86,7 @@ PIXELPLUS_CLUSTER_PORT=$(udp_port "$n")
 PIXELPLUS_CLUSTER_OVERLAY_PORT=$(($(udp_port "$n") + 1))
 PIXELPLUS_SENSOR_PORT=$(($(udp_port "$n") + 2))
 PIXELPLUS_HTTPS_PORT=$((HTTPS_BASE + $(idx "$n")))
-PIXELPLUS_PUBLIC_PORT=0
+PIXELPLUS_PUBLIC_PORT=$((PUBLIC_BASE + $(idx "$n")))
 PIXELPLUS_CLUSTER_PEERS=$(peers "$n")
 PIXELPLUS_CLUSTER_BROADCAST=0
 PIXELPLUS_MDNS=0
@@ -206,7 +209,7 @@ env)
 	node_env "${1:?node (leader|f1|f2)}"
 	;;
 *)
-	sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
 	exit 2
 	;;
 esac

@@ -202,6 +202,10 @@ pub struct NodeStatus {
     pub pi_model: Option<String>,
     pub hostname: String,
     pub problem: Option<String>,
+    /// Power limiter activity from the node's report (F12): omitted while
+    /// its limiter is off or the node is offline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limiter: Option<proto::LimiterReport>,
 }
 
 /// An announced node that is not (or no longer) adopted by this leader.

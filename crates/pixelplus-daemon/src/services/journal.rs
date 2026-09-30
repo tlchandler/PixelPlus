@@ -207,8 +207,8 @@ impl Journal {
         self.push(rec);
     }
 
-    /// Record an event with an explicit time (tests, imported history).
-    #[allow(dead_code)] // contract for WS3 / WS6
+    /// Record an event with an explicit time (tests).
+    #[cfg(test)]
     pub fn record_at(&self, at: DateTime<FixedOffset>, event: Event) {
         self.push(Record {
             ts: at.to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
@@ -227,7 +227,7 @@ impl Journal {
     }
 
     /// Events dropped so far (not running, queue full).
-    #[allow(dead_code)] // contract for WS6 (reports)
+    #[cfg(test)]
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
@@ -256,7 +256,6 @@ impl Journal {
 }
 
 /// Shorthand for `state.services.journal.record(event)`.
-#[allow(dead_code)] // contract for WS2 / WS3 / WS5 / WS6
 pub fn record(state: &AppState, event: Event) {
     state.services.journal.record(event);
 }
@@ -411,7 +410,6 @@ pub fn read_day(dir: &Path, date: NaiveDate, types: Option<&[String]>) -> Vec<Re
 }
 
 /// Records with `from <= ts < to` (e.g. a show night, noon to noon).
-#[allow(dead_code)] // contract for WS6 (reports) and WS2 (play history)
 pub fn read_range(
     dir: &Path,
     from: DateTime<FixedOffset>,

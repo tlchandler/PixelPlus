@@ -650,7 +650,6 @@ impl Default for MediaImport {
 
 /// Result of [`import_media_file`].
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // `replaced` / `linked_sequence_ids`: contract for WS6 (FPP Connect)
 pub struct ImportedMedia {
     pub media: Media,
     pub replaced: bool,

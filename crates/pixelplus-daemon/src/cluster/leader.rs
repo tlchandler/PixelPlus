@@ -253,6 +253,7 @@ fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus
         version: Some(super::VERSION.to_string()),
         pi_model: net::pi_model(),
         hostname,
+        limiter: report.as_ref().and_then(|r| r.limiter.clone()),
         problem: report.and_then(|r| r.problem),
     }
 }
@@ -320,6 +321,7 @@ fn follower_status(
             .or_else(|| peer.and_then(|p| p.beacon.pi.clone())),
         hostname: node.hostname.clone(),
         problem,
+        limiter: report.limiter.clone().filter(|_| online),
     }
 }
 
@@ -367,6 +369,7 @@ pub(crate) fn nodes_status(state: &AppState, sh: &Shared) -> Vec<NodeStatus> {
                     pi_model: leader.beacon.pi.clone(),
                     hostname: leader.beacon.hostname.clone(),
                     problem: None,
+                    limiter: None,
                 });
             }
             out

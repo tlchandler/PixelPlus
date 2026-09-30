@@ -15,12 +15,41 @@ use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
-/// Song requests accepted from everyone together within the rate window.
-const GLOBAL_RATE_MAX: usize = 60;
 /// Per visitor (IP): at most this many requests...
 pub const RATE_MAX: usize = 3;
-/// ...within this window.
+/// ...within this window (a burst limit; the hourly caps are settings).
 pub const RATE_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// The window of the hourly caps (`settings.requests.perVisitorPerHour`,
+/// `maxPerHour`).
+pub const HOUR: Duration = Duration::from_secs(3600);
+/// Distinct visitor addresses remembered within the hour (a flood of
+/// spoofed addresses can't grow memory without bound).
+const MAX_VISITORS: usize = 4096;
+
+/// The hourly caps of [`RequestQueue::check_rate`] (0 = no limit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HourlyCaps {
+    pub per_visitor: u32,
+    pub total: u32,
+}
+
+impl HourlyCaps {
+    pub fn of(rs: &pixelplus_core::model::RequestSettings) -> Self {
+        HourlyCaps {
+            per_visitor: rs.per_visitor_per_hour,
+            total: rs.max_per_hour,
+        }
+    }
+}
+
+/// Why [`RequestQueue::check_rate`] said no.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimited {
+    /// This visitor asked too often (burst or hourly cap).
+    Visitor,
+    /// Everyone together reached the hourly cap.
+    Everyone,
+}
 const NAME_MAX: usize = 30;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -66,32 +95,40 @@ impl RequestQueue {
         removed
     }
 
-    /// Per-IP rate limiting, plus a cap on all requests together (many
-    /// addresses, or none known). Records the hit when allowed.
-    pub fn check_rate(&self, ip: Option<IpAddr>, now: Instant) -> bool {
+    /// Per-visitor rate limiting (a burst limit plus an hourly cap), plus
+    /// an hourly cap on all requests together (many addresses, or none
+    /// known). `ip` is the visitor's address as `security::client_ip` sees
+    /// it (forwarding headers only from trusted proxies). Records the hit
+    /// when allowed.
+    pub fn check_rate(
+        &self,
+        ip: Option<IpAddr>,
+        now: Instant,
+        caps: HourlyCaps,
+    ) -> Result<(), RateLimited> {
         let mut hits = self.hits.lock();
         hits.retain(|_, v| {
-            v.back()
-                .is_some_and(|t| now.duration_since(*t) < RATE_WINDOW)
+            while v.front().is_some_and(|t| now.duration_since(*t) >= HOUR) {
+                v.pop_front();
+            }
+            !v.is_empty()
         });
         let total: usize = hits.values().map(VecDeque::len).sum();
-        if total >= GLOBAL_RATE_MAX || hits.len() >= 4096 {
-            return false;
+        if (caps.total > 0 && total >= caps.total as usize) || hits.len() >= MAX_VISITORS {
+            return Err(RateLimited::Everyone);
         }
         // Unknown address: all such requests share one bucket.
         let ip = ip.unwrap_or(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED));
         let q = hits.entry(ip).or_default();
-        while q
-            .front()
-            .is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW)
-        {
-            q.pop_front();
-        }
-        if q.len() >= RATE_MAX {
-            return false;
+        let recent = q
+            .iter()
+            .filter(|t| now.duration_since(**t) < RATE_WINDOW)
+            .count();
+        if recent >= RATE_MAX || (caps.per_visitor > 0 && q.len() >= caps.per_visitor as usize) {
+            return Err(RateLimited::Visitor);
         }
         q.push_back(now);
-        true
+        Ok(())
     }
 
     /// Drop every waiting request (the show is over for tonight).
@@ -143,12 +180,22 @@ impl RequestQueue {
                 ));
             }
         }
-        if !self.check_rate(ip, now) {
-            return Err(ApiError::new(
-                axum::http::StatusCode::TOO_MANY_REQUESTS,
-                "rate_limited",
-                "You've requested a few songs already. Give everyone a turn and try again in a few minutes.",
-            ));
+        match self.check_rate(ip, now, HourlyCaps::of(rs)) {
+            Ok(()) => {}
+            Err(RateLimited::Visitor) => {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    "rate_limited",
+                    "You've requested a few songs already. Give everyone a turn and try again a little later.",
+                ));
+            }
+            Err(RateLimited::Everyone) => {
+                return Err(ApiError::new(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    "busy",
+                    "Lots of people are requesting songs right now. Try again a little later.",
+                ));
+            }
         }
         let requested_by = name.map(clean_name).filter(|n| !n.is_empty());
         let req = SongRequest {
@@ -475,17 +522,49 @@ mod tests {
         assert!(q.on_status(&PlayerStatus::default(), t).is_none());
     }
 
+    const CAPS: HourlyCaps = HourlyCaps {
+        per_visitor: 6,
+        total: 60,
+    };
+
     #[test]
     fn rate_limit_per_ip() {
         let q = RequestQueue::default();
         let ip: Option<IpAddr> = Some("10.0.0.9".parse().unwrap());
         let t = Instant::now();
         for _ in 0..RATE_MAX {
-            assert!(q.check_rate(ip, t));
+            assert!(q.check_rate(ip, t, CAPS).is_ok());
         }
-        assert!(!q.check_rate(ip, t));
-        assert!(q.check_rate(Some("10.0.0.10".parse().unwrap()), t));
-        assert!(q.check_rate(ip, t + RATE_WINDOW + Duration::from_secs(1)));
+        assert_eq!(q.check_rate(ip, t, CAPS), Err(RateLimited::Visitor));
+        assert!(q
+            .check_rate(Some("10.0.0.10".parse().unwrap()), t, CAPS)
+            .is_ok());
+        let later = t + RATE_WINDOW + Duration::from_secs(1);
+        assert!(q.check_rate(ip, later, CAPS).is_ok());
+    }
+
+    #[test]
+    fn hourly_cap_per_visitor() {
+        let q = RequestQueue::default();
+        let ip: Option<IpAddr> = Some("10.0.0.9".parse().unwrap());
+        let t = Instant::now();
+        // Two bursts of 3, eleven minutes apart: the hourly cap (6) is reached.
+        for i in 0..6u64 {
+            let at = t + Duration::from_secs((i / 3) * 11 * 60);
+            assert!(q.check_rate(ip, at, CAPS).is_ok(), "request {i}");
+        }
+        let third_burst = t + Duration::from_secs(22 * 60);
+        assert_eq!(q.check_rate(ip, third_burst, CAPS), Err(RateLimited::Visitor));
+        // No hourly cap: only the burst limit.
+        let open = HourlyCaps {
+            per_visitor: 0,
+            total: 0,
+        };
+        assert!(q.check_rate(ip, third_burst, open).is_ok());
+        // An hour after the first requests, the visitor may ask again.
+        assert!(q
+            .check_rate(ip, t + HOUR + Duration::from_secs(1), CAPS)
+            .is_ok());
     }
 
     #[test]
@@ -494,20 +573,19 @@ mod tests {
         let t = Instant::now();
         // Unknown addresses share one bucket (no unlimited bypass).
         for _ in 0..RATE_MAX {
-            assert!(q.check_rate(None, t));
+            assert!(q.check_rate(None, t, CAPS).is_ok());
         }
-        assert!(!q.check_rate(None, t));
-        // Spoofed / rotating addresses hit the global cap.
+        assert_eq!(q.check_rate(None, t, CAPS), Err(RateLimited::Visitor));
+        // Spoofed / rotating addresses hit the hourly cap for everyone.
         let mut ok = 0;
         for i in 0..200u32 {
-            if q.check_rate(
-                Some(IpAddr::from([10, 1, (i / 250) as u8, (i % 250) as u8])),
-                t,
-            ) {
-                ok += 1;
+            let ip = Some(IpAddr::from([10, 1, (i / 250) as u8, (i % 250) as u8]));
+            match q.check_rate(ip, t, CAPS) {
+                Ok(()) => ok += 1,
+                Err(e) => assert_eq!(e, RateLimited::Everyone),
             }
         }
-        assert_eq!(ok + RATE_MAX, GLOBAL_RATE_MAX);
+        assert_eq!(ok + RATE_MAX, CAPS.total as usize);
     }
 
     #[test]

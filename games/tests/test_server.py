@@ -5,6 +5,7 @@ updates from pixelplusd, against the fake pixelplusd with a stub emulator.
 """
 
 import asyncio
+import dataclasses
 import base64
 import json
 import os
@@ -107,14 +108,51 @@ class HubTestCase(unittest.IsolatedAsyncioTestCase):
             await self.hub.server.stop()
         self.fake.stop()
 
-    def connect(self, cid=None):
+    def connect(self, cid=None, ip=None):
         """A phone joins: returns (id, ws) after the hello/welcome exchange."""
         cid = cid or uuid.uuid4().hex
         ws = FakeWS()
+        if ip:
+            ws.peer = ip
         c = server.Client(cid, ws)
         self.hub.clients[cid] = c
+        self.hub.ips[cid] = c.ip
         self.hub.push(cid)
         return cid, ws
+
+
+class VisitorLimitTests(HubTestCase):
+    games = {"cooldownMinutes": 0, "maxQueuePerVisitor": 2}
+
+    async def test_one_address_can_hold_only_its_share_of_the_line(self):
+        self.assertEqual(self.hub.cfg.max_queue_per_visitor, 2)
+        a, _ = self.connect(ip="203.0.113.7")
+        b, wb = self.connect(ip="203.0.113.7")
+        c, wc = self.connect(ip="203.0.113.7")
+        d, wd = self.connect(ip="198.51.100.1")
+        self.hub.press_start(a)                 # playing
+        self.hub.press_start(b)                 # in line
+        self.assertEqual(wb.last()["phase"], "queued")
+        self.hub.press_start(c)                 # a third phone from the same address
+        self.assertEqual(wc.last()["phase"], "limited")
+        self.assertIn("2 phones", wc.last()["message"])
+        self.assertNotIn(c, self.hub.queue)
+        self.hub.press_start(d)                 # another visitor is not affected
+        self.assertEqual(wd.last()["phase"], "queued")
+        # once one of them leaves the line, the third phone may join
+        self.hub.queue.remove(b)
+        self.hub.press_start(c)
+        self.assertEqual(wc.last()["phase"], "queued")
+
+    async def test_unknown_address_and_no_limit(self):
+        a, _ = self.connect()
+        b, wb = self.connect()
+        c, wc = self.connect()
+        for cid in (a, b, c):
+            self.hub.press_start(cid)
+        self.assertEqual(wc.last()["phase"], "queued")
+        self.hub.cfg = dataclasses.replace(self.hub.cfg, max_queue_per_visitor=0)
+        self.assertFalse(self.hub.visitor_limit_reached(c))
 
 
 class MarioFlowTests(HubTestCase):

@@ -146,7 +146,7 @@
 		{ href: '/settings/remote', label: 'Remote access', icon: Globe, desc: 'Reach the show from anywhere' },
 		{
 			href: '/settings/updates',
-			label: 'Update everything',
+			label: 'Updates',
 			icon: RefreshCw,
 			desc: 'Channels, auto-update, rollback'
 		}
@@ -1303,6 +1303,28 @@
 											bind:value={s.requests.maxQueue}
 											oninput={() => changed('requests')}
 										/></label
+									>
+								</div>
+								<div class="form-grid">
+									<label class="field"
+										><span class="label">Requests per visitor per hour</span><input
+											class="input num"
+											type="number"
+											min="0"
+											max="100"
+											bind:value={s.requests.perVisitorPerHour}
+											oninput={() => changed('requests')}
+										/><span class="hint">0 = no limit. Never more than 3 in 10 minutes.</span></label
+									>
+									<label class="field"
+										><span class="label">Requests per hour, everyone</span><input
+											class="input num"
+											type="number"
+											min="0"
+											max="1000"
+											bind:value={s.requests.maxPerHour}
+											oninput={() => changed('requests')}
+										/><span class="hint">0 = no limit.</span></label
 									>
 								</div>
 								<div class="form-grid">

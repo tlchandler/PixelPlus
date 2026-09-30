@@ -78,6 +78,22 @@ fn show_label(state: &AppState) -> String {
     show.name.clone()
 }
 
+/// Someone signed in to the admin UI from outside the home network (F14:
+/// through a tunnel, Tailscale or a public address). Raises a warning
+/// (deduplicated per address for [`DEDUP_WINDOW`]) in the background.
+pub fn remote_sign_in(state: &AppState, ip: Option<std::net::IpAddr>, via: &str) {
+    let who = ip.map_or_else(|| "an unknown address".to_string(), |ip| ip.to_string());
+    tracing::info!("Remote sign-in from {who} through {via}");
+    let key = format!("remote-sign-in:{who}");
+    let body = format!(
+        "Someone signed in to PixelPlus from {who} through {via}. If this wasn't you, change your password in Settings → Security and check Settings → Remote access."
+    );
+    let state = state.clone();
+    tokio::spawn(async move {
+        raise(&state, &key, Severity::Warning, "Remote sign-in", &body).await;
+    });
+}
+
 /// Raise an alert: toast in the UI, and email/ntfy if configured (deduplicated
 /// by `key`, rate limited).
 pub async fn raise(state: &AppState, key: &str, severity: Severity, title: &str, body: &str) {

@@ -61,6 +61,9 @@ class Client:
     def __init__(self, cid, ws):
         self.id = cid
         self.ws = ws
+        # The visitor's address (web.client_address: forwarded headers only from a trusted
+        # proxy, e.g. pixelplusd's public listener), for the per-visitor queue limit.
+        self.ip = getattr(ws, "peer", None) or "?"
         self.last_seen = time.monotonic()
         self.tokens = float(MSG_BURST)    # flood control (token bucket)
         self.strikes = 0
@@ -87,6 +90,7 @@ class Hub:
         self.clients = {}           # id -> Client (most recent connection)
         self.queue = []             # ids waiting, in order
         self.gone = {}              # id -> time it disconnected
+        self.ips = {}               # id -> visitor address (kept while the player may come back)
         self.active = None          # id of the player
         self.offer = None           # (id, deadline) when the queue head is being offered a turn
         self.cooldown_until = 0
@@ -323,8 +327,34 @@ class Hub:
                 and not self.busy_reason:
             self.start_game(cid)
         elif cid not in self.queue:
+            if self.visitor_limit_reached(cid):
+                n = self.cfg.max_queue_per_visitor
+                self.last_result[cid] = {
+                    "phase": "limited",
+                    "message": "%d %s from your network %s already in line or playing. "
+                               "Give everyone a turn!" % (n, "phone" if n == 1 else "phones",
+                                                          "is" if n == 1 else "are")}
+                log.info("Player %s: per-visitor queue limit (%d) reached", cid[:6], n)
+                self.push(cid)
+                return
             self.queue.append(cid)
         self.push_all()
+
+    def visitor_limit_reached(self, cid):
+        """True when other phones from this player's address already fill its share of the line
+        (``maxQueuePerVisitor``): queued, being offered a turn, or playing. Phones are told apart by
+        their device id; the address stops one visitor from queueing many ids."""
+        limit = self.cfg.max_queue_per_visitor
+        ip = self.ips.get(cid)
+        if limit <= 0 or not ip or ip == "?":
+            return False
+        taken = set(self.queue)
+        if self.offer:
+            taken.add(self.offer[0])
+        if self.active:
+            taken.add(self.active)
+        taken.discard(cid)
+        return sum(1 for other in taken if self.ips.get(other) == ip) >= limit
 
     def start_game(self, cid):
         if self.arcade_mode():
@@ -549,6 +579,7 @@ class Hub:
                         await old.ws.close(REPLACED)
                     client = Client(cid, ws)
                     self.clients[cid] = client
+                    self.ips[cid] = client.ip
                     self.gone.pop(cid, None)
                     ws.send_json({"t": "welcome", "id": cid})
                     self.push(cid)
@@ -586,6 +617,7 @@ class Hub:
                     oldest = next(iter(self.gone))
                     del self.gone[oldest]
                     self.last_result.pop(oldest, None)
+                    self.ips.pop(oldest, None)
                 if client.id == self.active:
                     self.controls.set(0)
 
@@ -634,6 +666,8 @@ class Hub:
             if now - t > 300:
                 del self.gone[cid]
                 self.last_result.pop(cid, None)
+                if cid not in self.clients:
+                    self.ips.pop(cid, None)
         in_cooldown = self.cooldown_left() > 0
         if self._was_cooling and not in_cooldown:
             changed = True  # cooldown just ended: phones go back to PRESS START

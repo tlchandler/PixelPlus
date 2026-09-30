@@ -50,7 +50,8 @@
 //! * [`amps`]: latest current reading of a `kind: current` input (INA219 /
 //!   INA226 on a receiver bus), for WS3's power limiter (`PowerSupply.sensor`).
 //! * Sensor triggers (`TriggerKind::Sensor`) fire through WS3's
-//!   `services::triggers::sensor_input` on every input activation (state ≠ 0).
+//!   `services::triggers::sensor_input` on every input event (it fires on the
+//!   rising edge, `active` = state ≠ 0).
 
 use crate::api::{ApiError, ApiResult};
 use crate::cluster::proto::{ct_eq, hmac_sha256, Freshness, ReplayGuard};
@@ -94,7 +95,10 @@ fn hex(b: &[u8]) -> String {
 
 /// A node's id from its Wi-Fi MAC address: `sn` + the last four bytes in hex
 /// (10 characters, like every PixelPlus id). Accepts `:`/`-` separated or
-/// plain hex, any case.
+/// plain hex, any case. The leader never sees a node's MAC address (nodes
+/// announce their id), so this only checks the firmware's derivation against
+/// the shared test vectors.
+#[cfg(test)]
 pub fn sensor_id_from_mac(mac: &str) -> Option<String> {
     let digits: String = mac
         .chars()
@@ -793,10 +797,8 @@ pub async fn on_datagram(state: &AppState, bytes: &[u8], from: SocketAddr) -> Op
                 "sensorNodeId": node, "input": input, "state": value, "at": now_rfc
             });
             state.events.publish("sensorInput", &ev);
-            if value != 0 {
-                let st2 = state.clone();
-                tokio::spawn(async move { fire_triggers(&st2, &node, &input).await });
-            }
+            let st2 = state.clone();
+            tokio::spawn(async move { fire_triggers(&st2, &node, &input, value != 0).await });
         }
         Outcome::Dropped(why) => {
             tracing::debug!("sensor datagram from {from} dropped: {why}");
@@ -821,8 +823,8 @@ pub async fn on_datagram(state: &AppState, bytes: &[u8], from: SocketAddr) -> Op
 /// Fire the sensor triggers bound to `node`/`input` through WS3's gated
 /// entry point (`services::triggers::sensor_input`: when / window /
 /// cooldown / per-hour limits, surprise or play actions, journal).
-async fn fire_triggers(state: &AppState, node: &str, input: &str) {
-    for f in super::triggers::sensor_input(state, node, input, true).await {
+async fn fire_triggers(state: &AppState, node: &str, input: &str, active: bool) {
+    for f in super::triggers::sensor_input(state, node, input, active).await {
         tracing::debug!("Sensor {node}/{input} → {}: {}", f.trigger_id, f.message);
     }
 }

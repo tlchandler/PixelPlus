@@ -579,7 +579,6 @@ fn fpp_digest(hash: &str, password: &str) -> [u8; 32] {
 ///    password, writes are accepted only when they are not CORS-simple
 ///    ([`cors_simple`]: xLights uses `PATCH` and JSON `POST`s), which a foreign
 ///    web page can't send → else `403 csrf`.
-#[allow(dead_code)] // called by api/fppcompat.rs (WS6)
 pub async fn fpp_compat_authorize(
     state: &AppState,
     peer: Option<SocketAddr>,
@@ -678,8 +677,9 @@ pub async fn fpp_compat_authorize(
 
 /// [`fpp_compat_authorize`] as a middleware, for
 /// `Router::layer(axum::middleware::from_fn_with_state(state, security::fpp_compat_guard))`
-/// on the root-mounted fppcompat router.
-#[allow(dead_code)] // used by api/fppcompat.rs (WS6)
+/// on a router. `api/fppcompat.rs` calls [`fpp_compat_authorize`] from its own
+/// extractor; the security tests exercise the rules through this layer.
+#[cfg(test)]
 pub async fn fpp_compat_guard(
     State(state): State<AppState>,
     peer: super::Peer,

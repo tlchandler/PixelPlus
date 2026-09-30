@@ -323,14 +323,7 @@ pub fn power_live(state: &crate::state::AppState) -> serde_json::Value {
             .map(|c| c.nodes_status())
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|n| {
-                // `limiter` is read loosely: older cluster code may not carry it.
-                let v = serde_json::to_value(&n).ok()?;
-                let rep = v
-                    .get("limiter")
-                    .and_then(|l| serde_json::from_value::<LimiterReport>(l.clone()).ok());
-                Some((n.id.clone(), (n.online, rep)))
-            })
+            .map(|n| (n.id, (n.online, n.limiter)))
             .collect();
         for (node_id, b) in budgets {
             if node_id == me.id {
