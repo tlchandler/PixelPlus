@@ -5,10 +5,13 @@ import { MockServer } from '../server';
 import type { UpdateInfo } from '$lib/api/types';
 
 async function call<T = any>(m: MockServer, method: string, path: string, body?: unknown | FormData) {
-	const res = await m.fetch('/api/v1' + path, {
+	const pending = m.fetch('/api/v1' + path, {
 		method,
 		body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body)
 	});
+	// The mock answers after a short (fake-timer) delay.
+	await vi.advanceTimersByTimeAsync(150);
+	const res = await pending;
 	const text = await res.text();
 	return { status: res.status, data: (text ? JSON.parse(text) : undefined) as T };
 }
@@ -70,7 +73,7 @@ describe('fleet mocks', () => {
 		form.append('passphrase', 'mistletoe-and-wine');
 		form.append('transfer', new Blob(['x']), 'show.ppxfer');
 		const p = call(m, 'POST', '/system/setup', form);
-		await vi.runAllTimersAsync();
+		await vi.advanceTimersByTimeAsync(2000);
 		const r = await p;
 		expect(r.status).toBe(200);
 		expect(r.data.role).toBe('leader');
