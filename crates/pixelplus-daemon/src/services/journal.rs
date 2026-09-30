@@ -369,11 +369,25 @@ pub fn append(dir: &Path, recs: &[Record]) -> std::io::Result<()> {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
+            .read(true)
             .open(&path)?;
+        // A power cut can leave the last line unfinished: start on a fresh
+        // line so the first new record (often `restart`) isn't glued to it.
+        if len > 0 && !ends_with_newline(&mut f)? {
+            f.write_all(b"\n")?;
+        }
         f.write_all(&buf)?;
         f.flush()?;
     }
     Ok(())
+}
+
+fn ends_with_newline(f: &mut std::fs::File) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    f.seek(SeekFrom::End(-1))?;
+    let mut b = [0u8; 1];
+    f.read_exact(&mut b)?;
+    Ok(b[0] == b'\n')
 }
 
 /// Delete day files older than [`KEEP_DAYS`] before `today`.
@@ -401,10 +415,26 @@ pub fn read_day(dir: &Path, date: NaiveDate, types: Option<&[String]>) -> Vec<Re
     let Ok(f) = std::fs::File::open(day_file(dir, date)) else {
         return vec![];
     };
+    // Only lines that can be of a wanted type are parsed: the minute-by-minute
+    // metrics make up most of a season's journal, and the smart playlists
+    // read two weeks of it every 30 s (a cheap substring test first).
+    let quoted: Option<Vec<Vec<u8>>> = types.map(|t| {
+        t.iter()
+            .map(|t| format!("\"{t}\"").into_bytes())
+            .collect()
+    });
+    // Split on raw bytes: a line torn by a power cut in the middle of a
+    // multi-byte character is skipped, not the end of the day's reading.
     std::io::BufReader::new(f)
-        .lines()
+        .split(b'\n')
         .map_while(Result::ok)
-        .filter_map(|l| serde_json::from_str::<Record>(&l).ok())
+        .filter(|l| {
+            quoted.as_ref().map_or(true, |q| {
+                q.iter()
+                    .any(|q| l.windows(q.len()).any(|w| w == q.as_slice()))
+            })
+        })
+        .filter_map(|l| serde_json::from_slice::<Record>(&l).ok())
         .filter(|r| types.map_or(true, |t| t.iter().any(|t| t == r.event.name())))
         .collect()
 }
@@ -543,6 +573,29 @@ mod tests {
             "{\"ts\":\"2026-01-01T10:00:00Z\",\"ev\":\"trigger\",\"id\":\"a\"}\n{\"ts\":\"2026-01-01T1",
         )
         .unwrap();
+        // Torn in the middle of a multi-byte character, then appended to
+        // after the restart: both complete records are read.
+        let torn = b"{\"ts\":\"2026-01-02T10:00:00Z\",\"ev\":\"trigger\",\"id\":\"a\"}\n{\"ts\":\"2026-01-02T10:01:00Z\",\"ev\":\"warn\",\"code\":\"x\",\"msg\":\"\xe2\x80".to_vec();
+        std::fs::write(d.join("2026-01-02.jsonl"), &torn).unwrap();
+        append(
+            &d,
+            &[rec(
+                "2026-01-02T10:02:00Z",
+                Event::Restart {
+                    reason: "power".into(),
+                },
+            )],
+        )
+        .unwrap();
+        let day2 = read_day(&d, NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(), None);
+        assert_eq!(day2.len(), 2, "{day2:?}");
+        assert!(matches!(day2[1].event, Event::Restart { .. }));
+        let only = read_day(
+            &d,
+            NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(),
+            Some(&["restart".to_string()]),
+        );
+        assert_eq!(only.len(), 1);
         std::fs::write(d.join("2025-01-01.jsonl"), "").unwrap();
         std::fs::write(d.join("notes.txt"), "").unwrap();
         assert_eq!(

@@ -188,8 +188,7 @@
 			</ul>
 		</section>
 		<p class="foot">
-			{#if station}<Radio size={14} /> {station} ·
-			{/if}Please be kind to the neighbors
+			{#if station}<Radio size={14} /> {station}&nbsp;·&nbsp;{/if}Please be kind to the neighbors
 		</p>
 	{/if}
 

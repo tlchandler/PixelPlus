@@ -1893,7 +1893,10 @@ impl Core {
                 now_ms,
             );
         } else if !on && running_any {
-            self.stop(false, true, now_ms);
+            // Ending the tool is not stopping the show: a show window it
+            // interrupted starts again (the scheduler takes over).
+            self.stop(false, false, now_ms);
+            self.run_scheduler(now_ms);
         }
     }
 

@@ -413,8 +413,16 @@
 					</div>
 				</div>
 			{/if}
-			{#if t.kind === 'http'}<code class="mono faint tiny">POST {location.origin}/api/v1/triggers/{t.id}</code
-				>{/if}
+			{#if t.kind === 'http'}
+				<p class="faint tiny hook">
+					Send <code class="mono">POST {location.origin}/api/v1/triggers/{t.id}</code> with the header
+					<code class="mono">X-PixelPlus-Request: 1</code>, for example
+					<code class="mono"
+						>curl -X POST -H 'X-PixelPlus-Request: 1' {location.origin}/api/v1/triggers/{t.id}</code
+					>{#if show.settings.security.passwordHash !== undefined}. While this controller has a password, the
+						link only works from a signed-in browser.{/if}
+				</p>
+			{/if}
 		</article>
 	{:else}
 		<div class="faint small empty">No triggers yet.</div>
@@ -432,6 +440,13 @@
 </div>
 
 <style>
+	.hook {
+		margin: 0;
+		overflow-wrap: anywhere;
+	}
+	.hook code {
+		overflow-wrap: anywhere;
+	}
 	.te {
 		display: flex;
 		flex-direction: column;

@@ -647,6 +647,85 @@ async fn a_scheduled_show_ends_a_forgotten_test_pattern() {
     assert!(wait_for(1000, || uniform(&e.out(0)) == Some(10)).await);
 }
 
+/// Measuring the sound delay during show time and then turning the
+/// calibration off brings the show back (it used to count as the owner
+/// stopping the show: dark for the rest of the night).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ending_calibration_during_a_show_window_resumes_the_show() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 400, 25, |_| 10)];
+        let mut pl = playlist("p1", &["s1"], 0);
+        pl.repeat = true;
+        show.playlists = vec![pl];
+        show.schedule.location.timezone = "UTC".into();
+        show.schedule.entries.push(ScheduleEntry {
+            start_exact: Default::default(),
+            id: "e".into(),
+            name: "All day".into(),
+            enabled: true,
+            playlist_id: "p1".into(),
+            days: vec![
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri,
+                Weekday::Sat,
+                Weekday::Sun,
+            ],
+            date_range: None,
+            start: TimeSpec::Clock {
+                time: "00:00".into(),
+            },
+            end: TimeSpec::Clock {
+                time: "00:00".into(),
+            },
+            priority: 0,
+            end_behavior: EndBehavior::FinishSong,
+        });
+        show.schedule.enabled = true;
+    })
+    .await;
+    assert!(wait_for(3000, || e.status().state == PlayerState::Playing).await);
+    for v2 in [false, true] {
+        let cmd = if v2 {
+            PlayerCmd::CalibrateV2(7)
+        } else {
+            PlayerCmd::Calibrate(true)
+        };
+        e.engine.handle.send(cmd).await.unwrap();
+        assert!(
+            wait_for(2000, || e
+                .status()
+                .item
+                .is_some_and(|i| i.kind == "calibration"))
+            .await
+        );
+        e.engine
+            .handle
+            .send(PlayerCmd::Calibrate(false))
+            .await
+            .unwrap();
+        assert!(
+            wait_for(3000, || e
+                .status()
+                .item
+                .is_some_and(|i| i.kind == "sequence"))
+            .await,
+            "the show resumes after calibration (v2: {v2}): {:?}",
+            e.status()
+        );
+    }
+    // Stopping the show itself still keeps the window quiet.
+    e.engine
+        .handle
+        .send(PlayerCmd::Stop { fade: false })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(e.status().state, PlayerState::Idle);
+}
+
 fn empty_req() -> PlayRequest {
     PlayRequest::default()
 }

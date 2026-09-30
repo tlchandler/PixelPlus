@@ -420,7 +420,9 @@
 										? 'none yet'
 										: r.backupAgeDays === 0
 											? 'today'
-											: `${r.backupAgeDays} days old`}</span
+											: r.backupAgeDays === 1
+												? '1 day old'
+												: `${r.backupAgeDays} days old`}</span
 								>
 							</div>
 							<div>
