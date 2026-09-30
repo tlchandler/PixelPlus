@@ -4,6 +4,7 @@ mod api;
 mod config;
 mod events;
 mod node;
+mod player;
 mod services;
 mod state;
 mod store;

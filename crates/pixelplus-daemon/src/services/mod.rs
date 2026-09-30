@@ -13,11 +13,20 @@ pub struct Services {
     /// Latest JSON payload per WebSocket message type (`status`, `nodes`,
     /// `sensors`), replayed to newly connected clients.
     last: parking_lot::Mutex<std::collections::BTreeMap<&'static str, Value>>,
-    /// Placeholder so the struct is never empty; services add fields below.
-    _private: OnceLock<()>,
+    /// Playback engine (set by `player::engine::start`).
+    pub player: OnceLock<crate::player::PlayerHandle>,
+    // Other services register their handles here (one field per service).
 }
 
 impl Services {
+    /// The playback engine handle.
+    ///
+    /// # Panics
+    /// Only if called before startup finished (a programming error).
+    pub fn player(&self) -> &crate::player::PlayerHandle {
+        self.player.get().expect("player service not started")
+    }
+
     /// Remember the latest payload of a periodically published message.
     pub fn remember(&self, kind: &'static str, data: Value) {
         self.last.lock().insert(kind, data);
