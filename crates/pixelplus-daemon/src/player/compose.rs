@@ -41,7 +41,11 @@ impl Sink<'_> {
     pub fn put(&mut self, slot: &PropSlot, px: &[u8]) {
         match self {
             Sink::Chan(chan) => {
-                write_channel_runs(slot.runs.iter().copied(), &px[..slot.len.min(px.len())], chan);
+                write_channel_runs(
+                    slot.runs.iter().copied(),
+                    &px[..slot.len.min(px.len())],
+                    chan,
+                );
             }
             Sink::Frame(frame, map) => {
                 map.apply_overlay(&slot.id, &px[..slot.len.min(px.len())], frame);
@@ -138,7 +142,11 @@ impl TestLayer {
         }
         let kind = if req.mode == "effect" {
             let preset = req.effect.clone().ok_or("an effect test needs an effect")?;
-            let target = if is_empty(&req.target.props) { preset.target.clone() } else { req.target.props.clone() };
+            let target = if is_empty(&req.target.props) {
+                preset.target.clone()
+            } else {
+                req.target.props.clone()
+            };
             TestKind::Effect(Box::new(EffectLayer::on_target(show, &preset, &target)))
         } else {
             TestKind::Pattern(test_pattern(req)?)
@@ -146,7 +154,10 @@ impl TestLayer {
         let slots = if raw_output.is_some() || remote_only {
             vec![]
         } else {
-            resolve_target(show, &req.target.props).into_iter().map(PropSlot::of).collect()
+            resolve_target(show, &req.target.props)
+                .into_iter()
+                .map(PropSlot::of)
+                .collect()
         };
         Ok(TestLayer {
             req: req.clone(),
@@ -261,8 +272,8 @@ pub fn preview_frame(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::TestTarget;
+    use super::*;
     use pixelplus_core::model::{BoardKind, EffectKind, Node, NodeRole, PropKind, PropSegment};
 
     pub(crate) fn prop(id: &str, n: u32, chan: u32, out: u32, start: u32) -> Prop {
@@ -333,8 +344,16 @@ mod tests {
         // the preview reads them back in prop order.
         let mut s = s;
         s.props[1].channel_runs = Some(vec![
-            ChannelRun { prop_offset: 0, channel_start: 12, pixel_count: 1 },
-            ChannelRun { prop_offset: 1, channel_start: 3, pixel_count: 2 },
+            ChannelRun {
+                prop_offset: 0,
+                channel_start: 12,
+                pixel_count: 1,
+            },
+            ChannelRun {
+                prop_offset: 1,
+                channel_start: 3,
+                pixel_count: 2,
+            },
         ]);
         let slot = PropSlot::of(&s.props[1]);
         let mut chan = vec![0u8; 15];
@@ -351,7 +370,13 @@ mod tests {
             mode: "solid".into(),
             color: Some("#ff0000".into()),
             speed: None,
-            target: TestTarget { props: Target { prop_ids: vec!["b".into()], ..Default::default() }, ..Default::default() },
+            target: TestTarget {
+                props: Target {
+                    prop_ids: vec!["b".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             effect: None,
         };
         let mut t = TestLayer::new(&s, "n1", &req, 0.0).unwrap();
@@ -361,7 +386,11 @@ mod tests {
         assert_eq!(&chan[0..3], &[0, 0, 0]);
         // Raw output test on this node.
         let mut raw = req.clone();
-        raw.target = TestTarget { node_id: Some("n1".into()), output: Some(2), ..Default::default() };
+        raw.target = TestTarget {
+            node_id: Some("n1".into()),
+            output: Some(2),
+            ..Default::default()
+        };
         let mut t = TestLayer::new(&s, "n1", &raw, 0.0).unwrap();
         let mut frame = OutputFrame::new(&[2, 3]);
         t.render_raw(0.0, &mut frame);
@@ -379,19 +408,32 @@ mod tests {
         assert!(TestLayer::new(&s, "n1", &raw, 0.0).unwrap().remote_only);
         // Every mode parses.
         for mode in ["solid", "chase", "rgbCycle", "countPixels", "walk"] {
-            let r = TestRequest { mode: mode.into(), ..req.clone() };
+            let r = TestRequest {
+                mode: mode.into(),
+                ..req.clone()
+            };
             assert!(test_pattern(&r).is_ok(), "{mode}");
         }
-        assert!(test_pattern(&TestRequest { mode: "bogus".into(), ..req.clone() }).is_err());
+        assert!(test_pattern(&TestRequest {
+            mode: "bogus".into(),
+            ..req.clone()
+        })
+        .is_err());
         // Effect mode.
         let preset = EffectPreset {
             id: "e".into(),
             name: "E".into(),
             effect: EffectKind::Solid,
-            params: [("color".to_string(), serde_json::json!("#00ff00"))].into_iter().collect(),
+            params: [("color".to_string(), serde_json::json!("#00ff00"))]
+                .into_iter()
+                .collect(),
             target: Target::default(),
         };
-        let r = TestRequest { mode: "effect".into(), effect: Some(preset), ..req.clone() };
+        let r = TestRequest {
+            mode: "effect".into(),
+            effect: Some(preset),
+            ..req.clone()
+        };
         let mut t = TestLayer::new(&s, "n1", &r, 0.0).unwrap();
         let mut chan = vec![0u8; 15];
         t.render_props(0.0, &mut Sink::Chan(&mut chan));

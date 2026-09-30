@@ -248,7 +248,13 @@ impl NodeMap {
                     } else {
                         seg.start_pixel + k0
                     };
-                    pieces.push((out, piece.channel_start, dst, piece.pixel_count, seg.reverse));
+                    pieces.push((
+                        out,
+                        piece.channel_start,
+                        dst,
+                        piece.pixel_count,
+                        seg.reverse,
+                    ));
                 }
             }
         }
@@ -954,10 +960,16 @@ mod tests {
         assert_eq!(rgb, [30, 31, 32, 33, 34, 35, 0, 1, 2, 3, 4, 5, 6, 7, 8]);
         let mut chan = [0u8; 36];
         write_prop_channels(&p, &rgb, &mut chan);
-        assert_eq!(chan.to_vec(), [&frame[..9], &[0u8; 21][..], &frame[30..]].concat());
+        assert_eq!(
+            chan.to_vec(),
+            [&frame[..9], &[0u8; 21][..], &frame[30..]].concat()
+        );
         // Runs past pixelCount are clipped; a gap has no data.
         let q = with_runs(prop("q", 4, 0, vec![]), &[(0, 0, 1), (2, 9, 5)]);
-        let r: Vec<_> = q.channel_ranges().map(|r| (r.prop_offset, r.channel_start, r.pixel_count)).collect();
+        let r: Vec<_> = q
+            .channel_ranges()
+            .map(|r| (r.prop_offset, r.channel_start, r.pixel_count))
+            .collect();
         assert_eq!(r, vec![(0, 0, 1), (2, 9, 2)]);
         assert_eq!(q.channel_of_pixel(1), None);
     }
@@ -968,14 +980,8 @@ mod tests {
         // Arch-like prop: 3 strings of 4 pixels, string 2 patched far away, wired as one
         // chain on output 1 and a reversed copy on output 2.
         let runs = [(0, 0, 4), (4, 300, 4), (8, 12, 4)];
-        let a = with_runs(
-            prop("a", 12, 0, vec![seg("n1", 1, 0, 12, 0, false)]),
-            &runs,
-        );
-        let b = with_runs(
-            prop("b", 12, 0, vec![seg("n1", 2, 0, 12, 0, true)]),
-            &runs,
-        );
+        let a = with_runs(prop("a", 12, 0, vec![seg("n1", 1, 0, 12, 0, false)]), &runs);
+        let b = with_runs(prop("b", 12, 0, vec![seg("n1", 2, 0, 12, 0, true)]), &runs);
         let map = NodeMap::build_for_node(&n, &[a.clone(), b]);
         assert!(map.warnings.is_empty(), "{:?}", map.warnings);
         // Frame where each pixel's bytes are its channel-pixel index.
@@ -983,7 +989,9 @@ mod tests {
         let mut out = map.new_frame();
         map.render(&frame, &mut out);
         let px = |o: usize| -> Vec<u8> { out.output(o).chunks(3).map(|c| c[0]).collect() };
-        let expect: Vec<u8> = (0..12).map(|i| (a.channel_of_pixel(i).unwrap() / 3) as u8).collect();
+        let expect: Vec<u8> = (0..12)
+            .map(|i| (a.channel_of_pixel(i).unwrap() / 3) as u8)
+            .collect();
         assert_eq!(expect, vec![0, 1, 2, 3, 100, 101, 102, 103, 4, 5, 6, 7]);
         assert_eq!(px(0), expect);
         let mut rev = expect.clone();

@@ -380,11 +380,18 @@ pub(crate) fn mqtt_test_settings(
     }
     let placeholder = super::show::SECRET_PLACEHOLDER;
     let sent = patch.get("password").and_then(Value::as_str);
-    let same_broker = settings.host.trim().eq_ignore_ascii_case(stored.host.trim())
+    let same_broker = settings
+        .host
+        .trim()
+        .eq_ignore_ascii_case(stored.host.trim())
         && settings.port == stored.port;
     match sent {
         Some(p) if p == placeholder => {
-            settings.password = if same_broker { stored.password.clone() } else { None }
+            settings.password = if same_broker {
+                stored.password.clone()
+            } else {
+                None
+            }
         }
         Some(_) => {}
         None if !same_broker => settings.password = None,
@@ -425,9 +432,15 @@ fn mqtt_test_never_sends_stored_password_elsewhere() {
     assert_eq!(t(json!({})), Some("secret".into()));
     assert_eq!(t(json!({"password": "********"})), Some("secret".into()));
     assert_eq!(t(json!({"host": "attacker.example"})), None);
-    assert_eq!(t(json!({"host": "attacker.example", "password": "********"})), None);
+    assert_eq!(
+        t(json!({"host": "attacker.example", "password": "********"})),
+        None
+    );
     assert_eq!(t(json!({"port": 1884})), None);
-    assert_eq!(t(json!({"host": "other", "password": "typed"})), Some("typed".into()));
+    assert_eq!(
+        t(json!({"host": "other", "password": "typed"})),
+        Some("typed".into())
+    );
 }
 
 pub fn routes() -> Router<AppState> {

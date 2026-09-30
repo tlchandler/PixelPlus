@@ -937,7 +937,10 @@ pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
                     0 => peer.addr.port().wrapping_add(1),
                     p => p,
                 };
-                (peer.beacon.id.clone(), SocketAddr::new(peer.addr.ip(), port))
+                (
+                    peer.beacon.id.clone(),
+                    SocketAddr::new(peer.addr.ip(), port),
+                )
             })
             .collect()
     };
@@ -1116,10 +1119,11 @@ pub(crate) async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                 }
                 // Adopted by an older PixelPlus with the show-wide key: give
                 // it its own key (signed with the old one).
-                Some(l) if l == identity.id
-                    && m.is_some()
-                    && sh.uses_legacy_key(&node.id)
-                    && h.last_readopt.map_or(true, |t| t.elapsed() > READOPT_EVERY) =>
+                Some(l)
+                    if l == identity.id
+                        && m.is_some()
+                        && sh.uses_legacy_key(&node.id)
+                        && h.last_readopt.map_or(true, |t| t.elapsed() > READOPT_EVERY) =>
                 {
                     h.last_readopt = Some(Instant::now());
                     readopt.push(peer.clone());
@@ -1171,7 +1175,10 @@ pub(crate) async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                     sh2.replay.lock().forget(&reply.id);
                     tracing::info!("re-adopted {} with a new key", peer.beacon.name);
                 }
-                Ok(_) => tracing::warn!("re-adopting {}: a different controller answered", peer.beacon.name),
+                Ok(_) => tracing::warn!(
+                    "re-adopting {}: a different controller answered",
+                    peer.beacon.name
+                ),
                 Err(e) => tracing::warn!("re-adopting {} failed: {}", peer.beacon.name, e.message),
             }
         });

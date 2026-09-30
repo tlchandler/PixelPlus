@@ -217,9 +217,8 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
             P::number("speed", "Speed", 0.0, 2.0, 0.01, 0.05)
                 .unit("cycles/s")
                 .help("Trips through the whole color list per second."),
-            P::number("spread", "Spread", 0.0, 2.0, 0.05, 0.0).help(
-                "0 = every prop the same color; higher staggers colors across the display.",
-            ),
+            P::number("spread", "Spread", 0.0, 2.0, 0.05, 0.0)
+                .help("0 = every prop the same color; higher staggers colors across the display."),
         ],
         EffectKind::Candycane => vec![
             P::colors("colors", "Stripe colors", &["#ff0000", "#ffffff"]),

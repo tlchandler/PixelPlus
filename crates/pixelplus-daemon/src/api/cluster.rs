@@ -344,7 +344,14 @@ async fn adopt(
     // may still be allowed. Only a clock difference is answered, so the
     // leader can correct it.
     let signed_by_leader = auth_header(&headers).is_some()
-        && match verify_from_leader(&state, &cluster, &headers, &Method::POST, &path_of(&uri), &body) {
+        && match verify_from_leader(
+            &state,
+            &cluster,
+            &headers,
+            &Method::POST,
+            &path_of(&uri),
+            &body,
+        ) {
             Ok(_) => true,
             Err(r) if r.headers().contains_key(sig::TIME_HEADER) => return Ok(*r),
             Err(_) => false,

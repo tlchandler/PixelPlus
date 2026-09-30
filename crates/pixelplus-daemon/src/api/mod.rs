@@ -1,9 +1,10 @@
 //! HTTP API (`/api/v1`) and static UI serving.
 
 pub mod auth;
-pub mod cluster; pub mod nodes;
+pub mod cluster;
 pub mod crud;
 mod error;
+pub mod nodes;
 pub mod show;
 pub mod ws;
 // System, content & integrations workstream.
@@ -16,13 +17,13 @@ pub mod overlay;
 pub mod playerapi;
 pub mod public;
 pub mod security;
-pub mod system;
-pub mod test;
-pub mod tools;
-#[cfg(test)]
-pub mod testkit;
 #[cfg(test)]
 mod security_tests;
+pub mod system;
+pub mod test;
+#[cfg(test)]
+pub mod testkit;
+pub mod tools;
 
 pub use error::{ApiError, ApiResult};
 
@@ -58,7 +59,8 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::routes())
         .merge(crud::all_routes())
         .merge(show::routes())
-        .merge(cluster::routes()).merge(nodes::routes())
+        .merge(cluster::routes())
+        .merge(nodes::routes())
         .merge(system::routes())
         .merge(content::routes())
         .merge(import::routes())
@@ -72,9 +74,15 @@ pub fn router(state: AppState) -> Router {
         .merge(debug::routes())
         .route("/ws", get(ws::handler))
         .fallback(|| async { ApiError::not_found("That API endpoint") })
-        .layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_auth))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_auth,
+        ))
         // Host allow-list, CSRF header, WebSocket origin (before auth).
-        .layer(axum::middleware::from_fn_with_state(state.clone(), security::guard))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            security::guard,
+        ))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

@@ -696,7 +696,10 @@ pub(crate) async fn to_player(state: &AppState, cmd: PlayerCmd) -> bool {
 }
 
 /// Write `value` as JSON readable by this user only (atomic).
-pub(crate) fn write_private_json<T: Serialize>(path: &std::path::Path, value: &T) -> anyhow::Result<()> {
+pub(crate) fn write_private_json<T: Serialize>(
+    path: &std::path::Path,
+    value: &T,
+) -> anyhow::Result<()> {
     use std::io::Write;
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;

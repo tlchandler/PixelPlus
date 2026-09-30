@@ -43,7 +43,10 @@ pub fn interfaces() -> Interfaces {
 /// (IPv4 by netmask, IPv6 link-local), i.e. on the local network segment.
 pub fn on_local_subnet(ip: IpAddr) -> bool {
     let ip = match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(v6)),
         other => other,
     };
     if ip.is_loopback() {

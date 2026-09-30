@@ -514,8 +514,17 @@ fn advanced_start_channels_import_as_channel_runs() {
     // A model chained after an Advanced model starts after its highest channel.
     assert_eq!(props["After Canes"].channel_start, 2023);
     // Icicles number every node from string 1; custom models from the lowest string.
-    assert_eq!((props["Icicles"].channel_start, runs_of(props["Icicles"])), (2499, None));
-    assert_eq!((props["Snowflake"].channel_start, runs_of(props["Snowflake"])), (2699, None));
+    assert_eq!(
+        (props["Icicles"].channel_start, runs_of(props["Icicles"])),
+        (2499, None)
+    );
+    assert_eq!(
+        (
+            props["Snowflake"].channel_start,
+            runs_of(props["Snowflake"])
+        ),
+        (2699, None)
+    );
     // Tree: `#ip:universe:ch`, `!Controller:ch` (contiguous with string 1, so merged),
     // and universe 4 right after universe 2 because xLights drops the unknown output.
     let tree = props["Tree"];
@@ -534,7 +543,10 @@ fn advanced_start_channels_import_as_channel_runs() {
     assert!(!w.contains("unknown model 'Off Arch'"), "{w}");
 
     // Unknown controller / output types are dropped with a warning.
-    assert!(w.contains("'Old Wireless'") && w.contains("unknown type 'Wireless'"), "{w}");
+    assert!(
+        w.contains("'Old Wireless'") && w.contains("unknown type 'Wireless'"),
+        "{w}"
+    );
     assert!(w.contains("'FutureProtocol'"), "{w}");
     assert!(!w.contains("not contiguous"), "{w}");
     assert!(!w.contains("cannot resolve"), "{w}");
@@ -546,7 +558,8 @@ fn advanced_start_channels_import_as_channel_runs() {
 fn advanced_start_channels_round_trip_through_mapping() {
     let mut show = Show::default();
     show.nodes.push(node("porch", "Porch", BoardKind::Difftx));
-    show.nodes.push(node("yard", "Yard", BoardKind::Difftxlarge));
+    show.nodes
+        .push(node("yard", "Yard", BoardKind::Difftxlarge));
     let p = import_preview(RGB_ADV, Some(NET_ADV), &show).unwrap();
     let s = apply_import(&show, &p, &BTreeMap::new());
     let get = |n: &str| s.props.iter().find(|p| p.name == n).unwrap();
@@ -573,7 +586,11 @@ fn advanced_start_channels_round_trip_through_mapping() {
 
     let channels = 4530u32;
     let byte = |b: u32, f: u32| ((b * 7 + f * 13) % 251) as u8;
-    let mut w = FseqWriter::new(Cursor::new(Vec::new()), FseqWriterOptions::new(channels, 25)).unwrap();
+    let mut w = FseqWriter::new(
+        Cursor::new(Vec::new()),
+        FseqWriterOptions::new(channels, 25),
+    )
+    .unwrap();
     for f in 0..4 {
         let frame: Vec<u8> = (0..channels).map(|b| byte(b, f)).collect();
         w.write_frame(&frame).unwrap();
@@ -597,7 +614,9 @@ fn advanced_start_channels_round_trip_through_mapping() {
             let mut rgb = vec![0u8; prop.pixel_count as usize * 3];
             pm.read_prop(&prop.id, &out, &mut rgb);
             for i in 0..prop.pixel_count {
-                let Some((o, px)) = pm.locate(&prop.id, i) else { continue };
+                let Some((o, px)) = pm.locate(&prop.id, i) else {
+                    continue;
+                };
                 let ch = expected(&prop.name, i);
                 let want = [byte(ch, 2), byte(ch + 1, 2), byte(ch + 2, 2)];
                 assert_eq!(

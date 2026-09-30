@@ -274,9 +274,19 @@ async fn leader_adopts_followers_and_drives_them() {
     let k1 = f1.state.identity().cluster_key.expect("f1 key");
     let k2 = f2.state.identity().cluster_key.expect("f2 key");
     assert_ne!(k1, k2);
-    assert_eq!(leader.cluster.shared.keys.lock().followers.get(&f1_id), Some(&k1));
-    assert_eq!(leader.cluster.shared.keys.lock().followers.get(&f2_id), Some(&k2));
-    assert_eq!(leader.state.identity().cluster_key, None, "no show-wide key any more");
+    assert_eq!(
+        leader.cluster.shared.keys.lock().followers.get(&f1_id),
+        Some(&k1)
+    );
+    assert_eq!(
+        leader.cluster.shared.keys.lock().followers.get(&f2_id),
+        Some(&k2)
+    );
+    assert_eq!(
+        leader.state.identity().cluster_key,
+        None,
+        "no show-wide key any more"
+    );
     assert!(leader
         .cluster
         .discovered()
@@ -598,7 +608,10 @@ async fn leader_adopts_followers_and_drives_them() {
     for (key, sender) in [(&k2, &f2_id), (&k2, &f1_id)] {
         let r = http
             .get(&slice_url)
-            .header(sig::AUTH_HEADER, signed(key, sender, "GET", &slice_url, b""))
+            .header(
+                sig::AUTH_HEADER,
+                signed(key, sender, "GET", &slice_url, b""),
+            )
             .send()
             .await
             .unwrap();
@@ -638,7 +651,8 @@ async fn leader_adopts_followers_and_drives_them() {
         .state
         .store
         .update(|s| {
-            s.settings.security.password_hash = Some(crate::api::auth::hash_password("jingle").unwrap());
+            s.settings.security.password_hash =
+                Some(crate::api::auth::hash_password("jingle").unwrap());
             Ok(())
         })
         .await
@@ -646,7 +660,8 @@ async fn leader_adopts_followers_and_drives_them() {
     let show_url = leader.url("/show");
     for req in [
         http.get(&show_url).header("x-pixelplus-key", &k1),
-        http.get(&show_url).header(sig::AUTH_HEADER, signed(&k1, &f1_id, "GET", &show_url, b"")),
+        http.get(&show_url)
+            .header(sig::AUTH_HEADER, signed(&k1, &f1_id, "GET", &show_url, b"")),
         http.get(&show_url).header("x-pixelplus-local", "1"),
     ] {
         assert_eq!(req.send().await.unwrap().status(), 401);
@@ -656,7 +671,10 @@ async fn leader_adopts_followers_and_drives_them() {
     let body = br#"{"type":"blackout","on":true}"#;
     let r = http
         .post(&cmd_url)
-        .header(sig::AUTH_HEADER, signed(&k2, &leader_id, "POST", &cmd_url, body))
+        .header(
+            sig::AUTH_HEADER,
+            signed(&k2, &leader_id, "POST", &cmd_url, body),
+        )
         .header("content-type", "application/json")
         .body(body.to_vec())
         .send()
@@ -760,7 +778,12 @@ async fn leader_adopts_followers_and_drives_them() {
     assert!(leader.cluster.shared.keys.lock().followers.is_empty());
     for id in [&f1_id] {
         eventually("offered again", Duration::from_secs(5), || {
-            leader.cluster.discovered().iter().any(|n| &n.id == id).then_some(())
+            leader
+                .cluster
+                .discovered()
+                .iter()
+                .any(|n| &n.id == id)
+                .then_some(())
         })
         .await;
         let r = http
@@ -769,9 +792,17 @@ async fn leader_adopts_followers_and_drives_them() {
             .send()
             .await
             .unwrap();
-        assert_eq!(r.status(), 200, "re-adopt {id}: {}", r.text().await.unwrap());
+        assert_eq!(
+            r.status(),
+            200,
+            "re-adopt {id}: {}",
+            r.text().await.unwrap()
+        );
     }
-    assert_eq!(f1.state.identity().leader_id.as_deref(), Some(leader_id.as_str()));
+    assert_eq!(
+        f1.state.identity().leader_id.as_deref(),
+        Some(leader_id.as_str())
+    );
 
     for n in [&leader, &f1, &f2] {
         n.cluster.shutdown();
@@ -798,17 +829,34 @@ async fn adoption_rules_skew_and_replay() {
 
     // A leader never accepts an unsolicited adoption, forced or not.
     for force in [false, true] {
-        let r = http.post(l2.url("/cluster/adopt")).json(&stranger(force)).send().await.unwrap();
+        let r = http
+            .post(l2.url("/cluster/adopt"))
+            .json(&stranger(force))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), 409);
     }
     assert_eq!(l2.state.identity().role, LocalRole::Leader);
     // Without the CSRF header, nothing is accepted at all.
-    let r = reqwest::Client::builder().no_proxy().build().unwrap()
-        .post(f.url("/cluster/adopt")).json(&stranger(false)).send().await.unwrap();
+    let r = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .post(f.url("/cluster/adopt"))
+        .json(&stranger(false))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 403);
     // …and a leader is not offered for adoption.
     eventually("f discovered", Duration::from_secs(5), || {
-        leader.cluster.discovered().iter().any(|n| n.id == f_id).then_some(())
+        leader
+            .cluster
+            .discovered()
+            .iter()
+            .any(|n| n.id == f_id)
+            .then_some(())
     })
     .await;
     assert!(leader.cluster.discovered().iter().all(|n| n.id != l2_id));
@@ -832,16 +880,30 @@ async fn adoption_rules_skew_and_replay() {
     }
     leader::check_health(&leader.state, &leader.cluster.shared).await;
     tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(f.state.identity().cluster_key.as_deref(), Some(key.as_str()), "adopted only once");
+    assert_eq!(
+        f.state.identity().cluster_key.as_deref(),
+        Some(key.as_str()),
+        "adopted only once"
+    );
     // Now it refuses strangers, even "forced" (its leader is online).
-    let r = http.post(f.url("/cluster/adopt")).json(&stranger(true)).send().await.unwrap();
+    let r = http
+        .post(f.url("/cluster/adopt"))
+        .json(&stranger(true))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 409);
 
     // Clocks that disagree: the follower answers with its (signed) time and
     // the leader retries with the corrected offset.
     leader.cluster.shared.skew.lock().insert(f_id.clone(), 3600);
     eventually("f online", Duration::from_secs(5), || {
-        leader.cluster.nodes_status().iter().any(|s| s.id == f_id && s.online).then_some(())
+        leader
+            .cluster
+            .nodes_status()
+            .iter()
+            .any(|s| s.id == f_id && s.online)
+            .then_some(())
     })
     .await;
     let res = leader
@@ -850,8 +912,14 @@ async fn adoption_rules_skew_and_replay() {
         .await;
     assert!(res[0].ok, "{res:?}");
     assert!(leader.cluster.shared.skew.lock()[&f_id].abs() <= 2);
-    next_cmd(&mut f.player_rx, "blackout", |c| matches!(c, PlayerCmd::Blackout(true))).await;
-    assert!(!f.cluster.shared.keys.lock().pending, "the leader used the new key");
+    next_cmd(&mut f.player_rx, "blackout", |c| {
+        matches!(c, PlayerCmd::Blackout(true))
+    })
+    .await;
+    assert!(
+        !f.cluster.shared.keys.lock().pending,
+        "the leader used the new key"
+    );
 
     // UDP replay: an old sequence number of the leader's current run is dropped,
     // a fresh one is accepted.
@@ -875,31 +943,69 @@ async fn adoption_rules_skew_and_replay() {
     };
     let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let boot = leader.cluster.shared.boot.clone();
-    let old = proto::encode(&sync(7), Some(proto::Stamp { key: &key, boot: &boot, seq: 1 }));
+    let old = proto::encode(
+        &sync(7),
+        Some(proto::Stamp {
+            key: &key,
+            boot: &boot,
+            seq: 1,
+        }),
+    );
     sock.send_to(&old, ("127.0.0.1", fp)).unwrap();
-    let other_boot = proto::encode(&sync(8), Some(proto::Stamp { key: &key, boot: "otherboot1", seq: u64::MAX / 2 }));
+    let other_boot = proto::encode(
+        &sync(8),
+        Some(proto::Stamp {
+            key: &key,
+            boot: "otherboot1",
+            seq: u64::MAX / 2,
+        }),
+    );
     sock.send_to(&other_boot, ("127.0.0.1", fp)).unwrap();
-    let fresh = proto::encode(&sync(9), Some(proto::Stamp { key: &key, boot: &boot, seq: u64::MAX / 2 }));
+    let fresh = proto::encode(
+        &sync(9),
+        Some(proto::Stamp {
+            key: &key,
+            boot: &boot,
+            seq: u64::MAX / 2,
+        }),
+    );
     sock.send_to(&fresh, ("127.0.0.1", fp)).unwrap();
-    let cmd = next_cmd(&mut f.player_rx, "fresh sync", |c| {
-        matches!(c, PlayerCmd::Sync(p) if matches!(p.brightness, 7..=9))
-    })
+    let cmd = next_cmd(
+        &mut f.player_rx,
+        "fresh sync",
+        |c| matches!(c, PlayerCmd::Sync(p) if matches!(p.brightness, 7..=9)),
+    )
     .await;
-    assert!(matches!(cmd, PlayerCmd::Sync(p) if p.brightness == 9), "replays were dropped");
+    assert!(
+        matches!(cmd, PlayerCmd::Sync(p) if p.brightness == 9),
+        "replays were dropped"
+    );
     // The very same packet again is a replay.
     sock.send_to(&fresh, ("127.0.0.1", fp)).unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     while let Ok(c) = f.player_rx.try_recv() {
-        assert!(!matches!(c, PlayerCmd::Sync(p) if p.brightness == 9), "replayed sync applied");
+        assert!(
+            !matches!(c, PlayerCmd::Sync(p) if p.brightness == 9),
+            "replayed sync applied"
+        );
     }
 
     // Removed from the show (force), then adopted again: works (TOFU), with a
     // new key.
-    let r = http.delete(leader.url(&format!("/nodes/{f_id}?force=1"))).send().await.unwrap();
+    let r = http
+        .delete(leader.url(&format!("/nodes/{f_id}?force=1")))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 200);
     assert_eq!(f.state.identity().leader_id, None);
     eventually("f offered again", Duration::from_secs(5), || {
-        leader.cluster.discovered().iter().any(|n| n.id == f_id).then_some(())
+        leader
+            .cluster
+            .discovered()
+            .iter()
+            .any(|n| n.id == f_id)
+            .then_some(())
     })
     .await;
     let r = http
@@ -909,7 +1015,10 @@ async fn adoption_rules_skew_and_replay() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
-    assert_ne!(f.state.identity().cluster_key.as_deref(), Some(key.as_str()));
+    assert_ne!(
+        f.state.identity().cluster_key.as_deref(),
+        Some(key.as_str())
+    );
 
     // "Allow a new leader" on the follower (signed-in admin, 15 minutes).
     let r = http
@@ -919,17 +1028,32 @@ async fn adoption_rules_skew_and_replay() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
-    let r = http.post(f.url("/cluster/adopt")).json(&stranger(false)).send().await.unwrap();
+    let r = http
+        .post(f.url("/cluster/adopt"))
+        .json(&stranger(false))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
     assert_eq!(f.state.identity().leader_id.as_deref(), Some("stranger01"));
     assert!(f.cluster.shared.join_window().is_none(), "used up");
 
     // "Join another show" on the second leader: it is offered, and adopting it
     // needs the usual confirmation because its own show is replaced.
-    let r = http.post(l2.url("/system/join-show")).json(&serde_json::json!({})).send().await.unwrap();
+    let r = http
+        .post(l2.url("/system/join-show"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 200);
     eventually("l2 offered", Duration::from_secs(5), || {
-        leader.cluster.discovered().iter().any(|n| n.id == l2_id && n.joining).then_some(())
+        leader
+            .cluster
+            .discovered()
+            .iter()
+            .any(|n| n.id == l2_id && n.joining)
+            .then_some(())
     })
     .await;
     let adopt = |force: bool| {
@@ -944,7 +1068,10 @@ async fn adoption_rules_skew_and_replay() {
     assert!(std::fs::read_dir(l2.dir.join("cluster"))
         .unwrap()
         .flatten()
-        .any(|e| e.file_name().to_string_lossy().starts_with("show-before-adopt-")));
+        .any(|e| e
+            .file_name()
+            .to_string_lossy()
+            .starts_with("show-before-adopt-")));
 
     for n in [&leader, &f, &l2] {
         n.cluster.shutdown();

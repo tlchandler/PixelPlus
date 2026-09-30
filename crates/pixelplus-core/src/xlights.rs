@@ -311,8 +311,8 @@ impl Resolver<'_, '_, '_> {
         };
         // Merge strings that continue each other.
         runs.dedup_by(|next, prev| {
-            let joins = prev.0 + prev.1 == next.0
-                && prev.2 as u64 + 3 * prev.1 as u64 == next.2 as u64;
+            let joins =
+                prev.0 + prev.1 == next.0 && prev.2 as u64 + 3 * prev.1 as u64 == next.2 as u64;
             if joins {
                 prev.1 += next.1;
             }
@@ -1483,7 +1483,13 @@ mod tests {
         // Spinner: string 1 after string 2; channelStart is the lowest.
         let sp = get("Sp");
         assert_eq!(sp.channel_start, 199);
-        assert_eq!(runs(sp), Some(vec![(0, 299, sp.pixel_count / 2), (sp.pixel_count / 2, 199, sp.pixel_count / 2)]));
+        assert_eq!(
+            runs(sp),
+            Some(vec![
+                (0, 299, sp.pixel_count / 2),
+                (sp.pixel_count / 2, 199, sp.pixel_count / 2)
+            ])
+        );
         // Poly line strings split at the individual start nodes.
         assert_eq!(runs(get("P")), Some(vec![(0, 499, 3), (3, 599, 7)]));
         // Layered arch: every node from string 1.
@@ -1492,9 +1498,18 @@ mod tests {
         // referring to its own model is an unresolvable cycle and falls back too.
         let gap = get("Gap");
         assert_eq!((gap.channel_start, runs(gap)), (999, None));
-        assert!(p.warnings.iter().any(|w| w.contains("'Gap' has individual start channels but no String2")));
-        assert!(p.warnings.iter().any(|w| w.contains("'Gap'") && w.contains("refers to itself")));
+        assert!(p
+            .warnings
+            .iter()
+            .any(|w| w.contains("'Gap' has individual start channels but no String2")));
+        assert!(p
+            .warnings
+            .iter()
+            .any(|w| w.contains("'Gap'") && w.contains("refers to itself")));
         // Without Advanced="1", String attributes are ignored.
-        assert_eq!((get("Plain").channel_start, runs(get("Plain"))), (1099, None));
+        assert_eq!(
+            (get("Plain").channel_start, runs(get("Plain"))),
+            (1099, None)
+        );
     }
 }

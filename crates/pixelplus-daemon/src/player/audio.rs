@@ -60,7 +60,11 @@ pub fn list_audio_devices() -> Vec<AudioDevice> {
             for d in devices {
                 if let Ok(name) = d.name() {
                     if name != "default" && !out.iter().any(|x| x.id == name) {
-                        out.push(AudioDevice { name: pretty_device_name(&name), id: name, is_default: false });
+                        out.push(AudioDevice {
+                            name: pretty_device_name(&name),
+                            id: name,
+                            is_default: false,
+                        });
                     }
                 }
             }
@@ -303,7 +307,10 @@ pub struct AudioEngine {
 impl AudioEngine {
     /// An engine without output (lights-only).
     pub fn disabled(reason: impl Into<String>) -> Self {
-        AudioEngine { out: None, error: Some(reason.into()) }
+        AudioEngine {
+            out: None,
+            error: Some(reason.into()),
+        }
     }
 
     /// Open `device` ("default" or an ALSA name). Never fails: on error the
@@ -338,8 +345,18 @@ impl AudioEngine {
     /// Start playing `path` from `start_ms` with `gain_db`, fading in over
     /// `fade_in_ms`. Returns None when audio is unavailable. Track ids are
     /// unique per process, so ids from a replaced engine never collide.
-    pub fn play(&mut self, path: &Path, start_ms: u64, gain_db: f32, fade_in_ms: u32) -> Option<TrackId> {
-        let out = self.out.as_ref().filter(|o| o.failed.lock().is_none())?.clone();
+    pub fn play(
+        &mut self,
+        path: &Path,
+        start_ms: u64,
+        gain_db: f32,
+        fade_in_ms: u32,
+    ) -> Option<TrackId> {
+        let out = self
+            .out
+            .as_ref()
+            .filter(|o| o.failed.lock().is_none())?
+            .clone();
         let id = NEXT_TRACK.fetch_add(1, Ordering::Relaxed);
         let queue = TrackQueue::new(out.rate);
         spawn_decoder(path.to_path_buf(), start_ms, queue.clone(), out.rate);
@@ -381,7 +398,11 @@ impl AudioEngine {
         // its start, never beyond its end.
         let cb_ms = m.last_cb_frames as f64 * 1000.0 / rate;
         let before = played_ms - if t.paused { 0.0 } else { cb_ms };
-        let into = if t.paused { 0.0 } else { (since.as_secs_f64() * 1000.0).min(cb_ms) };
+        let into = if t.paused {
+            0.0
+        } else {
+            (since.as_secs_f64() * 1000.0).min(cb_ms)
+        };
         Some((before + into - m.latency.as_secs_f64() * 1000.0).max(0.0))
     }
 
@@ -438,7 +459,6 @@ impl AudioEngine {
             o.mixer.lock().volume_target = volume_gain(percent);
         }
     }
-
 }
 
 impl Drop for AudioEngine {
@@ -524,10 +544,18 @@ fn cpal_thread(device_name: String, tx: std::sync::mpsc::Sender<Result<Arc<Outpu
         *err_out.failed.lock() = Some(format!("the audio device stopped working ({e})"));
     };
     let stream = match format {
-        cpal::SampleFormat::F32 => build_stream::<f32>(&device, &config, channels, out.clone(), on_error),
-        cpal::SampleFormat::I16 => build_stream::<i16>(&device, &config, channels, out.clone(), on_error),
-        cpal::SampleFormat::U16 => build_stream::<u16>(&device, &config, channels, out.clone(), on_error),
-        cpal::SampleFormat::I32 => build_stream::<i32>(&device, &config, channels, out.clone(), on_error),
+        cpal::SampleFormat::F32 => {
+            build_stream::<f32>(&device, &config, channels, out.clone(), on_error)
+        }
+        cpal::SampleFormat::I16 => {
+            build_stream::<i16>(&device, &config, channels, out.clone(), on_error)
+        }
+        cpal::SampleFormat::U16 => {
+            build_stream::<u16>(&device, &config, channels, out.clone(), on_error)
+        }
+        cpal::SampleFormat::I32 => {
+            build_stream::<i32>(&device, &config, channels, out.clone(), on_error)
+        }
         other => Err(format!("unsupported audio sample format {other:?}")),
     };
     let stream = match stream {
@@ -575,7 +603,11 @@ where
                 if let Some(lat) = ts.playback.duration_since(&ts.callback) {
                     // Smooth the latency estimate.
                     let old = m.latency.as_secs_f64();
-                    let new = if old == 0.0 { lat.as_secs_f64() } else { old * 0.9 + lat.as_secs_f64() * 0.1 };
+                    let new = if old == 0.0 {
+                        lat.as_secs_f64()
+                    } else {
+                        old * 0.9 + lat.as_secs_f64() * 0.1
+                    };
                     m.latency = Duration::from_secs_f64(new);
                 }
                 m.last_cb = Some(Instant::now());
@@ -597,13 +629,15 @@ where
 
 fn spawn_decoder(path: PathBuf, start_ms: u64, queue: Arc<TrackQueue>, rate: u32) {
     let q2 = queue.clone();
-    let r = std::thread::Builder::new().name("pp-decode".into()).spawn(move || {
-        if let Err(e) = decode_into(&path, start_ms, &q2, rate) {
-            tracing::warn!("audio {}: {e}", path.display());
-            *q2.error.lock() = Some(e);
-        }
-        q2.eof.store(true, Ordering::Release);
-    });
+    let r = std::thread::Builder::new()
+        .name("pp-decode".into())
+        .spawn(move || {
+            if let Err(e) = decode_into(&path, start_ms, &q2, rate) {
+                tracing::warn!("audio {}: {e}", path.display());
+                *q2.error.lock() = Some(e);
+            }
+            q2.eof.store(true, Ordering::Release);
+        });
     if let Err(e) = r {
         *queue.error.lock() = Some(format!("could not start the decoder: {e}"));
         queue.eof.store(true, Ordering::Release);
@@ -622,14 +656,23 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
     use symphonia::core::probe::Hint;
     use symphonia::core::units::Time;
 
-    let file = std::fs::File::open(path).map_err(|e| format!("cannot open the audio file ({e})"))?;
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("cannot open the audio file ({e})"))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions {
+                enable_gapless: true,
+                ..Default::default()
+            },
+            &MetadataOptions::default(),
+        )
         .map_err(|e| format!("unsupported or damaged audio file ({e})"))?;
     let mut format = probed.format;
     let track = format
@@ -641,7 +684,9 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
     let track_id = track.id;
     let src_rate = track.codec_params.sample_rate.unwrap_or(44_100);
     if let Some(n) = track.codec_params.n_frames {
-        queue.duration_ms.store(n * 1000 / src_rate.max(1) as u64, Ordering::Relaxed);
+        queue
+            .duration_ms
+            .store(n * 1000 / src_rate.max(1) as u64, Ordering::Relaxed);
     }
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -651,7 +696,13 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
     let mut skip_frames: u64 = 0;
     if start_ms > 0 {
         let time = Time::from(start_ms as f64 / 1000.0);
-        match format.seek(SeekMode::Accurate, SeekTo::Time { time, track_id: Some(track_id) }) {
+        match format.seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time,
+                track_id: Some(track_id),
+            },
+        ) {
             Ok(seeked) => {
                 let diff = seeked.required_ts.saturating_sub(seeked.actual_ts);
                 skip_frames = match track.codec_params.time_base {
@@ -695,32 +746,30 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
                 pending[1].clear();
                 Ok(queue.push(out))
             }
-            Some(rs) => {
-                loop {
-                    let need = rs.input_frames_next();
-                    if pending[0].len() < need {
-                        if !last || pending[0].is_empty() {
-                            return Ok(true);
-                        }
-                        let res = rs
-                            .process_partial(Some(&[&pending[0][..], &pending[1][..]]), None)
-                            .map_err(|e| e.to_string())?;
-                        pending[0].clear();
-                        pending[1].clear();
-                        interleave(&res[0], &res[1], out);
-                        return Ok(queue.push(out));
+            Some(rs) => loop {
+                let need = rs.input_frames_next();
+                if pending[0].len() < need {
+                    if !last || pending[0].is_empty() {
+                        return Ok(true);
                     }
                     let res = rs
-                        .process(&[&pending[0][..need], &pending[1][..need]], None)
+                        .process_partial(Some(&[&pending[0][..], &pending[1][..]]), None)
                         .map_err(|e| e.to_string())?;
-                    pending[0].drain(..need);
-                    pending[1].drain(..need);
+                    pending[0].clear();
+                    pending[1].clear();
                     interleave(&res[0], &res[1], out);
-                    if !queue.push(out) {
-                        return Ok(false);
-                    }
+                    return Ok(queue.push(out));
                 }
-            }
+                let res = rs
+                    .process(&[&pending[0][..need], &pending[1][..need]], None)
+                    .map_err(|e| e.to_string())?;
+                pending[0].drain(..need);
+                pending[1].drain(..need);
+                interleave(&res[0], &res[1], out);
+                if !queue.push(out) {
+                    return Ok(false);
+                }
+            },
         }
     };
 
@@ -755,7 +804,8 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
         };
         let spec = *decoded.spec();
         let chans = spec.channels.count().max(1);
-        let sb = sample_buf.get_or_insert_with(|| SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
+        let sb = sample_buf
+            .get_or_insert_with(|| SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
         if sb.capacity() < decoded.capacity() * chans {
             *sb = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
         }
@@ -774,7 +824,9 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
             pending[0].push(l);
             pending[1].push(r);
         }
-        if pending[0].len() >= CHUNK && !flush(&mut pending, &mut resampler, &mut out_interleaved, false)? {
+        if pending[0].len() >= CHUNK
+            && !flush(&mut pending, &mut resampler, &mut out_interleaved, false)?
+        {
             return Ok(());
         }
     }
@@ -813,7 +865,9 @@ pub(crate) fn write_test_wav(path: &Path, rate: u32, seconds: f32, freq: f32, am
     data.extend_from_slice(b"data");
     data.extend_from_slice(&(n * 4).to_le_bytes());
     for i in 0..n {
-        let v = ((i as f32 / rate as f32 * freq * std::f32::consts::TAU).sin() * amplitude * 32767.0) as i16;
+        let v = ((i as f32 / rate as f32 * freq * std::f32::consts::TAU).sin()
+            * amplitude
+            * 32767.0) as i16;
         data.extend_from_slice(&v.to_le_bytes());
         data.extend_from_slice(&v.to_le_bytes());
     }
@@ -853,7 +907,9 @@ mod tests {
         write_test_wav(&p, 44_100, 1.0, 440.0, 0.5);
         let q = TrackQueue::new(44_100);
         let q2 = q.clone();
-        let h = std::thread::spawn(move || decode_into(&p, 0, &q2, 44_100).map(|_| q2.eof.store(true, Ordering::Release)));
+        let h = std::thread::spawn(move || {
+            decode_into(&p, 0, &q2, 44_100).map(|_| q2.eof.store(true, Ordering::Release))
+        });
         let samples = drain(&q);
         h.join().unwrap().unwrap();
         assert_eq!(samples.len(), 44_100 * 2);
@@ -871,7 +927,9 @@ mod tests {
         let q = TrackQueue::new(48_000);
         let q2 = q.clone();
         let p2 = p.clone();
-        let h = std::thread::spawn(move || decode_into(&p2, 500, &q2, 48_000).map(|_| q2.eof.store(true, Ordering::Release)));
+        let h = std::thread::spawn(move || {
+            decode_into(&p2, 500, &q2, 48_000).map(|_| q2.eof.store(true, Ordering::Release))
+        });
         let samples = drain(&q);
         h.join().unwrap().unwrap();
         let frames = samples.len() / 2;
@@ -969,7 +1027,10 @@ mod tests {
         assert!((db_gain(-6.0) - 0.501).abs() < 0.01);
         assert_eq!(db_gain(f32::NAN), 1.0);
         assert!((db_gain(100.0) - db_gain(24.0)).abs() < 1e-6);
-        assert_eq!(pretty_device_name("hw:CARD=Headphones,DEV=0"), "Headphones (hw)");
+        assert_eq!(
+            pretty_device_name("hw:CARD=Headphones,DEV=0"),
+            "Headphones (hw)"
+        );
         assert!(list_audio_devices().iter().any(|d| d.id == "default"));
     }
 

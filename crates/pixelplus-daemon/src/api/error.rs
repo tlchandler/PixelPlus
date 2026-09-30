@@ -22,7 +22,11 @@ impl ApiError {
         }
     }
     pub fn not_found(what: impl std::fmt::Display) -> Self {
-        Self::new(StatusCode::NOT_FOUND, "not_found", format!("{what} was not found"))
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("{what} was not found"),
+        )
     }
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "bad_request", message)

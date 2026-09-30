@@ -249,7 +249,11 @@ pub fn encode(msg: &Msg, stamp: Option<Stamp>) -> Vec<u8> {
     if let Some(st) = stamp.filter(|s| !s.key.is_empty()) {
         json.pop(); // closing '}'
         json.extend_from_slice(b",\"bt\":");
-        json.extend_from_slice(serde_json::to_string(st.boot).unwrap_or_default().as_bytes());
+        json.extend_from_slice(
+            serde_json::to_string(st.boot)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
         json.extend_from_slice(format!(",\"sq\":{}}}", st.seq).as_bytes());
         let mac = hmac_sha256(st.key.as_bytes(), &json);
         json.pop();
@@ -432,15 +436,13 @@ pub struct OverlayFrame {
 
 /// Encode an overlay frame (always authenticated).
 #[allow(dead_code)] // used by `ClusterHandle::forward_overlay`
-pub fn encode_overlay(
-    prop_id: &str,
-    rgb: &[u8],
-    stamp: Stamp,
-) -> Result<Vec<u8>, ProtoError> {
+pub fn encode_overlay(prop_id: &str, rgb: &[u8], stamp: Stamp) -> Result<Vec<u8>, ProtoError> {
     let id = prop_id.as_bytes();
     let boot = stamp.boot.as_bytes();
     if id.is_empty() || id.len() > 255 || boot.len() > 255 {
-        return Err(ProtoError::Malformed("prop / boot id must be 1..255 bytes".into()));
+        return Err(ProtoError::Malformed(
+            "prop / boot id must be 1..255 bytes".into(),
+        ));
     }
     let len = 2 + boot.len() + 8 + 1 + id.len() + rgb.len() + MAC_LEN;
     if len > MAX_OVERLAY_PACKET {
@@ -653,13 +655,17 @@ mod tests {
         assert_eq!(raw.sender(), "leader0001");
         assert!(raw.verify("secret"));
         // The sequence number is covered by the MAC.
-        let text = String::from_utf8(bytes).unwrap().replace("\"sq\":77", "\"sq\":78");
+        let text = String::from_utf8(bytes)
+            .unwrap()
+            .replace("\"sq\":77", "\"sq\":78");
         assert!(!parse(text.as_bytes()).unwrap().verify("secret"));
         // A MAC without boot/seq (old format) is not accepted.
         let mut legacy = serde_json::to_vec(&sample_sync()).unwrap();
         let mac = hmac_sha256(b"secret", &legacy);
         legacy.pop();
-        legacy.extend_from_slice(format!(",\"mac\":\"{}\"}}", pixelplus_core::fseq::to_hex(&mac)).as_bytes());
+        legacy.extend_from_slice(
+            format!(",\"mac\":\"{}\"}}", pixelplus_core::fseq::to_hex(&mac)).as_bytes(),
+        );
         assert!(!parse(&legacy).unwrap().verify("secret"));
     }
 

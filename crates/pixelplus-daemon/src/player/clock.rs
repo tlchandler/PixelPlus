@@ -23,7 +23,11 @@ pub struct MonoClock {
 
 impl MonoClock {
     pub fn new(pos_ms: f64, now_ms: f64) -> Self {
-        MonoClock { base_pos: pos_ms, base_at: now_ms, paused: false }
+        MonoClock {
+            base_pos: pos_ms,
+            base_at: now_ms,
+            paused: false,
+        }
     }
 
     pub fn pos(&self, now_ms: f64) -> f64 {
@@ -70,7 +74,12 @@ pub struct SlewClock {
 
 impl SlewClock {
     pub fn new(pos_ms: f64, now_ms: f64) -> Self {
-        SlewClock { pos: pos_ms, last: now_ms, rate: 1.0, running: true }
+        SlewClock {
+            pos: pos_ms,
+            last: now_ms,
+            rate: 1.0,
+            running: true,
+        }
     }
 
     /// Position now (advances the internal state).
@@ -176,7 +185,12 @@ pub struct Fade {
 
 impl Fade {
     pub fn new(start_ms: f64, len_ms: f64, from: f32, to: f32) -> Self {
-        Fade { start_ms, len_ms, from, to }
+        Fade {
+            start_ms,
+            len_ms,
+            from,
+            to,
+        }
     }
 
     pub fn level(&self, now_ms: f64) -> f32 {
@@ -229,7 +243,7 @@ mod tests {
         }
         assert!((c.advance(now) - target).abs() <= 25.0, "converged");
         // 1 s ahead of target: jump.
-        assert_eq!(c.update(target, now, 25.0 ), SyncAction::InSync);
+        assert_eq!(c.update(target, now, 25.0), SyncAction::InSync);
         assert_eq!(c.update(target + 1000.0, now, 25.0), SyncAction::Jump);
         assert_eq!(c.pos(), target + 1000.0);
         // Ahead by 100 ms: slew slower.

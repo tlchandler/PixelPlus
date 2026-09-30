@@ -34,7 +34,13 @@ pub const SHM_HEADER: usize = 12;
 pub fn shm_path(dir: &Path, prop_id: &str) -> PathBuf {
     let safe: String = prop_id
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     dir.join(format!("pixelplus-overlay-{safe}"))
 }
@@ -57,8 +63,14 @@ struct Shm {
 }
 
 enum TempKind {
-    Text { text: String, color: Rgb, scroll: bool },
-    Qr { grid: RgbGrid },
+    Text {
+        text: String,
+        color: Rgb,
+        scroll: bool,
+    },
+    Qr {
+        grid: RgbGrid,
+    },
 }
 
 struct Temp {
@@ -128,11 +140,17 @@ pub struct OverlayManager {
 impl OverlayManager {
     /// Shared-memory buffers are created in `dir` (normally `/dev/shm`).
     pub fn new(dir: PathBuf) -> Self {
-        OverlayManager { dir, overlays: HashMap::new() }
+        OverlayManager {
+            dir,
+            overlays: HashMap::new(),
+        }
     }
 
     fn entry(&mut self, prop: &Prop) -> &mut Overlay {
-        let o = self.overlays.entry(prop.id.clone()).or_insert_with(|| Overlay::new(prop));
+        let o = self
+            .overlays
+            .entry(prop.id.clone())
+            .or_insert_with(|| Overlay::new(prop));
         // Geometry changed (prop edited): rebuild the mapping, keep state.
         if o.pixel_count != prop.pixel_count as usize || o.matrix != prop_matrix(prop) {
             o.matrix = prop_matrix(prop);
@@ -150,9 +168,16 @@ impl OverlayManager {
         let (w, h) = (o.matrix.width, o.matrix.height);
         let path = shm_path(&dir, &prop.id);
         if o.shm.is_none() {
-            o.shm = Some(create_shm(&path, w, h).map_err(|e| format!("could not create {}: {e}", path.display()))?);
+            o.shm = Some(
+                create_shm(&path, w, h)
+                    .map_err(|e| format!("could not create {}: {e}", path.display()))?,
+            );
         }
-        Ok(OverlayInfo { shm: path.to_string_lossy().into_owned(), width: w, height: h })
+        Ok(OverlayInfo {
+            shm: path.to_string_lossy().into_owned(),
+            width: w,
+            height: h,
+        })
     }
 
     pub fn enable(&mut self, prop: &Prop, enabled: bool) {
@@ -191,12 +216,27 @@ impl OverlayManager {
     }
 
     /// Show text (scrolling or fitted) for `duration_ms` (0 = until disabled).
-    pub fn text(&mut self, prop: &Prop, text: &str, color: &str, scroll: bool, duration_ms: u64, now: Instant) {
+    pub fn text(
+        &mut self,
+        prop: &Prop,
+        text: &str,
+        color: &str,
+        scroll: bool,
+        duration_ms: u64,
+        now: Instant,
+    ) {
         let color = parse_color(color);
         let o = self.entry(prop);
-        let enabled_before = o.temp.as_ref().map_or(o.enabled && o.auto_since.is_none(), |t| t.enabled_before);
+        let enabled_before = o
+            .temp
+            .as_ref()
+            .map_or(o.enabled && o.auto_since.is_none(), |t| t.enabled_before);
         o.temp = Some(Temp {
-            kind: TempKind::Text { text: text.to_string(), color, scroll, },
+            kind: TempKind::Text {
+                text: text.to_string(),
+                color,
+                scroll,
+            },
             started: now,
             until: (duration_ms > 0).then(|| now + Duration::from_millis(duration_ms)),
             enabled_before,
@@ -206,10 +246,20 @@ impl OverlayManager {
     }
 
     /// Show a QR code for `duration_ms` (0 = until disabled).
-    pub fn qr(&mut self, prop: &Prop, url: &str, duration_ms: u64, now: Instant) -> Result<(), String> {
+    pub fn qr(
+        &mut self,
+        prop: &Prop,
+        url: &str,
+        duration_ms: u64,
+        now: Instant,
+    ) -> Result<(), String> {
         let o = self.entry(prop);
-        let grid = text::render_qr(url, o.matrix.width, o.matrix.height, QrStyle::default()).map_err(|e| e.to_string())?;
-        let enabled_before = o.temp.as_ref().map_or(o.enabled && o.auto_since.is_none(), |t| t.enabled_before);
+        let grid = text::render_qr(url, o.matrix.width, o.matrix.height, QrStyle::default())
+            .map_err(|e| e.to_string())?;
+        let enabled_before = o
+            .temp
+            .as_ref()
+            .map_or(o.enabled && o.auto_since.is_none(), |t| t.enabled_before);
         o.temp = Some(Temp {
             kind: TempKind::Qr { grid },
             started: now,
@@ -243,15 +293,27 @@ impl OverlayManager {
             if let Some(t) = &o.temp {
                 let (w, h) = (o.matrix.width, o.matrix.height);
                 let grid = match &t.kind {
-                    TempKind::Text { text: s, color, scroll: true } => {
+                    TempKind::Text {
+                        text: s,
+                        color,
+                        scroll: true,
+                    } => {
                         let font = Font::for_height(h);
                         let tw = text::text_width(s, font, 1);
                         let t_ms = now.duration_since(t.started).as_millis() as u64;
-                        text::render_text(s, *color, w, h, text::marquee_offset(t_ms, SCROLL_PX_PER_S, tw, w))
+                        text::render_text(
+                            s,
+                            *color,
+                            w,
+                            h,
+                            text::marquee_offset(t_ms, SCROLL_PX_PER_S, tw, w),
+                        )
                     }
-                    TempKind::Text { text: s, color, scroll: false } => {
-                        text::render_text_fit(s, Font::for_height(h), *color, w, h)
-                    }
+                    TempKind::Text {
+                        text: s,
+                        color,
+                        scroll: false,
+                    } => text::render_text_fit(s, Font::for_height(h), *color, w, h),
                     TempKind::Qr { grid } => grid.clone(),
                 };
                 o.pixels.fill(0);
@@ -275,7 +337,9 @@ impl OverlayManager {
 
     /// Any overlay currently showing?
     pub fn any_active(&self) -> bool {
-        self.overlays.values().any(|o| o.enabled && (o.has_content || o.temp.is_some()))
+        self.overlays
+            .values()
+            .any(|o| o.enabled && (o.has_content || o.temp.is_some()))
     }
 
     /// Call `f(prop_id, pixels)` for every enabled overlay with content.
@@ -363,7 +427,10 @@ fn create_shm(path: &Path, w: u32, h: u32) -> std::io::Result<Shm> {
         // SAFETY: fchown on our own open descriptor.
         let _ = unsafe { libc::fchown(file.as_raw_fd(), u32::MAX, gid) };
     }
-    Ok(Shm { file, path: path.to_path_buf() })
+    Ok(Shm {
+        file,
+        path: path.to_path_buf(),
+    })
 }
 
 /// Read a new frame if the writer flagged one; clears the flag.
@@ -393,7 +460,9 @@ fn poll_shm(file: &File, w: u32, h: u32) -> std::io::Result<Option<RgbGrid>> {
     let rgb = if bpp == 3 {
         raw
     } else {
-        raw.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect()
+        raw.chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect()
     };
     Ok(RgbGrid::from_bytes(w, h, rgb))
 }
@@ -418,7 +487,11 @@ mod tests {
             group_ids: vec![],
             layout: None,
             // 4×2, serpentine: row 0 left→right = 0..3, row 1 right→left = 4..7.
-            matrix: Some(MatrixInfo { width: 4, height: 2, pixel_map: vec![0, 1, 2, 3, 7, 6, 5, 4] }),
+            matrix: Some(MatrixInfo {
+                width: 4,
+                height: 2,
+                pixel_map: vec![0, 1, 2, 3, 7, 6, 5, 4],
+            }),
             color: None,
             max_milliamps_per_pixel: None,
             notes: None,
@@ -447,7 +520,11 @@ mod tests {
         let meta = std::fs::metadata(&path).unwrap();
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(meta.permissions().mode() & 0o777, 0o660);
-        let f = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
         let mut hdr = [0u8; 12];
         f.read_exact_at(&mut hdr, 0).unwrap();
         assert_eq!(u32::from_ne_bytes(hdr[0..4].try_into().unwrap()), 4);
@@ -474,7 +551,11 @@ mod tests {
         assert_eq!(&px[4 * 3..4 * 3 + 3], &[30, 100, 7]);
         assert_eq!(&px[0..3], &[0, 0, 7]);
         f.read_exact_at(&mut hdr, 0).unwrap();
-        assert_eq!(u32::from_ne_bytes(hdr[8..12].try_into().unwrap()) & 1, 0, "flag cleared");
+        assert_eq!(
+            u32::from_ne_bytes(hdr[8..12].try_into().unwrap()) & 1,
+            0,
+            "flag cleared"
+        );
 
         // No new frame: the last frame stays.
         m.update(now);
@@ -517,7 +598,11 @@ mod tests {
         let mut m = OverlayManager::new(tmp());
         let mut prop = matrix_prop();
         prop.pixel_count = 32 * 16;
-        prop.matrix = Some(MatrixInfo { width: 32, height: 16, pixel_map: (0..512).collect() });
+        prop.matrix = Some(MatrixInfo {
+            width: 32,
+            height: 16,
+            pixel_map: (0..512).collect(),
+        });
         let t0 = Instant::now();
         m.text(&prop, "HI", "#ff0000", false, 1000, t0);
         m.update(t0);
@@ -535,7 +620,11 @@ mod tests {
         // QR (needs at least 21×21): too small here, fine on 32×32.
         assert!(m.qr(&prop, "http://x.y/", 1000, t0).is_err());
         prop.pixel_count = 32 * 32;
-        prop.matrix = Some(MatrixInfo { width: 32, height: 32, pixel_map: (0..1024).collect() });
+        prop.matrix = Some(MatrixInfo {
+            width: 32,
+            height: 32,
+            pixel_map: (0..1024).collect(),
+        });
         m.qr(&prop, "http://x.y/", 1000, t0).unwrap();
         m.update(t0);
         assert!(active(&m).is_some());
@@ -558,6 +647,9 @@ mod tests {
         let mi = prop_matrix(&p);
         assert_eq!((mi.width, mi.height), (8, 1));
         assert_eq!(mi.pixel_map, (0..8).collect::<Vec<_>>());
-        assert_eq!(shm_path(Path::new("/dev/shm"), "a/b").to_str().unwrap(), "/dev/shm/pixelplus-overlay-a_b");
+        assert_eq!(
+            shm_path(Path::new("/dev/shm"), "a/b").to_str().unwrap(),
+            "/dev/shm/pixelplus-overlay-a_b"
+        );
     }
 }

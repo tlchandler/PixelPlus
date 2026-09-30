@@ -107,15 +107,17 @@ fn validate_name(name: &str) -> ApiResult<()> {
         return Err(ApiError::bad_request("Please give it a name."));
     }
     if name.chars().count() > 120 {
-        return Err(ApiError::bad_request("That name is too long (120 characters max)."));
+        return Err(ApiError::bad_request(
+            "That name is too long (120 characters max).",
+        ));
     }
     Ok(())
 }
 
 fn validate_receiver(r: &Receiver, show: &Show) -> ApiResult<()> {
-    let node = show
-        .node(&r.node_id)
-        .ok_or_else(|| ApiError::bad_request("Pick the controller this receiver is plugged into."))?;
+    let node = show.node(&r.node_id).ok_or_else(|| {
+        ApiError::bad_request("Pick the controller this receiver is plugged into.")
+    })?;
     let jacks = node.board.jack_count() as u32;
     if r.jack == 0 || (jacks > 0 && r.jack > jacks) {
         return Err(ApiError::bad_request(format!(
@@ -133,9 +135,9 @@ fn validate_prop(p: &Prop, show: &Show) -> ApiResult<()> {
         return Err(ApiError::bad_request("A prop needs at least one pixel."));
     }
     for seg in &p.segments {
-        let node = show
-            .node(&seg.node_id)
-            .ok_or_else(|| ApiError::bad_request("A wiring segment points at a controller that no longer exists."))?;
+        let node = show.node(&seg.node_id).ok_or_else(|| {
+            ApiError::bad_request("A wiring segment points at a controller that no longer exists.")
+        })?;
         if seg.output == 0 || seg.output as usize > node.outputs.len() {
             return Err(ApiError::bad_request(format!(
                 "{} doesn't have output {}.",
@@ -172,7 +174,10 @@ async fn list<E: Entity>(State(state): State<AppState>) -> Json<Vec<E>> {
     Json(E::list(&state.store.get()).clone())
 }
 
-async fn get_one<E: Entity>(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<E>> {
+async fn get_one<E: Entity>(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<E>> {
     E::list(&state.store.get())
         .iter()
         .find(|e| e.id() == id)
@@ -181,20 +186,30 @@ async fn get_one<E: Entity>(State(state): State<AppState>, Path(id): Path<String
         .ok_or_else(|| ApiError::not_found(E::LABEL))
 }
 
-async fn create<E: Entity>(State(state): State<AppState>, Json(mut body): Json<Value>) -> ApiResult<Json<E>> {
+async fn create<E: Entity>(
+    State(state): State<AppState>,
+    Json(mut body): Json<Value>,
+) -> ApiResult<Json<E>> {
     if let Value::Object(map) = &mut body {
-        let has_id = map.get("id").and_then(Value::as_str).is_some_and(|s| !s.is_empty());
+        let has_id = map
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty());
         if !has_id {
             map.insert("id".into(), Value::String(new_id()));
         }
     }
-    let entity: E = serde_json::from_value(body)
-        .map_err(|e| ApiError::bad_request(format!("That {} isn't valid: {e}", E::LABEL.to_lowercase())))?;
+    let entity: E = serde_json::from_value(body).map_err(|e| {
+        ApiError::bad_request(format!("That {} isn't valid: {e}", E::LABEL.to_lowercase()))
+    })?;
     let (created, _) = state
         .store
         .update(|show| {
             if E::list(show).iter().any(|e| e.id() == entity.id()) {
-                return Err(ApiError::conflict(format!("That {} already exists.", E::LABEL.to_lowercase())));
+                return Err(ApiError::conflict(format!(
+                    "That {} already exists.",
+                    E::LABEL.to_lowercase()
+                )));
             }
             entity.validate(show)?;
             E::list_mut(show).push(entity.clone());
@@ -216,7 +231,8 @@ async fn update<E: Entity>(
                 .iter()
                 .position(|e| e.id() == id)
                 .ok_or_else(|| ApiError::not_found(E::LABEL))?;
-            let mut value = serde_json::to_value(&E::list(show)[idx]).map_err(ApiError::internal)?;
+            let mut value =
+                serde_json::to_value(&E::list(show)[idx]).map_err(ApiError::internal)?;
             merge_patch(&mut value, &patch);
             let mut entity: E = serde_json::from_value(value)
                 .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
@@ -229,7 +245,10 @@ async fn update<E: Entity>(
     Ok(Json(updated))
 }
 
-async fn delete<E: Entity>(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn delete<E: Entity>(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     state
         .store
         .update(|show| {
@@ -251,7 +270,10 @@ pub fn routes<E: Entity>(path: &str) -> Router<AppState> {
         .route(&format!("/{path}"), get(list::<E>).post(create::<E>))
         .route(
             &format!("/{path}/{{id}}"),
-            get(get_one::<E>).put(update::<E>).patch(update::<E>).delete(delete::<E>),
+            get(get_one::<E>)
+                .put(update::<E>)
+                .patch(update::<E>)
+                .delete(delete::<E>),
         )
 }
 

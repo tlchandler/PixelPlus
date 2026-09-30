@@ -51,7 +51,10 @@ impl PlaylistCursor {
     pub fn with_seed(playlist: Playlist, seed: u64) -> Self {
         let mut c = PlaylistCursor {
             playlist,
-            pos: Pos { phase: Phase::Intro, index: 0 },
+            pos: Pos {
+                phase: Phase::Intro,
+                index: 0,
+            },
             order: Vec::new(),
             history: Vec::new(),
             ending: false,
@@ -70,7 +73,10 @@ impl PlaylistCursor {
         // Put the chosen item first; the rest keep (shuffled) order.
         self.order.retain(|&i| i != index);
         self.order.insert(0, index);
-        self.pos = Pos { phase: Phase::Main, index: 0 };
+        self.pos = Pos {
+            phase: Phase::Main,
+            index: 0,
+        };
         self.history.clear();
     }
 
@@ -158,7 +164,10 @@ impl PlaylistCursor {
             Phase::Intro => pos.index += 1,
             Phase::Main => {
                 if self.ending {
-                    pos = Pos { phase: Phase::Outro, index: 0 };
+                    pos = Pos {
+                        phase: Phase::Outro,
+                        index: 0,
+                    };
                 } else {
                     pos.index += 1;
                     if pos.index >= self.order.len() && p.repeat && !p.items.is_empty() {
@@ -166,7 +175,13 @@ impl PlaylistCursor {
                         // clone of the RNG; `advance` regenerates the same order.
                         let mut rng = self.rng.clone();
                         let order = make_order(p, self.order.last().copied(), &mut rng);
-                        return (Pos { phase: Phase::Main, index: 0 }, Some(order));
+                        return (
+                            Pos {
+                                phase: Phase::Main,
+                                index: 0,
+                            },
+                            Some(order),
+                        );
                     }
                 }
             }
@@ -189,9 +204,24 @@ impl PlaylistCursor {
 fn normalized(p: &Playlist, mut pos: Pos, order_len: usize) -> Pos {
     loop {
         match pos.phase {
-            Phase::Intro if pos.index >= p.intro.len() => pos = Pos { phase: Phase::Main, index: 0 },
-            Phase::Main if pos.index >= order_len => pos = Pos { phase: Phase::Outro, index: 0 },
-            Phase::Outro if pos.index >= p.outro.len() => pos = Pos { phase: Phase::Done, index: 0 },
+            Phase::Intro if pos.index >= p.intro.len() => {
+                pos = Pos {
+                    phase: Phase::Main,
+                    index: 0,
+                }
+            }
+            Phase::Main if pos.index >= order_len => {
+                pos = Pos {
+                    phase: Phase::Outro,
+                    index: 0,
+                }
+            }
+            Phase::Outro if pos.index >= p.outro.len() => {
+                pos = Pos {
+                    phase: Phase::Done,
+                    index: 0,
+                }
+            }
             _ => return pos,
         }
     }
@@ -218,7 +248,10 @@ mod tests {
     use super::*;
 
     fn seq(id: &str) -> PlaylistItem {
-        PlaylistItem::Sequence { id: id.into(), sequence_id: id.into() }
+        PlaylistItem::Sequence {
+            id: id.into(),
+            sequence_id: id.into(),
+        }
     }
 
     fn pl(items: &[&str], intro: &[&str], outro: &[&str], shuffle: bool, repeat: bool) -> Playlist {
@@ -264,7 +297,8 @@ mod tests {
 
     #[test]
     fn finish_after_current_plays_outro() {
-        let mut c = PlaylistCursor::with_seed(pl(&["a", "b", "c"], &[], &["o1", "o2"], false, true), 1);
+        let mut c =
+            PlaylistCursor::with_seed(pl(&["a", "b", "c"], &[], &["o1", "o2"], false, true), 1);
         assert_eq!(c.current().unwrap().id(), "a");
         c.finish_after_current();
         assert_eq!(c.peek_next().unwrap().id(), "o1");
@@ -316,7 +350,8 @@ mod tests {
 
     #[test]
     fn start_at_index_and_flat_index() {
-        let mut c = PlaylistCursor::with_seed(pl(&["a", "b", "c"], &["i"], &["o"], false, false), 1);
+        let mut c =
+            PlaylistCursor::with_seed(pl(&["a", "b", "c"], &["i"], &["o"], false, false), 1);
         assert_eq!(c.flat_index(), (0, 5));
         c.start_at(2);
         assert_eq!(c.current().unwrap().id(), "c");

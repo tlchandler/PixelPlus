@@ -306,9 +306,27 @@ fn analyze_ffmpeg(path: &Path) -> Result<MediaMeta, String> {
 #[test]
 fn ffmpeg_inputs_are_local_files_only() {
     let a = ffmpeg_input(Path::new("/var/lib/pixelplus/media/x.M4A"));
-    assert_eq!(a, ["-protocol_whitelist", "file,pipe", "-f", "mov", "-i", "file:/var/lib/pixelplus/media/x.M4A"]);
+    assert_eq!(
+        a,
+        [
+            "-protocol_whitelist",
+            "file,pipe",
+            "-f",
+            "mov",
+            "-i",
+            "file:/var/lib/pixelplus/media/x.M4A"
+        ]
+    );
     let a = ffmpeg_input(Path::new("/tmp/upload.tmp"));
-    assert_eq!(a, ["-protocol_whitelist", "file,pipe", "-i", "file:/tmp/upload.tmp"]);
+    assert_eq!(
+        a,
+        [
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            "file:/tmp/upload.tmp"
+        ]
+    );
 }
 
 /// `I:  -16.3 LUFS` from the ebur128 summary.
@@ -346,16 +364,16 @@ pub async fn transcode_mp3(src: &Path, dst: &Path) -> Result<Option<()>, String>
     let mut args: Vec<&str> = vec!["-hide_banner", "-loglevel", "error", "-y"];
     args.extend(input.iter().map(String::as_str));
     args.extend([
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
-            "-codec:a",
-            "libmp3lame",
-            "-b:a",
-            "192k",
-            &d,
-        ]);
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        "192k",
+        &d,
+    ]);
     let out = super::system::run("ffmpeg", &args, Duration::from_secs(300)).await?;
     if out.success {
         Ok(Some(()))

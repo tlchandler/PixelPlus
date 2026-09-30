@@ -58,8 +58,16 @@ pub struct ScheduleFacts {
 pub fn facts_at(s: &Schedule, now: DateTime<Utc>) -> ScheduleFacts {
     let tz = schedule::schedule_timezone(s).unwrap_or(chrono_tz::UTC);
     let local = now.with_timezone(&tz);
-    let active = if s.enabled { schedule::active_at(s, local) } else { None };
-    let next = if s.enabled { schedule::next_show(s, local) } else { None };
+    let active = if s.enabled {
+        schedule::active_at(s, local)
+    } else {
+        None
+    };
+    let next = if s.enabled {
+        schedule::next_show(s, local)
+    } else {
+        None
+    };
     ScheduleFacts {
         enabled: s.enabled,
         active: active.map(|o| ActiveWindow {
@@ -71,7 +79,10 @@ pub fn facts_at(s: &Schedule, now: DateTime<Utc>) -> ScheduleFacts {
             end_behavior: o.end_behavior,
             preempted: o.preempted,
         }),
-        next_show: next.map(|o| NextShowRef { name: o.name, starts_at: o.start.to_rfc3339() }),
+        next_show: next.map(|o| NextShowRef {
+            name: o.name,
+            starts_at: o.start.to_rfc3339(),
+        }),
         volume_cap: match &s.volume_curfew {
             Some(c) if schedule::curfew_active(s, local) => Some(c.volume),
             _ => None,
@@ -118,7 +129,11 @@ impl Scheduler {
 
     /// Decide what to do. `playing` is the origin of the current playback
     /// (None when idle).
-    pub fn decide(&mut self, facts: &ScheduleFacts, playing: Option<&Origin>) -> Option<SchedAction> {
+    pub fn decide(
+        &mut self,
+        facts: &ScheduleFacts,
+        playing: Option<&Origin>,
+    ) -> Option<SchedAction> {
         let active = facts.active.as_ref().filter(|_| facts.enabled);
         match playing {
             Some(Origin::Schedule(key)) => {
@@ -208,17 +223,29 @@ mod tests {
     #[test]
     fn starts_window_when_idle_and_shows_looks() {
         let mut s = Scheduler::new();
-        assert_eq!(s.decide(&facts(None), None), Some(SchedAction::Look(Some("off".into()))));
+        assert_eq!(
+            s.decide(&facts(None), None),
+            Some(SchedAction::Look(Some("off".into())))
+        );
         let w = window("e1@1", EndBehavior::FinishSong, false);
-        assert_eq!(s.decide(&facts(Some(w.clone())), None), Some(SchedAction::Start(w.clone())));
+        assert_eq!(
+            s.decide(&facts(Some(w.clone())), None),
+            Some(SchedAction::Start(w.clone()))
+        );
         // Playing it: nothing to do.
         let o = Origin::Schedule("e1@1".into());
         assert_eq!(s.decide(&facts(Some(w.clone())), Some(&o)), None);
         // Window ends: finish song, once.
-        assert_eq!(s.decide(&facts(None), Some(&o)), Some(SchedAction::End(EndBehavior::FinishSong)));
+        assert_eq!(
+            s.decide(&facts(None), Some(&o)),
+            Some(SchedAction::End(EndBehavior::FinishSong))
+        );
         assert_eq!(s.decide(&facts(None), Some(&o)), None);
         // Stopped: off look.
-        assert_eq!(s.decide(&facts(None), None), Some(SchedAction::Look(Some("off".into()))));
+        assert_eq!(
+            s.decide(&facts(None), None),
+            Some(SchedAction::Look(Some("off".into())))
+        );
     }
 
     #[test]
@@ -250,10 +277,16 @@ mod tests {
         let f = facts(Some(w.clone()));
         assert!(matches!(s.decide(&f, None), Some(SchedAction::Start(_))));
         s.on_user_stop(&f, Some(&Origin::Schedule(w.key.clone())));
-        assert_eq!(s.decide(&f, None), Some(SchedAction::Look(Some("idle".into()))));
+        assert_eq!(
+            s.decide(&f, None),
+            Some(SchedAction::Look(Some("idle".into())))
+        );
         // The next occurrence starts normally.
         let w2 = window("e1@2", EndBehavior::FinishSong, false);
-        assert!(matches!(s.decide(&facts(Some(w2)), None), Some(SchedAction::Start(_))));
+        assert!(matches!(
+            s.decide(&facts(Some(w2)), None),
+            Some(SchedAction::Start(_))
+        ));
     }
 
     #[test]
@@ -263,7 +296,10 @@ mod tests {
         let f = facts(Some(w.clone()));
         s.decide(&f, None);
         s.on_finished(&w.key);
-        assert_eq!(s.decide(&f, None), Some(SchedAction::Look(Some("idle".into()))));
+        assert_eq!(
+            s.decide(&f, None),
+            Some(SchedAction::Look(Some("idle".into())))
+        );
     }
 
     #[test]
@@ -278,16 +314,26 @@ mod tests {
             Some(SchedAction::End(EndBehavior::StopNow))
         );
         // Once stopped, the higher-priority window starts.
-        assert_eq!(s.decide(&facts(Some(high.clone())), None), Some(SchedAction::Start(high)));
+        assert_eq!(
+            s.decide(&facts(Some(high.clone())), None),
+            Some(SchedAction::Start(high))
+        );
     }
 
     #[test]
     fn end_behaviors_pass_through() {
-        for b in [EndBehavior::StopNow, EndBehavior::FadeOut, EndBehavior::FinishSong] {
+        for b in [
+            EndBehavior::StopNow,
+            EndBehavior::FadeOut,
+            EndBehavior::FinishSong,
+        ] {
             let mut s = Scheduler::new();
             let w = window("e@1", b, false);
             s.decide(&facts(Some(w.clone())), None);
-            assert_eq!(s.decide(&facts(None), Some(&Origin::Schedule(w.key))), Some(SchedAction::End(b)));
+            assert_eq!(
+                s.decide(&facts(None), Some(&Origin::Schedule(w.key))),
+                Some(SchedAction::End(b))
+            );
         }
     }
 
@@ -300,10 +346,22 @@ mod tests {
                 name: "Nightly".into(),
                 enabled: true,
                 playlist_id: "pl".into(),
-                days: vec![Weekday::Mon, Weekday::Tue, Weekday::Wed, Weekday::Thu, Weekday::Fri, Weekday::Sat, Weekday::Sun],
+                days: vec![
+                    Weekday::Mon,
+                    Weekday::Tue,
+                    Weekday::Wed,
+                    Weekday::Thu,
+                    Weekday::Fri,
+                    Weekday::Sat,
+                    Weekday::Sun,
+                ],
                 date_range: None,
-                start: TimeSpec::Clock { time: "18:00".into() },
-                end: TimeSpec::Clock { time: "22:00".into() },
+                start: TimeSpec::Clock {
+                    time: "18:00".into(),
+                },
+                end: TimeSpec::Clock {
+                    time: "22:00".into(),
+                },
                 priority: 0,
                 end_behavior: EndBehavior::FadeOut,
             }],
@@ -318,7 +376,11 @@ mod tests {
         assert_eq!(w.entry_id, "e1");
         assert_eq!(w.end_behavior, EndBehavior::FadeOut);
         assert!(w.ends_at.starts_with("2026-12-01T22:00:00"));
-        assert!(f.next_show.unwrap().starts_at.starts_with("2026-12-02T18:00:00"));
+        assert!(f
+            .next_show
+            .unwrap()
+            .starts_at
+            .starts_with("2026-12-02T18:00:00"));
         // 23:00 local: outside.
         let later = Utc.with_ymd_and_hms(2026, 12, 2, 5, 0, 0).unwrap();
         assert!(facts_at(&sch, later).active.is_none());

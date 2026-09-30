@@ -168,7 +168,9 @@ async fn on_packet(state: &AppState, sh: &Arc<Shared>, data: &[u8], src: SocketA
 
 /// Is `new` (from `src`) plausibly the same device as the entry `old`?
 fn same_device(old: &Peer, new: &Beacon, src: SocketAddr) -> bool {
-    old.addr.ip() == src.ip() || new.ips.contains(&old.addr.ip()) || old.beacon.ips.contains(&src.ip())
+    old.addr.ip() == src.ip()
+        || new.ips.contains(&old.addr.ip())
+        || old.beacon.ips.contains(&src.ip())
 }
 
 fn on_beacon(state: &AppState, sh: &Arc<Shared>, b: Beacon, src: SocketAddr, authenticated: bool) {
@@ -298,10 +300,9 @@ async fn beacon_loop(state: AppState, sh: Arc<Shared>) {
                 dests.extend(follower::leader_addr(&state, &sh));
                 dests.sort();
                 dests.dedup();
-                let key = identity
-                    .cluster_key
-                    .as_deref()
-                    .filter(|_| identity.role == LocalRole::Follower && identity.leader_id.is_some());
+                let key = identity.cluster_key.as_deref().filter(|_| {
+                    identity.role == LocalRole::Follower && identity.leader_id.is_some()
+                });
                 sh.send_json(&msg, key, &dests).await;
             }
         }

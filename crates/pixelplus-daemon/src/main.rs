@@ -68,9 +68,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding HTTP port {addr}"))?;
     tracing::info!("Web interface on http://{addr}");
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     tracing::info!("PixelPlus stopped");
     Ok(())
 }
@@ -81,7 +84,8 @@ async fn shutdown_signal() {
     };
     #[cfg(unix)]
     let term = async {
-        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
             s.recv().await;
         }
     };

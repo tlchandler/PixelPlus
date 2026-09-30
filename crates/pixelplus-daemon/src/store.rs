@@ -98,10 +98,9 @@ impl ShowStore {
             .map_err(crate::api::ApiError::internal)?;
         *self.inner.show.write() = show.clone();
         let _ = self.inner.changed.send(show.version);
-        self.inner.events.publish(
-            "show",
-            &serde_json::json!({ "version": show.version }),
-        );
+        self.inner
+            .events
+            .publish("show", &serde_json::json!({ "version": show.version }));
         Ok((result, show))
     }
 

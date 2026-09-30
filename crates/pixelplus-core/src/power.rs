@@ -683,8 +683,16 @@ mod tests {
         // Prop "a": first 50 pixels at byte 0, last 50 at byte 600 (beyond prop "b").
         let mut s = show();
         s.props[0].channel_runs = Some(vec![
-            ChannelRun { prop_offset: 0, channel_start: 0, pixel_count: 50 },
-            ChannelRun { prop_offset: 50, channel_start: 600, pixel_count: 50 },
+            ChannelRun {
+                prop_offset: 0,
+                channel_start: 0,
+                pixel_count: 50,
+            },
+            ChannelRun {
+                prop_offset: 50,
+                channel_start: 600,
+                pixel_count: 50,
+            },
         ]);
         // Full white only where the second run lives: half the prop lights.
         let mut frame = vec![0u8; 750];
@@ -694,7 +702,11 @@ mod tests {
             Ok::<_, ()>(())
         })
         .unwrap();
-        assert!((e.per_output[0].peak_amps - 3.0).abs() < 0.01, "{}", e.per_output[0].peak_amps);
+        assert!(
+            (e.per_output[0].peak_amps - 3.0).abs() < 0.01,
+            "{}",
+            e.per_output[0].peak_amps
+        );
         // Bytes 150..300 (contiguous layout's second half) are ignored.
         let mut frame = vec![0u8; 750];
         frame[150..300].fill(255);

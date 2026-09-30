@@ -5,16 +5,16 @@ pub mod model;
 
 // Data path (owned by the "core-data" workstream)
 pub mod fseq;
-pub mod ppseq;
-pub mod xlights;
+pub mod layout;
 pub mod mapping;
 pub mod power;
-pub mod layout;
+pub mod ppseq;
+pub mod xlights;
 
 // Show logic (owned by the "core-show" workstream)
 pub mod effects;
+pub mod faultfinder;
 pub mod schedule;
 pub mod sun;
-pub mod faultfinder;
 pub mod template;
 pub mod text;

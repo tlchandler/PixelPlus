@@ -23,7 +23,6 @@
 use super::audio::{AudioEngine, TrackId};
 use super::clock::{self, crossfade_progress, crossfade_start, Fade, MonoClock, SlewClock};
 use super::compose::{self, find_effect, EffectLayer, PropSlot, Sink, TestLayer};
-use crate::services::tts::DynamicContext;
 use super::overlay::OverlayManager;
 use super::playlist::PlaylistCursor;
 use super::reader::{FrameLayout, FrameReader, SeqMeta};
@@ -33,10 +32,13 @@ use super::{OverlayCmd, PlayerCmd, PlayerHandle, SyncPacket};
 use crate::api::{ApiError, ApiResult};
 use crate::events::ToastKind;
 use crate::node::LocalRole;
+use crate::services::tts::DynamicContext;
 use crate::state::AppState;
 use pixelplus_core::mapping::{NodeMap, OutputFrame, PropMap};
 use pixelplus_core::model::{BoardKind, EffectPreset, OutputConfig, PlaylistItem, Show};
-use pixelplus_output::{BackendKind, OutputFrameRef, PixelOutput, PixelPipeline, SimHandle, SimOutput};
+use pixelplus_output::{
+    BackendKind, OutputFrameRef, PixelOutput, PixelPipeline, SimHandle, SimOutput,
+};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -76,9 +78,14 @@ impl EngineOptions {
     pub fn from_env() -> Self {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
         EngineOptions {
-            audio: !matches!(env("PIXELPLUS_AUDIO").as_deref(), Some("none" | "off" | "0" | "false")),
+            audio: !matches!(
+                env("PIXELPLUS_AUDIO").as_deref(),
+                Some("none" | "off" | "0" | "false")
+            ),
             output: None,
-            shm_dir: env("PIXELPLUS_SHM_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/dev/shm")),
+            shm_dir: env("PIXELPLUS_SHM_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/dev/shm")),
             realtime: true,
         }
     }
@@ -134,7 +141,11 @@ pub fn start_with(state: &AppState, opts: EngineOptions) -> anyhow::Result<Engin
 
     tokio::spawn(control_task(state.clone(), cmd_rx, core_tx.clone(), ev_rx));
     tokio::spawn(status_publisher(state.clone(), status_rx.clone()));
-    Ok(Engine { handle: PlayerHandle::new(cmd_tx, status_rx), sim, core_tx })
+    Ok(Engine {
+        handle: PlayerHandle::new(cmd_tx, status_rx),
+        sim,
+        core_tx,
+    })
 }
 
 /// DPI geometry vs. configured strings (for the pre-show health check).
@@ -156,7 +167,10 @@ static GEOMETRY: parking_lot::Mutex<Option<GeometryStatus>> = parking_lot::const
 
 /// Current DPI geometry check (see [`GeometryStatus`]).
 pub fn geometry_status() -> GeometryStatus {
-    GEOMETRY.lock().clone().unwrap_or(GeometryStatus { ok: true, ..Default::default() })
+    GEOMETRY.lock().clone().unwrap_or(GeometryStatus {
+        ok: true,
+        ..Default::default()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -168,15 +182,29 @@ enum CoreCmd {
     Player(PlayerCmd),
     Show(Arc<Show>),
     Facts(ScheduleFacts),
-    Identity { id: String, role: LocalRole, board: Option<BoardKind> },
-    DjRendered { clip_id: String, path: PathBuf },
+    Identity {
+        id: String,
+        role: LocalRole,
+        board: Option<BoardKind>,
+    },
+    DjRendered {
+        clip_id: String,
+        path: PathBuf,
+    },
     Shutdown,
 }
 
 enum CoreEvent {
-    Log { level: &'static str, message: String, toast: bool },
+    Log {
+        level: &'static str,
+        message: String,
+        toast: bool,
+    },
     Games(serde_json::Value),
-    PrerenderDj { clip_id: String, ctx: DynamicContext },
+    PrerenderDj {
+        clip_id: String,
+        ctx: DynamicContext,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -230,13 +258,21 @@ async fn control_task(
 
 fn handle_event(state: &AppState, core: &Sender<CoreCmd>, ev: CoreEvent) {
     match ev {
-        CoreEvent::Log { level, message, toast } => {
+        CoreEvent::Log {
+            level,
+            message,
+            toast,
+        } => {
             state.events.publish(
                 "log",
                 &serde_json::json!({ "level": level, "message": message, "time": chrono::Utc::now().to_rfc3339() }),
             );
             if toast {
-                let kind = if level == "error" { ToastKind::Error } else { ToastKind::Warning };
+                let kind = if level == "error" {
+                    ToastKind::Error
+                } else {
+                    ToastKind::Warning
+                };
                 state.events.toast(kind, message);
             }
         }
@@ -263,8 +299,12 @@ fn handle_event(state: &AppState, core: &Sender<CoreCmd>, ev: CoreEvent) {
                     Ok(Ok(path)) => {
                         let _ = core.send(CoreCmd::DjRendered { clip_id, path });
                     }
-                    Ok(Err(e)) => tracing::warn!("rendering DJ clip {clip_id} failed: {e:#}; using its last render"),
-                    Err(_) => tracing::warn!("rendering DJ clip {clip_id} timed out; using its last render"),
+                    Ok(Err(e)) => tracing::warn!(
+                        "rendering DJ clip {clip_id} failed: {e:#}; using its last render"
+                    ),
+                    Err(_) => tracing::warn!(
+                        "rendering DJ clip {clip_id} timed out; using its last render"
+                    ),
                 }
             });
         }
@@ -277,16 +317,23 @@ async fn games_command(path: &Path, cmd: &serde_json::Value) -> Result<serde_jso
     {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let fut = async {
-            let mut stream = tokio::net::UnixStream::connect(path).await.map_err(|_| "the games service isn't running".to_string())?;
+            let mut stream = tokio::net::UnixStream::connect(path)
+                .await
+                .map_err(|_| "the games service isn't running".to_string())?;
             let mut line = serde_json::to_vec(cmd).map_err(|e| e.to_string())?;
             line.push(b'\n');
             stream.write_all(&line).await.map_err(|e| e.to_string())?;
             let mut reader = BufReader::new(stream);
             let mut resp = String::new();
-            reader.read_line(&mut resp).await.map_err(|e| e.to_string())?;
+            reader
+                .read_line(&mut resp)
+                .await
+                .map_err(|e| e.to_string())?;
             serde_json::from_str::<serde_json::Value>(resp.trim()).map_err(|e| e.to_string())
         };
-        tokio::time::timeout(Duration::from_secs(4), fut).await.map_err(|_| "the games service did not answer".to_string())?
+        tokio::time::timeout(Duration::from_secs(4), fut)
+            .await
+            .map_err(|_| "the games service did not answer".to_string())?
     }
     #[cfg(not(unix))]
     {
@@ -362,7 +409,10 @@ fn set_realtime_priority() {
         if r == 0 {
             tracing::info!("output thread running with realtime priority");
         } else {
-            tracing::debug!("realtime priority not available ({}); using normal priority", std::io::Error::last_os_error());
+            tracing::debug!(
+                "realtime priority not available ({}); using normal priority",
+                std::io::Error::last_os_error()
+            );
         }
     }
 }
@@ -489,11 +539,17 @@ struct Program {
 #[derive(Debug, Clone)]
 enum Pending {
     Item(PlaylistItem),
-    Request { sequence_id: String, name: Option<String> },
+    Request {
+        sequence_id: String,
+        name: Option<String>,
+    },
 }
 
 enum ActiveKind {
-    Sequence { reader: FrameReader, meta: Option<SeqMeta> },
+    Sequence {
+        reader: FrameReader,
+        meta: Option<SeqMeta>,
+    },
     Effect(Box<EffectLayer>),
     /// DJ clip or media: audio only, the idle look runs under it.
     Audio,
@@ -654,7 +710,11 @@ struct Core {
 }
 
 fn item_ref(kind: &str, id: &str, name: &str) -> ItemRef {
-    ItemRef { kind: kind.into(), id: id.into(), name: name.into() }
+    ItemRef {
+        kind: kind.into(),
+        id: id.into(),
+        name: name.into(),
+    }
 }
 
 impl Core {
@@ -672,7 +732,9 @@ impl Core {
         let slow_pi = pi.as_ref().is_some_and(|p| {
             matches!(
                 p.family,
-                pixelplus_hw::board::PiFamily::Zero2W | pixelplus_hw::board::PiFamily::Zero | pixelplus_hw::board::PiFamily::Pi1
+                pixelplus_hw::board::PiFamily::Zero2W
+                    | pixelplus_hw::board::PiFamily::Zero
+                    | pixelplus_hw::board::PiFamily::Pi1
             )
         });
         let board = board_for(&show, &identity.id, identity.board, is_pi);
@@ -680,7 +742,11 @@ impl Core {
         tracing::info!("pixel output: {kind:?} for board {board:?}");
         let audio_device = show.settings.audio.device.clone();
         let want_audio = opts.audio && identity.role != LocalRole::Follower;
-        let audio = AudioEngine::disabled(if want_audio { "the audio device is starting" } else { "audio is disabled on this controller" });
+        let audio = AudioEngine::disabled(if want_audio {
+            "the audio device is starting"
+        } else {
+            "audio is disabled on this controller"
+        });
         let volume = show.settings.audio.volume.min(100);
         let t0 = app.started;
         let shm_dir = opts.shm_dir.clone();
@@ -764,12 +830,19 @@ impl Core {
     fn warn(&self, message: impl Into<String>, toast: bool) {
         let message = message.into();
         tracing::warn!("{message}");
-        let _ = self.events.send(CoreEvent::Log { level: "warning", message, toast });
+        let _ = self.events.send(CoreEvent::Log {
+            level: "warning",
+            message,
+            toast,
+        });
     }
 
     fn recover_from_panic(&mut self, what: &str) {
         self.panics += 1;
-        tracing::error!("the player hit an internal error in {what}; recovering (#{})", self.panics);
+        tracing::error!(
+            "the player hit an internal error in {what}; recovering (#{})",
+            self.panics
+        );
         if self.panics >= 3 {
             // Something in the current program keeps failing: drop it.
             self.program = None;
@@ -780,7 +853,10 @@ impl Core {
             self.look = None;
             self.follow = FollowState::default();
             self.audio.stop_all(50);
-            self.item_error = Some(("Playback stopped after an internal error".into(), Instant::now()));
+            self.item_error = Some((
+                "Playback stopped after an internal error".into(),
+                Instant::now(),
+            ));
             let _ = self.events.send(CoreEvent::Log {
                 level: "error",
                 message: "Playback stopped after an internal error; the player recovered.".into(),
@@ -810,7 +886,8 @@ impl Core {
                 for w in &self.node_map.warnings {
                     tracing::debug!("mapping: {w}");
                 }
-                self.prop_map = PropMap::build_with_layout(n, &show.props, self.node_map.pixels_per_output());
+                self.prop_map =
+                    PropMap::build_with_layout(n, &show.props, self.node_map.pixels_per_output());
                 let count = self.node_map.pixels_per_output().len();
                 let configs: Vec<OutputConfig> = (0..count)
                     .map(|i| {
@@ -818,7 +895,10 @@ impl Core {
                             .iter()
                             .find(|o| o.index as usize == i + 1)
                             .cloned()
-                            .unwrap_or_else(|| OutputConfig { index: i as u32 + 1, ..Default::default() })
+                            .unwrap_or_else(|| OutputConfig {
+                                index: i as u32 + 1,
+                                ..Default::default()
+                            })
                     })
                     .collect();
                 let master = self.pipeline.master_brightness();
@@ -832,7 +912,11 @@ impl Core {
             }
         }
         self.frame = self.node_map.new_frame();
-        self.slots = show.props.iter().map(|p| (p.id.clone(), PropSlot::of(p))).collect();
+        self.slots = show
+            .props
+            .iter()
+            .map(|p| (p.id.clone(), PropSlot::of(p)))
+            .collect();
         self.remote_props = show
             .props
             .iter()
@@ -844,11 +928,20 @@ impl Core {
             .iter()
             .map(|p| p.channel_end() as usize)
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            // A hostile or corrupt show file must not make us allocate
+            // gigabytes: no real sequence frame is larger than this.
+            .min(pixelplus_core::fseq::MAX_FRAME_BYTES as usize);
         self.chan.resize(chan_len, 0);
         self.chan_b.resize(chan_len, 0);
         let total = self.node_map.total_pixels();
-        let longest = self.node_map.pixels_per_output().iter().copied().max().unwrap_or(0);
+        let longest = self
+            .node_map
+            .pixels_per_output()
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0);
         self.effect_period = if self.slow_pi || total > 20_000 || longest > 800 {
             Duration::from_millis(50)
         } else {
@@ -858,9 +951,17 @@ impl Core {
     }
 
     fn update_geometry(&self) {
-        let longest = self.node_map.pixels_per_output().iter().copied().max().unwrap_or(0);
+        let longest = self
+            .node_map
+            .pixels_per_output()
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0);
         let max = self.output.max_pixels();
-        let needed = pixelplus_output::DpiGeometry::for_pixels(longest.max(1)).ok().map(|g| g.pixels_per_output);
+        let needed = pixelplus_output::DpiGeometry::for_pixels(longest.max(1))
+            .ok()
+            .map(|g| g.pixels_per_output);
         let ok = max.map_or(true, |m| longest <= m);
         let message = (!ok).then(|| {
             format!(
@@ -868,7 +969,13 @@ impl Core {
                 max.unwrap_or(0)
             )
         });
-        *GEOMETRY.lock() = Some(GeometryStatus { ok, longest_string: longest, max_pixels: max, needed_pixels: needed, message });
+        *GEOMETRY.lock() = Some(GeometryStatus {
+            ok,
+            longest_string: longest,
+            max_pixels: max,
+            needed_pixels: needed,
+            message,
+        });
     }
 
     fn reload(&mut self, show: Arc<Show>) {
@@ -1018,12 +1125,23 @@ impl Core {
                     self.overlays.set_prop_pixels(p, &rgb, now);
                 }
             }
-            OverlayCmd::Text { prop_id, text, color, scroll, duration_ms } => {
+            OverlayCmd::Text {
+                prop_id,
+                text,
+                color,
+                scroll,
+                duration_ms,
+            } => {
                 if let Some(p) = prop_of(&prop_id) {
-                    self.overlays.text(p, &text, &color, scroll, duration_ms, now);
+                    self.overlays
+                        .text(p, &text, &color, scroll, duration_ms, now);
                 }
             }
-            OverlayCmd::Qr { prop_id, url, duration_ms } => {
+            OverlayCmd::Qr {
+                prop_id,
+                url,
+                duration_ms,
+            } => {
                 if let Some(p) = prop_of(&prop_id) {
                     if let Err(e) = self.overlays.qr(p, &url, duration_ms, now) {
                         self.warn(format!("Can't show the QR code on {}: {e}", p.name), true);
@@ -1035,7 +1153,9 @@ impl Core {
 
     fn play(&mut self, req: PlayRequest, now_ms: f64) -> ApiResult<()> {
         if self.is_follower() {
-            return Err(ApiError::conflict("This controller follows its show leader; control playback on the leader."));
+            return Err(ApiError::conflict(
+                "This controller follows its show leader; control playback on the leader.",
+            ));
         }
         // Pressing play ends a live look ("Effects → Show live"): it is drawn on top of
         // everything and would otherwise hide what was just started.
@@ -1044,12 +1164,17 @@ impl Core {
         }
         let show = self.show.clone();
         let (source, first, playlist, crossfade) = if let Some(id) = &req.playlist_id {
-            let pl = show.playlist(id).ok_or_else(|| ApiError::not_found("That playlist"))?;
+            let pl = show
+                .playlist(id)
+                .ok_or_else(|| ApiError::not_found("That playlist"))?;
             let mut cursor = PlaylistCursor::new(pl.clone());
             if let Some(i) = req.start_index {
                 cursor.start_at(i as usize);
             }
-            let first = cursor.current().cloned().ok_or_else(|| ApiError::bad_request("That playlist is empty."))?;
+            let first = cursor
+                .current()
+                .cloned()
+                .ok_or_else(|| ApiError::bad_request("That playlist is empty."))?;
             (
                 Source::Playlist(Box::new(cursor)),
                 Pending::Item(first),
@@ -1057,30 +1182,75 @@ impl Core {
                 pl.crossfade_ms,
             )
         } else if let Some(id) = &req.sequence_id {
-            show.sequence(id).ok_or_else(|| ApiError::not_found("That sequence"))?;
-            (Source::Single, Pending::Item(PlaylistItem::Sequence { id: "manual".into(), sequence_id: id.clone() }), None, 0)
+            show.sequence(id)
+                .ok_or_else(|| ApiError::not_found("That sequence"))?;
+            (
+                Source::Single,
+                Pending::Item(PlaylistItem::Sequence {
+                    id: "manual".into(),
+                    sequence_id: id.clone(),
+                }),
+                None,
+                0,
+            )
         } else if let Some(id) = &req.dj_clip_id {
-            show.dj_clip(id).ok_or_else(|| ApiError::not_found("That DJ clip"))?;
-            (Source::Single, Pending::Item(PlaylistItem::Dj { id: "manual".into(), dj_clip_id: id.clone() }), None, 0)
+            show.dj_clip(id)
+                .ok_or_else(|| ApiError::not_found("That DJ clip"))?;
+            (
+                Source::Single,
+                Pending::Item(PlaylistItem::Dj {
+                    id: "manual".into(),
+                    dj_clip_id: id.clone(),
+                }),
+                None,
+                0,
+            )
         } else if let Some(id) = &req.effect_id {
             find_effect(&show, id).ok_or_else(|| ApiError::not_found("That look"))?;
             (
                 Source::Single,
-                Pending::Item(PlaylistItem::Effect { id: "manual".into(), effect_id: id.clone(), duration_ms: 0 }),
+                Pending::Item(PlaylistItem::Effect {
+                    id: "manual".into(),
+                    effect_id: id.clone(),
+                    duration_ms: 0,
+                }),
                 None,
                 0,
             )
         } else if let Some(id) = &req.media_id {
-            show.media_item(id).ok_or_else(|| ApiError::not_found("That audio file"))?;
-            (Source::Single, Pending::Item(PlaylistItem::Media { id: "manual".into(), media_id: id.clone() }), None, 0)
+            show.media_item(id)
+                .ok_or_else(|| ApiError::not_found("That audio file"))?;
+            (
+                Source::Single,
+                Pending::Item(PlaylistItem::Media {
+                    id: "manual".into(),
+                    media_id: id.clone(),
+                }),
+                None,
+                0,
+            )
         } else {
-            return Err(ApiError::bad_request("Choose a playlist, sequence, DJ clip, look or audio file to play."));
+            return Err(ApiError::bad_request(
+                "Choose a playlist, sequence, DJ clip, look or audio file to play.",
+            ));
         };
-        self.start_program(Program { origin: Origin::Manual, source, playlist, crossfade_ms: crossfade }, first, now_ms);
+        self.start_program(
+            Program {
+                origin: Origin::Manual,
+                source,
+                playlist,
+                crossfade_ms: crossfade,
+            },
+            first,
+            now_ms,
+        );
         match &self.program {
             Some(p) if p.origin == Origin::Manual => Ok(()),
             _ => Err(ApiError::bad_request(
-                self.item_error.as_ref().map(|e| e.0.clone()).unwrap_or_else(|| "Nothing playable.".into()),
+                self.item_error
+                    .as_ref()
+                    .map(|e| e.0.clone())
+                    .unwrap_or_else(|| "Nothing playable.".into()),
             )),
         }
     }
@@ -1137,7 +1307,11 @@ impl Core {
             return;
         }
         self.paused = paused;
-        for a in self.current.iter_mut().chain(self.outgoing.iter_mut().map(|o| &mut o.active)) {
+        for a in self
+            .current
+            .iter_mut()
+            .chain(self.outgoing.iter_mut().map(|o| &mut o.active))
+        {
             a.clock.set_paused(paused, now_ms);
             if let Some(id) = a.audio {
                 self.audio.set_paused(id, paused);
@@ -1146,7 +1320,9 @@ impl Core {
     }
 
     fn seek(&mut self, pos: f64, now_ms: f64) {
-        let Some(a) = self.current.as_mut() else { return };
+        let Some(a) = self.current.as_mut() else {
+            return;
+        };
         let pos = match a.duration_ms {
             Some(d) => pos.clamp(0.0, d as f64),
             None => pos.max(0.0),
@@ -1209,12 +1385,20 @@ impl Core {
             return;
         }
         if self.show.sequence(&sequence_id).is_none() {
-            self.warn("A song request was for a sequence that no longer exists", false);
+            self.warn(
+                "A song request was for a sequence that no longer exists",
+                false,
+            );
             return;
         }
         if self.program.is_none() || self.stop_fade.is_some() {
             self.start_program(
-                Program { origin: Origin::Manual, source: Source::Single, playlist: None, crossfade_ms: 0 },
+                Program {
+                    origin: Origin::Manual,
+                    source: Source::Single,
+                    playlist: None,
+                    crossfade_ms: 0,
+                },
                 Pending::Request { sequence_id, name },
                 now_ms,
             );
@@ -1251,7 +1435,10 @@ impl Core {
 
     fn peek_next(&self) -> Option<Pending> {
         if let Some((sequence_id, name)) = self.requests.front() {
-            return Some(Pending::Request { sequence_id: sequence_id.clone(), name: name.clone() });
+            return Some(Pending::Request {
+                sequence_id: sequence_id.clone(),
+                name: name.clone(),
+            });
         }
         match self.program.as_ref().map(|p| &p.source) {
             Some(Source::Playlist(c)) => c.peek_next().cloned().map(Pending::Item),
@@ -1285,7 +1472,10 @@ impl Core {
             }
             attempts += 1;
             if attempts >= 64 {
-                self.warn("Nothing in this playlist can be played right now; stopping.", true);
+                self.warn(
+                    "Nothing in this playlist can be played right now; stopping.",
+                    true,
+                );
                 self.playback_finished();
                 return;
             }
@@ -1294,7 +1484,11 @@ impl Core {
     }
 
     fn playback_finished(&mut self) {
-        if let Some(Program { origin: Origin::Schedule(key), .. }) = &self.program {
+        if let Some(Program {
+            origin: Origin::Schedule(key),
+            ..
+        }) = &self.program
+        {
             self.sched.on_finished(key);
         }
         self.clear_playback();
@@ -1304,8 +1498,12 @@ impl Core {
 
     /// After an item started: pre-render an upcoming dynamic DJ clip.
     fn after_begin(&mut self, started: &Pending) {
-        let Some(Pending::Item(PlaylistItem::Dj { dj_clip_id, .. })) = self.peek_next() else { return };
-        let Some(clip) = self.show.dj_clip(&dj_clip_id) else { return };
+        let Some(Pending::Item(PlaylistItem::Dj { dj_clip_id, .. })) = self.peek_next() else {
+            return;
+        };
+        let Some(clip) = self.show.dj_clip(&dj_clip_id) else {
+            return;
+        };
         if !clip.dynamic {
             return;
         }
@@ -1314,7 +1512,9 @@ impl Core {
             Some(Source::Playlist(c)) => {
                 let mut c = c.clone();
                 c.advance();
-                c.advance().cloned().map(|i| self.pending_ref(&Pending::Item(i)).name)
+                c.advance()
+                    .cloned()
+                    .map(|i| self.pending_ref(&Pending::Item(i)).name)
             }
             _ => None,
         };
@@ -1331,30 +1531,46 @@ impl Core {
         // Forget the previous showtime render (its placeholders are stale); if the
         // new one is not ready in time the clip's last saved render plays.
         self.dj_rendered.remove(&dj_clip_id);
-        let _ = self.events.send(CoreEvent::PrerenderDj { clip_id: dj_clip_id, ctx });
+        let _ = self.events.send(CoreEvent::PrerenderDj {
+            clip_id: dj_clip_id,
+            ctx,
+        });
     }
 
     fn pending_ref(&self, p: &Pending) -> ItemRef {
         let show = &self.show;
         match p {
             Pending::Request { sequence_id, .. } => {
-                let name = show.sequence(sequence_id).map_or("Song request", |s| s.name.as_str());
+                let name = show
+                    .sequence(sequence_id)
+                    .map_or("Song request", |s| s.name.as_str());
                 item_ref("request", sequence_id, name)
             }
             Pending::Item(i) => match i {
-                PlaylistItem::Sequence { sequence_id, .. } => {
-                    item_ref("sequence", sequence_id, show.sequence(sequence_id).map_or("Missing sequence", |s| &s.name))
-                }
-                PlaylistItem::Dj { dj_clip_id, .. } => {
-                    item_ref("dj", dj_clip_id, show.dj_clip(dj_clip_id).map_or("Missing DJ clip", |c| &c.name))
-                }
+                PlaylistItem::Sequence { sequence_id, .. } => item_ref(
+                    "sequence",
+                    sequence_id,
+                    show.sequence(sequence_id)
+                        .map_or("Missing sequence", |s| &s.name),
+                ),
+                PlaylistItem::Dj { dj_clip_id, .. } => item_ref(
+                    "dj",
+                    dj_clip_id,
+                    show.dj_clip(dj_clip_id)
+                        .map_or("Missing DJ clip", |c| &c.name),
+                ),
                 PlaylistItem::Effect { effect_id, .. } => {
-                    let name = find_effect(show, effect_id).map(|e| e.name).unwrap_or_else(|| "Missing look".into());
+                    let name = find_effect(show, effect_id)
+                        .map(|e| e.name)
+                        .unwrap_or_else(|| "Missing look".into());
                     item_ref("effect", effect_id, &name)
                 }
-                PlaylistItem::Media { media_id, .. } => {
-                    item_ref("media", media_id, show.media_item(media_id).map_or("Missing audio", |m| &m.name))
-                }
+                PlaylistItem::Media { media_id, .. } => item_ref(
+                    "media",
+                    media_id,
+                    show.media_item(media_id)
+                        .map_or("Missing audio", |m| &m.name),
+                ),
                 PlaylistItem::Pause { id, .. } => item_ref("pause", id, "Pause"),
                 PlaylistItem::Command { id, command, .. } => item_ref("command", id, command),
             },
@@ -1388,7 +1604,10 @@ impl Core {
     fn begin(&mut self, p: &Pending, now_ms: f64) -> Result<Option<Active>, String> {
         let iref = self.pending_ref(p);
         let show = self.show.clone();
-        let single = matches!(self.program.as_ref().map(|p| &p.source), Some(Source::Single));
+        let single = matches!(
+            self.program.as_ref().map(|p| &p.source),
+            Some(Source::Single)
+        );
         let seq_id = match p {
             Pending::Request { sequence_id, .. } => Some(sequence_id.clone()),
             Pending::Item(PlaylistItem::Sequence { sequence_id, .. }) => Some(sequence_id.clone()),
@@ -1410,24 +1629,43 @@ impl Core {
                 match show.media_item(mid) {
                     Some(m) => match self.media_path(&m.file) {
                         Some(path) => a.audio_src = Some((path, self.media_gain(m))),
-                        None => self.warn(format!("The audio for “{}” is missing; playing lights only", seq.name), true),
+                        None => self.warn(
+                            format!(
+                                "The audio for “{}” is missing; playing lights only",
+                                seq.name
+                            ),
+                            true,
+                        ),
                     },
-                    None => self.warn(format!("The audio linked to “{}” was deleted; playing lights only", seq.name), false),
+                    None => self.warn(
+                        format!(
+                            "The audio linked to “{}” was deleted; playing lights only",
+                            seq.name
+                        ),
+                        false,
+                    ),
                 }
             }
             return Ok(Some(a));
         }
-        let Pending::Item(item) = p else { unreachable!("requests are sequences") };
+        let Pending::Item(item) = p else {
+            unreachable!("requests are sequences")
+        };
         match item {
             PlaylistItem::Sequence { .. } => unreachable!("handled above"),
             PlaylistItem::Dj { dj_clip_id, .. } => {
                 let clip = show.dj_clip(dj_clip_id).ok_or("the DJ clip was deleted")?;
-                let rendered = self.dj_rendered.get(dj_clip_id).filter(|p| p.exists()).cloned();
+                let rendered = self
+                    .dj_rendered
+                    .get(dj_clip_id)
+                    .filter(|p| p.exists())
+                    .cloned();
                 let media = clip.media_id.as_deref().and_then(|m| show.media_item(m));
                 let (path, gain, duration) = match (rendered, media) {
                     (Some(p), m) => (p, 0.0, m.map(|m| m.duration_ms)),
                     (None, Some(m)) => (
-                        self.media_path(&m.file).ok_or("the DJ clip's audio file is missing")?,
+                        self.media_path(&m.file)
+                            .ok_or("the DJ clip's audio file is missing")?,
                         self.media_gain(m),
                         Some(m.duration_ms),
                     ),
@@ -1439,14 +1677,22 @@ impl Core {
                 Ok(Some(a))
             }
             PlaylistItem::Media { media_id, .. } => {
-                let m = show.media_item(media_id).ok_or("the audio file was deleted")?;
-                let path = self.media_path(&m.file).ok_or("the audio file is missing")?;
+                let m = show
+                    .media_item(media_id)
+                    .ok_or("the audio file was deleted")?;
+                let path = self
+                    .media_path(&m.file)
+                    .ok_or("the audio file is missing")?;
                 let mut a = Active::new(iref, ActiveKind::Audio, now_ms);
                 a.audio_src = Some((path, self.media_gain(m)));
                 a.duration_ms = (m.duration_ms > 0).then_some(m.duration_ms);
                 Ok(Some(a))
             }
-            PlaylistItem::Effect { effect_id, duration_ms, .. } => {
+            PlaylistItem::Effect {
+                effect_id,
+                duration_ms,
+                ..
+            } => {
                 let preset = find_effect(&show, effect_id).ok_or("the look was deleted")?;
                 let layer = EffectLayer::new(&show, &preset);
                 let mut a = Active::new(iref, ActiveKind::Effect(Box::new(layer)), now_ms);
@@ -1496,8 +1742,12 @@ impl Core {
                 let text = s("text").unwrap_or_default();
                 let color = s("color").unwrap_or_else(|| "#ffffff".into());
                 let scroll = args.get("scroll").and_then(|v| v.as_bool()).unwrap_or(true);
-                let duration = args.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(15_000);
-                self.overlays.text(prop, &text, &color, scroll, duration, Instant::now());
+                let duration = args
+                    .get("durationMs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(15_000);
+                self.overlays
+                    .text(prop, &text, &color, scroll, duration, Instant::now());
             }
             other => self.warn(format!("Unknown playlist command “{other}” skipped"), false),
         }
@@ -1509,17 +1759,29 @@ impl Core {
         if self.is_follower() {
             return;
         }
-        let origin = if self.stop_fade.is_some() { None } else { self.program.as_ref().map(|p| p.origin.clone()) };
+        let origin = if self.stop_fade.is_some() {
+            None
+        } else {
+            self.program.as_ref().map(|p| p.origin.clone())
+        };
         if self.stop_fade.is_some() {
             return; // decide once the fade has finished
         }
-        let Some(action) = self.sched.decide(&self.facts, origin.as_ref()) else { return };
+        let Some(action) = self.sched.decide(&self.facts, origin.as_ref()) else {
+            return;
+        };
         self.sched.prune(&self.facts);
         match action {
             SchedAction::Start(w) => {
                 let show = self.show.clone();
                 let Some(pl) = show.playlist(&w.playlist_id) else {
-                    self.warn(format!("The schedule “{}” plays a playlist that no longer exists", w.name), true);
+                    self.warn(
+                        format!(
+                            "The schedule “{}” plays a playlist that no longer exists",
+                            w.name
+                        ),
+                        true,
+                    );
                     self.sched.on_finished(&w.key);
                     return;
                 };
@@ -1547,7 +1809,9 @@ impl Core {
                 match behavior {
                     EndBehavior::FinishSong => {
                         self.requests.clear();
-                        if let Some(Source::Playlist(c)) = self.program.as_mut().map(|p| &mut p.source) {
+                        if let Some(Source::Playlist(c)) =
+                            self.program.as_mut().map(|p| &mut p.source)
+                        {
                             c.finish_after_current();
                         }
                     }
@@ -1577,7 +1841,11 @@ impl Core {
 
     /// The idle look that runs under DJ clips and pauses.
     fn ensure_idle_layer(&mut self) {
-        let want = self.facts.idle_effect_id.clone().or_else(|| self.show.schedule.idle_effect_id.clone());
+        let want = self
+            .facts
+            .idle_effect_id
+            .clone()
+            .or_else(|| self.show.schedule.idle_effect_id.clone());
         let have = self.idle_layer.as_ref().map(|l| l.id.clone());
         if want == have {
             return;
@@ -1585,7 +1853,12 @@ impl Core {
         let now_ms = self.now_ms();
         self.idle_layer = want.and_then(|id| {
             let preset = find_effect(&self.show, &id)?;
-            Some(Look { id, name: preset.name.clone(), layer: EffectLayer::new(&self.show, &preset), started_ms: now_ms })
+            Some(Look {
+                id,
+                name: preset.name.clone(),
+                layer: EffectLayer::new(&self.show, &preset),
+                started_ms: now_ms,
+            })
         });
     }
 
@@ -1625,7 +1898,8 @@ impl Core {
         // (Re)open after a failure or a device change, only while no audio plays.
         // Opening happens on a helper thread: a hanging device never stalls the lights.
         let wanted = self.show.settings.audio.device.clone();
-        let busy = self.current.as_ref().is_some_and(|a| a.audio.is_some()) || self.outgoing.is_some();
+        let busy =
+            self.current.as_ref().is_some_and(|a| a.audio.is_some()) || self.outgoing.is_some();
         if let Some(rx) = &self.audio_pending {
             if busy {
                 return; // swap engines between items only
@@ -1655,7 +1929,10 @@ impl Core {
         }
         let want = self.opts.audio && !self.is_follower();
         let device_changed = wanted != self.audio_device;
-        if want && !busy && (device_changed || (!self.audio.available() && now >= self.audio_retry_at)) {
+        if want
+            && !busy
+            && (device_changed || (!self.audio.available() && now >= self.audio_retry_at))
+        {
             if device_changed {
                 self.audio_backoff = Duration::from_secs(15);
             }
@@ -1663,9 +1940,11 @@ impl Core {
             // Close the old device first (ALSA devices are exclusive).
             self.audio = AudioEngine::disabled("the audio device is starting");
             let (tx, rx) = std::sync::mpsc::channel();
-            let spawned = std::thread::Builder::new().name("pp-audio-open".into()).spawn(move || {
-                let _ = tx.send(AudioEngine::open(&wanted));
-            });
+            let spawned = std::thread::Builder::new()
+                .name("pp-audio-open".into())
+                .spawn(move || {
+                    let _ = tx.send(AudioEngine::open(&wanted));
+                });
             match spawned {
                 Ok(_) => self.audio_pending = Some(rx),
                 Err(e) => {
@@ -1697,7 +1976,9 @@ impl Core {
 
     fn try_start(&mut self, now_ms: f64) -> Result<(), String> {
         let paused = self.paused;
-        let Some(a) = self.current.as_mut() else { return Ok(()) };
+        let Some(a) = self.current.as_mut() else {
+            return Ok(());
+        };
         if a.started {
             return Ok(());
         }
@@ -1757,7 +2038,11 @@ impl Core {
         }
         // Start (opening files) / skip broken items.
         if let Err(e) = self.try_start(now_ms) {
-            let name = self.current.as_ref().map(|a| a.iref.name.clone()).unwrap_or_default();
+            let name = self
+                .current
+                .as_ref()
+                .map(|a| a.iref.name.clone())
+                .unwrap_or_default();
             let msg = format!("Skipped “{name}”: {e}");
             self.item_error = Some((msg.clone(), Instant::now()));
             self.warn(msg, true);
@@ -1777,7 +2062,9 @@ impl Core {
                 }
             }
         }
-        let Some(a) = self.current.as_mut() else { return };
+        let Some(a) = self.current.as_mut() else {
+            return;
+        };
         if !a.started || paused {
             return;
         }
@@ -1789,7 +2076,11 @@ impl Core {
                     a.warned_audio = true;
                     let msg = format!("Couldn't play the audio for “{}”: {e}", a.iref.name);
                     self.item_error = Some((msg.clone(), Instant::now()));
-                    let _ = self.events.send(CoreEvent::Log { level: "warning", message: msg, toast: true });
+                    let _ = self.events.send(CoreEvent::Log {
+                        level: "warning",
+                        message: msg,
+                        toast: true,
+                    });
                 }
             }
         }
@@ -1798,7 +2089,10 @@ impl Core {
                 a.duration_ms.is_some_and(|d| pos >= d as f64)
             }
             ActiveKind::Audio => match a.audio {
-                Some(id) => self.audio.is_finished(id) || a.duration_ms.is_some_and(|d| pos >= d as f64 + 5000.0),
+                Some(id) => {
+                    self.audio.is_finished(id)
+                        || a.duration_ms.is_some_and(|d| pos >= d as f64 + 5000.0)
+                }
                 // No audio device: keep the show's timing using the file's duration.
                 None => a.duration_ms.map_or(true, |d| pos >= d as f64),
             },
@@ -1818,7 +2112,9 @@ impl Core {
         if remaining.is_some_and(|r| r < 4000.0) && self.preload.is_none() {
             let next_seq = match self.peek_next() {
                 Some(Pending::Request { sequence_id, .. }) => Some(sequence_id),
-                Some(Pending::Item(PlaylistItem::Sequence { sequence_id, .. })) => Some(sequence_id),
+                Some(Pending::Item(PlaylistItem::Sequence { sequence_id, .. })) => {
+                    Some(sequence_id)
+                }
                 _ => None,
             };
             if let Some(id) = next_seq {
@@ -1850,7 +2146,11 @@ impl Core {
                     if let Some(id) = old.audio {
                         self.audio.fade_out(id, len as u32);
                     }
-                    self.outgoing = Some(Outgoing { active: old, start_ms: now_ms, len_ms: len });
+                    self.outgoing = Some(Outgoing {
+                        active: old,
+                        start_ms: now_ms,
+                        len_ms: len,
+                    });
                     let next = self.take_next();
                     self.start_next(next, now_ms, len as u32);
                 }
@@ -1882,7 +2182,10 @@ impl Core {
             ActiveKind::Effect(layer) => layer.render(pos as u64, &mut Sink::Chan(chan)),
             ActiveKind::Audio | ActiveKind::Pause => {
                 if let Some(l) = idle {
-                    l.layer.render((now_ms - l.started_ms).max(0.0) as u64, &mut Sink::Chan(chan));
+                    l.layer.render(
+                        (now_ms - l.started_ms).max(0.0) as u64,
+                        &mut Sink::Chan(chan),
+                    );
                 }
             }
         }
@@ -1903,12 +2206,22 @@ impl Core {
         if let Some(o) = self.outgoing.as_mut() {
             self.chan_b.fill(0);
             let pos = Self::position(&self.audio, &mut o.active, paused, now_ms);
-            Self::render_active(&mut o.active, pos, &mut self.chan_b, self.idle_layer.as_mut(), now_ms);
+            Self::render_active(
+                &mut o.active,
+                pos,
+                &mut self.chan_b,
+                self.idle_layer.as_mut(),
+                now_ms,
+            );
             blend_t = Some(crossfade_progress(o.start_ms, o.len_ms, now_ms));
         }
         self.shown = None;
         if let Some(a) = self.current.as_mut() {
-            let pos = if a.started { Self::position(&self.audio, a, paused, now_ms) } else { 0.0 };
+            let pos = if a.started {
+                Self::position(&self.audio, a, paused, now_ms)
+            } else {
+                0.0
+            };
             if a.started || blend_t.is_none() {
                 Self::render_active(a, pos, &mut self.chan, self.idle_layer.as_mut(), now_ms);
             }
@@ -1917,7 +2230,10 @@ impl Core {
             }
         } else if self.program.is_none() {
             if let Some(l) = self.look.as_mut() {
-                l.layer.render((now_ms - l.started_ms).max(0.0) as u64, &mut Sink::Chan(&mut self.chan));
+                l.layer.render(
+                    (now_ms - l.started_ms).max(0.0) as u64,
+                    &mut Sink::Chan(&mut self.chan),
+                );
             }
         }
         if let Some(t) = blend_t {
@@ -1974,7 +2290,11 @@ impl Core {
                 f.have_frame = true;
             }
             if f.have_frame {
-                let id = f.pkt.as_ref().and_then(|p| p.item.as_ref()).map(|i| i.id.clone());
+                let id = f
+                    .pkt
+                    .as_ref()
+                    .and_then(|p| p.item.as_ref())
+                    .map(|i| i.id.clone());
                 self.shown = id.map(|id| (id, idx));
             }
             if f.have_frame {
@@ -1994,7 +2314,10 @@ impl Core {
                 }
             }
         } else if let Some(e) = f.effect.as_mut() {
-            e.render(pos.max(0.0) as u64, &mut Sink::Frame(&mut self.frame, &self.prop_map));
+            e.render(
+                pos.max(0.0) as u64,
+                &mut Sink::Frame(&mut self.frame, &self.prop_map),
+            );
         }
         if let Some(t) = f.test.as_mut() {
             t.render_props(now_ms, &mut Sink::Frame(&mut self.frame, &self.prop_map));
@@ -2092,7 +2415,13 @@ impl Core {
         self.preview_no = self.preview_no.wrapping_add(1);
         let level = self.light_level(now_ms) * self.brightness as f32 / 100.0;
         let bytes = if self.is_follower() {
-            compose::preview_frame(&self.show, self.preview_no, level, None, Some((&self.frame, &self.prop_map)))
+            compose::preview_frame(
+                &self.show,
+                self.preview_no,
+                level,
+                None,
+                Some((&self.frame, &self.prop_map)),
+            )
         } else {
             compose::preview_frame(&self.show, self.preview_no, level, Some(&self.chan), None)
         };
@@ -2102,7 +2431,11 @@ impl Core {
     fn frame_period(&self) -> Duration {
         let clamp = |ms: u32| Duration::from_millis(ms.clamp(10, 100) as u64);
         let seq_ms = if self.is_follower() {
-            self.follow.meta.as_ref().filter(|_| self.follow.reader.is_some()).map(|m| m.frame_ms)
+            self.follow
+                .meta
+                .as_ref()
+                .filter(|_| self.follow.reader.is_some())
+                .map(|m| m.frame_ms)
         } else {
             match self.current.as_ref().map(|a| &a.kind) {
                 Some(ActiveKind::Sequence { meta: Some(m), .. }) => Some(m.frame_ms),
@@ -2112,7 +2445,11 @@ impl Core {
         if let Some(ms) = seq_ms {
             // Crossfades and live overlays (games) run at least at the effect rate.
             let fast = self.outgoing.is_some() || self.overlays.any_active();
-            return clamp(ms).min(if fast { self.effect_period } else { Duration::MAX });
+            return clamp(ms).min(if fast {
+                self.effect_period
+            } else {
+                Duration::MAX
+            });
         }
         let busy = self.program.is_some()
             || self.look.is_some()
@@ -2179,7 +2516,9 @@ impl Core {
                             f.missing = Some(format!("“{}” is not downloaded yet", item.name));
                         }
                     }
-                    None => f.missing = Some(format!("“{}” is not on this controller yet", item.name)),
+                    None => {
+                        f.missing = Some(format!("“{}” is not on this controller yet", item.name))
+                    }
                 }
             }
             f.clock = None;
@@ -2193,7 +2532,11 @@ impl Core {
             }
         }
         // Effect (looks, effect items, the look under DJ clips).
-        let effect = if seq_item.is_none() { p.effect.clone() } else { None };
+        let effect = if seq_item.is_none() {
+            p.effect.clone()
+        } else {
+            None
+        };
         match effect {
             Some(e) => {
                 if f.effect.as_ref().map(|x| &x.preset) != Some(&e) {
@@ -2208,7 +2551,9 @@ impl Core {
         if !active {
             f.clock = None;
         } else {
-            let c = f.clock.get_or_insert_with(|| SlewClock::new(target, now_ms));
+            let c = f
+                .clock
+                .get_or_insert_with(|| SlewClock::new(target, now_ms));
             if p.state == PlayerState::Paused {
                 c.set_running(false, now_ms);
                 c.update(target, now_ms, frame_ms);
@@ -2266,7 +2611,8 @@ impl Core {
             self.follow = FollowState::default();
             let _ = self.events.send(CoreEvent::Log {
                 level: "warning",
-                message: "Lost contact with the show leader; lights are dark until it returns.".into(),
+                message: "Lost contact with the show leader; lights are dark until it returns."
+                    .into(),
                 toast: false,
             });
         }
@@ -2294,9 +2640,16 @@ impl Core {
         if self.is_follower() {
             let f = &self.follow;
             if let Some(p) = &f.pkt {
-                s.state = if f.hold_since.is_some() && p.state != PlayerState::Idle { PlayerState::Paused } else { p.state };
+                s.state = if f.hold_since.is_some() && p.state != PlayerState::Idle {
+                    PlayerState::Paused
+                } else {
+                    p.state
+                };
                 s.item = p.item.clone();
-                s.pos_ms = f.clock.as_ref().map_or(p.pos_ms, |c| c.pos().max(0.0) as u64);
+                s.pos_ms = f
+                    .clock
+                    .as_ref()
+                    .map_or(p.pos_ms, |c| c.pos().max(0.0) as u64);
             }
             if let Some(m) = &f.meta {
                 s.duration_ms = m.duration_ms();
@@ -2304,7 +2657,9 @@ impl Core {
             if let Some(m) = &f.missing {
                 errors.push(m.clone());
             }
-            if f.pkt.as_ref().is_some_and(|p| p.state != PlayerState::Idle) && now_ms - f.rx_ms > 3000.0 {
+            if f.pkt.as_ref().is_some_and(|p| p.state != PlayerState::Idle)
+                && now_ms - f.rx_ms > 3000.0
+            {
                 errors.push("Lost contact with the show leader".into());
             }
         } else {
@@ -2327,14 +2682,21 @@ impl Core {
                 s.duration_ms = a.duration_ms.unwrap_or(0);
                 if let (Source::Playlist(c), Some((id, name))) = (&prog.source, &prog.playlist) {
                     let (index, count) = c.flat_index();
-                    s.playlist = Some(PlaylistRef { id: id.clone(), name: name.clone(), index, count });
+                    s.playlist = Some(PlaylistRef {
+                        id: id.clone(),
+                        name: name.clone(),
+                        index,
+                        count,
+                    });
                 }
                 s.next_item = self.peek_next().map(|p| self.pending_ref(&p));
                 let wants_audio = a.audio_src.is_some();
                 if wants_audio && self.opts.audio && !self.audio.available() {
                     errors.push(format!(
                         "No sound: {}. The lights keep playing.",
-                        self.audio.error().unwrap_or_else(|| "the audio device is unavailable".into())
+                        self.audio
+                            .error()
+                            .unwrap_or_else(|| "the audio device is unavailable".into())
                     ));
                 }
             } else if let Some(l) = &self.look {
@@ -2369,10 +2731,21 @@ impl Core {
 
     fn publish_status(&mut self, now: Instant, now_ms: f64) {
         let s = self.build_status(now_ms);
-        let strip = |s: &PlayerStatus| PlayerStatus { pos_ms: 0, fps: 0.0, ..s.clone() };
+        let strip = |s: &PlayerStatus| PlayerStatus {
+            pos_ms: 0,
+            fps: 0.0,
+            ..s.clone()
+        };
         let changed = strip(&s) != strip(&self.last_status);
-        let moving = matches!(s.state, PlayerState::Playing | PlayerState::Effect | PlayerState::Testing);
-        let every = if moving { Duration::from_millis(250) } else { Duration::from_secs(2) };
+        let moving = matches!(
+            s.state,
+            PlayerState::Playing | PlayerState::Effect | PlayerState::Testing
+        );
+        let every = if moving {
+            Duration::from_millis(250)
+        } else {
+            Duration::from_secs(2)
+        };
         if changed || now.duration_since(self.last_status_at) >= every {
             self.last_status_at = now;
             self.last_status = s.clone();
@@ -2388,7 +2761,9 @@ impl Core {
         let effect = match (&self.program, &self.current) {
             (Some(_), Some(a)) => match &a.kind {
                 ActiveKind::Effect(l) => Some(l.preset.clone()),
-                ActiveKind::Audio | ActiveKind::Pause => self.idle_layer.as_ref().map(|l| l.layer.preset.clone()),
+                ActiveKind::Audio | ActiveKind::Pause => {
+                    self.idle_layer.as_ref().map(|l| l.layer.preset.clone())
+                }
                 ActiveKind::Sequence { .. } => None,
             },
             _ => self.look.as_ref().map(|l| l.layer.preset.clone()),
@@ -2399,7 +2774,9 @@ impl Core {
             Some(t) => (effect, Some(t.req.clone())),
             None => (effect, None),
         };
-        if (effect.as_ref(), test.as_ref()) != (self.last_extras.0.as_ref(), self.last_extras.1.as_ref()) {
+        if (effect.as_ref(), test.as_ref())
+            != (self.last_extras.0.as_ref(), self.last_extras.1.as_ref())
+        {
             self.last_extras = (effect.clone(), test.clone());
             if let Some(cluster) = self.app.services.cluster.get() {
                 cluster.set_sync_effect(effect);
@@ -2430,7 +2807,12 @@ fn dummy_node() -> pixelplus_core::model::Node {
 }
 
 /// This node's board: PIXELPLUS_BOARD, the show, the setup wizard, or the platform.
-fn board_for(show: &Show, node_id: &str, identity_board: Option<BoardKind>, is_pi: bool) -> BoardKind {
+fn board_for(
+    show: &Show,
+    node_id: &str,
+    identity_board: Option<BoardKind>,
+    is_pi: bool,
+) -> BoardKind {
     // PIXELPLUS_BOARD (e.g. `virtual` in Docker) overrides everything, as in
     // services::system::effective_board.
     if let Some(b) = crate::services::system::board_override() {
@@ -2439,12 +2821,21 @@ fn board_for(show: &Show, node_id: &str, identity_board: Option<BoardKind>, is_p
     show.node(node_id)
         .map(|n| n.board)
         .or(identity_board)
-        .unwrap_or(if is_pi { BoardKind::BarePi } else { BoardKind::Virtual })
+        .unwrap_or(if is_pi {
+            BoardKind::BarePi
+        } else {
+            BoardKind::Virtual
+        })
 }
 
 /// Pick the output backend. `Auto`: DPI on a Pi with a pixel board and a DRM
 /// device; otherwise the simulator (so the live preview and tests work).
-fn choose_backend(app: &AppState, opts: &EngineOptions, board: BoardKind, is_pi: bool) -> BackendKind {
+fn choose_backend(
+    app: &AppState,
+    opts: &EngineOptions,
+    board: BoardKind,
+    is_pi: bool,
+) -> BackendKind {
     if let Some(k) = opts.output {
         return k;
     }

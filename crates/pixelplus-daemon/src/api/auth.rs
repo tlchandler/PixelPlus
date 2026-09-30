@@ -14,7 +14,9 @@
 
 use super::{ApiError, ApiResult};
 use crate::state::AppState;
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{
+    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+};
 use argon2::Argon2;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderValue};
@@ -81,7 +83,11 @@ impl Throttle {
     }
 
     pub fn failure(&mut self, ip: Option<IpAddr>, now: Instant) {
-        while self.recent.front().is_some_and(|t| now.duration_since(*t) > GLOBAL_WINDOW) {
+        while self
+            .recent
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > GLOBAL_WINDOW)
+        {
             self.recent.pop_front();
         }
         self.recent.push_back(now);
@@ -95,7 +101,9 @@ impl Throttle {
         }
         let f = self.per_ip.entry(ip).or_default();
         // A day without mistakes forgives old ones.
-        if f.last.is_some_and(|l| now.duration_since(l) > Duration::from_secs(24 * 3600)) {
+        if f.last
+            .is_some_and(|l| now.duration_since(l) > Duration::from_secs(24 * 3600))
+        {
             f.failures = 0;
         }
         f.failures += 1;
@@ -167,7 +175,11 @@ pub fn hash_password(password: &str) -> ApiResult<String> {
 
 pub fn verify_password(hash: &str, password: &str) -> bool {
     PasswordHash::new(hash)
-        .map(|h| Argon2::default().verify_password(password.as_bytes(), &h).is_ok())
+        .map(|h| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &h)
+                .is_ok()
+        })
         .unwrap_or(false)
 }
 
@@ -246,7 +258,11 @@ pub async fn require_auth(
         .get::<axum::extract::OriginalUri>()
         .map(|u| u.0.path().to_string())
         .unwrap_or_else(|| req.uri().path().to_string());
-    let path = if path.starts_with("/api/v1/") || path == "/api/v1" { path } else { format!("/api/v1{path}") };
+    let path = if path.starts_with("/api/v1/") || path == "/api/v1" {
+        path
+    } else {
+        format!("/api/v1{path}")
+    };
     let path = path.as_str();
     let unconfigured = state.identity().role == crate::node::LocalRole::Unconfigured;
     if path == "/api/v1/system/setup"
@@ -254,7 +270,8 @@ pub async fn require_auth(
         && !peer.0.is_some_and(|p| super::security::lan_peer(p.ip()))
     {
         // Claiming a new controller only from the local network.
-        return ApiError::forbidden("Set up this controller from your local network.").into_response();
+        return ApiError::forbidden("Set up this controller from your local network.")
+            .into_response();
     }
     let open = path.starts_with("/api/v1/auth/")
         || path.starts_with("/api/v1/public/")
@@ -358,7 +375,8 @@ async fn set_password(
     let show = state.store.get();
     if let Some(hash) = show.settings.security.password_hash.as_deref() {
         let authed = is_authenticated(&state, &headers, peer.0);
-        let ip = super::security::client_ip(peer.0, &headers, &show.settings.security.trusted_proxies);
+        let ip =
+            super::security::client_ip(peer.0, &headers, &show.settings.security.trusted_proxies);
         if let Err(wait) = state.sessions.throttle.lock().check(ip, Instant::now()) {
             return Err(too_many(wait));
         }
@@ -370,7 +388,9 @@ async fn set_password(
             if authed {
                 state.sessions.throttle.lock().failure(ip, Instant::now());
             }
-            return Err(ApiError::forbidden("Enter your current password to change it."));
+            return Err(ApiError::forbidden(
+                "Enter your current password to change it.",
+            ));
         }
     }
     let new_hash = match body.new_password.as_deref().filter(|p| !p.is_empty()) {
@@ -424,16 +444,26 @@ mod tests {
         }
         t.failure(Some(a), now);
         assert_eq!(t.check(Some(a), now), Err(FIRST_LOCKOUT));
-        assert!(t.check(Some(b), now).is_ok(), "other addresses are not affected");
+        assert!(
+            t.check(Some(b), now).is_ok(),
+            "other addresses are not affected"
+        );
         assert!(t.check(Some(a), now + FIRST_LOCKOUT).is_ok());
         t.failure(Some(a), now + FIRST_LOCKOUT);
-        assert_eq!(t.check(Some(a), now + FIRST_LOCKOUT), Err(FIRST_LOCKOUT * 2), "doubles");
+        assert_eq!(
+            t.check(Some(a), now + FIRST_LOCKOUT),
+            Err(FIRST_LOCKOUT * 2),
+            "doubles"
+        );
         t.success(Some(a));
         assert!(t.check(Some(a), now + FIRST_LOCKOUT).is_ok());
         // Many addresses: everyone waits a minute.
         let mut t = Throttle::default();
         for i in 0..GLOBAL_FAILURES {
-            t.failure(Some(IpAddr::from([10, 0, (i / 250) as u8, (i % 250) as u8])), now);
+            t.failure(
+                Some(IpAddr::from([10, 0, (i / 250) as u8, (i % 250) as u8])),
+                now,
+            );
         }
         assert!(t.check(Some(b), now).is_err());
         assert!(t.check(Some(b), now + GLOBAL_LOCKOUT).is_ok());
@@ -442,7 +472,10 @@ mod tests {
     #[test]
     fn cookie_parsing() {
         let mut h = HeaderMap::new();
-        h.insert(header::COOKIE, HeaderValue::from_static("a=1; pp_session=abc; b=2"));
+        h.insert(
+            header::COOKIE,
+            HeaderValue::from_static("a=1; pp_session=abc; b=2"),
+        );
         assert_eq!(session_token(&h).as_deref(), Some("abc"));
     }
 }

@@ -40,7 +40,8 @@ impl NodeIdentity {
     pub fn load_or_create(path: &Path) -> anyhow::Result<Self> {
         if path.exists() {
             let text = std::fs::read_to_string(path)?;
-            return serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()));
+            return serde_json::from_str(&text)
+                .with_context(|| format!("parsing {}", path.display()));
         }
         let id = pixelplus_core::model::new_id();
         let me = NodeIdentity {

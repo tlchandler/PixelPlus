@@ -34,15 +34,28 @@ pub fn redact_settings(s: &mut ShowSettings) {
 /// In a settings patch, replace placeholders with the stored secrets.
 pub fn restore_secrets(patch: &mut Value, current: &ShowSettings) {
     let placeholder = |v: Option<&Value>| v.and_then(Value::as_str) == Some(SECRET_PLACEHOLDER);
-    if let Some(email) = patch.pointer_mut("/alerts/email").and_then(Value::as_object_mut) {
+    if let Some(email) = patch
+        .pointer_mut("/alerts/email")
+        .and_then(Value::as_object_mut)
+    {
         if placeholder(email.get("password")) {
-            let stored = current.alerts.email.as_ref().map(|e| e.password.clone()).unwrap_or_default();
+            let stored = current
+                .alerts
+                .email
+                .as_ref()
+                .map(|e| e.password.clone())
+                .unwrap_or_default();
             email.insert("password".into(), Value::String(stored));
         }
     }
     if let Some(mqtt) = patch.pointer_mut("/mqtt").and_then(Value::as_object_mut) {
         if placeholder(mqtt.get("password")) {
-            let stored = current.mqtt.password.clone().map(Value::String).unwrap_or(Value::Null);
+            let stored = current
+                .mqtt
+                .password
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null);
             mqtt.insert("password".into(), stored);
         }
     }
@@ -51,18 +64,24 @@ pub fn restore_secrets(patch: &mut Value, current: &ShowSettings) {
 /// Allowed host names and trusted proxies must be well-formed.
 fn validate_security(sec: &pixelplus_core::model::SecuritySettings) -> ApiResult<()> {
     if sec.allowed_hosts.len() > 32 || sec.trusted_proxies.len() > 32 {
-        return Err(ApiError::bad_request("That's too many entries (32 at most)."));
+        return Err(ApiError::bad_request(
+            "That's too many entries (32 at most).",
+        ));
     }
     for h in &sec.allowed_hosts {
         let name = h.trim().strip_prefix("*.").unwrap_or(h.trim());
         let ok = h.trim() == "*"
             || (!name.is_empty()
                 && name.len() <= 253
-                && name
-                    .split('.')
-                    .all(|l| !l.is_empty() && l.len() <= 63 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')));
+                && name.split('.').all(|l| {
+                    !l.is_empty()
+                        && l.len() <= 63
+                        && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                }));
         if !ok {
-            return Err(ApiError::bad_request(format!("“{h}” isn't a valid host name.")));
+            return Err(ApiError::bad_request(format!(
+                "“{h}” isn't a valid host name."
+            )));
         }
     }
     for p in &sec.trusted_proxies {
@@ -86,13 +105,18 @@ struct NameBody {
     name: String,
 }
 
-async fn put_name(State(state): State<AppState>, Json(body): Json<NameBody>) -> ApiResult<Json<Show>> {
+async fn put_name(
+    State(state): State<AppState>,
+    Json(body): Json<NameBody>,
+) -> ApiResult<Json<Show>> {
     let name = body.name.trim().to_string();
     if name.is_empty() {
         return Err(ApiError::bad_request("Please give your show a name."));
     }
     if name.chars().count() > 120 {
-        return Err(ApiError::bad_request("That name is too long (120 characters max)."));
+        return Err(ApiError::bad_request(
+            "That name is too long (120 characters max).",
+        ));
     }
     let (_, show) = state
         .store
@@ -105,7 +129,10 @@ async fn put_name(State(state): State<AppState>, Json(body): Json<NameBody>) -> 
     Ok(Json(super::content::public_show(&show)))
 }
 
-async fn put_settings(State(state): State<AppState>, Json(patch): Json<Value>) -> ApiResult<Json<ShowSettings>> {
+async fn put_settings(
+    State(state): State<AppState>,
+    Json(patch): Json<Value>,
+) -> ApiResult<Json<ShowSettings>> {
     let (settings, _) = state
         .store
         .update(|s| {
@@ -134,7 +161,10 @@ async fn get_schedule(State(state): State<AppState>) -> Json<Schedule> {
     Json(state.store.get().schedule.clone())
 }
 
-async fn put_schedule(State(state): State<AppState>, Json(patch): Json<Value>) -> ApiResult<Json<Schedule>> {
+async fn put_schedule(
+    State(state): State<AppState>,
+    Json(patch): Json<Value>,
+) -> ApiResult<Json<Schedule>> {
     let (schedule, _) = state
         .store
         .update(|s| {
@@ -185,5 +215,8 @@ pub fn routes() -> Router<AppState> {
         .route("/show/name", put(put_name))
         .route("/show/settings", put(put_settings).patch(put_settings))
         .route("/schedule", get(get_schedule).put(put_schedule))
-        .route("/pronunciations", get(get_pronunciations).put(put_pronunciations))
+        .route(
+            "/pronunciations",
+            get(get_pronunciations).put(put_pronunciations),
+        )
 }

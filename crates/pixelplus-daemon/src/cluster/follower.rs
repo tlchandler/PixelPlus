@@ -291,8 +291,10 @@ pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]
     if identity.role != LocalRole::Follower {
         return;
     }
-    let (Some(key), Some(leader)) = (identity.cluster_key.as_deref(), identity.leader_id.as_deref())
-    else {
+    let (Some(key), Some(leader)) = (
+        identity.cluster_key.as_deref(),
+        identity.leader_id.as_deref(),
+    ) else {
         return;
     };
     let Some(frame) = proto::decode_overlay(data, key) else {
@@ -371,7 +373,9 @@ pub(crate) fn answers_recent_ping(sh: &Shared, t0: f64) -> bool {
 pub(crate) async fn challenge(state: &AppState, sh: &Shared, src: SocketAddr) {
     {
         let mut f = sh.follower.lock();
-        if f.last_challenge.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
+        if f.last_challenge
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(500))
+        {
             return;
         }
         f.last_challenge = Some(Instant::now());
@@ -546,8 +550,15 @@ pub async fn handle_adopt(
     }
     let offer = sig::dh_offer().map_err(ApiError::internal)?;
     let my_dh = offer.public_hex.clone();
-    let key = sig::derive_key(offer, &call.dh, &call.leader_id, &identity.id, &call.dh, &my_dh)
-        .ok_or_else(|| ApiError::bad_request("Invalid key exchange."))?;
+    let key = sig::derive_key(
+        offer,
+        &call.dh,
+        &call.leader_id,
+        &identity.id,
+        &call.dh,
+        &my_dh,
+    )
+    .ok_or_else(|| ApiError::bad_request("Invalid key exchange."))?;
     let changed_leader = identity.leader_id.as_deref() != Some(call.leader_id.as_str());
     let _guard = sh.install_lock.lock().await;
     let identity = state
@@ -591,7 +602,10 @@ pub async fn handle_adopt(
     if why.is_empty() {
         tracing::info!("Adopted by show leader {label} at {from}.");
     } else {
-        super::log_warning(state, format!("Adopted by show leader {label} at {from} ({why})."));
+        super::log_warning(
+            state,
+            format!("Adopted by show leader {label} at {from} ({why})."),
+        );
     }
     state.events.toast(
         crate::events::ToastKind::Success,
@@ -1251,7 +1265,12 @@ mod tests {
             bad.leader_url = url.into();
             assert!(validate_call(&bad).is_err(), "{url}");
         }
-        for url in ["http://127.0.0.1:8080", "http://192.168.1.4", "http://100.100.1.1", "http://[fe80::1]"] {
+        for url in [
+            "http://127.0.0.1:8080",
+            "http://192.168.1.4",
+            "http://100.100.1.1",
+            "http://[fe80::1]",
+        ] {
             let mut good = ok.clone();
             good.leader_url = url.into();
             assert!(validate_call(&good).is_ok(), "{url}");
@@ -1261,7 +1280,10 @@ mod tests {
         assert!(validate_call(&bad).is_err());
         let mut bad = ok.clone();
         bad.dh = "k".repeat(64);
-        assert!(validate_call(&bad).is_err(), "old leaders sent a clusterKey, no dh");
+        assert!(
+            validate_call(&bad).is_err(),
+            "old leaders sent a clusterKey, no dh"
+        );
     }
 
     #[test]

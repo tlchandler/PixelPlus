@@ -324,7 +324,9 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
     let data_dir = state.config.data_dir.clone();
     let show = tokio::task::spawn_blocking(move || -> Result<Show, String> {
         let show = read_archive_show(&path)?;
-        let free = super::system::disk_space(&data_dir).map(|(f, _)| f).unwrap_or(u64::MAX);
+        let free = super::system::disk_space(&data_dir)
+            .map(|(f, _)| f)
+            .unwrap_or(u64::MAX);
         let budget = MAX_RESTORE_BYTES.min(free.saturating_sub(KEEP_FREE));
         let mut unpacked: u64 = 0;
         let f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
@@ -343,7 +345,9 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
             // archives that would fill the SD card.
             unpacked = unpacked.saturating_add(entry.header().size().unwrap_or(u64::MAX));
             if unpacked > budget {
-                return Err("That snapshot is too large to restore here (not enough free space).".into());
+                return Err(
+                    "That snapshot is too large to restore here (not enough free space).".into(),
+                );
             }
             let dst = data_dir.join(&rel);
             if let Some(p) = dst.parent() {

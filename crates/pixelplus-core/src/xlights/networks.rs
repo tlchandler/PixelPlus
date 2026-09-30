@@ -357,9 +357,15 @@ mod tests {
         .unwrap();
         let names: Vec<&str> = n.controllers.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["A", "B", "C"]);
-        assert_eq!((n.controllers[1].start, n.controllers[1].channels), (101, 512));
+        assert_eq!(
+            (n.controllers[1].start, n.controllers[1].channels),
+            (101, 512)
+        );
         assert_eq!(n.controllers[2].outputs[0].kind, "xxx Ethernet");
         let w = w.join("\n");
-        assert!(w.contains("'Future'") && w.contains("'NoType'") && w.contains("'Warp'"), "{w}");
+        assert!(
+            w.contains("'Future'") && w.contains("'NoType'") && w.contains("'Warp'"),
+            "{w}"
+        );
     }
 }

@@ -385,7 +385,10 @@ mod tests {
         // Spoofed / rotating addresses hit the global cap.
         let mut ok = 0;
         for i in 0..200u32 {
-            if q.check_rate(Some(IpAddr::from([10, 1, (i / 250) as u8, (i % 250) as u8])), t) {
+            if q.check_rate(
+                Some(IpAddr::from([10, 1, (i / 250) as u8, (i % 250) as u8])),
+                t,
+            ) {
                 ok += 1;
             }
         }

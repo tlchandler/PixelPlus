@@ -71,7 +71,9 @@ pub struct SyncPacket {
 #[allow(clippy::large_enum_variant)]
 pub enum PlayerCmd {
     Play(PlayRequest, oneshot::Sender<ApiResult<()>>),
-    Stop { fade: bool },
+    Stop {
+        fade: bool,
+    },
     Pause,
     Resume,
     Next,
@@ -83,7 +85,10 @@ pub enum PlayerCmd {
     TestStart(TestRequest, oneshot::Sender<ApiResult<()>>),
     TestStop,
     /// Visitor song request: play `sequence_id` next.
-    Enqueue { sequence_id: String, name: Option<String> },
+    Enqueue {
+        sequence_id: String,
+        name: Option<String>,
+    },
     /// Follower: follow the leader's playback.
     Sync(SyncPacket),
     /// Overlay control for a prop (games, text, QR, fault finder).
@@ -97,7 +102,10 @@ pub enum PlayerCmd {
 #[derive(Debug)]
 pub enum OverlayCmd {
     /// Open (or reuse) the shared-memory buffer for a matrix prop.
-    Open { prop_id: String, reply: oneshot::Sender<ApiResult<OverlayInfo>> },
+    Open {
+        prop_id: String,
+        reply: oneshot::Sender<ApiResult<OverlayInfo>>,
+    },
     /// Enable/disable compositing of the prop's overlay.
     Enable { prop_id: String, enabled: bool },
     /// Replace the overlay content with a full grid frame (row-major RGB, width×height×3).
@@ -105,8 +113,18 @@ pub enum OverlayCmd {
     /// Replace the overlay content with pixels in prop order (pixelCount×3).
     PropPixels { prop_id: String, rgb: Vec<u8> },
     /// Scrolling text / QR helper overlays.
-    Text { prop_id: String, text: String, color: String, scroll: bool, duration_ms: u64 },
-    Qr { prop_id: String, url: String, duration_ms: u64 },
+    Text {
+        prop_id: String,
+        text: String,
+        color: String,
+        scroll: bool,
+        duration_ms: u64,
+    },
+    Qr {
+        prop_id: String,
+        url: String,
+        duration_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -145,7 +163,10 @@ impl PlayerHandle {
             .map_err(|_| ApiError::unavailable("The player is not running."))
     }
 
-    async fn request<T>(&self, f: impl FnOnce(oneshot::Sender<ApiResult<T>>) -> PlayerCmd) -> ApiResult<T> {
+    async fn request<T>(
+        &self,
+        f: impl FnOnce(oneshot::Sender<ApiResult<T>>) -> PlayerCmd,
+    ) -> ApiResult<T> {
         let (tx, rx) = oneshot::channel();
         self.send(f(tx)).await?;
         rx.await

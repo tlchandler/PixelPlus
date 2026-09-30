@@ -658,8 +658,16 @@ mod tests {
         // Prop "a" is two xLights strings: pixels 0..30 at byte 300, 30..50 at byte 0.
         let mut show = show();
         show.props[0].channel_runs = Some(vec![
-            ChannelRun { prop_offset: 0, channel_start: 300, pixel_count: 30 },
-            ChannelRun { prop_offset: 30, channel_start: 0, pixel_count: 20 },
+            ChannelRun {
+                prop_offset: 0,
+                channel_start: 300,
+                pixel_count: 30,
+            },
+            ChannelRun {
+                prop_offset: 30,
+                channel_start: 0,
+                pixel_count: 20,
+            },
         ]);
         show.props[0].channel_start = 0;
         let map = NodeMap::build(&show, "f1").unwrap();

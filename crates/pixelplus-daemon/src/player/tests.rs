@@ -77,8 +77,19 @@ fn write_fseq(path: &Path, frames: u32, frame_ms: u8, value: impl Fn(u32) -> u8)
     w.finish().unwrap();
 }
 
-fn sequence(dir: &Path, id: &str, frames: u32, frame_ms: u8, value: impl Fn(u32) -> u8) -> Sequence {
-    write_fseq(&dir.join(format!("sequences/{id}.fseq")), frames, frame_ms, value);
+fn sequence(
+    dir: &Path,
+    id: &str,
+    frames: u32,
+    frame_ms: u8,
+    value: impl Fn(u32) -> u8,
+) -> Sequence {
+    write_fseq(
+        &dir.join(format!("sequences/{id}.fseq")),
+        frames,
+        frame_ms,
+        value,
+    );
     Sequence {
         id: id.into(),
         name: format!("Song {id}"),
@@ -118,7 +129,10 @@ fn playlist(id: &str, items: &[&str], crossfade_ms: u32) -> Playlist {
         name: "Tonight".into(),
         items: items
             .iter()
-            .map(|s| PlaylistItem::Sequence { id: format!("i-{s}"), sequence_id: s.to_string() })
+            .map(|s| PlaylistItem::Sequence {
+                id: format!("i-{s}"),
+                sequence_id: s.to_string(),
+            })
             .collect(),
         intro: vec![],
         outro: vec![],
@@ -246,38 +260,73 @@ async fn playlist_run(audio: bool) {
         statuses.push(e.status());
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let first_s1 = samples.iter().find(|s| (1..=40).contains(&s.1)).expect("s1 played").0;
+    let first_s1 = samples
+        .iter()
+        .find(|s| (1..=40).contains(&s.1))
+        .expect("s1 played")
+        .0;
     let first_s2 = samples.iter().find(|s| s.1 >= 100).expect("s2 played").0;
     let gap = first_s2 - first_s1;
-    assert!((850..=1250).contains(&gap), "s1 lasted {gap} ms (expected ~1000)");
+    assert!(
+        (850..=1250).contains(&gap),
+        "s1 lasted {gap} ms (expected ~1000)"
+    );
     // Frames follow the clock: frame index ≈ elapsed / 25 ms.
     for &(t, v, _) in &samples {
         if (1..=40).contains(&v) && t > first_s1 + 50 && t < first_s2 {
             let expected = ((t - first_s1) / 25) as i64;
-            assert!((v as i64 - 1 - expected).abs() <= 6, "at {t} ms frame {} (expected ~{expected})", v - 1);
+            assert!(
+                (v as i64 - 1 - expected).abs() <= 6,
+                "at {t} ms frame {} (expected ~{expected})",
+                v - 1
+            );
         }
     }
     // s1 frames only move forward.
-    let s1_vals: Vec<u8> = samples.iter().map(|s| s.1).filter(|v| (1..=40).contains(v)).collect();
+    let s1_vals: Vec<u8> = samples
+        .iter()
+        .map(|s| s.1)
+        .filter(|v| (1..=40).contains(v))
+        .collect();
     assert!(s1_vals.windows(2).all(|w| w[1] >= w[0]));
     assert!(*s1_vals.last().unwrap() >= 35, "reached the end of s1");
     // After the playlist: dark and idle.
-    assert!(wait_for(1500, || uniform(&e.out(0)) == Some(0) && e.status().state == PlayerState::Idle).await);
+    assert!(
+        wait_for(1500, || uniform(&e.out(0)) == Some(0)
+            && e.status().state == PlayerState::Idle)
+        .await
+    );
 
     // Status progressed through both items with a playlist reference.
-    let playing: Vec<_> = statuses.iter().filter(|s| s.state == PlayerState::Playing).collect();
-    assert!(playing.iter().any(|s| s.item.as_ref().is_some_and(|i| i.id == "s1" && i.kind == "sequence")));
-    assert!(playing.iter().any(|s| s.item.as_ref().is_some_and(|i| i.id == "s2")));
+    let playing: Vec<_> = statuses
+        .iter()
+        .filter(|s| s.state == PlayerState::Playing)
+        .collect();
+    assert!(playing.iter().any(|s| s
+        .item
+        .as_ref()
+        .is_some_and(|i| i.id == "s1" && i.kind == "sequence")));
+    assert!(playing
+        .iter()
+        .any(|s| s.item.as_ref().is_some_and(|i| i.id == "s2")));
     let p = playing[0].playlist.as_ref().unwrap();
     assert_eq!((p.id.as_str(), p.count), ("p1", 2));
-    assert!(playing.iter().any(|s| s.next_item.as_ref().is_some_and(|i| i.id == "s2")));
+    assert!(playing
+        .iter()
+        .any(|s| s.next_item.as_ref().is_some_and(|i| i.id == "s2")));
     let s1_pos: Vec<u64> = playing
         .iter()
         .filter(|s| s.item.as_ref().is_some_and(|i| i.id == "s1"))
         .map(|s| s.pos_ms)
         .collect();
-    assert!(s1_pos.windows(2).all(|w| w[1] >= w[0]), "position never goes back");
-    assert!(s1_pos.iter().any(|&p| p > 400), "position advanced: {s1_pos:?}");
+    assert!(
+        s1_pos.windows(2).all(|w| w[1] >= w[0]),
+        "position never goes back"
+    );
+    assert!(
+        s1_pos.iter().any(|&p| p > 400),
+        "position advanced: {s1_pos:?}"
+    );
     assert_eq!(playing[0].duration_ms, 1000);
 }
 
@@ -304,11 +353,21 @@ async fn requests_play_next_then_playlist_resumes() {
         show.playlists = vec![playlist("p1", &["s1", "s2"], 0)];
     })
     .await;
-    e.engine.handle.play(PlayRequest { playlist_id: Some("p1".into()), ..empty_req() }).await.unwrap();
+    e.engine
+        .handle
+        .play(PlayRequest {
+            playlist_id: Some("p1".into()),
+            ..empty_req()
+        })
+        .await
+        .unwrap();
     assert!(wait_for(2000, || uniform(&e.out(0)) == Some(10)).await);
     e.engine
         .handle
-        .send(PlayerCmd::Enqueue { sequence_id: "s3".into(), name: Some("Ava".into()) })
+        .send(PlayerCmd::Enqueue {
+            sequence_id: "s3".into(),
+            name: Some("Ava".into()),
+        })
         .await
         .unwrap();
     let mut order = vec![];
@@ -327,21 +386,42 @@ async fn requests_play_next_then_playlist_resumes() {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    assert_eq!(order, [10, 30, 20], "request plays after the current item, then the playlist resumes");
+    assert_eq!(
+        order,
+        [10, 30, 20],
+        "request plays after the current item, then the playlist resumes"
+    );
 }
 
 fn empty_req() -> PlayRequest {
-    PlayRequest { playlist_id: None, sequence_id: None, dj_clip_id: None, effect_id: None, media_id: None, start_index: None }
+    PlayRequest {
+        playlist_id: None,
+        sequence_id: None,
+        dj_clip_id: None,
+        effect_id: None,
+        media_id: None,
+        start_index: None,
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crossfade_blends_items() {
     let e = env(LocalRole::Leader, false, |dir, show| {
-        show.sequences = vec![sequence(dir, "s1", 40, 25, |_| 40), sequence(dir, "s2", 40, 25, |_| 200)];
+        show.sequences = vec![
+            sequence(dir, "s1", 40, 25, |_| 40),
+            sequence(dir, "s2", 40, 25, |_| 200),
+        ];
         show.playlists = vec![playlist("p1", &["s1", "s2"], 400)];
     })
     .await;
-    e.engine.handle.play(PlayRequest { playlist_id: Some("p1".into()), ..empty_req() }).await.unwrap();
+    e.engine
+        .handle
+        .play(PlayRequest {
+            playlist_id: Some("p1".into()),
+            ..empty_req()
+        })
+        .await
+        .unwrap();
     let mut seen = vec![];
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_millis(2200) {
@@ -352,9 +432,16 @@ async fn crossfade_blends_items() {
     }
     assert!(seen.contains(&40) && seen.contains(&200));
     let blended = seen.iter().filter(|&&v| v > 45 && v < 195).count();
-    assert!(blended >= 3, "crossfade frames between the two looks: {seen:?}");
+    assert!(
+        blended >= 3,
+        "crossfade frames between the two looks: {seen:?}"
+    );
     // Monotonic rise through the blend.
-    let mid: Vec<u8> = seen.iter().copied().filter(|&v| v > 40 && v < 200).collect();
+    let mid: Vec<u8> = seen
+        .iter()
+        .copied()
+        .filter(|&v| v > 40 && v < 200)
+        .collect();
     assert!(mid.windows(2).all(|w| w[1] + 8 >= w[0]), "{mid:?}");
 }
 
@@ -365,12 +452,24 @@ async fn brightness_blackout_fade_tests_and_overlays() {
     })
     .await;
     let h = &e.engine.handle;
-    h.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.unwrap();
+    h.play(PlayRequest {
+        sequence_id: Some("s1".into()),
+        ..empty_req()
+    })
+    .await
+    .unwrap();
     assert!(wait_for(2000, || uniform(&e.out(0)) == Some(200)).await);
     h.send(PlayerCmd::SetBrightness(50)).await.unwrap();
-    assert!(wait_for(1000, || uniform(&e.out(0)) == Some(100)).await, "master brightness halves");
+    assert!(
+        wait_for(1000, || uniform(&e.out(0)) == Some(100)).await,
+        "master brightness halves"
+    );
     h.send(PlayerCmd::Blackout(true)).await.unwrap();
-    assert!(wait_for(1000, || uniform(&e.out(0)) == Some(0) && e.status().blackout).await);
+    assert!(
+        wait_for(1000, || uniform(&e.out(0)) == Some(0)
+            && e.status().blackout)
+        .await
+    );
     h.send(PlayerCmd::Blackout(false)).await.unwrap();
     h.send(PlayerCmd::SetBrightness(100)).await.unwrap();
     assert!(wait_for(1000, || uniform(&e.out(0)) == Some(200)).await);
@@ -380,7 +479,13 @@ async fn brightness_blackout_fade_tests_and_overlays() {
         mode: "solid".into(),
         color: Some("#ff0000".into()),
         speed: None,
-        target: TestTarget { props: Target { prop_ids: vec!["b".into()], ..Default::default() }, ..Default::default() },
+        target: TestTarget {
+            props: Target {
+                prop_ids: vec!["b".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         effect: None,
     })
     .await
@@ -389,7 +494,13 @@ async fn brightness_blackout_fade_tests_and_overlays() {
     assert_eq!(uniform(&e.out(0)), Some(200));
     assert!(wait_for(1000, || e.status().state == PlayerState::Testing).await);
     // Bad test requests are rejected.
-    assert!(h.test_start(TestRequest { mode: "bogus".into(), ..solid_req() }).await.is_err());
+    assert!(h
+        .test_start(TestRequest {
+            mode: "bogus".into(),
+            ..solid_req()
+        })
+        .await
+        .is_err());
     h.send(PlayerCmd::TestStop).await.unwrap();
     assert!(wait_for(1000, || uniform(&e.out(1)) == Some(200)).await);
 
@@ -397,31 +508,68 @@ async fn brightness_blackout_fade_tests_and_overlays() {
     let info = h.overlay_open("a".into()).await.unwrap();
     assert!(info.shm.ends_with("pixelplus-overlay-a"));
     assert_eq!((info.width, info.height), (2, 1));
-    h.send(PlayerCmd::Overlay(OverlayCmd::Enable { prop_id: "a".into(), enabled: true })).await.unwrap();
-    h.send(PlayerCmd::Overlay(OverlayCmd::PropPixels { prop_id: "a".into(), rgb: vec![1, 2, 3, 4, 5, 6] })).await.unwrap();
+    h.send(PlayerCmd::Overlay(OverlayCmd::Enable {
+        prop_id: "a".into(),
+        enabled: true,
+    }))
+    .await
+    .unwrap();
+    h.send(PlayerCmd::Overlay(OverlayCmd::PropPixels {
+        prop_id: "a".into(),
+        rgb: vec![1, 2, 3, 4, 5, 6],
+    }))
+    .await
+    .unwrap();
     assert!(wait_for(1000, || e.out(0) == [1, 2, 3, 4, 5, 6]).await);
     // Shared memory: the writer sets bit 0; the engine copies the frame.
     {
         use std::os::unix::fs::FileExt;
-        let f = std::fs::OpenOptions::new().read(true).write(true).open(&info.shm).unwrap();
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&info.shm)
+            .unwrap();
         f.write_all_at(&[9, 9, 9, 7, 7, 7], 12).unwrap();
         f.write_all_at(&1u32.to_ne_bytes(), 8).unwrap();
     }
     assert!(wait_for(1000, || e.out(0) == [9, 9, 9, 7, 7, 7]).await);
-    h.send(PlayerCmd::Overlay(OverlayCmd::Enable { prop_id: "a".into(), enabled: false })).await.unwrap();
+    h.send(PlayerCmd::Overlay(OverlayCmd::Enable {
+        prop_id: "a".into(),
+        enabled: false,
+    }))
+    .await
+    .unwrap();
     assert!(wait_for(1000, || uniform(&e.out(0)) == Some(200)).await);
     assert!(h.overlay_open("nope".into()).await.is_err());
 
     // Stop with fade: dims over ~1 s, then idle and dark.
     let t0 = Instant::now();
     h.send(PlayerCmd::Stop { fade: true }).await.unwrap();
-    assert!(wait_for(600, || uniform(&e.out(0)).is_some_and(|v| v > 20 && v < 180)).await, "fading");
-    assert!(wait_for(2000, || uniform(&e.out(0)) == Some(0) && e.status().state == PlayerState::Idle).await);
-    assert!(t0.elapsed() >= Duration::from_millis(800), "the fade took about a second");
+    assert!(
+        wait_for(600, || uniform(&e.out(0))
+            .is_some_and(|v| v > 20 && v < 180))
+        .await,
+        "fading"
+    );
+    assert!(
+        wait_for(2000, || uniform(&e.out(0)) == Some(0)
+            && e.status().state == PlayerState::Idle)
+        .await
+    );
+    assert!(
+        t0.elapsed() >= Duration::from_millis(800),
+        "the fade took about a second"
+    );
 }
 
 fn solid_req() -> TestRequest {
-    TestRequest { mode: "solid".into(), color: None, speed: None, target: TestTarget::default(), effect: None }
+    TestRequest {
+        mode: "solid".into(),
+        color: None,
+        speed: None,
+        target: TestTarget::default(),
+        effect: None,
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -431,25 +579,51 @@ async fn missing_and_corrupt_items_are_skipped() {
         let mut missing = sequence(dir, "missing", 20, 25, |_| 1);
         missing.file = "sequences/not-there.fseq".into();
         let corrupt = sequence(dir, "corrupt", 20, 25, |_| 2);
-        std::fs::write(dir.join("sequences/corrupt.fseq"), b"garbage garbage garbage").unwrap();
+        std::fs::write(
+            dir.join("sequences/corrupt.fseq"),
+            b"garbage garbage garbage",
+        )
+        .unwrap();
         show.sequences = vec![missing, corrupt, good];
         show.playlists = vec![playlist("p1", &["missing", "corrupt", "good"], 0)];
     })
     .await;
     let mut events = e.state.events.subscribe();
-    e.engine.handle.play(PlayRequest { playlist_id: Some("p1".into()), ..empty_req() }).await.unwrap();
-    assert!(wait_for(3000, || uniform(&e.out(0)) == Some(77)).await, "the good item plays");
+    e.engine
+        .handle
+        .play(PlayRequest {
+            playlist_id: Some("p1".into()),
+            ..empty_req()
+        })
+        .await
+        .unwrap();
+    assert!(
+        wait_for(3000, || uniform(&e.out(0)) == Some(77)).await,
+        "the good item plays"
+    );
     let mut warnings = 0;
     while let Ok(ev) = events.try_recv() {
         if let crate::events::Event::Json { kind: "log", data } = ev {
-            if data["message"].as_str().unwrap_or("").starts_with("Skipped") {
+            if data["message"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("Skipped")
+            {
                 warnings += 1;
             }
         }
     }
     assert!(warnings >= 2, "a warning per skipped item");
     // A playlist that is entirely unplayable stops instead of spinning.
-    assert!(e.engine.handle.play(PlayRequest { sequence_id: Some("missing".into()), ..empty_req() }).await.is_err());
+    assert!(e
+        .engine
+        .handle
+        .play(PlayRequest {
+            sequence_id: Some("missing".into()),
+            ..empty_req()
+        })
+        .await
+        .is_err());
     assert!(wait_for(1500, || e.status().state == PlayerState::Idle).await);
 }
 
@@ -461,21 +635,38 @@ async fn effect_look_and_pause_resume() {
             id: "green".into(),
             name: "Green".into(),
             effect: EffectKind::Solid,
-            params: [("color".to_string(), serde_json::json!("#00ff00"))].into_iter().collect(),
-            target: Target { all: true, ..Default::default() },
+            params: [("color".to_string(), serde_json::json!("#00ff00"))]
+                .into_iter()
+                .collect(),
+            target: Target {
+                all: true,
+                ..Default::default()
+            },
         });
     })
     .await;
     let h = &e.engine.handle;
-    h.play(PlayRequest { effect_id: Some("green".into()), ..empty_req() }).await.unwrap();
-    assert!(wait_for(1500, || {
-        let o = e.out(0);
-        o.len() == 6 && o[1] > 0 && o[0] == 0 && o[2] == 0
+    h.play(PlayRequest {
+        effect_id: Some("green".into()),
+        ..empty_req()
     })
-    .await);
+    .await
+    .unwrap();
+    assert!(
+        wait_for(1500, || {
+            let o = e.out(0);
+            o.len() == 6 && o[1] > 0 && o[0] == 0 && o[2] == 0
+        })
+        .await
+    );
     assert!(wait_for(1000, || e.status().state == PlayerState::Effect).await);
 
-    h.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.unwrap();
+    h.play(PlayRequest {
+        sequence_id: Some("s1".into()),
+        ..empty_req()
+    })
+    .await
+    .unwrap();
     assert!(wait_for(1500, || uniform(&e.out(0)).is_some_and(|v| v > 3)).await);
     h.send(PlayerCmd::Pause).await.unwrap();
     assert!(wait_for(1000, || e.status().state == PlayerState::Paused).await);
@@ -483,10 +674,16 @@ async fn effect_look_and_pause_resume() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(uniform(&e.out(0)), held, "paused: frame holds");
     h.send(PlayerCmd::Resume).await.unwrap();
-    assert!(wait_for(1000, || uniform(&e.out(0)) != held).await, "resumed");
+    assert!(
+        wait_for(1000, || uniform(&e.out(0)) != held).await,
+        "resumed"
+    );
     h.send(PlayerCmd::Seek(5000)).await.unwrap();
     // Frame 200 → value (200 % 200) + 1 = 1, then counting up again.
-    assert!(wait_for(1000, || uniform(&e.out(0)).is_some_and(|v| v < 20)).await, "seeked");
+    assert!(
+        wait_for(1000, || uniform(&e.out(0)).is_some_and(|v| v < 20)).await,
+        "seeked"
+    );
     assert!(wait_for(1000, || e.status().pos_ms >= 5000).await);
 }
 
@@ -496,10 +693,17 @@ async fn follower_plays_slices_from_sync() {
         let seq = sequence(dir, "s1", 400, 25, |f| (f / 4) as u8);
         // Build this node's slice like the leader would.
         let map = NodeMap::build(show, "n1").unwrap();
-        pixelplus_core::ppseq::write_slice_from_path(dir.join("sequences/s1.fseq"), &map, dir.join("sequences/s1.ppseq"))
-            .unwrap();
+        pixelplus_core::ppseq::write_slice_from_path(
+            dir.join("sequences/s1.fseq"),
+            &map,
+            dir.join("sequences/s1.ppseq"),
+        )
+        .unwrap();
         std::fs::remove_file(dir.join("sequences/s1.fseq")).unwrap();
-        show.sequences = vec![Sequence { file: "sequences/s1.ppseq".into(), ..seq }];
+        show.sequences = vec![Sequence {
+            file: "sequences/s1.ppseq".into(),
+            ..seq
+        }];
     })
     .await;
     let h = &e.engine.handle;
@@ -508,7 +712,11 @@ async fn follower_plays_slices_from_sync() {
         leader: "leader".into(),
         show_version: 1,
         state: PlayerState::Playing,
-        item: Some(ItemRef { kind: "sequence".into(), id: "s1".into(), name: "Song".into() }),
+        item: Some(ItemRef {
+            kind: "sequence".into(),
+            id: "s1".into(),
+            name: "Song".into(),
+        }),
         pos_ms: pos,
         sent_at_ms: now_ms(),
         effect: None,
@@ -517,19 +725,38 @@ async fn follower_plays_slices_from_sync() {
         blackout: false,
     };
     // Followers refuse local playback.
-    assert!(h.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.is_err());
+    assert!(h
+        .play(PlayRequest {
+            sequence_id: Some("s1".into()),
+            ..empty_req()
+        })
+        .await
+        .is_err());
 
     h.send(PlayerCmd::Sync(packet(4000))).await.unwrap();
     // Frame 160 → value 40.
-    assert!(wait_for(2000, || uniform(&e.out(0)).is_some_and(|v| (40..=44).contains(&v))).await);
+    assert!(
+        wait_for(2000, || uniform(&e.out(0))
+            .is_some_and(|v| (40..=44).contains(&v)))
+        .await
+    );
     // Jump (> 250 ms).
     h.send(PlayerCmd::Sync(packet(8000))).await.unwrap();
-    assert!(wait_for(1000, || uniform(&e.out(0)).is_some_and(|v| (80..=84).contains(&v))).await);
+    assert!(
+        wait_for(1000, || uniform(&e.out(0))
+            .is_some_and(|v| (80..=84).contains(&v)))
+        .await
+    );
     assert!(wait_for(1000, || e.status().item.is_some_and(|i| i.id == "s1")).await);
     // Leader releases us: dark.
-    h.send(PlayerCmd::Sync(SyncPacket { leader: String::new(), state: PlayerState::Idle, item: None, ..packet(0) }))
-        .await
-        .unwrap();
+    h.send(PlayerCmd::Sync(SyncPacket {
+        leader: String::new(),
+        state: PlayerState::Idle,
+        item: None,
+        ..packet(0)
+    }))
+    .await
+    .unwrap();
     assert!(wait_for(1000, || uniform(&e.out(0)) == Some(0)).await);
     assert!(wait_for(2500, || e.status().state == PlayerState::Idle).await);
 }
@@ -547,12 +774,21 @@ async fn preview_frames_cover_all_props() {
     .await;
     let mut rx = e.state.events.subscribe();
     crate::api::ws::PREVIEW_SUBSCRIBERS.fetch_add(1, Ordering::Relaxed);
-    e.engine.handle.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.unwrap();
+    e.engine
+        .handle
+        .play(PlayRequest {
+            sequence_id: Some("s1".into()),
+            ..empty_req()
+        })
+        .await
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut found = None;
     while Instant::now() < deadline && found.is_none() {
         match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
-            Ok(Ok(crate::events::Event::Preview(b))) if b.len() == 5 + 18 && b[5] == 50 => found = Some(b),
+            Ok(Ok(crate::events::Event::Preview(b))) if b.len() == 5 + 18 && b[5] == 50 => {
+                found = Some(b)
+            }
             _ => {}
         }
     }
@@ -574,22 +810,43 @@ async fn play_ends_a_live_look() {
         id: "live".into(),
         name: "Blue".into(),
         effect: EffectKind::Solid,
-        params: [("color".to_string(), serde_json::json!("#0000ff"))].into_iter().collect(),
-        target: Target { all: true, ..Default::default() },
+        params: [("color".to_string(), serde_json::json!("#0000ff"))]
+            .into_iter()
+            .collect(),
+        target: Target {
+            all: true,
+            ..Default::default()
+        },
     };
     h.test_start(TestRequest {
         mode: "effect".into(),
         color: None,
         speed: None,
-        target: TestTarget { node_id: None, output: None, props: look.target.clone() },
+        target: TestTarget {
+            node_id: None,
+            output: None,
+            props: look.target.clone(),
+        },
         effect: Some(look),
     })
     .await
     .unwrap();
     assert!(wait_for(1000, || e.status().state == PlayerState::Effect).await);
-    h.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.unwrap();
-    assert!(wait_for(1500, || e.status().state == PlayerState::Playing).await, "{:?}", e.status().state);
-    assert!(wait_for(1500, || uniform(&e.out(0)) == Some(77)).await, "the sequence shows, not the look");
+    h.play(PlayRequest {
+        sequence_id: Some("s1".into()),
+        ..empty_req()
+    })
+    .await
+    .unwrap();
+    assert!(
+        wait_for(1500, || e.status().state == PlayerState::Playing).await,
+        "{:?}",
+        e.status().state
+    );
+    assert!(
+        wait_for(1500, || uniform(&e.out(0)) == Some(77)).await,
+        "the sequence shows, not the look"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -598,9 +855,29 @@ async fn debug_tap_records_the_shown_sequence_frame() {
         show.sequences = vec![sequence(dir, "s1", 400, 25, |f| (f % 200) as u8 + 1)];
     })
     .await;
-    e.engine.handle.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.unwrap();
-    let tap = e.state.services.debug_output.get().expect("tap enabled in dev/sim").clone();
-    assert!(wait_for(1500, || tap.snapshot().sequence.as_ref().is_some_and(|(_, f)| *f > 2)).await);
+    e.engine
+        .handle
+        .play(PlayRequest {
+            sequence_id: Some("s1".into()),
+            ..empty_req()
+        })
+        .await
+        .unwrap();
+    let tap = e
+        .state
+        .services
+        .debug_output
+        .get()
+        .expect("tap enabled in dev/sim")
+        .clone();
+    assert!(
+        wait_for(1500, || tap
+            .snapshot()
+            .sequence
+            .as_ref()
+            .is_some_and(|(_, f)| *f > 2))
+        .await
+    );
     let t = tap.snapshot();
     let (id, frame) = t.sequence.clone().unwrap();
     assert_eq!(id, "s1");
@@ -619,7 +896,11 @@ async fn follower_leader_test_replaces_local_identify() {
         mode: "solid".into(),
         color: Some("#ffffff".into()),
         speed: None,
-        target: TestTarget { node_id: Some("n1".into()), output: None, props: Default::default() },
+        target: TestTarget {
+            node_id: Some("n1".into()),
+            output: None,
+            props: Default::default(),
+        },
         effect: None,
     })
     .await
@@ -630,7 +911,14 @@ async fn follower_leader_test_replaces_local_identify() {
         mode: "solid".into(),
         color: Some("#ff0000".into()),
         speed: None,
-        target: TestTarget { node_id: None, output: None, props: Target { all: true, ..Default::default() } },
+        target: TestTarget {
+            node_id: None,
+            output: None,
+            props: Target {
+                all: true,
+                ..Default::default()
+            },
+        },
         effect: None,
     };
     let now_ms = e.state.started.elapsed().as_millis() as u64;

@@ -85,12 +85,20 @@ async fn client(state: AppState, socket: WebSocket) {
 
     // Greet with the current show version so the client can sync immediately.
     let hello = serde_json::json!({ "type": "show", "data": { "version": state.store.version() } });
-    if tx.send(Message::Text(hello.to_string().into())).await.is_err() {
+    if tx
+        .send(Message::Text(hello.to_string().into()))
+        .await
+        .is_err()
+    {
         return;
     }
     for (kind, data) in state.services.snapshot_for_new_client() {
         let msg = serde_json::json!({ "type": kind, "data": data });
-        if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+        if tx
+            .send(Message::Text(msg.to_string().into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }

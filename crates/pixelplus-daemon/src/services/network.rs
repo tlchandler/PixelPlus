@@ -288,7 +288,19 @@ pub fn wifi_connect_args(ssid: &str, with_password: bool) -> Vec<String> {
     if with_password {
         a.push("--ask".into());
     }
-    a.extend(["--wait", "45", "dev", "wifi", "connect", ssid, "name", "pixelplus-wifi"].map(String::from));
+    a.extend(
+        [
+            "--wait",
+            "45",
+            "dev",
+            "wifi",
+            "connect",
+            ssid,
+            "name",
+            "pixelplus-wifi",
+        ]
+        .map(String::from),
+    );
     a
 }
 

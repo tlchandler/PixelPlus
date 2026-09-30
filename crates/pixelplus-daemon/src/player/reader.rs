@@ -46,11 +46,17 @@ enum SeqFile {
 
 impl SeqFile {
     fn open(path: &Path) -> Result<SeqFile, String> {
-        let is_ppseq = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ppseq"));
+        let is_ppseq = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("ppseq"));
         if is_ppseq {
-            PpseqFile::open(path).map(SeqFile::Ppseq).map_err(|e| e.to_string())
+            PpseqFile::open(path)
+                .map(SeqFile::Ppseq)
+                .map_err(|e| e.to_string())
         } else {
-            FseqFile::open(path).map(SeqFile::Fseq).map_err(|e| e.to_string())
+            FseqFile::open(path)
+                .map(SeqFile::Fseq)
+                .map_err(|e| e.to_string())
         }
     }
 
@@ -109,7 +115,10 @@ impl FrameReader {
     /// Open `path` on a new thread and start reading at `start_frame`.
     pub fn open(path: PathBuf, start_frame: u32) -> FrameReader {
         let shared = Arc::new(Shared {
-            state: Mutex::new(State { next: start_frame, ..Default::default() }),
+            state: Mutex::new(State {
+                next: start_frame,
+                ..Default::default()
+            }),
             cond: Condvar::new(),
         });
         let s2 = shared.clone();
@@ -160,7 +169,9 @@ impl FrameReader {
     /// frame is not read yet (the caller keeps showing its previous frame).
     pub fn get(&self, idx: u32, out: &mut [u8]) -> bool {
         let mut st = self.shared.state.lock();
-        let Some(meta) = st.meta.clone() else { return false };
+        let Some(meta) = st.meta.clone() else {
+            return false;
+        };
         let idx = idx.min(meta.frame_count.saturating_sub(1));
         // Drop frames we are past.
         let mut dropped = false;
@@ -278,7 +289,9 @@ mod tests {
     pub(crate) fn write_fseq(path: &Path, frames: u32, channels: u32, frame_ms: u8) {
         let mut w = FseqWriter::create(path, FseqWriterOptions::new(channels, frame_ms)).unwrap();
         for f in 0..frames {
-            let frame: Vec<u8> = (0..channels).map(|c| (f as u8).wrapping_add(c as u8)).collect();
+            let frame: Vec<u8> = (0..channels)
+                .map(|c| (f as u8).wrapping_add(c as u8))
+                .collect();
             w.write_frame(&frame).unwrap();
         }
         w.finish().unwrap();
@@ -286,7 +299,8 @@ mod tests {
 
     #[test]
     fn reads_ahead_and_seeks() {
-        let dir = std::env::temp_dir().join(format!("pp-reader-{}", pixelplus_core::model::new_id()));
+        let dir =
+            std::env::temp_dir().join(format!("pp-reader-{}", pixelplus_core::model::new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.fseq");
         write_fseq(&path, 200, 9, 25);
@@ -323,7 +337,8 @@ mod tests {
 
     #[test]
     fn missing_and_corrupt_files_report_errors() {
-        let dir = std::env::temp_dir().join(format!("pp-reader-{}", pixelplus_core::model::new_id()));
+        let dir =
+            std::env::temp_dir().join(format!("pp-reader-{}", pixelplus_core::model::new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let r = FrameReader::open(dir.join("missing.fseq"), 0);
         assert!(!r.wait_ready(0, Duration::from_secs(5)));
