@@ -35,6 +35,18 @@ impl Env {
         sim.with_latest(|s| s.outputs.get(i).cloned().unwrap_or_default())
     }
 
+    /// Outputs `i` and `j` read from the same frame (one lock), so a frame
+    /// arriving between two separate reads can't tear the comparison.
+    fn out_pair(&self, i: usize, j: usize) -> (Vec<u8>, Vec<u8>) {
+        let sim = self.engine.sim.as_ref().expect("sim output");
+        sim.with_latest(|s| {
+            (
+                s.outputs.get(i).cloned().unwrap_or_default(),
+                s.outputs.get(j).cloned().unwrap_or_default(),
+            )
+        })
+    }
+
     fn status(&self) -> PlayerStatus {
         self.engine.handle.status()
     }
@@ -260,8 +272,7 @@ async fn playlist_run(audio: bool) {
     let mut samples: Vec<(u64, u8, u8)> = vec![]; // (ms, out1 value, out2 value)
     let mut statuses = vec![];
     while t0.elapsed() < Duration::from_millis(2600) {
-        let a = e.out(0);
-        let b = e.out(1);
+        let (a, b) = e.out_pair(0, 1);
         assert_eq!(a.len(), 6, "output 1 carries prop A's 2 pixels");
         assert_eq!(b.len(), 9, "output 2 carries prop B's 3 pixels");
         let (va, vb) = (uniform(&a).expect("uniform"), uniform(&b).expect("uniform"));
