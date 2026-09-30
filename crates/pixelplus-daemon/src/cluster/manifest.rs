@@ -37,6 +37,9 @@ pub struct ManifestSettings {
     pub location: Location,
     #[serde(default)]
     pub oled: OledSettings,
+    /// Pixel output options (latch alignment).
+    #[serde(default)]
+    pub output: OutputSettings,
 }
 
 /// What the leader tells one follower (`GET /cluster/manifest/:nodeId`).
@@ -161,6 +164,7 @@ pub fn build(
         settings: ManifestSettings {
             location: show.schedule.location.clone(),
             oled: show.settings.oled.clone(),
+            output: show.settings.output.clone(),
         },
         mapping_hash,
     })
@@ -218,6 +222,7 @@ pub fn follower_show(
         },
         settings: ShowSettings {
             oled: manifest.settings.oled.clone(),
+            output: manifest.settings.output.clone(),
             security: current.settings.security.clone(),
             ..ShowSettings::default()
         },

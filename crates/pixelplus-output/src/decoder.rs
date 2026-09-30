@@ -58,6 +58,9 @@ pub struct DecodedOutput {
     pub low_ns: Option<MinMax>,
     /// Low time from the last bit to the first bit of the next frame.
     pub reset_ns: f64,
+    /// When the last bit ends, from the start of the frame period (the string
+    /// latches its new colours one reset time later). `None` without data.
+    pub data_end_ns: Option<f64>,
     /// Human-readable timing problems (at most a few are kept).
     pub violations: Vec<String>,
     /// Total number of timing problems.
@@ -219,7 +222,8 @@ impl Track {
         }
     }
 
-    fn finish(mut self, period: u64, px_ns: f64, spec: &Ws281xSpec) -> DecodedOutput {
+    fn finish(mut self, period: u64, px_ns: f64, spec: &Ws281xSpec, bit_px: u64) -> DecodedOutput {
+        self.out.data_end_ns = self.prev_rise.map(|r| (r + bit_px) as f64 * px_ns);
         if self.high {
             self.violation("line is still high at the end of the frame".into());
         }
@@ -361,7 +365,7 @@ impl WsDecoder {
         Ok(DecodedFrame {
             outputs: tracks
                 .into_iter()
-                .map(|tr| tr.finish(period, px_ns, &self.spec))
+                .map(|tr| tr.finish(period, px_ns, &self.spec, u64::from(g.bit.px_per_bit)))
                 .collect(),
             latch_violations,
             latch_violation_count,
@@ -446,6 +450,82 @@ mod tests {
         let decoded = WsDecoder::new(layout, geometry).decode(&fb).unwrap();
         decoded.verify(frame, pixels as usize).unwrap();
         decoded
+    }
+
+    #[test]
+    fn bottom_aligned_strings_latch_together() {
+        // Strings of 3, 7 and 12 LEDs (and an empty one) on a difftx, plus
+        // a difftxlarge frame with outputs in every bank.
+        let a: Vec<u8> = (0..9).map(|i| (i * 29 + 1) as u8).collect();
+        let b: Vec<u8> = (0..21).map(|i| (i * 53 + 7) as u8).collect();
+        let c: Vec<u8> = (0..36).map(|i| (i * 11 + 3) as u8).collect();
+        let e: [u8; 0] = [];
+        for (board, frame, pixels) in [
+            (
+                BoardKind::Difftx,
+                OutputFrameRef::new(vec![&a[..], &b[..], &e[..], &c[..]]),
+                16,
+            ),
+            (
+                BoardKind::Difftxlarge,
+                {
+                    let mut outs: Vec<&[u8]> = vec![&[]; 60];
+                    outs[0] = &a;
+                    outs[25] = &b;
+                    outs[59] = &c;
+                    OutputFrameRef::new(outs)
+                },
+                12,
+            ),
+        ] {
+            let layout = OutputLayout::for_board(board);
+            let geometry = DpiGeometry::for_pixels(pixels).unwrap();
+            let decode = |bottom: bool| {
+                let mut enc = WsEncoder::new(layout.clone(), geometry).unwrap();
+                enc.set_bottom_align(bottom);
+                let words = enc.encode_to_vec(&frame).unwrap();
+                let w = geometry.hactive() as usize;
+                let h = geometry.vactive() as usize;
+                let fb = FrameBufferRef::new(&words, w, h, w).unwrap();
+                let d = WsDecoder::new(layout.clone(), geometry)
+                    .decode(&fb)
+                    .unwrap();
+                // Round trip: same bytes, clean timing, reset long enough.
+                d.verify(&frame, pixels as usize).unwrap();
+                d
+            };
+            let ends = |d: &DecodedFrame| -> Vec<f64> {
+                d.outputs.iter().filter_map(|o| o.data_end_ns).collect()
+            };
+            let bit_ns = geometry.pixel_ns() * f64::from(geometry.bit.px_per_bit);
+            let top = ends(&decode(false));
+            let bottom = ends(&decode(true));
+            assert_eq!((top.len(), bottom.len()), (3, 3), "{board:?}");
+            let spread = |v: &[f64]| {
+                v.iter().cloned().fold(f64::MIN, f64::max)
+                    - v.iter().cloned().fold(f64::MAX, f64::min)
+            };
+            // Top-aligned: 12 vs 3 LEDs latch 9 lines apart.
+            assert!(
+                spread(&top) > 8.5 * geometry.line_ns(),
+                "{board:?}: top-aligned spread {}",
+                spread(&top)
+            );
+            // Bottom-aligned: every string ends within one bit (bank skew).
+            assert!(
+                spread(&bottom) < bit_ns,
+                "{board:?}: bottom-aligned spread {} ns",
+                spread(&bottom)
+            );
+            // …at the end of the longest string's last line.
+            let longest_end =
+                12.0 * geometry.line_ns() - f64::from(geometry.h_blank_px()) * geometry.pixel_ns();
+            assert!(
+                (bottom[0] - longest_end).abs() < bit_ns,
+                "{board:?}: {} vs {longest_end}",
+                bottom[0]
+            );
+        }
     }
 
     #[test]

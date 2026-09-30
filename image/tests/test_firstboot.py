@@ -36,6 +36,18 @@ class RecordingSys(firstboot.Sys):
         return None
 
 
+class PowerSaveSys(RecordingSys):
+    def __init__(self, ps):
+        super().__init__()
+        self.ps = ps
+
+    def output(self, argv, timeout=30):
+        if argv[:2] == ["iw", "dev"]:
+            self.commands.append(list(argv))
+            return f"Power save: {self.ps}\n"
+        return super().output(argv, timeout)
+
+
 class FirstbootTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -66,6 +78,19 @@ class FirstbootTests(unittest.TestCase):
         import pwd
         home = os.path.join(self.tmp, "home", "pi")
         firstboot.first_login_user = lambda: pwd.struct_passwd(("pi", "x", os.getuid(), os.getgid(), "", home, "/bin/bash"))
+
+    def test_wifi_power_save_off(self):
+        os.makedirs(os.path.join(self.tmp, "sys/class/net/wlan0"))
+        s = PowerSaveSys("on")
+        firstboot.wifi_power_save_off(s)
+        self.assertIn(["iw", "dev", "wlan0", "set", "power_save", "off"], s.commands)
+        s = PowerSaveSys("off")
+        firstboot.wifi_power_save_off(s)
+        self.assertNotIn(["iw", "dev", "wlan0", "set", "power_save", "off"], s.commands)
+        # No Wi-Fi interface: nothing to do.
+        s = PowerSaveSys("on")
+        firstboot.wifi_power_save_off(s, "wlan9")
+        self.assertEqual(s.commands, [])
 
     def tearDown(self):
         firstboot.Sys.have = self.saved_have

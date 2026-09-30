@@ -24,6 +24,7 @@
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import BoardDiagram from '$lib/components/viz/BoardDiagram.svelte';
+	import SyncBadge from '$lib/components/ui/SyncBadge.svelte';
 	import {
 		Radar,
 		Plus,
@@ -346,6 +347,15 @@
 										)}{:else if n.role === 'leader'}Online{:else if live.syncState === 'syncing'}Syncing files {live
 											.files.total - live.files.pending}/{live.files.total}{:else}In sync{/if}
 								</span>
+								{#if live.online && n.role === 'follower'}
+									<SyncBadge node={live} />
+								{:else if live.online && live.wifiPowerSave}
+									<span
+										class="badge red"
+										title="Wi-Fi power saving delays packets by up to a second and hurts sync between controllers"
+										>Wi-Fi power saving on</span
+									>
+								{/if}
 							{/if}
 						</div>
 						<div class="faint small">

@@ -121,6 +121,14 @@ Implementation is original (FPP's DPIPixels is CC-BY-ND and must not be copied);
 vertical size: the daemon sizes it from the longest configured string (`DpiGeometry::for_pixels`),
 regenerates the config.txt fragment and asks the user to reboot (health check + banner in the UI).
 
+**When a frame lights up.** The display scans out on a free-running vblank grid (refresh
+R = 24.8 ms at 800 px, 49.3 ms at 1600 px) and a string of L LEDs latches L × 30.6 µs + 0.28 ms
+after scan-out starts. The DPI backend reports every page flip's vblank sequence and
+CLOCK_MONOTONIC timestamp (`PixelOutput::present_timing`, `VblankModel`); the player paces its
+output thread from that grid and chooses each frame for the moment it actually lights up (§7.4.6).
+Optional, experimental: `settings.output.latchAlign` bottom-aligns every string's data so all
+strings on a controller latch together (DESIGN.md "Latch alignment").
+
 ---
 
 ## 4. Show model (JSON; Rust types in `pixelplus-core::model`)
@@ -290,7 +298,9 @@ ScheduleEntry {
 TimeSpec = { kind: "clock", time: "HH:MM" } | { kind: "sunset"|"sunrise", offsetMin: number }
 
 ShowSettings {
-  audio: { device: string, volume: number, normalize: boolean, targetLufs: number }
+  audio: { device: string, volume: number, normalize: boolean, targetLufs: number,
+           outputDelayMs?: number }   // lights delayed by this (−500…2000 ms), §7.4.7
+  output?: { latchAlign: boolean }    // experimental: all strings latch together, §3.4
   alerts: { email?: {smtpHost, smtpPort, username, password, from, to, tls}, ntfy?: {server, topic}, rules: {tempC: number, voltageMin: number, followerOffline: boolean, showFailure: boolean} }
   mqtt: { enabled: boolean, host, port, username?, password?, baseTopic: string, homeAssistantDiscovery: boolean }
   requests: { enabled: boolean, maxQueue: number, playlistId?: string, title: string, message: string }
@@ -391,7 +401,9 @@ served only with an audio content type from a whitelist, `Content-Disposition: a
 * Every node advertises mDNS `_pixelplus._tcp` (TXT: `id`, `role`, `board`, `ver`; through
   avahi-daemon when it runs, else the built-in responder - see BUILDING.md "mDNS") and sends a UDP
   broadcast **beacon** on port 32320 every 2 s:
-  `{"t":"beacon","id","name","role","board","boardRev","pi","ver","http":80,"adoptedBy":<leaderId|null>}`.
+  `{"t":"beacon","id","name","role","board","boardRev","pi","ver","http":80,"adoptedBy":<leaderId|null>,"proto":2}`
+  (`proto` = cluster protocol version, §7.4.1; absent = 1). Broadcast is used for discovery only:
+  everything timing-related is unicast (§7.4.1).
 * The leader UI lists unadopted nodes under **Controllers → New controllers found**. Clicking
   **Adopt** calls `POST http://<follower>/api/v1/cluster/adopt {leaderId, leaderUrl, dh, force?, name?}`;
   the follower answers `{id, name, hostname, board, …, dh, proof}`. Both sides derive **a key for this
@@ -428,16 +440,146 @@ frames: zstd-compressed blocks, each block = up to 64 frames; block index table 
 The leader uses the same renderer for its own outputs (it plays from the full fseq directly).
 
 ### 7.4 Sync
+
+Goal: every controller shows the frame the audience should see *now*, i.e. the leader's
+timeline at the moment the lights change, and that timeline matches what the audience hears.
+Error sources, from largest (before protocol 2) to smallest: the follower's old ±1-frame
+deadband (a 0..F sawtooth), vblank quantisation and pipeline lag (0..R late per node), WS281x
+latch delay (0–49 ms by string length), and only then the network (sub-ms with the measures
+below). Measured accuracy and remaining limits: §7.4.9; board options: `docs/HARDWARE-NOTES.md`.
+
 * Effects sent to followers (sync packets, commands, manifests) must be copies passed through
   `effects::stamp_world_bounds(&mut copy, &show.props)` so display-wide effects line up across nodes.
-* Leader broadcasts (UDP 32320, and unicast to adopted followers) **sync packets** every 250 ms
-  while playing and on every state change:
-  `{"t":"sync","leader":id,"showVersion","state":"playing|paused|stopped|effect","item":{type,id},"startedAtMs":<leader monotonic ms>,"posMs":number,"sentAtMs":number,"effect"?:EffectPreset,"brightness":number}`
-* Followers keep a clock offset estimate using NTP-style ping (`{"t":"ping"}` / `pong`) and set
-  their playback position to `posMs + (now - sentAt)`; drift > 1 frame → slew, > 250 ms → jump.
-* Audio plays only on the leader. Leader position is derived from the audio clock when audio is playing.
-* Commands (test patterns, fault finder, effects, blackout) are sent as HTTP POSTs to
-  `/api/v1/cluster/command` on the follower.
+* Audio plays only on the leader. Commands (test patterns, fault finder, effects, blackout) are
+  HTTP POSTs to `/api/v1/cluster/command` on the follower.
+
+#### 7.4.1 Transport and protocol version
+* Clock probes (`ping`/`pong`) and sync packets are **unicast** UDP 32320 to/from each adopted
+  follower, MACed with that follower's key (§7.5). Broadcast carries only the unauthenticated
+  discovery beacon: Wi-Fi broadcast waits for the next DTIM beacon, goes out at the lowest rate
+  and is never retransmitted.
+* The cluster socket is marked **DSCP EF** (`IP_TOS 0xB8`, IPv6 traffic class) and
+  `SO_PRIORITY 6`; Linux maps EF to the Wi-Fi voice/video access category (WMM), so timing
+  packets skip the best-effort queue. The overlay socket uses AF41.
+* **Protocol version** `proto` (`proto.rs PROTOCOL_VERSION`): 1 = 3-timestamp pong, integer-ms
+  sync; **2** = 4-timestamp pong (`t2`), timeline anchors, sync-quality reports. A leader and its
+  followers must run the same version: a mismatch is shown on the follower's node card, in the
+  leader's log and health check ("update both to the same version"). Protocol 2 still parses
+  protocol 1 packets (missing fields fall back), but only matching versions are supported.
+
+#### 7.4.2 Clock exchange (4 timestamps, kernel receive stamps)
+```
+ping : follower → leader  {"t":"ping","id","t0"}            t0 = follower clock when sent
+pong : leader → follower  {"t":"pong","id","t0","t1","t2","boot"}
+                           t1 = leader kernel RX stamp of the ping, t2 = leader clock when the pong is sent
+                           t3 = follower kernel RX stamp of the pong
+delay  = (t3 − t0) − (t2 − t1)        round trip without the leader's processing time
+offset = ((t1 − t0) + (t2 − t3)) / 2  leader clock − follower clock
+```
+* Clocks are CLOCK_MONOTONIC ms since each daemon's start (f64). Receive times come from
+  `SO_TIMESTAMPNS` (taken in the kernel network core, free of tokio wake-up, JSON and HMAC time;
+  CLOCK_REALTIME converted to monotonic at receive time; stamps older than 100 ms are refused),
+  falling back to userspace time where unavailable. `t0` is taken after the ping is encoded,
+  `t2` just before encoding plus the lower envelope of recent encode times.
+* Pings go out in **bursts**: 5 pings 20 ms apart every 2 s; a **fast-start burst** of 16 pings
+  10 ms apart (every 200 ms) after adoption, a leader restart (new boot id) or a detected clock
+  step, until 5 good samples exist (a usable estimate in ~200 ms). Unanswered pings over the last
+  90 s give the loss rate.
+
+#### 7.4.3 Clock model (`cluster/clock.rs ClockModel`)
+Fits `offset(t) = a + b·(t − t_ref)` (offset **and drift** b) over the last **90 s**:
+the best sample of each burst and of each 4 s bin; only samples within
+`3 · max(0.3 ms, ½(p30 − min))` of the minimum delay; weights `1/(delay − min + 0.1 ms)²`;
+the drift regularised toward the previous estimate (σ 200 ppm, clamp ±1000 ppm); one robust
+pass drops residual outliers. A sample further from the fit than half its excess delay (+ fit
+noise, drift uncertainty, 0.5 ms) is **quarantined**; low-delay quarantined samples in 3 bursts in a
+row mean the clock stepped (e.g. NTP) and the fit restarts from them. An offset jump > 50 ms
+(leader restart) or a new leader boot id resets at once. Without pongs the fit extrapolates
+(holdover: 60 s cost 0.06 ms in simulation). Reported error bound: `min_delay/2 + rms`.
+
+Simulated (unit tests, 30 min, drift ±45–100 ppm, heavy-tailed jitter, spikes, 5 % loss): clock
+error mean 0.045 ms, worst < 0.5 ms; busy 2.4 GHz (asymmetric jitter, 15 % loss) worst < 1 ms.
+
+#### 7.4.4 Sync packets: timeline anchors
+Every 250 ms while active (every 2 s idle) and at once on a change (state, item, brightness,
+blackout, anchor epoch), unicast to each follower:
+```
+{"t":"sync","leader":id,"showVersion","state":"idle|playing|paused|testing|effect","item":{type,id,name},
+ "posMs":u64,"sentAtMs":u64,                                  // protocol 1 rendering (integer ms)
+ "anchor":{"posMs":f64,"atMs":f64,"rate":f64,"epoch":u64},     // protocol 2
+ "effect"?:EffectPreset,"test"?:TestRequest,"brightness","blackout"}
+```
+The anchor says: the lights timeline was at `posMs` when the leader clock read `atMs`, and
+advances `rate` ms per leader ms (0 while paused). `atMs` is the **engine's own timestamp** of
+the position (µs precision), not the time the packet was built. `epoch` changes on every
+discontinuity (new item, seek, pause/resume, sound-delay change, a jump of the leader's audio
+clock). Anchors are idempotent: loss and reordering cost nothing, holdover is exact to the
+drift estimate. The follower converts an anchor to its own clock with the clock model:
+`atLocal = to_local(atMs)`, `rateLocal = rate · (1 + b)`, so
+`target(t) = posMs + rateLocal · (t − atLocal)` for any local time t.
+
+#### 7.4.5 Following the timeline (`player/clock.rs Servo`)
+Followers evaluate the anchor **every output frame** (not only when a packet arrives) and track
+it with a servo: a new epoch or an error > 100 ms jumps; otherwise
+`rate = rateLocal + clamp(e / 500 ms, ±2 %)` — continuous, **no deadband**, so model updates
+of a fraction of a millisecond are absorbed within about a second. The leader's own lights use
+the same kind of servo on its audio clock (a slow PI loop, τ ≈ 2 s, that learns the sound card's
+rate and filters ALSA delay jitter); its anchors carry that smooth timeline and its learnt rate.
+Loss: after 3 s without packets a follower plays on (holdover) to the end of the item, holds
+3 s, fades to dark.
+
+#### 7.4.6 Presentation time (DPI)
+Each frame is chosen for the moment it **lights up**, on the leader and on followers:
+`t_light = v + latch`, where v is the vblank the flip will take effect at (predicted from the
+page-flip timestamps: the grid `last + n·R`, after any flip still pending) and `latch` the WS281x
+latch delay of this node's strings (`L × line + 0.28 ms`; L = the longest string when
+bottom-aligned, else the mean string length). The frame shown is the one covering the middle of
+its slot: `idx = floor((pos(t_light) + R/2) / F)`. The output thread is paced from the vblank
+grid: the next update is timed for the next frame boundary of the timeline
+(`clock::next_update`), moved to the vblank at which it will show, and composing starts early
+enough (smoothed tick time × 1.5 + 1 ms) for the flip to make it. When R < F, frames change only at
+frame boundaries (the vblanks in between are skipped); when R > F, every refresh shows the frame at
+the middle of its slot. Frame changes then land within **±R/2 of the ideal instant** on every node
+(±12 ms at 800 px/40 Hz, ±6 ms at 400 px, ±1.7 ms at 100 px) instead of 0..R late plus a frame of
+pipeline lag. Without a scanned-out display (simulation) frames light up when written and the
+loop wakes at the timeline's frame boundaries; `PIXELPLUS_SIM_REFRESH_HZ` simulates a vblank grid.
+
+#### 7.4.7 Sound delay and calibration
+`settings.audio.outputDelayMs` (i32, −500…2000, default 0) is how much later the audience hears
+the sound than it leaves the leader's audio output (FM transmitter, HDMI TV, Bluetooth, and
+~2.9 ms per metre of air). The leader's lights timeline is `audio position − outputDelayMs`;
+anchors carry that timeline, so every controller's lights are delayed alike. Changing it starts a
+new epoch (followers jump at once). **Settings → Audio → Sync lights to sound** calibrates it:
+`POST /player/calibration {on}` plays a click every second (`cache/calibration-click.wav`) while
+every prop on every controller flashes white for 50 ms at the same timeline instants (item type
+`calibration`); the user moves a slider (±1/±10 ms steps, presets) until flash and click
+coincide where the audience stands. Item ends and the status `posMs` stay on the audio clock
+(what is heard).
+
+#### 7.4.8 Wi-Fi power save, sync quality, health
+* Power save makes the access point hold packets for a dozing station (50–1000 ms). The image
+  sets NetworkManager `wifi.powersave = 2` (`/etc/NetworkManager/conf.d/40-pixelplus-wifi-powersave.conf`
+  and the package's appliance `50-pixelplus.conf`); `pixelplus-firstboot` and `pixelplus-netwatch`
+  run `iw dev wlan0 set power_save off` as a fallback; the daemon checks `iw dev wlan0 get
+  power_save` every minute.
+* Followers report in their beacon (`report.quality`): clock error bound, fit jitter, drift ppm,
+  RTT min/p50/p95, loss %, samples, the servo's timeline error, pixel refresh (Hz), kernel
+  timestamps in use, and `wifiPowerSave`. `GET /nodes` / the `nodes` WebSocket message carry them as
+  `sync`, `wifiPowerSave`, `protocol`. The Controllers page shows a badge per follower ("In sync
+  ±0.3 ms": excellent < 2 ms, good < 5 ms, fair < 1 frame, poor otherwise or with power save on,
+  > 10 % loss, another protocol) with a detail popover and fixes. The health check's **Timing**
+  item fails on a protocol mismatch and warns on power save, > 5 ms error or > 10 % loss.
+
+#### 7.4.9 Accuracy and limits
+* Network timeline error: sub-ms on decent Wi-Fi (simulation: mean ≈ 0.04 ms, worst ≈ 0.2 ms at
+  up to 100 ppm drift; busy 2.4 GHz worst ≈ 0.6 ms), tens of µs on loopback/Ethernet (e2e on
+  one machine: ≤ 0.035 ms). The residual floor is the (unmeasurable) asymmetry of the minimum
+  path delays.
+* Visible alignment per node: ±R/2 (vblank quantisation; only shorter strings, i.e. a higher
+  refresh, reduce it), plus string-length skew unless latch alignment is on.
+* Lights vs sound: aligned to what leaves the leader's audio device; everything after it is the
+  user's `outputDelayMs`. The Pi headphone jack reports its delay in ~10 ms steps (filtered).
+* Hardware options (SYNC header, GPS PPS): `docs/HARDWARE-NOTES.md`.
 
 ### 7.5 Cluster security
 **Keys.** One key per follower (§7.1), never shared: compromising one follower gives no access
@@ -460,10 +602,12 @@ a follower only installs what its leader sent. The key itself is never sent.
 
 **UDP** (`proto.rs`). Every authenticated datagram carries the sender's boot id (`bt`) and a
 sequence number (`sq`) that grows with every packet, inside the HMAC. Receivers keep, per sender,
-the current boot id and highest sequence number and drop anything not newer (replays of sync,
-overlay, pong or beacon packets). A follower accepts a *new* leader boot id only from a pong that
+the current boot id, the highest sequence number and which of the 64 numbers below it were
+seen, and drop anything seen before or older than that window (replays of sync, overlay, pong
+or beacon packets; slightly reordered packets are still accepted once). A follower accepts a *new* leader boot id only from a pong that
 answers one of its own pings of the last 5 s (a replay can't); an authenticated packet from an
-unknown run triggers such a ping. Boot ids that were replaced are never accepted again. The
+unknown run triggers such a ping. Boot ids that were replaced are never accepted again. Pong
+timestamps (`t1`, `t2`) and sync anchors are covered by the MAC like everything else. The
 leader unicasts sync packets, pongs, overlay frames (`'P'` frames with boot id and sequence
 number) and a copy of its beacon to each follower, MACed with that follower's key; its
 broadcast beacon is unauthenticated (discovery only).
@@ -557,6 +701,7 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `POST /player/play` | {playlistId?} | {sequenceId?} | {djClipId?} |
 | `POST /player/stop` {fade?:bool}, `/player/pause`, `/player/resume`, `/player/next`, `/player/previous`, `/player/seek {posMs}` | |
 | `PUT /player/volume {volume}`, `PUT /player/brightness {brightness}` | |
+| `POST /player/calibration {on}` | "Sync lights to sound" test pattern (click + white flash every second, all controllers), §7.4.7 |
 | `POST /test/start` | {mode:"solid"|"chase"|"rgbCycle"|"countPixels"|"walk"|"effect", color?, target:{nodeId?, output?, propIds?, groupIds?, all?}, effect?: EffectPreset} |
 | `POST /test/stop` | |
 | `POST /faultfinder/start` {propId} → FaultSession; `POST /faultfinder/:session/answer {lit:boolean}` → next step or result {pixelIndex, message} ; `POST /faultfinder/stop` | binary search for first bad pixel: lights pixels [0..mid], asks "do all lit pixels light correctly?" |

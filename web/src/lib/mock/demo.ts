@@ -720,7 +720,8 @@ export function buildDemoShow(): Show {
 			]
 		},
 		settings: {
-			audio: { device: 'hw:CARD=Headphones', volume: 72, normalize: true, targetLufs: -14 },
+			audio: { device: 'hw:CARD=Headphones', volume: 72, normalize: true, targetLufs: -14, outputDelayMs: 0 },
+			output: { latchAlign: false },
 			alerts: {
 				ntfy: { server: 'https://ntfy.sh', topic: 'chandler-lights-alerts' },
 				rules: { tempC: 65, voltageMin: 11.2, followerOffline: true, showFailure: true }

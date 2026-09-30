@@ -1,14 +1,14 @@
 //! In-memory simulated output for development, Docker and the live preview.
 
-use super::{OutputStats, PixelOutput};
+use super::{OutputStats, PixelOutput, PresentTiming};
 use crate::decoder::{DecodedFrame, WsDecoder};
 use crate::encoder::{BufferState, FrameBufferMut, FrameBufferRef, WsEncoder};
 use crate::error::{OutputError, Result};
 use crate::frame::OutputFrameRef;
 use crate::layout::OutputLayout;
-use crate::timing::DpiGeometry;
+use crate::timing::{DpiGeometry, RESET_MIN_NS};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// The most recent frame a [`SimOutput`] received.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -66,6 +66,28 @@ pub struct SimOutput {
     stats: OutputStats,
     max_outputs: Option<usize>,
     verifier: Option<Verifier>,
+    vblank: Option<SimVblank>,
+    bottom_align: bool,
+}
+
+/// A simulated vblank grid (see [`SimOutput::with_refresh`]).
+#[derive(Debug, Clone, Copy)]
+struct SimVblank {
+    epoch: Instant,
+    period: Duration,
+    /// Vblank the last written frame takes effect at.
+    queued: Option<Instant>,
+}
+
+impl SimVblank {
+    fn at_or_after(&self, t: Instant) -> Instant {
+        if t <= self.epoch {
+            return self.epoch;
+        }
+        let p = self.period.as_secs_f64();
+        let n = ((t - self.epoch).as_secs_f64() / p).ceil();
+        self.epoch + Duration::from_secs_f64(n * p)
+    }
 }
 
 impl SimOutput {
@@ -76,7 +98,27 @@ impl SimOutput {
             stats: OutputStats::new("sim"),
             max_outputs: None,
             verifier: None,
+            vblank: None,
+            bottom_align: false,
         }
+    }
+
+    /// Pretend to scan out on a free-running vblank grid of `period`, like
+    /// DPI: [`PixelOutput::present_timing`] reports it, and a frame written
+    /// takes effect at the next vblank. Lets the player's presentation-time
+    /// pacing run (and be tested) without hardware.
+    pub fn with_refresh(mut self, period: Duration) -> Self {
+        if !period.is_zero() {
+            self.vblank = Some(SimVblank {
+                // An arbitrary phase: every node's grid is independent.
+                epoch: Instant::now() + period.mul_f64(0.37),
+                period,
+                queued: None,
+            });
+            self.stats.refresh_hz = Some(1.0 / period.as_secs_f64());
+            self.stats.vblank_period_us = Some(period.as_secs_f64() * 1e6);
+        }
+        self
     }
 
     /// A simulated output for a board with `outputs` outputs.
@@ -179,6 +221,17 @@ impl PixelOutput for SimOutput {
         }
         self.stats.record_encode(started.elapsed());
         self.stats.frames += 1;
+        if let Some(v) = self.vblank.as_mut() {
+            let now = Instant::now();
+            // One flip per vblank: a frame written while another is queued
+            // replaces it at the vblank after (like DPI after its wait).
+            let after = match v.queued {
+                Some(q) if q > now => q + v.period / 2,
+                _ => now,
+            };
+            let at = v.at_or_after(after + Duration::from_nanos(1));
+            v.queued = Some(at);
+        }
         Ok(())
     }
 
@@ -188,6 +241,33 @@ impl PixelOutput for SimOutput {
 
     fn stats(&self) -> OutputStats {
         self.stats.clone()
+    }
+
+    fn set_bottom_align(&mut self, on: bool) {
+        self.bottom_align = on;
+        if let Some(v) = self.verifier.as_mut() {
+            v.encoder.set_bottom_align(on);
+        }
+        self.stats.bottom_aligned = on;
+    }
+
+    fn present_timing(&self) -> Option<PresentTiming> {
+        let v = self.vblank?;
+        let now = Instant::now();
+        let next = v.at_or_after(now);
+        let last = if next > now {
+            next.checked_sub(v.period).unwrap_or(v.epoch)
+        } else {
+            next
+        };
+        Some(PresentTiming {
+            last_vblank: last.max(v.epoch),
+            period: v.period,
+            pending_vblank: v.queued.filter(|q| *q > now),
+            line: Duration::from_nanos(30_625),
+            reset: Duration::from_nanos(RESET_MIN_NS as u64),
+            bottom_aligned: self.bottom_align,
+        })
     }
 }
 
@@ -234,5 +314,60 @@ mod tests {
             (3, 1, 0)
         );
         assert_eq!(stats.max_pixels_per_output, Some(10));
+    }
+
+    #[test]
+    fn simulated_vblank_grid() {
+        let mut sim = SimOutput::with_outputs(4).with_refresh(Duration::from_millis(10));
+        sim.start().unwrap();
+        let t = sim.present_timing().unwrap();
+        assert_eq!(t.period, Duration::from_millis(10));
+        assert!(t.pending_vblank.is_none());
+        let px = [1u8, 2, 3];
+        sim.write_frame(&OutputFrameRef::new(vec![&px])).unwrap();
+        let t = sim.present_timing().unwrap();
+        let q = t.pending_vblank.expect("queued for the next vblank");
+        assert!(q > Instant::now() && q <= Instant::now() + Duration::from_millis(10));
+        // A second frame before that vblank goes to the one after.
+        sim.write_frame(&OutputFrameRef::new(vec![&px])).unwrap();
+        let q2 = sim.present_timing().unwrap().pending_vblank.unwrap();
+        assert_eq!((q2 - q).as_millis(), 10);
+        assert!(SimOutput::new().present_timing().is_none());
+    }
+
+    #[test]
+    fn bottom_aligned_frames_verify_incrementally() {
+        let layout = OutputLayout::for_board(BoardKind::Difftx);
+        let mut sim = SimOutput::verifying(layout, DpiGeometry::for_pixels(10).unwrap()).unwrap();
+        sim.start().unwrap();
+        sim.set_bottom_align(true);
+        assert!(sim.stats().bottom_aligned);
+        // Lengths change from frame to frame (the incremental path must
+        // clear and re-place every output).
+        for lens in [
+            [10usize, 3, 0, 7],
+            [2, 9, 4, 1],
+            [10, 10, 10, 10],
+            [1, 0, 0, 0],
+        ] {
+            let data: Vec<Vec<u8>> = lens
+                .iter()
+                .enumerate()
+                .map(|(o, &n)| (0..n * 3).map(|i| (i * 7 + o * 31) as u8).collect())
+                .collect();
+            sim.write_frame(&OutputFrameRef::new(
+                data.iter().map(Vec::as_slice).collect(),
+            ))
+            .unwrap();
+            let d = sim.last_decoded().unwrap();
+            let ends: Vec<f64> = d.outputs.iter().filter_map(|o| o.data_end_ns).collect();
+            let spread = ends.iter().cloned().fold(f64::MIN, f64::max)
+                - ends.iter().cloned().fold(f64::MAX, f64::min);
+            assert!(
+                spread < 1_300.0,
+                "{lens:?}: strings latch {spread} ns apart"
+            );
+        }
+        assert_eq!(sim.stats().errors, 0);
     }
 }

@@ -25,6 +25,7 @@
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import SignalBars from '$lib/components/ui/SignalBars.svelte';
+	import SyncWizard from '$lib/components/ui/SyncWizard.svelte';
 	import { requestLink, prettyUrl } from '$lib/util/visitors';
 	import { parseLogs, dayLabel } from '$lib/util/logs';
 	import { countryName, fmtTemp, tempUnitOf, tempValue, fToC } from '$lib/util/units';
@@ -32,6 +33,7 @@
 	import {
 		Wifi,
 		Volume2,
+		AudioLines,
 		Bell,
 		House,
 		Hand,
@@ -91,7 +93,12 @@
 			desc: 'Wi-Fi and the controller’s name',
 			device: true
 		},
-		{ id: 'audio', label: 'Audio', icon: Volume2, desc: 'Speakers, volume and volume leveling' },
+		{
+			id: 'audio',
+			label: 'Audio',
+			icon: Volume2,
+			desc: 'Speakers, volume, leveling, lights-to-sound timing'
+		},
 		{ id: 'alerts', label: 'Alerts', icon: Bell, desc: 'A message when something needs you' },
 		{ id: 'mqtt', label: 'Home Assistant', icon: House, desc: 'Control the show from your smart home' },
 		{ id: 'requests', label: 'Song requests', icon: Hand, desc: 'Visitors pick songs · radio · yard sign' },
@@ -229,6 +236,20 @@
 				.then((d) => (devices = d))
 				.catch(() => {});
 	});
+
+	// ---- lights-to-sound timing
+	let syncOpen = $state(false);
+	async function saveDelay(ms: number) {
+		if (!s) return;
+		s.audio.outputDelayMs = ms;
+		try {
+			await api.saveSettings({ audio: { outputDelayMs: ms } });
+			await app.reloadShow();
+		} catch (e) {
+			toasts.error('Could not save the sound delay', (e as Error).message);
+		}
+	}
+	const fmtDelay = (v: number) => (v === 0 ? 'none' : `${v > 0 ? '+' : '−'}${Math.abs(v)} ms`);
 
 	// ---- alerts / mqtt tests
 	let testing = $state<string | null>(null);
@@ -798,6 +819,45 @@
 											value={d.id}>{d.name}</option
 										>{/each}</select
 								>
+							</div>
+						</div>
+						<div class="setting stack">
+							<div class="text">
+								<div class="title">Sync lights to sound</div>
+								<div class="desc">
+									When the audience hears the music late (FM radio, a TV or Bluetooth speaker, or just far
+									away), delay the lights to match. Sound delay now: <strong
+										>{fmtDelay(s.audio.outputDelayMs ?? 0)}</strong
+									>.
+								</div>
+							</div>
+							<div class="control">
+								<button class="btn" onclick={() => (syncOpen = true)}
+									><AudioLines size={16} /> Sync lights to sound…</button
+								>
+							</div>
+						</div>
+						<div class="setting">
+							<div class="text">
+								<div class="title">
+									Strings change together <span class="badge accent">Experimental</span>
+								</div>
+								<div class="desc">
+									Long and short strings on a controller show each new frame at the same moment instead of up
+									to 49 ms apart. Try it on your pixels before a show: a few pixel types may not like it.
+								</div>
+							</div>
+							<div class="control">
+								<Switch
+									checked={s.output?.latchAlign ?? false}
+									label="Strings change together (experimental)"
+									onchange={(v: boolean) => {
+										if (s) {
+											s.output = { latchAlign: v };
+											changed('output');
+										}
+									}}
+								/>
 							</div>
 						</div>
 						<div class="setting stack">
@@ -1739,6 +1799,10 @@
 		</div>
 	</div>
 </div>
+
+{#if s}
+	<SyncWizard bind:open={syncOpen} delayMs={s.audio.outputDelayMs ?? 0} onsave={saveDelay} />
+{/if}
 
 <Modal bind:open={pwOpen} title={sys?.passwordSet ? 'Change password' : 'Set a password'} size="sm">
 	<div class="col" style="gap:12px">

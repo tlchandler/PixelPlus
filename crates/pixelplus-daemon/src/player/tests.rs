@@ -143,6 +143,15 @@ fn playlist(id: &str, items: &[&str], crossfade_ms: u32) -> Playlist {
 }
 
 async fn env(role: LocalRole, audio: bool, setup: impl FnOnce(&Path, &mut Show)) -> Env {
+    env_with(role, audio, None, setup).await
+}
+
+async fn env_with(
+    role: LocalRole,
+    audio: bool,
+    sim_refresh_hz: Option<f64>,
+    setup: impl FnOnce(&Path, &mut Show),
+) -> Env {
     let dir = std::env::temp_dir().join(format!("pp-engine-{}", new_id()));
     let config = Config {
         data_dir: dir.clone(),
@@ -184,6 +193,7 @@ async fn env(role: LocalRole, audio: bool, setup: impl FnOnce(&Path, &mut Show))
         output: Some(BackendKind::Sim),
         shm_dir: dir.join("shm"),
         realtime: false,
+        sim_refresh_hz,
     };
     let engine = start_with(&state, opts).unwrap();
     Env { state, dir, engine }
@@ -719,6 +729,7 @@ async fn follower_plays_slices_from_sync() {
         }),
         pos_ms: pos,
         sent_at_ms: now_ms(),
+        anchor: None,
         effect: None,
         test: None,
         brightness: 100,
@@ -929,6 +940,7 @@ async fn follower_leader_test_replaces_local_identify() {
         item: None,
         pos_ms: 0,
         sent_at_ms: now_ms,
+        anchor: None,
         effect: None,
         test: Some(red),
         brightness: 100,
@@ -941,4 +953,253 @@ async fn follower_leader_test_replaces_local_identify() {
         "leader's test shows, not the local identify: {:?}",
         e.out(0)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Timing: presentation time, anchors, sound delay, calibration
+// ---------------------------------------------------------------------------
+
+/// Poll the output tap as fast as possible for `ms`, keeping every new frame.
+async fn tap_frames(e: &Env, ms: u64) -> Vec<debugtap::TapFrame> {
+    let tap = e.state.services.debug_output.get().expect("tap").clone();
+    let mut out: Vec<debugtap::TapFrame> = Vec::new();
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_millis(ms) {
+        let f = tap.snapshot();
+        if out.last().map_or(true, |l| l.frame_no != f.frame_no) {
+            out.push(f);
+        }
+        tokio::time::sleep(Duration::from_micros(300)).await;
+    }
+    out
+}
+
+/// Frame changes land within ±R/2 of their ideal instant on a vblank grid,
+/// with updates only at frame boundaries when the refresh is faster than
+/// the sequence (R < F), and on every refresh when it is slower (R > F).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn frames_are_chosen_for_their_light_up_time_on_a_vblank_grid() {
+    for (hz, frame_ms) in [(100.0, 25u8), (20.0, 25u8), (40.3, 50u8)] {
+        let r = 1000.0 / hz;
+        let e = env_with(LocalRole::Leader, false, Some(hz), |dir, show| {
+            show.sequences = vec![sequence(dir, "s1", 400, frame_ms, |f| (f % 250) as u8)];
+        })
+        .await;
+        e.engine
+            .handle
+            .play(PlayRequest {
+                sequence_id: Some("s1".into()),
+                ..empty_req()
+            })
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let frames = tap_frames(&e, 1500).await;
+        let f = frame_ms as f64;
+        // Light-up times sit on the vblank grid (plus a constant latch delay).
+        let lights: Vec<f64> = frames.iter().map(|t| t.light_ms).collect();
+        for w in lights.windows(2) {
+            let n = (w[1] - w[0]) / r;
+            assert!(
+                (n - n.round()).abs() < 0.02 && n.round() >= 1.0,
+                "{hz} Hz: gap {n} refreshes"
+            );
+        }
+        let (mut checked, mut missed) = (0, 0);
+        for w in frames.windows(2) {
+            let (Some((_, a)), Some((_, b))) = (&w[0].sequence, &w[1].sequence) else {
+                continue;
+            };
+            let pos = w[1].pos_ms.unwrap();
+            // The shown frame covers the middle of its presentation slot.
+            assert_eq!(*b, ((pos + r / 2.0) / f).floor() as u32, "{hz} Hz");
+            if r < f && w[1].frame_no == w[0].frame_no + 1 && *b == a + 1 {
+                // A frame change: within half a refresh of its ideal instant
+                // (unless the loaded test machine made us miss a vblank:
+                // then exactly one refresh later).
+                let early = *b as f64 * f - pos;
+                if early.abs() > r / 2.0 + 0.5 {
+                    assert!(
+                        early + r >= -r / 2.0 - 0.5,
+                        "{hz} Hz: frame {b} {early:.2} ms off"
+                    );
+                    missed += 1;
+                }
+                checked += 1;
+            }
+        }
+        if r < f {
+            assert!(checked > 5, "{hz} Hz: only {checked} frame changes seen");
+            assert!(
+                missed * 5 <= checked,
+                "{hz} Hz: {missed}/{checked} vblanks missed"
+            );
+        }
+        let span = (lights.last().unwrap() - lights[0]) / 1000.0;
+        let rate = (frames.len() - 1) as f64 / span;
+        let expected = if r < f { 1000.0 / f } else { hz };
+        assert!(
+            (rate - expected).abs() < expected * 0.15,
+            "{hz} Hz / {f} ms frames: {rate:.1} updates/s, expected {expected:.1}"
+        );
+    }
+}
+
+/// Followers follow the anchor continuously: an offset of 8 ms (well inside
+/// the old ±1-frame deadband) and a 150 ppm rate difference are removed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn follower_follows_the_anchor_without_a_deadband() {
+    let e = env(LocalRole::Follower, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 800, 25, |f| (f % 250) as u8)];
+    })
+    .await;
+    let h = &e.engine.handle;
+    let now_ms = || e.state.started.elapsed().as_secs_f64() * 1000.0;
+    let packet = |a: Anchor| SyncPacket {
+        leader: "leader".into(),
+        show_version: 1,
+        state: PlayerState::Playing,
+        item: Some(ItemRef {
+            kind: "sequence".into(),
+            id: "s1".into(),
+            name: "Song".into(),
+        }),
+        pos_ms: a.pos_ms as u64,
+        sent_at_ms: now_ms() as u64,
+        anchor: Some(a),
+        effect: None,
+        test: None,
+        brightness: 100,
+        blackout: false,
+    };
+    let start = now_ms();
+    let first = Anchor {
+        pos_ms: 2000.0,
+        at_ms: start,
+        rate: 1.0,
+        epoch: 1,
+    };
+    h.send(PlayerCmd::Sync(packet(first))).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Same epoch, 8 ms ahead and 150 ppm fast: slew, no jump.
+    let t = now_ms();
+    let second = Anchor {
+        pos_ms: first.pos_at(t) + 8.0,
+        at_ms: t,
+        rate: 1.00015,
+        epoch: 1,
+    };
+    for _ in 0..16 {
+        h.send(PlayerCmd::Sync(packet(second))).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let frames = tap_frames(&e, 500).await;
+    let worst = frames
+        .iter()
+        .filter_map(|f| f.pos_ms.map(|p| (p - second.pos_at(f.light_ms)).abs()))
+        .fold(0.0f64, f64::max);
+    assert!(!frames.is_empty());
+    assert!(worst < 0.5, "timeline error {worst} ms after 4 s");
+    let err = e.status().sync_error_ms.expect("sync error reported");
+    assert!(err < 1.0, "{err}");
+}
+
+/// `settings.audio.outputDelayMs` delays the lights (and the anchors sent to
+/// followers) against the audio clock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sound_delay_shifts_the_lights_timeline() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 800, 25, |f| (f % 250) as u8)];
+        show.settings.audio.output_delay_ms = 300;
+    })
+    .await;
+    e.engine
+        .handle
+        .play(PlayRequest {
+            sequence_id: Some("s1".into()),
+            ..empty_req()
+        })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let tap = e.state.services.debug_output.get().unwrap().snapshot();
+    let s = e.status();
+    let a = s.anchor.expect("leader anchor");
+    // Heard position ≈ at_ms-based; lights = heard − 300.
+    let heard_at_light = s.pos_ms as f64 + (tap.light_ms - a.at_ms);
+    let lights = tap.pos_ms.unwrap();
+    assert!(
+        (heard_at_light - lights - 300.0).abs() < 30.0,
+        "heard {heard_at_light} vs lights {lights}"
+    );
+    assert!((a.pos_at(tap.light_ms) - lights).abs() < 1.0);
+    // Changing the delay moves the timeline at once (a new epoch).
+    let epoch = a.epoch;
+    let mut show = (*e.state.store.get()).clone();
+    show.settings.audio.output_delay_ms = -100;
+    e.state.store.replace(show).await.unwrap();
+    assert!(
+        wait_for(1500, || e.status().anchor.is_some_and(
+            |b| b.epoch != epoch && (b.pos_ms - (a.pos_at(b.at_ms) + 400.0)).abs() < 30.0
+        ))
+        .await
+    );
+}
+
+/// "Sync lights to sound": every prop flashes white once a second.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn calibration_flashes_every_second() {
+    let e = env(LocalRole::Leader, false, |_, _| {}).await;
+    e.engine
+        .handle
+        .send(PlayerCmd::Calibrate(true))
+        .await
+        .unwrap();
+    assert!(
+        wait_for(1500, || e
+            .status()
+            .item
+            .is_some_and(|i| i.kind == engine::CALIBRATION_ID))
+        .await
+    );
+    // Within 2 s we see both a white flash and dark.
+    let (mut white, mut dark) = (false, false);
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_millis(2200) && !(white && dark) {
+        match uniform(&e.out(0)) {
+            Some(255) => white = true,
+            Some(0) => dark = true,
+            _ => {}
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert!(white && dark, "white {white} dark {dark}");
+    assert!(std::fs::metadata(e.dir.join("cache/calibration-click.wav")).is_ok());
+    e.engine
+        .handle
+        .send(PlayerCmd::Calibrate(false))
+        .await
+        .unwrap();
+    assert!(wait_for(1500, || e.status().state == PlayerState::Idle).await);
+}
+
+#[test]
+fn click_track_is_a_valid_wav() {
+    let wav = engine::click_wav(2_000);
+    assert_eq!(&wav[..4], b"RIFF");
+    assert_eq!(&wav[8..16], b"WAVEfmt ");
+    assert_eq!(wav.len(), 44 + 2 * 48_000);
+    // Silence between clicks, a loud click at 1 s.
+    let sample = |i: usize| i16::from_le_bytes([wav[44 + 2 * i], wav[45 + 2 * i]]);
+    assert_eq!(sample(12_000), 0);
+    assert!(
+        (24_000..24_100)
+            .map(sample)
+            .map(i16::unsigned_abs)
+            .max()
+            .unwrap()
+            > 20_000
+    );
+    assert!(engine::flash_on(1_010.0, 1.0) && !engine::flash_on(1_300.0, 1.0));
+    assert!(!engine::flash_on(-5.0, 1.0));
 }

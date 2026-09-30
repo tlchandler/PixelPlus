@@ -947,6 +947,8 @@ pub struct ShowSettings {
     /// Display units for the UI. `None` = pick from the viewer's locale (US → °F).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub units: Option<UnitSettings>,
+    #[serde(default)]
+    pub output: OutputSettings,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1060,7 +1062,18 @@ pub struct AudioSettings {
     pub volume: u8,
     pub normalize: bool,
     pub target_lufs: f32,
+    /// How much later the audience hears the sound than it leaves this
+    /// controller's audio output (FM transmitter, HDMI TV, Bluetooth,
+    /// distance: ~3 ms per metre), in ms. Every controller's lights are
+    /// delayed by this much so they match what is heard. Negative values
+    /// make the lights earlier. Set with Settings → Audio → "Sync lights to
+    /// sound". Range [`OUTPUT_DELAY_RANGE_MS`].
+    #[serde(default)]
+    pub output_delay_ms: i32,
 }
+
+/// Allowed range of [`AudioSettings::output_delay_ms`].
+pub const OUTPUT_DELAY_RANGE_MS: std::ops::RangeInclusive<i32> = -500..=2000;
 
 impl Default for AudioSettings {
     fn default() -> Self {
@@ -1069,8 +1082,21 @@ impl Default for AudioSettings {
             volume: 80,
             normalize: true,
             target_lufs: -16.0,
+            output_delay_ms: 0,
         }
     }
+}
+
+/// Pixel output options (show-wide, sent to followers).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputSettings {
+    /// Experimental: start every string's data so that all strings on a
+    /// controller end together ("bottom-aligned"), so strings of different
+    /// lengths show a new frame at the same moment instead of up to 49 ms
+    /// apart. Off by default; validate on real pixels before a show.
+    #[serde(default)]
+    pub latch_align: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

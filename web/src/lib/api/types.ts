@@ -358,6 +358,10 @@ export interface AudioSettings {
 	volume: number;
 	normalize: boolean;
 	targetLufs: number;
+	/** How much later the audience hears the sound than it leaves the leader (FM, HDMI,
+	 * Bluetooth, distance ≈ 3 ms per metre); every controller's lights are delayed by this
+	 * much. Negative = lights earlier. Range −500…2000 ms. Set with "Sync lights to sound". */
+	outputDelayMs?: number;
 }
 export interface EmailSettings {
 	smtpHost: string;
@@ -461,6 +465,11 @@ export interface ShowSettings {
 	games: GameSettings;
 	/** Display units. Absent = follow the viewer's locale (US → °F). Values are stored metric. */
 	units?: UnitSettings;
+	/** Pixel output options (every controller). */
+	output?: {
+		/** Experimental: all strings on a controller latch together ("bottom-aligned"). */
+		latchAlign: boolean;
+	};
 }
 export type TemperatureUnit = 'c' | 'f';
 export interface UnitSettings {
@@ -673,6 +682,28 @@ export interface PlayerStatus {
 	blackout?: boolean;
 }
 
+/** How well a follower keeps time with its leader (all times in ms). */
+export interface SyncQuality {
+	/** Error bound of the leader-clock estimate (half the best round trip + fit noise). */
+	offsetErrorMs: number;
+	/** Residual noise of the clock fit. */
+	jitterMs: number;
+	/** Drift of the leader's clock against this controller's, ppm. */
+	driftPpm: number;
+	/** Round trip: best, median, 95th percentile over the last 90 s. */
+	rttMs: number;
+	rttP50Ms: number;
+	rttP95Ms: number;
+	/** Clock probes without an answer, percent. */
+	lossPct: number;
+	samples: number;
+	/** How far the player is from the leader's timeline (smoothed). */
+	timelineErrorMs?: number;
+	/** Pixel refresh of this controller (frame changes land within ±half a refresh). */
+	refreshHz?: number;
+	kernelTimestamps: boolean;
+}
+
 export interface NodeStatus {
 	id: Id;
 	name: string;
@@ -682,6 +713,15 @@ export interface NodeStatus {
 	syncOffsetMs: number;
 	syncState: 'synced' | 'syncing' | 'offline';
 	files: { pending: number; total: number };
+	role?: NodeRole;
+	/** Followers (protocol 2): timing quality. */
+	sync?: SyncQuality | null;
+	/** Wi-Fi power saving on (bad for sync); null when unknown / wired. */
+	wifiPowerSave?: boolean | null;
+	/** Cluster protocol version the node runs. */
+	protocol?: number;
+	problem?: string | null;
+	version?: string | null;
 }
 
 export interface LogLine {

@@ -419,6 +419,87 @@ impl DpiGeometry {
     }
 }
 
+impl DpiGeometry {
+    /// How long after the start of scan-out (the DRM vblank timestamp marks
+    /// the first active line) a string whose data occupies the first `lines`
+    /// lines shows its new colours: its data, then the reset low time after
+    /// which WS281x chips latch.
+    pub fn latch_ns(&self, lines: f64) -> f64 {
+        lines.max(0.0) * self.line_ns() + RESET_MIN_NS
+    }
+}
+
+/// Model of a display's vertical blanking grid, fed with page-flip completion
+/// events (DRM reports the vblank sequence number and a CLOCK_MONOTONIC
+/// timestamp of the first active line of each flip).
+///
+/// Vblanks are a free-running grid set by the pixel clock: `t = last +
+/// n × period`. The period starts at the mode's nominal value and is refined
+/// from events (`Δt / Δsequence`), which also absorbs the pixel-clock error.
+/// Times are nanoseconds on any monotonic base.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VblankModel {
+    nominal_ns: f64,
+    period_ns: f64,
+    last: Option<(u32, u64)>,
+    samples: u32,
+}
+
+impl VblankModel {
+    /// A model for a display refreshing every `nominal_ns`.
+    pub fn new(nominal_ns: f64) -> Self {
+        VblankModel {
+            nominal_ns,
+            period_ns: nominal_ns,
+            last: None,
+            samples: 0,
+        }
+    }
+
+    /// Record a flip that completed at vblank `seq`, timestamp `t_ns`.
+    pub fn observe(&mut self, seq: u32, t_ns: u64) {
+        if let Some((s0, t0)) = self.last {
+            let dseq = seq.wrapping_sub(s0);
+            if dseq > 0 && dseq < 100_000 && t_ns > t0 {
+                let p = (t_ns - t0) as f64 / f64::from(dseq);
+                // Ignore nonsense (a mode change, a missed wrap).
+                if (p - self.nominal_ns).abs() < self.nominal_ns * 0.02 {
+                    self.samples = self.samples.saturating_add(1);
+                    let alpha = (1.0 / f64::from(self.samples)).max(0.05);
+                    self.period_ns += alpha * (p - self.period_ns);
+                }
+            }
+        }
+        self.last = Some((seq, t_ns));
+    }
+
+    /// Current refresh period estimate (ns).
+    pub fn period_ns(&self) -> f64 {
+        self.period_ns
+    }
+
+    /// Timestamp (ns) of the last observed vblank.
+    pub fn last_ns(&self) -> Option<u64> {
+        self.last.map(|(_, t)| t)
+    }
+
+    /// The first vblank at or after `t_ns` (None before the first event).
+    pub fn next_at_or_after(&self, t_ns: u64) -> Option<u64> {
+        let (_, last) = self.last?;
+        if t_ns <= last {
+            return Some(last);
+        }
+        let n = ((t_ns - last) as f64 / self.period_ns).ceil();
+        Some(last + (n * self.period_ns).round() as u64)
+    }
+
+    /// Whether `t_ns` is closer to the vblank *after* `expected_ns` than to
+    /// `expected_ns` itself (a flip that missed its vblank).
+    pub fn is_late(&self, expected_ns: u64, t_ns: u64) -> bool {
+        t_ns as f64 > expected_ns as f64 + self.period_ns / 2.0
+    }
+}
+
 impl Default for DpiGeometry {
     /// 800 LEDs per output at about 40 fps (1152 × 807 active, 40.3 Hz).
     fn default() -> Self {
@@ -522,6 +603,55 @@ mod tests {
         assert!(
             DpiGeometry::from_mode(PIXEL_CLOCK_HZ, 1152, 1160, 1168, 1176, 5, 6, 7, 8).is_err()
         );
+    }
+
+    #[test]
+    fn latch_offset() {
+        let g = DpiGeometry::default();
+        // 800 LEDs latch ~24.5 ms + 0.28 ms after scan-out starts.
+        let ms = g.latch_ns(800.0) / 1e6;
+        assert!((ms - (800.0 * 0.030_625 + 0.28)).abs() < 1e-6, "{ms}");
+        assert_eq!(g.latch_ns(-5.0), RESET_MIN_NS);
+    }
+
+    #[test]
+    fn vblank_model_tracks_the_grid() {
+        let nominal = DpiGeometry::default().frame_ns();
+        let true_period = nominal * (1.0 + 300e-6); // pixel clock 300 ppm slow
+        let mut m = VblankModel::new(nominal);
+        assert_eq!(m.next_at_or_after(5), None);
+        let t = |seq: u32| (1_000_000.0 + f64::from(seq) * true_period) as u64;
+        // Flips on every 1–3 vblanks, as a paced output would do.
+        let mut seq = 10u32;
+        for i in 0..200 {
+            m.observe(seq, t(seq));
+            seq += 1 + (i % 3);
+        }
+        assert!(
+            (m.period_ns() - true_period).abs() < 1.0,
+            "{}",
+            m.period_ns()
+        );
+        let last = m.last_ns().unwrap();
+        assert_eq!(m.next_at_or_after(last), Some(last));
+        let next = m.next_at_or_after(last + 1).unwrap();
+        assert!((next as f64 - (last as f64 + true_period)).abs() < 2.0);
+        // Far ahead the prediction stays on the grid.
+        let far = m
+            .next_at_or_after(last + (true_period * 99.5) as u64)
+            .unwrap();
+        assert!(
+            ((far - last) as f64 / true_period - 100.0).abs() < 1e-3,
+            "{}",
+            (far - last) as f64 / true_period
+        );
+        // A flip one vblank later than expected is late; jitter is not.
+        assert!(m.is_late(next, next + true_period as u64));
+        assert!(!m.is_late(next, next + 50_000));
+        // Nonsense deltas (e.g. a mode change) do not disturb the estimate.
+        let before = m.period_ns();
+        m.observe(seq + 1_000, last + 5);
+        assert_eq!(m.period_ns(), before);
     }
 
     #[test]

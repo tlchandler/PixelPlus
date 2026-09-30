@@ -371,6 +371,15 @@ async fn host_checks(state: &AppState) -> Vec<Check> {
             )
         });
     }
+    // Timing between controllers (sync quality, Wi-Fi power save, versions).
+    let statuses: Vec<crate::cluster::NodeStatus> = nodes
+        .as_ref()
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let own_ps = crate::services::network::wifi_power_save();
+    if let Some(c) = sync_check(&statuses, own_ps, !followers.is_empty()) {
+        out.push(c);
+    }
     // Disk.
     if let Some((free, _)) = disk_space(&state.config.data_dir) {
         let mb = free / (1024 * 1024);
@@ -482,6 +491,104 @@ async fn host_checks(state: &AppState) -> Vec<Check> {
     // Clock.
     out.push(clock_check(state).await);
     out
+}
+
+/// How well the followers keep time with this leader: protocol mismatches
+/// fail, Wi-Fi power save, a large clock error or lossy links warn. `None`
+/// when there is nothing to say (no followers and power save off/unknown).
+pub fn sync_check(
+    nodes: &[crate::cluster::NodeStatus],
+    own_power_save: Option<bool>,
+    has_followers: bool,
+) -> Option<Check> {
+    use pixelplus_core::model::NodeRole;
+    let followers: Vec<_> = nodes
+        .iter()
+        .filter(|n| n.role == NodeRole::Follower && n.adopted && n.online)
+        .collect();
+    let mismatch: Vec<String> = followers
+        .iter()
+        .filter(|n| n.protocol != 0 && n.protocol != crate::cluster::proto::PROTOCOL_VERSION)
+        .map(|n| n.name.clone())
+        .collect();
+    if !mismatch.is_empty() {
+        return Some(check(
+            "sync",
+            "Timing",
+            Status::Fail,
+            format!(
+                "{} run another PixelPlus version (cluster protocol). Update every controller \
+                 to the same version.",
+                list_names(&mismatch)
+            ),
+        ));
+    }
+    let mut power_save: Vec<String> = followers
+        .iter()
+        .filter(|n| n.wifi_power_save == Some(true))
+        .map(|n| n.name.clone())
+        .collect();
+    if own_power_save == Some(true) {
+        power_save.insert(0, "this controller".into());
+    }
+    if !power_save.is_empty() {
+        return Some(check(
+            "sync",
+            "Timing",
+            Status::Warn,
+            format!(
+                "Wi-Fi power saving is on for {}: packets can be delayed by up to a second. \
+                 Update PixelPlus or run `sudo iw dev wlan0 set power_save off`.",
+                list_names(&power_save)
+            ),
+        ));
+    }
+    if !has_followers {
+        return None;
+    }
+    let with_q: Vec<_> = followers
+        .iter()
+        .filter_map(|n| n.sync.map(|q| (n, q)))
+        .collect();
+    let poor: Vec<String> = with_q
+        .iter()
+        .filter(|(_, q)| q.offset_error_ms > 5.0 || q.loss_pct > 10.0)
+        .map(|(n, q)| {
+            format!(
+                "{} (±{:.1} ms, {:.0} % lost)",
+                n.name, q.offset_error_ms, q.loss_pct
+            )
+        })
+        .collect();
+    if !poor.is_empty() {
+        return Some(check(
+            "sync",
+            "Timing",
+            Status::Warn,
+            format!(
+                "Weak network timing: {}. Move the access point closer, use 5 GHz or Ethernet.",
+                list_names(&poor)
+            ),
+        ));
+    }
+    let worst = with_q
+        .iter()
+        .map(|(_, q)| q.offset_error_ms)
+        .fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v))));
+    Some(match worst {
+        Some(w) => check(
+            "sync",
+            "Timing",
+            Status::Ok,
+            format!("Controllers keep time within ±{w:.1} ms"),
+        ),
+        None => check(
+            "sync",
+            "Timing",
+            Status::Ok,
+            "Waiting for timing reports from the controllers",
+        ),
+    })
 }
 
 /// Strings longer than the boot-time DPI mode (only reported when there is a problem).
@@ -843,6 +950,79 @@ mod geometry_tests {
     use super::*;
     use crate::player::GeometryStatus;
     use crate::services::geometry::evaluate;
+
+    #[test]
+    fn sync_check_reports_timing_problems() {
+        use crate::cluster::proto::{FileProgress, SyncQuality, SyncState, PROTOCOL_VERSION};
+        use crate::cluster::NodeStatus;
+        use pixelplus_core::model::{BoardKind, NodeRole};
+        let node = |name: &str, q: Option<SyncQuality>, ps: Option<bool>, proto: u32| NodeStatus {
+            id: name.into(),
+            name: name.into(),
+            role: NodeRole::Follower,
+            adopted: true,
+            online: true,
+            last_seen: None,
+            board: BoardKind::Difftx,
+            sync_offset_ms: 0.0,
+            sync_state: SyncState::Synced,
+            sync: q,
+            wifi_power_save: ps,
+            protocol: proto,
+            files: FileProgress::default(),
+            ip: None,
+            version: None,
+            pi_model: None,
+            hostname: String::new(),
+            problem: None,
+        };
+        let good = SyncQuality {
+            offset_error_ms: 0.4,
+            loss_pct: 1.0,
+            ..Default::default()
+        };
+        let c = sync_check(
+            &[node("Garage", Some(good), Some(false), PROTOCOL_VERSION)],
+            Some(false),
+            true,
+        )
+        .unwrap();
+        assert_eq!(c.status, Status::Ok);
+        assert!(c.detail.contains("±0.4 ms"), "{}", c.detail);
+        let c = sync_check(
+            &[node("Garage", Some(good), Some(true), PROTOCOL_VERSION)],
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(c.status, Status::Warn);
+        assert!(c.detail.contains("power saving") && c.detail.contains("Garage"));
+        let bad = SyncQuality {
+            offset_error_ms: 9.0,
+            loss_pct: 30.0,
+            ..Default::default()
+        };
+        let c = sync_check(
+            &[node("Tree", Some(bad), None, PROTOCOL_VERSION)],
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(c.status, Status::Warn);
+        assert!(
+            c.detail.contains("Tree (±9.0 ms, 30 % lost)"),
+            "{}",
+            c.detail
+        );
+        let c = sync_check(&[node("Old", None, None, 1)], None, true).unwrap();
+        assert_eq!(c.status, Status::Fail);
+        // A single controller: only its own power save matters.
+        assert!(sync_check(&[], Some(false), false).is_none());
+        assert_eq!(
+            sync_check(&[], Some(true), false).unwrap().status,
+            Status::Warn
+        );
+    }
 
     #[test]
     fn geometry_check_offers_the_fix() {

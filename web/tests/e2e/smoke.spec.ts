@@ -89,3 +89,33 @@ test('public request page lets a visitor request a song', async ({ page }) => {
 	await expect(page.getByText('You’re on the list!')).toBeVisible();
 	expect(errors).toEqual([]);
 });
+
+test('controllers show how well each follower keeps time', async ({ page }) => {
+	const errors = watchErrors(page);
+	await page.goto('/controllers?mock=1');
+	const badge = page.getByRole('button', { name: /In sync ±\d/ }).first();
+	await expect(badge).toBeVisible();
+	await badge.click();
+	const details = page.getByRole('dialog', { name: 'Timing details' });
+	await expect(details).toContainText('Clock accuracy');
+	await expect(details).toContainText('Network round trip');
+	await page.keyboard.press('Escape');
+	await expect(details).toBeHidden();
+	expect(errors).toEqual([]);
+});
+
+test('sync lights to sound: start the test, move the delay, done', async ({ page }) => {
+	const errors = watchErrors(page);
+	await page.goto('/settings?mock=1#audio');
+	await page.getByRole('button', { name: /Sync lights to sound/ }).click();
+	const wizard = page.getByRole('dialog', { name: 'Sync lights to sound' });
+	await wizard.getByRole('button', { name: 'Start the test' }).click();
+	await expect(wizard.getByText('Flashing and clicking')).toBeVisible();
+	await wizard.getByRole('button', { name: 'FM transmitter' }).click();
+	await wizard.getByRole('button', { name: '10 ms later' }).click();
+	await expect(wizard.getByText('+30 ms', { exact: true }).first()).toBeVisible();
+	await wizard.getByRole('button', { name: 'Done' }).click();
+	await expect(wizard).toBeHidden();
+	await expect(page.getByText('+30 ms', { exact: true })).toBeVisible();
+	expect(errors).toEqual([]);
+});

@@ -27,9 +27,24 @@ pub(crate) fn spawn(state: &AppState, sh: &Arc<Shared>) {
     }
 }
 
-async fn bind(sh: &Shared, port: u16) -> std::io::Result<UdpSocket> {
+async fn bind(sh: &Shared, port: u16, overlay: bool) -> std::io::Result<UdpSocket> {
     let sock = UdpSocket::bind(SocketAddr::new(sh.settings.bind, port)).await?;
     sock.set_broadcast(true)?;
+    // WMM priority for timing packets (clock probes, sync), a notch lower for
+    // overlay frames.
+    let tos = if overlay { net::TOS_AF41 } else { net::TOS_EF };
+    if let Err(e) = net::set_priority(&sock, tos) {
+        tracing::debug!("could not set the priority of UDP {port}: {e}");
+    }
+    if !overlay {
+        let on = net::enable_rx_timestamps(&sock);
+        sh.kernel_ts.store(on, std::sync::atomic::Ordering::Relaxed);
+        if !on {
+            tracing::info!(
+                "kernel receive timestamps unavailable; clock probes use userspace time"
+            );
+        }
+    }
     Ok(sock)
 }
 
@@ -44,7 +59,7 @@ async fn bind_and_receive(state: AppState, sh: Arc<Shared>, overlay: bool) {
     let what = if overlay { "overlay" } else { "cluster" };
     let mut warned = false;
     let sock = loop {
-        match bind(&sh, port).await {
+        match bind(&sh, port, overlay).await {
             Ok(s) => break Arc::new(s),
             Err(e) => {
                 if !warned {
@@ -72,8 +87,8 @@ async fn bind_and_receive(state: AppState, sh: Arc<Shared>, overlay: bool) {
 
     let mut buf = vec![0u8; 65_536];
     loop {
-        let (n, src) = tokio::select! {
-            r = sock.recv_from(&mut buf) => match r {
+        let (n, src, stamp) = tokio::select! {
+            r = net::recv_timestamped(&sock, &mut buf) => match r {
                 Ok(v) => v,
                 Err(e) => {
                     // ICMP errors (e.g. port unreachable after a send) surface here on
@@ -85,16 +100,18 @@ async fn bind_and_receive(state: AppState, sh: Arc<Shared>, overlay: bool) {
             },
             _ = stop.changed() => return,
         };
+        // Arrival time on the cluster clock (kernel stamp where available).
+        let rx_ms = sh.rx_time_ms(stamp);
         let data = &buf[..n];
         if overlay {
             follower::on_overlay_packet(&state, &sh, data).await;
         } else {
-            on_packet(&state, &sh, data, src).await;
+            on_packet(&state, &sh, data, src, rx_ms).await;
         }
     }
 }
 
-async fn on_packet(state: &AppState, sh: &Arc<Shared>, data: &[u8], src: SocketAddr) {
+async fn on_packet(state: &AppState, sh: &Arc<Shared>, data: &[u8], src: SocketAddr, rx_ms: f64) {
     let identity = state.identity();
     let raw = match proto::parse(data) {
         Ok(r) => r,
@@ -155,12 +172,12 @@ async fn on_packet(state: &AppState, sh: &Arc<Shared>, data: &[u8], src: SocketA
         }
         Msg::Ping(p) => {
             if let (true, Some(key)) = (fresh, key.as_deref()) {
-                leader::on_ping(state, sh, p, key, src).await;
+                leader::on_ping(state, sh, p, key, src, rx_ms).await;
             }
         }
         Msg::Pong(p) => {
             if fresh {
-                follower::on_pong(state, sh, p, src);
+                follower::on_pong(state, sh, p, src, rx_ms);
             }
         }
     }
@@ -268,6 +285,7 @@ pub(crate) fn build_beacon(state: &AppState, sh: &Shared, ips: Vec<std::net::IpA
         show_version,
         report,
         joining: sh.join_window().is_some(),
+        proto: proto::PROTOCOL_VERSION,
     }
 }
 

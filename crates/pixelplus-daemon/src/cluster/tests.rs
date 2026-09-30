@@ -451,17 +451,25 @@ async fn leader_adopts_followers_and_drives_them() {
             .duration_since(f1.state.started)
             .as_secs_f64()
             * 1000.0;
-    let est = f1
-        .cluster
-        .shared
-        .clock
-        .lock()
-        .offset_ms()
-        .expect("clock estimate");
+    // Wait for the fast-start burst + a few regular bursts, then the estimate
+    // is within a millisecond on loopback (4 timestamps, kernel receive stamps).
+    eventually("clock converged", Duration::from_secs(5), || {
+        f1.cluster.shared.clock.lock().converged().then_some(())
+    })
+    .await;
+    let est = {
+        let clock = f1.cluster.shared.clock.lock();
+        clock
+            .offset_at(f1.cluster.now_ms())
+            .expect("clock estimate")
+    };
     assert!(
-        (est - truth).abs() < 20.0,
+        (est - truth).abs() < 1.0,
         "offset estimate {est} vs {truth}"
     );
+    let q = super::follower::sync_quality(&f1.state, &f1.cluster.shared).expect("quality");
+    assert!(q.offset_error_ms < 5.0 && q.samples >= 5, "{q:?}");
+    assert!(q.loss_pct <= 20.0, "{q:?}");
 
     // 6. Sync: the follower player follows the leader.
     leader.status_tx.send_replace(PlayerStatus {
@@ -494,6 +502,47 @@ async fn leader_adopts_followers_and_drives_them() {
         (local_now - p.sent_at_ms as f64).abs() < 1000.0,
         "sent_at is local time"
     );
+    // Timeline anchors: the leader engine's timeline (position at its own
+    // clock time) arrives on the follower's clock; evaluated at the same
+    // instant on both it agrees to well under a millisecond on loopback.
+    let at = leader.cluster.now_ms();
+    leader.status_tx.send_replace(PlayerStatus {
+        state: PlayerState::Playing,
+        item: Some(ItemRef {
+            kind: "sequence".into(),
+            id: "s1".into(),
+            name: "Wizards".into(),
+        }),
+        pos_ms: 500,
+        duration_ms: 100_000,
+        brightness: 90,
+        anchor: Some(crate::player::Anchor {
+            pos_ms: 500.125,
+            at_ms: at,
+            rate: 1.0,
+            epoch: 77,
+        }),
+        ..Default::default()
+    });
+    let mut worst = 0.0f64;
+    for _ in 0..8 {
+        let cmd = next_cmd(
+            &mut f1.player_rx,
+            "sync with anchor",
+            |c| matches!(c, PlayerCmd::Sync(p) if p.anchor.is_some_and(|a| a.epoch == 77)),
+        )
+        .await;
+        let PlayerCmd::Sync(p) = cmd else {
+            unreachable!()
+        };
+        let a = p.anchor.unwrap();
+        // Same instant on both clocks.
+        let (lt, ft) = (leader.cluster.now_ms(), f1.cluster.now_ms());
+        let err = a.pos_at(ft) - (500.125 + (lt - at));
+        worst = worst.max(err.abs());
+    }
+    eprintln!("anchor timeline error on loopback: worst {worst:.3} ms");
+    assert!(worst < 1.0, "follower timeline off by {worst} ms");
     // The effect of a look is stamped with the display-wide bounds.
     leader
         .state
@@ -935,6 +984,7 @@ async fn adoption_rules_skew_and_replay() {
             item: None,
             pos_ms: 0,
             sent_at_ms: 0,
+            anchor: None,
             effect: None,
             test: None,
             brightness,
@@ -951,7 +1001,6 @@ async fn adoption_rules_skew_and_replay() {
             seq: 1,
         }),
     );
-    sock.send_to(&old, ("127.0.0.1", fp)).unwrap();
     let other_boot = proto::encode(
         &sync(8),
         Some(proto::Stamp {
@@ -960,7 +1009,6 @@ async fn adoption_rules_skew_and_replay() {
             seq: u64::MAX / 2,
         }),
     );
-    sock.send_to(&other_boot, ("127.0.0.1", fp)).unwrap();
     let fresh = proto::encode(
         &sync(9),
         Some(proto::Stamp {
@@ -970,22 +1018,21 @@ async fn adoption_rules_skew_and_replay() {
         }),
     );
     sock.send_to(&fresh, ("127.0.0.1", fp)).unwrap();
-    let cmd = next_cmd(
+    next_cmd(
         &mut f.player_rx,
         "fresh sync",
-        |c| matches!(c, PlayerCmd::Sync(p) if matches!(p.brightness, 7..=9)),
+        |c| matches!(c, PlayerCmd::Sync(p) if p.brightness == 9),
     )
     .await;
-    assert!(
-        matches!(cmd, PlayerCmd::Sync(p) if p.brightness == 9),
-        "replays were dropped"
-    );
-    // The very same packet again is a replay.
+    // Now an old sequence number (far below the reordering window), another
+    // run's packet and the very same packet again are all replays.
+    sock.send_to(&old, ("127.0.0.1", fp)).unwrap();
+    sock.send_to(&other_boot, ("127.0.0.1", fp)).unwrap();
     sock.send_to(&fresh, ("127.0.0.1", fp)).unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     while let Ok(c) = f.player_rx.try_recv() {
         assert!(
-            !matches!(c, PlayerCmd::Sync(p) if p.brightness == 9),
+            !matches!(c, PlayerCmd::Sync(p) if matches!(p.brightness, 7..=9)),
             "replayed sync applied"
         );
     }

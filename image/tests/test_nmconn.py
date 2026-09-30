@@ -124,3 +124,30 @@ class NmcliParsingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PowerSaveTests(unittest.TestCase):
+    def test_parse(self):
+        self.assertIs(nmconn.parse_power_save("Power save: on\n"), True)
+        self.assertIs(nmconn.parse_power_save("\tPower save: off"), False)
+        self.assertIsNone(nmconn.parse_power_save("command failed: No such device (-19)"))
+        self.assertIsNone(nmconn.parse_power_save(""))
+
+    def test_turned_off_when_on(self):
+        state = {"ps": "on"}
+        calls = []
+
+        def run(argv, timeout=30):
+            calls.append(list(argv))
+            if argv[-1] == "power_save":
+                return subprocess.CompletedProcess(argv, 0, f"Power save: {state['ps']}\n", "")
+            if argv[-2:] == ("power_save", "off") or list(argv[-2:]) == ["power_save", "off"]:
+                state["ps"] = "off"
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        nm = nmconn.NM(run)
+        self.assertIs(nm.power_save_off("wlan0"), False)
+        self.assertIn(["iw", "dev", "wlan0", "set", "power_save", "off"], calls)
+        calls.clear()
+        self.assertIs(nm.power_save_off("wlan0"), False)
+        self.assertNotIn(["iw", "dev", "wlan0", "set", "power_save", "off"], calls, "already off")

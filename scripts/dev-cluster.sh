@@ -22,6 +22,8 @@
 #   PP_CLUSTER_BASE  leader UDP port; f1 = +10, f2 = +20 (overlay = port + 1) (default: 32420)
 #   PP_AUDIO         PIXELPLUS_AUDIO for the leader (default: none)
 #   PP_LOG           PIXELPLUS_LOG filter     (default: info,tower_http=warn)
+#   PP_SIM_REFRESH   simulated pixel refresh (Hz) per node, e.g. "40,40,80": the
+#                    simulator then paces frames on a vblank grid like DPI (default: none)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,8 +64,12 @@ running() {
 }
 
 node_env() {
-	local n="$1" audio=none
+	local n="$1" audio=none refresh=""
 	[ "$n" = leader ] && audio="${PP_AUDIO:-none}"
+	if [ -n "${PP_SIM_REFRESH:-}" ]; then
+		IFS=, read -r -a rates <<<"$PP_SIM_REFRESH"
+		refresh="${rates[$(idx "$n")]:-${rates[0]}}"
+	fi
 	cat <<EOF
 PIXELPLUS_DATA_DIR=$DIR/$n
 PIXELPLUS_WEB_DIR=$WEB
@@ -82,6 +88,7 @@ PIXELPLUS_RUN_DIR=$DIR/$n/run
 PIXELPLUS_GAMES_SOCKET=$DIR/$n/run/games.sock
 PIXELPLUS_TTS_URL=http://127.0.0.1:9
 PIXELPLUS_DEV=1
+PIXELPLUS_SIM_REFRESH_HZ=$refresh
 PIXELPLUS_LOG=${PP_LOG:-info,tower_http=warn}
 EOF
 }

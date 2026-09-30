@@ -34,6 +34,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 
+/// Cluster protocol version, announced in beacons (`proto`). Bumped whenever
+/// the timing packets change meaning; a leader and its followers must run
+/// the same version (a mismatch is shown on the Controllers page and in the
+/// health check). History: 1 = ping/pong with 3 timestamps, sync packets with
+/// integer-ms positions; 2 = 4-timestamp pong (`t2`), timeline anchors in sync
+/// packets (`anchor`), sync-quality reports.
+pub const PROTOCOL_VERSION: u32 = 2;
+
+fn proto_v1() -> u32 {
+    1
+}
+
 /// Largest JSON datagram we send or accept.
 pub const MAX_JSON_PACKET: usize = 32 * 1024;
 /// Largest overlay datagram (the IPv4 UDP payload limit).
@@ -66,6 +78,45 @@ pub struct FollowerReport {
     /// Human-readable problem (download failed, missing slice, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// Clock / timeline sync quality (protocol 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<SyncQuality>,
+    /// Wi-Fi power saving is on (adds 50–1000 ms latency spikes): `None`
+    /// when unknown or not on Wi-Fi.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wifi_power_save: Option<bool>,
+}
+
+/// How well a follower follows its leader (Controllers page badge, health
+/// check). All times in ms.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncQuality {
+    /// Error bound of the leader-clock estimate: half the best round trip
+    /// (path asymmetry) plus the residual RMS of the fit.
+    pub offset_error_ms: f64,
+    /// Residual RMS of the clock fit.
+    pub jitter_ms: f64,
+    /// Drift of the leader clock against this one (ppm).
+    pub drift_ppm: f64,
+    /// Round trip: best, median, 95th percentile (last 90 s).
+    pub rtt_ms: f64,
+    pub rtt_p50_ms: f64,
+    pub rtt_p95_ms: f64,
+    /// Pings without a pong (last 90 s), percent.
+    pub loss_pct: f64,
+    /// Clock samples in the window.
+    pub samples: u32,
+    /// Smoothed error of the player following the leader's timeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline_error_ms: Option<f64>,
+    /// Display refresh of this controller's pixel output (Hz); frame changes
+    /// land within ±half a refresh of the ideal instant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_hz: Option<f64>,
+    /// Kernel receive timestamps are in use (userspace otherwise).
+    #[serde(default)]
+    pub kernel_timestamps: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -125,6 +176,9 @@ pub struct Beacon {
     /// (lets a leader offer a controller that is itself a leader).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub joining: bool,
+    /// Cluster protocol version ([`PROTOCOL_VERSION`]; absent = 1).
+    #[serde(default = "proto_v1")]
+    pub proto: u32,
 }
 
 /// Follower → leader clock probe.
@@ -144,8 +198,13 @@ pub struct Pong {
     pub id: String,
     /// Echo of the ping's `t0`.
     pub t0: f64,
-    /// Leader clock when the ping was received (ms since its daemon start).
+    /// Leader clock when the ping was received (kernel receive timestamp
+    /// where available; ms since its daemon start).
     pub t1: f64,
+    /// Leader clock just before the pong was sent (protocol 2; the leader's
+    /// processing time `t2 − t1` is excluded from the round trip).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub t2: Option<f64>,
     /// Leader boot id (a change resets the follower's clock filter).
     #[serde(default)]
     pub boot: String,
@@ -364,6 +423,9 @@ pub enum Freshness {
     UnknownBoot,
 }
 
+/// How far below the highest sequence number a late packet is still accepted.
+pub const REPLAY_WINDOW: u64 = 64;
+
 /// Remembers, per sender, the current boot id, the highest sequence number
 /// and boots that were replaced (a replay of an older run is refused).
 #[derive(Debug, Default)]
@@ -375,6 +437,8 @@ pub struct ReplayGuard {
 struct PeerSeq {
     boot: String,
     seq: u64,
+    /// Bit i set: `seq − 1 − i` was seen (reordering window).
+    window: u64,
     old_boots: std::collections::VecDeque<String>,
 }
 
@@ -388,10 +452,29 @@ impl ReplayGuard {
         }
         let p = self.peers.entry(sender.to_string()).or_default();
         if p.boot == boot {
-            if seq <= p.seq {
+            // Packets may arrive slightly out of order (the sender stamps them
+            // from several tasks; Wi-Fi reorders): accept each sequence number
+            // once within a window of REPLAY_WINDOW below the highest seen.
+            if seq > p.seq {
+                let shift = seq - p.seq;
+                p.window = if shift > REPLAY_WINDOW {
+                    0
+                } else {
+                    // The old highest becomes "seen" at bit shift − 1.
+                    (p.window << shift) | (1u64 << (shift - 1))
+                };
+                p.seq = seq;
+                return Freshness::Fresh;
+            }
+            let back = p.seq - seq;
+            if back == 0 || back > REPLAY_WINDOW {
                 return Freshness::Replayed;
             }
-            p.seq = seq;
+            let bit = 1u64 << (back - 1);
+            if p.window & bit != 0 {
+                return Freshness::Replayed;
+            }
+            p.window |= bit;
             return Freshness::Fresh;
         }
         if !new_boot_ok || p.old_boots.iter().any(|b| b == boot) {
@@ -405,6 +488,7 @@ impl ReplayGuard {
         }
         p.boot = boot.to_string();
         p.seq = seq;
+        p.window = 0;
         Freshness::Fresh
     }
 
@@ -539,6 +623,12 @@ mod tests {
             item: None,
             pos_ms: 1234,
             sent_at_ms: 99_000,
+            anchor: Some(crate::player::Anchor {
+                pos_ms: 1234.567,
+                at_ms: 99_000.125,
+                rate: 1.000_012,
+                epoch: 3,
+            }),
             effect: None,
             test: None,
             brightness: 80,
@@ -613,8 +703,10 @@ mod tests {
             show_version: 0,
             report: None,
             joining: false,
+            proto: PROTOCOL_VERSION,
         });
         let v: serde_json::Value = serde_json::from_slice(&encode(&b, None)).unwrap();
+        assert_eq!(v["proto"], PROTOCOL_VERSION);
         assert_eq!(v["t"], "beacon");
         assert_eq!(v["board"], "difftx");
         assert_eq!(v["boardRev"], "E");
@@ -622,6 +714,38 @@ mod tests {
         assert_eq!(v["adoptedBy"], serde_json::Value::Null);
         assert_eq!(v["http"], 80);
         assert_eq!(v["role"], "follower");
+    }
+
+    #[test]
+    fn protocol_2_fields_are_optional_on_the_wire() {
+        // An old (protocol 1) beacon and pong still parse.
+        let old_beacon = br#"{"t":"beacon","id":"a","name":"A","role":"follower","board":"difftx","ver":"0.0.9","http":80}"#;
+        match decode(old_beacon, None).unwrap().msg {
+            Msg::Beacon(b) => assert_eq!(b.proto, 1),
+            other => panic!("{other:?}"),
+        }
+        let old_pong = br#"{"t":"pong","id":"l","t0":1.5,"t1":9.25}"#;
+        match decode(old_pong, None).unwrap().msg {
+            Msg::Pong(p) => assert_eq!((p.t1, p.t2), (9.25, None)),
+            other => panic!("{other:?}"),
+        }
+        // Positions keep sub-millisecond precision.
+        let bytes = encode(&sample_sync(), None);
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["anchor"]["posMs"], 1234.567);
+        assert_eq!(v["anchor"]["atMs"], 99_000.125);
+        assert_eq!(v["anchor"]["epoch"], 3);
+        let back = decode(&bytes, None).unwrap().msg;
+        assert_eq!(back, sample_sync());
+        // A protocol 1 sync packet (no anchor) is still understood.
+        let text = String::from_utf8(bytes).unwrap();
+        let cut = text.find(",\"anchor\"").unwrap();
+        let end = text[cut..].find('}').unwrap() + cut + 1;
+        let legacy = format!("{}{}", &text[..cut], &text[end..]);
+        match decode(legacy.as_bytes(), None).unwrap().msg {
+            Msg::Sync(p) => assert_eq!((p.anchor, p.pos_ms), (None, 1234)),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -678,6 +802,16 @@ mod tests {
         assert_eq!(g.check("l", "b1", 2, false), Freshness::Fresh);
         assert_eq!(g.check("l", "b1", 2, false), Freshness::Replayed);
         assert_eq!(g.check("l", "b1", 1, false), Freshness::Replayed);
+        // Reordering: 5 arrives before 3 and 4; both still count, once.
+        assert_eq!(g.check("l", "b1", 5, false), Freshness::Fresh);
+        assert_eq!(g.check("l", "b1", 4, false), Freshness::Fresh);
+        assert_eq!(g.check("l", "b1", 3, false), Freshness::Fresh);
+        assert_eq!(g.check("l", "b1", 4, false), Freshness::Replayed);
+        assert_eq!(g.check("l", "b1", 5, false), Freshness::Replayed);
+        // Too old for the window.
+        assert_eq!(g.check("l", "b1", 200, false), Freshness::Fresh);
+        assert_eq!(g.check("l", "b1", 100, false), Freshness::Replayed);
+        assert_eq!(g.check("l", "b1", 199, false), Freshness::Fresh);
         // Restart: new boot accepted once confirmed; the old one is refused for good.
         assert_eq!(g.check("l", "b2", 1, true), Freshness::Fresh);
         assert_eq!(g.check("l", "b1", 99, true), Freshness::UnknownBoot);

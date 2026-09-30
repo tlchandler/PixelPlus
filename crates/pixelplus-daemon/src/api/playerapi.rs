@@ -211,6 +211,22 @@ async fn blackout(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<
     Ok(Json(json!({ "ok": true, "blackout": on })))
 }
 
+/// `POST /player/calibration` `{on: bool}` (default on): play or stop the
+/// "Sync lights to sound" pattern: a click every second and every prop on
+/// every controller flashing white with it. While it runs, change
+/// `settings.audio.outputDelayMs` until flash and click coincide.
+async fn calibration(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Value>> {
+    let v: Value = body_or_default(&body)?;
+    let on = v["on"].as_bool().unwrap_or(true);
+    if on && state.identity().role == crate::node::LocalRole::Follower {
+        return Err(ApiError::bad_request(
+            "This controller follows its show leader; calibrate on the leader.",
+        ));
+    }
+    player(&state)?.send(PlayerCmd::Calibrate(on)).await?;
+    Ok(Json(json!({ "ok": true, "on": on })))
+}
+
 /// Show a look live (`{effect: EffectPreset}`), or stop it (`{effect: null}`).
 pub(crate) async fn apply_effect(state: &AppState, effect: Option<EffectPreset>) -> ApiResult<()> {
     let p = player(state)?;
@@ -294,4 +310,5 @@ pub fn routes() -> Router<AppState> {
         .route("/player/brightness", put(brightness).post(brightness))
         .route("/player/blackout", post(blackout))
         .route("/player/effect", post(effect))
+        .route("/player/calibration", post(calibration))
 }

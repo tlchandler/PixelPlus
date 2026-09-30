@@ -16,19 +16,29 @@
 //! status and preview. Every iteration runs under `catch_unwind`: a bug in a
 //! frame never takes the show down.
 //!
-//! Timing: while a sequence plays the loop runs at the sequence's frame rate
-//! and picks the frame for the *current position*, which comes from the audio
-//! clock when audio plays (see `audio.rs`) or a monotonic clock otherwise.
+//! Timing (ARCHITECTURE §7.5): every frame is chosen for the moment it
+//! *lights up*, not the moment it is composed. On DPI that is the next usable
+//! vblank (predicted from page-flip timestamps) plus the WS281x latch delay of
+//! this controller's strings; the loop is paced from the vblank grid so frame
+//! changes land within ±half a refresh of their ideal instant. Without a
+//! scanned-out display (simulation) frames light up when written and the loop
+//! wakes at the timeline's frame boundaries. The timeline itself is a
+//! [`Servo`]: on the leader it follows the audio clock (see `audio.rs`; the
+//! monotonic clock when no audio plays) minus `settings.audio.outputDelayMs`,
+//! on followers the leader's timeline anchors.
 
 use super::audio::{AudioEngine, TrackId};
-use super::clock::{self, crossfade_progress, crossfade_start, Fade, MonoClock, SlewClock};
+use super::clock::{
+    self, crossfade_progress, crossfade_start, frame_for_slot, next_update, Fade, MonoClock, Servo,
+    ServoGains,
+};
 use super::compose::{self, find_effect, EffectLayer, PropSlot, Sink, TestLayer};
 use super::overlay::OverlayManager;
 use super::playlist::PlaylistCursor;
 use super::reader::{FrameLayout, FrameReader, SeqMeta};
 use super::scheduler::{self, Origin, SchedAction, ScheduleFacts, Scheduler};
 use super::types::*;
-use super::{OverlayCmd, PlayerCmd, PlayerHandle, SyncPacket};
+use super::{Anchor, OverlayCmd, PlayerCmd, PlayerHandle, SyncPacket};
 use crate::api::{ApiError, ApiResult};
 use crate::events::ToastKind;
 use crate::node::LocalRole;
@@ -56,6 +66,14 @@ const IDLE_PERIOD: Duration = Duration::from_millis(100);
 const PREVIEW_EVERY: Duration = Duration::from_millis(50);
 /// A sequence whose first frame is not readable within this time is skipped.
 const OPEN_TIMEOUT_MS: f64 = 5000.0;
+/// Presentation slot without a scanned-out display: software timer granularity.
+const SOFT_SLOT_MS: f64 = 1.0;
+/// Calibration ("Sync lights to sound"): a click and a white flash every second.
+pub const CALIBRATION_ID: &str = "calibration";
+pub const CALIBRATION_FLASH_MS: f64 = 50.0;
+const CALIBRATION_LEN_MS: u64 = 60_000;
+/// Anchor epochs: the engine's epoch in the high bits, timeline jumps below.
+const EPOCH_SHIFT: u32 = 20;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -72,6 +90,10 @@ pub struct EngineOptions {
     pub shm_dir: PathBuf,
     /// Try SCHED_FIFO for the output thread.
     pub realtime: bool,
+    /// Simulated output only: pretend to scan out at this refresh rate
+    /// (`PIXELPLUS_SIM_REFRESH_HZ`), so presentation-time pacing runs as on
+    /// DPI (development, tests).
+    pub sim_refresh_hz: Option<f64>,
 }
 
 impl EngineOptions {
@@ -87,6 +109,9 @@ impl EngineOptions {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("/dev/shm")),
             realtime: true,
+            sim_refresh_hz: env("PIXELPLUS_SIM_REFRESH_HZ")
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|hz| hz.is_finite() && *hz >= 1.0 && *hz <= 1000.0),
         }
     }
 }
@@ -367,7 +392,8 @@ fn run_output_thread(mut core: Core) {
     }
     let mut next = Instant::now();
     loop {
-        // Wait for the frame deadline, applying commands as they arrive.
+        // Wait for the frame deadline (see `Core::plan_next`), applying
+        // commands as they arrive.
         loop {
             let now = Instant::now();
             if now >= next {
@@ -386,17 +412,18 @@ fn run_output_thread(mut core: Core) {
                 Err(RecvTimeoutError::Timeout) => break,
             }
         }
+        let started = Instant::now();
         match catch_unwind(AssertUnwindSafe(|| core.tick())) {
             Ok(()) => core.panics = 0,
             Err(_) => core.recover_from_panic("a frame"),
         }
-        let period = core.frame_period();
-        next += period;
-        let now = Instant::now();
-        if next + period < now {
-            // Fell behind (slow SD card, overloaded CPU): resynchronise instead of bursting.
-            next = now + period;
-        }
+        core.note_tick(started.elapsed());
+        // Fell behind (slow SD card, overloaded CPU): the plan starts from now,
+        // so there is never a burst of catch-up frames.
+        next = match catch_unwind(AssertUnwindSafe(|| core.plan_next())) {
+            Ok(t) => t,
+            Err(_) => Instant::now() + core.frame_period(),
+        };
     }
 }
 
@@ -434,10 +461,13 @@ struct OutputStage {
 }
 
 impl OutputStage {
-    fn new(kind: BackendKind, board: BoardKind) -> Self {
+    fn new(kind: BackendKind, board: BoardKind, sim_refresh_hz: Option<f64>) -> Self {
         let (backend, sim): (Box<dyn PixelOutput>, _) = match kind {
             BackendKind::Sim => {
-                let s = SimOutput::new();
+                let mut s = SimOutput::new();
+                if let Some(hz) = sim_refresh_hz {
+                    s = s.with_refresh(Duration::from_secs_f64(1.0 / hz));
+                }
                 let h = s.handle();
                 (Box::new(s), Some(h))
             }
@@ -543,6 +573,8 @@ enum Pending {
         sequence_id: String,
         name: Option<String>,
     },
+    /// "Sync lights to sound" calibration pattern.
+    Calibration,
 }
 
 enum ActiveKind {
@@ -554,6 +586,8 @@ enum ActiveKind {
     /// DJ clip or media: audio only, the idle look runs under it.
     Audio,
     Pause,
+    /// Calibration: every prop flashes white at each click of the audio.
+    Flash,
 }
 
 struct Active {
@@ -569,6 +603,9 @@ struct Active {
     /// None = until stopped (manual look) / until the audio ends.
     duration_ms: Option<u64>,
     last_pos: f64,
+    /// The item's timeline as the lights follow it (tracks `clock`, which
+    /// tracks the audio clock); created when the item starts.
+    servo: Option<Servo>,
     buf: Vec<u8>,
     have_frame: bool,
     warned_audio: bool,
@@ -588,6 +625,7 @@ impl Active {
             begun_ms: now_ms,
             duration_ms: None,
             last_pos: 0.0,
+            servo: None,
             buf: Vec::new(),
             have_frame: false,
             warned_audio: false,
@@ -616,7 +654,12 @@ struct Look {
 struct FollowState {
     pkt: Option<SyncPacket>,
     rx_ms: f64,
-    clock: Option<SlewClock>,
+    /// The leader's timeline on the local clock (from the last packet).
+    anchor: Option<Anchor>,
+    /// Our position, following `anchor` (see [`Servo`]).
+    clock: Option<Servo>,
+    /// Calibration flash pattern.
+    flash: bool,
     item_key: Option<String>,
     reader: Option<FrameReader>,
     meta: Option<SeqMeta>,
@@ -707,6 +750,26 @@ struct Core {
     tap: Option<std::sync::Arc<super::debugtap::OutputTap>>,
     /// Sequence and frame index composed for the current output frame.
     shown: Option<(String, u32)>,
+    /// Timeline position (ms, unquantised) the shown frame was chosen for.
+    shown_pos: Option<f64>,
+
+    // ----- presentation timing (see `plan_next`) -----
+    /// Engine clock (ms) at which the frame being composed lights up.
+    light_ms: f64,
+    /// How long a frame is shown at least: the display refresh period, or
+    /// the software timer granularity.
+    slot_ms: f64,
+    /// Vblank planned for the next frame and the latch delay after it (ms).
+    planned: Option<(Instant, f64)>,
+    /// Smoothed duration of a tick (compose + encode), ms.
+    tick_ms: f64,
+    /// Longest and mean (non-empty) string of this node, in LEDs.
+    string_lines: (f64, f64),
+    /// Timeline discontinuities (new item, seek, pause, delay change).
+    epoch: u64,
+    /// `settings.audio.outputDelayMs` (leader).
+    output_delay_ms: f64,
+    latch_align: bool,
 }
 
 fn item_ref(kind: &str, id: &str, name: &str) -> ItemRef {
@@ -766,7 +829,7 @@ impl Core {
             slots: HashMap::new(),
             remote_props: HashSet::new(),
             pipeline: PixelPipeline::new(&[]),
-            output: OutputStage::new(kind, board),
+            output: OutputStage::new(kind, board, opts.sim_refresh_hz),
             frame: OutputFrame::new(&[]),
             wire: pixelplus_output::OutputFrame::default(),
             chan: Vec::new(),
@@ -809,11 +872,22 @@ impl Core {
             last_extras: (None, None),
             tap: None,
             shown: None,
+            shown_pos: None,
+            light_ms: 0.0,
+            slot_ms: SOFT_SLOT_MS,
+            planned: None,
+            tick_ms: 2.0,
+            string_lines: (0.0, 0.0),
+            epoch: 1,
+            output_delay_ms: show.settings.audio.output_delay_ms as f64,
+            latch_align: show.settings.output.latch_align,
             show: show.clone(),
             app,
             opts,
         };
         core.rebuild_maps();
+        let align = core.latch_align;
+        core.output.backend.set_bottom_align(align);
         core
     }
 
@@ -865,7 +939,7 @@ impl Core {
         }
         if self.panics >= 6 {
             // Maybe the output backend is wedged: rebuild it.
-            self.output = OutputStage::new(self.output.kind, self.board);
+            self.output = OutputStage::new(self.output.kind, self.board, self.opts.sim_refresh_hz);
             self.panics = 0;
         }
     }
@@ -947,6 +1021,19 @@ impl Core {
         } else {
             Duration::from_millis(25)
         };
+        let used: Vec<f64> = self
+            .node_map
+            .pixels_per_output()
+            .iter()
+            .filter(|&&p| p > 0)
+            .map(|&p| p as f64)
+            .collect();
+        let mean = if used.is_empty() {
+            0.0
+        } else {
+            used.iter().sum::<f64>() / used.len() as f64
+        };
+        self.string_lines = (longest as f64, mean);
         self.update_geometry();
     }
 
@@ -985,7 +1072,30 @@ impl Core {
         if kind != self.output.kind || (kind == BackendKind::Dpi && board != self.output.board) {
             tracing::info!("pixel output changes to {kind:?} for board {board:?}");
             self.output.backend.stop();
-            self.output = OutputStage::new(kind, board);
+            self.output = OutputStage::new(kind, board, self.opts.sim_refresh_hz);
+            self.planned = None;
+        }
+        let align = self.show.settings.output.latch_align;
+        if align != self.latch_align || self.output.backend.stats().bottom_aligned != align {
+            if align != self.latch_align {
+                tracing::info!(
+                    "pixel strings are now {} (experimental latch alignment)",
+                    if align {
+                        "bottom-aligned"
+                    } else {
+                        "top-aligned"
+                    }
+                );
+            }
+            self.latch_align = align;
+            self.output.backend.set_bottom_align(align);
+        }
+        // The sound delay moves the lights timeline: a new epoch makes the
+        // followers jump to it at once (live while calibrating).
+        let delay = self.show.settings.audio.output_delay_ms as f64;
+        if delay != self.output_delay_ms {
+            self.output_delay_ms = delay;
+            self.epoch += 1;
         }
         self.board = board;
         self.rebuild_maps();
@@ -1090,6 +1200,7 @@ impl Core {
                     self.on_sync(p, now_ms);
                 }
             }
+            PlayerCmd::Calibrate(on) => self.calibrate(on, now_ms),
             PlayerCmd::Overlay(o) => self.overlay_cmd(o),
             PlayerCmd::Reload => {
                 let show = self.app.store.get();
@@ -1255,6 +1366,32 @@ impl Core {
         }
     }
 
+    /// Start or stop the calibration pattern (leader only).
+    fn calibrate(&mut self, on: bool, now_ms: f64) {
+        if self.is_follower() {
+            return;
+        }
+        let running = self
+            .current
+            .as_ref()
+            .is_some_and(|a| a.iref.kind == CALIBRATION_ID);
+        if on && !running {
+            self.test = None;
+            self.start_program(
+                Program {
+                    origin: Origin::Manual,
+                    source: Source::Single,
+                    playlist: None,
+                    crossfade_ms: 0,
+                },
+                Pending::Calibration,
+                now_ms,
+            );
+        } else if !on && running {
+            self.stop(false, true, now_ms);
+        }
+    }
+
     fn start_program(&mut self, program: Program, first: Pending, now_ms: f64) {
         // Replace whatever plays (quick fade to avoid clicks).
         self.audio.stop_all(80);
@@ -1307,6 +1444,7 @@ impl Core {
             return;
         }
         self.paused = paused;
+        self.epoch += 1;
         for a in self
             .current
             .iter_mut()
@@ -1329,6 +1467,7 @@ impl Core {
         };
         a.clock.seek(pos, now_ms);
         a.last_pos = pos;
+        self.epoch += 1;
         if let Some(o) = self.outgoing.take() {
             if let Some(id) = o.active.audio {
                 self.audio.stop(id);
@@ -1457,6 +1596,7 @@ impl Core {
             };
             match self.begin(&p, now_ms) {
                 Ok(Some(mut active)) => {
+                    self.epoch += 1;
                     active.fade_in_ms = fade_in_ms;
                     self.current = Some(active);
                     self.after_begin(&p);
@@ -1545,6 +1685,9 @@ impl Core {
                     .sequence(sequence_id)
                     .map_or("Song request", |s| s.name.as_str());
                 item_ref("request", sequence_id, name)
+            }
+            Pending::Calibration => {
+                item_ref(CALIBRATION_ID, CALIBRATION_ID, "Sync lights to sound")
             }
             Pending::Item(i) => match i {
                 PlaylistItem::Sequence { sequence_id, .. } => item_ref(
@@ -1646,6 +1789,14 @@ impl Core {
                     ),
                 }
             }
+            return Ok(Some(a));
+        }
+        if matches!(p, Pending::Calibration) {
+            let path = calibration_click(&self.app.config.data_dir)
+                .map_err(|e| format!("could not write the calibration sound: {e}"))?;
+            let mut a = Active::new(iref, ActiveKind::Flash, now_ms);
+            a.audio_src = Some((path, 0.0));
+            a.duration_ms = Some(CALIBRATION_LEN_MS);
             return Ok(Some(a));
         }
         let Pending::Item(item) = p else {
@@ -1867,6 +2018,7 @@ impl Core {
     fn tick(&mut self) {
         let now = Instant::now();
         let now_ms = self.now_ms();
+        self.begin_frame(now, now_ms);
         if self.is_follower() {
             self.follower_advance(now_ms);
         } else {
@@ -1955,7 +2107,9 @@ impl Core {
         }
     }
 
-    fn position(audio: &AudioEngine, a: &mut Active, paused: bool, now_ms: f64) -> f64 {
+    /// The heard position of `a` now (audio clock, or monotonic without
+    /// audio); also advances the lights timeline (`a.servo`) that follows it.
+    fn position(audio: &AudioEngine, a: &mut Active, paused: bool, now_ms: f64, epoch: u64) -> f64 {
         if !a.started {
             return 0.0;
         }
@@ -1971,7 +2125,27 @@ impl Core {
         }
         let p = a.clock.pos(now_ms).max(a.last_pos);
         a.last_pos = p;
+        if let Some(s) = a.servo.as_mut() {
+            if paused {
+                s.set_running(false, now_ms);
+                s.update(p, Some(0.0), Some(epoch), now_ms);
+            } else {
+                if !s.running() {
+                    s.set_running(true, now_ms);
+                }
+                // The monotonic clock is exact (rate 1); the audio clock's rate
+                // is learnt and its jitter filtered.
+                let ff = (!a.use_audio_clock).then_some(1.0);
+                s.update(p, ff, Some(epoch), now_ms);
+            }
+        }
         p
+    }
+
+    /// Timeline position of `a` for the lights at clock time `t_ms`: the
+    /// followed timeline minus the sound delay.
+    fn lights_pos(a: &Active, t_ms: f64, delay_ms: f64) -> f64 {
+        a.servo.as_ref().map_or(a.last_pos, |s| s.pos_at(t_ms)) - delay_ms
     }
 
     fn try_start(&mut self, now_ms: f64) -> Result<(), String> {
@@ -2021,6 +2195,12 @@ impl Core {
                 self.audio.set_paused(id, true);
             }
         }
+        let gains = if a.use_audio_clock {
+            ServoGains::AUDIO
+        } else {
+            ServoGains::FOLLOWER
+        };
+        a.servo = Some(Servo::new(0.0, now_ms, gains));
         Ok(())
     }
 
@@ -2068,7 +2248,7 @@ impl Core {
         if !a.started || paused {
             return;
         }
-        let pos = Self::position(&self.audio, a, paused, now_ms);
+        let pos = Self::position(&self.audio, a, paused, now_ms, self.epoch);
         // Audio problems: warn once; audio-only items end with their track.
         if let Some(id) = a.audio {
             if let Some(e) = self.audio.track_error(id) {
@@ -2085,9 +2265,10 @@ impl Core {
             }
         }
         let ended = match &a.kind {
-            ActiveKind::Sequence { .. } | ActiveKind::Effect(_) | ActiveKind::Pause => {
-                a.duration_ms.is_some_and(|d| pos >= d as f64)
-            }
+            ActiveKind::Sequence { .. }
+            | ActiveKind::Effect(_)
+            | ActiveKind::Pause
+            | ActiveKind::Flash => a.duration_ms.is_some_and(|d| pos >= d as f64),
             ActiveKind::Audio => match a.audio {
                 Some(id) => {
                     self.audio.is_finished(id)
@@ -2158,28 +2339,42 @@ impl Core {
         }
     }
 
-    /// Render an item into channel space.
+    /// Render an item into channel space at lights position `pos` (a
+    /// presentation slot of `slot_ms`). Returns the sequence frame shown.
     fn render_active(
         a: &mut Active,
         pos: f64,
+        slot_ms: f64,
         chan: &mut [u8],
         idle: Option<&mut Look>,
         now_ms: f64,
-    ) {
+    ) -> Option<u32> {
         match &mut a.kind {
             ActiveKind::Sequence { reader, meta } => {
+                let mut shown = None;
                 if let Some(m) = meta {
-                    let idx = (pos / m.frame_ms as f64) as u32;
+                    let idx = frame_for_slot(pos, slot_ms, m.frame_ms as f64);
                     if a.buf.len() == m.frame_len && reader.get(idx, &mut a.buf) {
                         a.have_frame = true;
                     }
+                    shown = Some(idx);
                 }
                 if a.have_frame {
                     let n = chan.len().min(a.buf.len());
                     chan[..n].copy_from_slice(&a.buf[..n]);
                 }
+                shown.filter(|_| a.have_frame)
             }
-            ActiveKind::Effect(layer) => layer.render(pos as u64, &mut Sink::Chan(chan)),
+            ActiveKind::Effect(layer) => {
+                layer.render(pos.max(0.0) as u64, &mut Sink::Chan(chan));
+                None
+            }
+            ActiveKind::Flash => {
+                if flash_on(pos, slot_ms) {
+                    chan.fill(255);
+                }
+                None
+            }
             ActiveKind::Audio | ActiveKind::Pause => {
                 if let Some(l) = idle {
                     l.layer.render(
@@ -2187,12 +2382,19 @@ impl Core {
                         &mut Sink::Chan(chan),
                     );
                 }
+                None
             }
         }
     }
 
     fn compose_leader(&mut self, now_ms: f64) {
         let paused = self.paused;
+        let (light, slot, delay, epoch) = (
+            self.light_ms,
+            self.slot_ms,
+            self.output_delay_ms,
+            self.epoch,
+        );
         let needs_idle = self
             .current
             .iter()
@@ -2205,10 +2407,12 @@ impl Core {
         let mut blend_t = None;
         if let Some(o) = self.outgoing.as_mut() {
             self.chan_b.fill(0);
-            let pos = Self::position(&self.audio, &mut o.active, paused, now_ms);
+            Self::position(&self.audio, &mut o.active, paused, now_ms, epoch);
+            let pos = Self::lights_pos(&o.active, light, delay);
             Self::render_active(
                 &mut o.active,
                 pos,
+                slot,
                 &mut self.chan_b,
                 self.idle_layer.as_mut(),
                 now_ms,
@@ -2216,22 +2420,34 @@ impl Core {
             blend_t = Some(crossfade_progress(o.start_ms, o.len_ms, now_ms));
         }
         self.shown = None;
+        self.shown_pos = None;
         if let Some(a) = self.current.as_mut() {
             let pos = if a.started {
-                Self::position(&self.audio, a, paused, now_ms)
+                Self::position(&self.audio, a, paused, now_ms, epoch);
+                Self::lights_pos(a, light, delay)
             } else {
                 0.0
             };
             if a.started || blend_t.is_none() {
-                Self::render_active(a, pos, &mut self.chan, self.idle_layer.as_mut(), now_ms);
-            }
-            if let (true, ActiveKind::Sequence { meta: Some(m), .. }) = (a.have_frame, &a.kind) {
-                self.shown = Some((a.iref.id.clone(), (pos / m.frame_ms as f64) as u32));
+                let shown = Self::render_active(
+                    a,
+                    pos,
+                    slot,
+                    &mut self.chan,
+                    self.idle_layer.as_mut(),
+                    now_ms,
+                );
+                if let Some(idx) = shown {
+                    self.shown = Some((a.iref.id.clone(), idx));
+                }
+                if a.started {
+                    self.shown_pos = Some(pos);
+                }
             }
         } else if self.program.is_none() {
             if let Some(l) = self.look.as_mut() {
                 l.layer.render(
-                    (now_ms - l.started_ms).max(0.0) as u64,
+                    (light - l.started_ms).max(0.0) as u64,
                     &mut Sink::Chan(&mut self.chan),
                 );
             }
@@ -2274,6 +2490,7 @@ impl Core {
 
     fn compose_follower(&mut self, now_ms: f64) {
         self.frame.clear();
+        let (light, slot) = (self.light_ms, self.slot_ms);
         let f = &mut self.follow;
         if f.meta.is_none() {
             // The slice finished opening since the last sync packet.
@@ -2282,10 +2499,21 @@ impl Core {
                 f.meta = Some(m);
             }
         }
-        let pos = f.clock.as_mut().map_or(0.0, |c| c.advance(now_ms));
+        // Follow the leader's timeline continuously (every frame, not only
+        // when a packet arrives: the anchor is a function of time).
+        if let (Some(c), Some(a)) = (f.clock.as_mut(), f.anchor) {
+            if c.running() && f.hold_since.is_none() {
+                c.update(a.pos_at(now_ms), Some(a.rate), Some(a.epoch), now_ms);
+            } else {
+                c.advance(now_ms);
+            }
+        }
+        // …evaluated when this frame lights up.
+        let pos = f.clock.as_ref().map_or(0.0, |c| c.pos_at(light));
         self.shown = None;
+        self.shown_pos = f.clock.as_ref().map(|_| pos);
         if let (Some(reader), Some(meta)) = (f.reader.as_ref(), f.meta.as_ref()) {
-            let idx = (pos.max(0.0) / meta.frame_ms as f64) as u32;
+            let idx = frame_for_slot(pos, slot, meta.frame_ms as f64);
             if f.buf.len() == meta.frame_len && reader.get(idx, &mut f.buf) {
                 f.have_frame = true;
             }
@@ -2296,6 +2524,7 @@ impl Core {
                     .and_then(|p| p.item.as_ref())
                     .map(|i| i.id.clone());
                 self.shown = id.map(|id| (id, idx));
+                self.shown_pos = Some(pos);
             }
             if f.have_frame {
                 match &meta.layout {
@@ -2318,6 +2547,10 @@ impl Core {
                 pos.max(0.0) as u64,
                 &mut Sink::Frame(&mut self.frame, &self.prop_map),
             );
+        } else if f.flash && flash_on(pos, slot) {
+            for i in 0..self.frame.output_count() {
+                self.frame.output_mut(i).fill(255);
+            }
         }
         if let Some(t) = f.test.as_mut() {
             t.render_props(now_ms, &mut Sink::Frame(&mut self.frame, &self.prop_map));
@@ -2383,6 +2616,9 @@ impl Core {
                         frame_no: self.frames_out + 1,
                         at_ms: now_ms,
                         sequence: shown,
+                        pos_ms: self.shown_pos,
+                        light_at_ms: self.light_ms,
+                        engine_now_ms: self.t0.elapsed().as_secs_f64() * 1000.0,
                         master,
                     };
                     tap.record(meta, &ppo[..n], data, &mut wire.iter());
@@ -2465,6 +2701,154 @@ impl Core {
         }
     }
 
+    // ----- presentation timing -----------------------------------------
+
+    /// Presentation timing of the running output (DPI), if it has any.
+    fn present_timing(&self) -> Option<pixelplus_output::PresentTiming> {
+        if !self.output.running {
+            return None;
+        }
+        self.output.backend.present_timing()
+    }
+
+    fn engine_ms(&self, t: Instant) -> f64 {
+        match t.checked_duration_since(self.t0) {
+            Some(d) => d.as_secs_f64() * 1000.0,
+            None => -(self.t0.duration_since(t).as_secs_f64() * 1000.0),
+        }
+    }
+
+    fn engine_instant(&self, ms: f64) -> Instant {
+        if ms >= 0.0 {
+            self.t0 + Duration::from_secs_f64(ms / 1000.0)
+        } else {
+            self.t0
+        }
+    }
+
+    /// Latch delay (ms) of this node's strings after scan-out starts: all
+    /// strings latch after the longest when bottom-aligned; otherwise the
+    /// mean string length is the best single compromise.
+    fn latch_ms(&self, t: &pixelplus_output::PresentTiming) -> f64 {
+        let (longest, mean) = self.string_lines;
+        let lines = if t.bottom_aligned { longest } else { mean };
+        t.latch_after(lines).as_secs_f64() * 1000.0
+    }
+
+    /// Time a frame needs from the start of a tick until its flip is queued.
+    fn ready_margin(&self) -> Duration {
+        Duration::from_secs_f64((self.tick_ms * 1.5 + 1.0).clamp(2.0, 25.0) / 1000.0)
+    }
+
+    fn note_tick(&mut self, took: Duration) {
+        let ms = took.as_secs_f64() * 1000.0;
+        // Rise fast, decay slowly: a slow frame must not miss its vblank twice.
+        self.tick_ms = if ms > self.tick_ms {
+            self.tick_ms * 0.5 + ms * 0.5
+        } else {
+            self.tick_ms * 0.98 + ms * 0.02
+        };
+    }
+
+    /// When the frame being composed now lights up (sets `light_ms`/`slot_ms`).
+    fn begin_frame(&mut self, now: Instant, now_ms: f64) {
+        match self.present_timing() {
+            Some(t) => {
+                let ready = now + self.ready_margin() / 2;
+                let (mut v, latch) = self
+                    .planned
+                    .take()
+                    .unwrap_or_else(|| (t.vblank_at_or_after(ready), self.latch_ms(&t)));
+                if v < ready {
+                    // Too late for the planned vblank: it goes out a refresh later.
+                    v = t.vblank_at_or_after(ready);
+                }
+                if let Some(p) = t.pending_vblank {
+                    if v <= p {
+                        v = t.vblank_at_or_after(p + t.period / 2);
+                    }
+                }
+                self.light_ms = self.engine_ms(v) + latch;
+                self.slot_ms = t.period.as_secs_f64() * 1000.0;
+            }
+            None => {
+                self.planned = None;
+                self.light_ms = now_ms;
+                self.slot_ms = SOFT_SLOT_MS;
+            }
+        }
+    }
+
+    /// The timeline that decides frame changes right now: (lights position
+    /// now, rate, frame ms, frame shown).
+    fn frame_timeline(&self, now_ms: f64) -> Option<(f64, f64, f64, Option<u32>)> {
+        let shown = self.shown.as_ref().map(|(_, i)| *i);
+        if self.is_follower() {
+            let f = &self.follow;
+            let m = f.meta.as_ref().filter(|_| f.reader.is_some())?;
+            let c = f.clock.as_ref()?;
+            return Some((c.pos_at(now_ms), c.rate(), m.frame_ms as f64, shown));
+        }
+        let a = self.current.as_ref().filter(|a| a.started)?;
+        let ActiveKind::Sequence { meta: Some(m), .. } = &a.kind else {
+            return None;
+        };
+        let sv = a.servo.as_ref()?;
+        let rate = if self.paused { 0.0 } else { sv.rate() };
+        Some((
+            sv.pos_at(now_ms) - self.output_delay_ms,
+            rate,
+            m.frame_ms as f64,
+            shown,
+        ))
+    }
+
+    /// Plan the next frame: returns when to start composing it.
+    ///
+    /// While a sequence plays, the next update is timed for the next frame
+    /// boundary of the timeline ([`next_update`]); otherwise it follows the
+    /// frame period. On DPI the update is moved to the vblank at which it
+    /// will show (after any flip still pending) and composing starts early
+    /// enough for the flip to make it; the frame is then chosen for that
+    /// vblank plus the latch delay.
+    fn plan_next(&mut self) -> Instant {
+        let now = Instant::now();
+        let now_ms = self.engine_ms(now);
+        let period = self.frame_period();
+        let period_ms = period.as_secs_f64() * 1000.0;
+        let timing = self.present_timing();
+        let slot = timing.map_or(SOFT_SLOT_MS, |t| t.period.as_secs_f64() * 1000.0);
+        let mut desired = self.light_ms.max(now_ms - period_ms) + period_ms;
+        if let Some((pos, rate, frame_ms, shown)) = self.frame_timeline(now_ms) {
+            // Faster updates (crossfades, games) keep the frame period.
+            if period_ms >= frame_ms * 0.9 {
+                let shown = shown.unwrap_or_else(|| frame_for_slot(pos, slot, frame_ms));
+                if let Some(t) = next_update(pos, rate, now_ms, shown, frame_ms, slot) {
+                    desired = t.min(now_ms + frame_ms * 4.0 / rate.max(0.25));
+                }
+            }
+        }
+        match timing {
+            Some(t) => {
+                let latch = self.latch_ms(&t);
+                let margin = self.ready_margin();
+                let mut earliest = now + margin;
+                if let Some(p) = t.pending_vblank {
+                    earliest = earliest.max(p + t.period / 2);
+                }
+                let want = self.engine_instant(desired - latch).max(earliest);
+                let v = t.vblank_at_or_after(want);
+                self.planned = Some((v, latch));
+                v.checked_sub(margin).unwrap_or(now).max(now)
+            }
+            None => {
+                self.planned = None;
+                let at = self.engine_instant(desired);
+                at.max(now + Duration::from_micros(500))
+            }
+        }
+    }
+
     // ----- follower ------------------------------------------------------
 
     fn on_sync(&mut self, p: SyncPacket, now_ms: f64) {
@@ -2476,10 +2860,19 @@ impl Core {
         f.lost_fade = None;
         f.hold_since = None;
         f.lost_logged = false;
-        // Position at `now` (sent_at is already on our clock; see cluster::follower::localize_sync).
-        let age = (now_ms - p.sent_at_ms as f64).clamp(0.0, 2000.0);
         let playing = p.state == PlayerState::Playing || p.state == PlayerState::Effect;
-        let target = p.pos_ms as f64 + if playing { age } else { 0.0 };
+        // The leader's timeline on our clock (see cluster::follower::localize_sync);
+        // packets without one (released, old leader) give a position at `sent_at`.
+        let anchor = p.anchor.unwrap_or_else(|| {
+            let age = (now_ms - p.sent_at_ms as f64).clamp(0.0, 2000.0);
+            Anchor {
+                pos_ms: p.pos_ms as f64 + if playing { age } else { 0.0 },
+                at_ms: now_ms,
+                rate: if playing { 1.0 } else { 0.0 },
+                epoch: 0,
+            }
+        });
+        let target = anchor.pos_at(now_ms);
 
         // Tests carried in the packet.
         let mut new_leader_test = false;
@@ -2499,7 +2892,16 @@ impl Core {
             .filter(|_| matches!(p.state, PlayerState::Playing | PlayerState::Paused))
             .filter(|i| i.kind == "sequence" || i.kind == "request")
             .cloned();
-        let key = seq_item.as_ref().map(|i| format!("seq:{}", i.id));
+        let flash = p
+            .item
+            .as_ref()
+            .filter(|_| matches!(p.state, PlayerState::Playing | PlayerState::Paused))
+            .is_some_and(|i| i.kind == CALIBRATION_ID);
+        let key = match (&seq_item, flash) {
+            (Some(i), _) => Some(format!("seq:{}", i.id)),
+            (None, true) => Some(CALIBRATION_ID.to_string()),
+            (None, false) => None,
+        };
         if key != f.item_key {
             f.item_key = key;
             f.reader = None;
@@ -2545,22 +2947,24 @@ impl Core {
             }
             None => f.effect = None,
         }
-        // Clock.
-        let frame_ms = f.meta.as_ref().map_or(25.0, |m| m.frame_ms as f64);
-        let active = seq_item.is_some() || f.effect.is_some();
+        f.flash = flash;
+        // Clock: follow the anchor (jump on a new epoch, slew otherwise).
+        let active = seq_item.is_some() || f.effect.is_some() || flash;
         if !active {
             f.clock = None;
+            f.anchor = None;
         } else {
             let c = f
                 .clock
-                .get_or_insert_with(|| SlewClock::new(target, now_ms));
+                .get_or_insert_with(|| Servo::new(target, now_ms, ServoGains::FOLLOWER));
             if p.state == PlayerState::Paused {
                 c.set_running(false, now_ms);
-                c.update(target, now_ms, frame_ms);
+                c.update(target, Some(0.0), Some(anchor.epoch), now_ms);
             } else {
                 c.set_running(true, now_ms);
-                c.update(target, now_ms, frame_ms);
+                c.update(target, Some(anchor.rate), Some(anchor.epoch), now_ms);
             }
+            f.anchor = Some(anchor);
         }
         let released = p.leader.is_empty() && p.state == PlayerState::Idle;
         f.pkt = Some(p);
@@ -2662,6 +3066,11 @@ impl Core {
             {
                 errors.push("Lost contact with the show leader".into());
             }
+            s.sync_error_ms = f
+                .clock
+                .as_ref()
+                .filter(|c| c.running() && f.anchor.is_some())
+                .map(|c| c.error_ms());
         } else {
             s.schedule_entry = self.facts.active.as_ref().map(|w| ScheduleRef {
                 id: w.entry_id.clone(),
@@ -2680,6 +3089,13 @@ impl Core {
                 s.item = Some(a.iref.clone());
                 s.pos_ms = a.last_pos.max(0.0) as u64;
                 s.duration_ms = a.duration_ms.unwrap_or(0);
+                // The lights timeline for followers, stamped with our own clock.
+                s.anchor = a.servo.as_ref().map(|sv| Anchor {
+                    pos_ms: sv.pos_at(now_ms) - self.output_delay_ms,
+                    at_ms: now_ms,
+                    rate: if self.paused { 0.0 } else { sv.freq() },
+                    epoch: (self.epoch << EPOCH_SHIFT) + sv.jumps(),
+                });
                 if let (Source::Playlist(c), Some((id, name))) = (&prog.source, &prog.playlist) {
                     let (index, count) = c.flat_index();
                     s.playlist = Some(PlaylistRef {
@@ -2703,6 +3119,12 @@ impl Core {
                 s.state = PlayerState::Effect;
                 s.item = Some(item_ref("effect", &l.id, &l.name));
                 s.pos_ms = (now_ms - l.started_ms).max(0.0) as u64;
+                s.anchor = Some(Anchor {
+                    pos_ms: now_ms - l.started_ms,
+                    at_ms: now_ms,
+                    rate: 1.0,
+                    epoch: self.epoch << EPOCH_SHIFT,
+                });
             }
             if let Some((e, at)) = &self.item_error {
                 if at.elapsed() < Duration::from_secs(30) {
@@ -2719,6 +3141,12 @@ impl Core {
                 }
                 s.pos_ms = (now_ms - t.started_ms).max(0.0) as u64;
                 s.duration_ms = 0;
+                s.anchor = Some(Anchor {
+                    pos_ms: now_ms - t.started_ms,
+                    at_ms: now_ms,
+                    rate: 1.0,
+                    epoch: self.epoch << EPOCH_SHIFT,
+                });
             }
             Some(_) => s.state = PlayerState::Testing,
             None => {}
@@ -2726,14 +3154,27 @@ impl Core {
         if !errors.is_empty() {
             s.error = Some(errors.join(" · "));
         }
+        s.refresh_hz = self
+            .present_timing()
+            .map(|t| 1.0 / t.period.as_secs_f64().max(1e-6));
         s
     }
 
     fn publish_status(&mut self, now: Instant, now_ms: f64) {
         let s = self.build_status(now_ms);
+        // Position, fps and the anchor's position/rate change every frame; a new
+        // anchor epoch (seek, pause, new item) is published at once.
         let strip = |s: &PlayerStatus| PlayerStatus {
             pos_ms: 0,
             fps: 0.0,
+            anchor: s.anchor.map(|a| Anchor {
+                pos_ms: 0.0,
+                at_ms: 0.0,
+                rate: 0.0,
+                epoch: a.epoch,
+            }),
+            sync_error_ms: None,
+            refresh_hz: None,
             ..s.clone()
         };
         let changed = strip(&s) != strip(&self.last_status);
@@ -2764,7 +3205,7 @@ impl Core {
                 ActiveKind::Audio | ActiveKind::Pause => {
                     self.idle_layer.as_ref().map(|l| l.layer.preset.clone())
                 }
-                ActiveKind::Sequence { .. } => None,
+                ActiveKind::Sequence { .. } | ActiveKind::Flash => None,
             },
             _ => self.look.as_ref().map(|l| l.layer.preset.clone()),
         };
@@ -2789,6 +3230,62 @@ impl Core {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Calibration flash: on for [`CALIBRATION_FLASH_MS`] from each whole second
+/// (at least one presentation slot, so it is never skipped).
+pub fn flash_on(pos_ms: f64, slot_ms: f64) -> bool {
+    pos_ms >= 0.0 && pos_ms % 1000.0 < CALIBRATION_FLASH_MS.max(slot_ms)
+}
+
+/// The calibration sound (a sharp click at every whole second, 60 s), written
+/// once to `<data>/cache/calibration-click.wav`.
+fn calibration_click(data_dir: &Path) -> std::io::Result<PathBuf> {
+    let dir = data_dir.join("cache");
+    let path = dir.join("calibration-click.wav");
+    let bytes = click_wav(CALIBRATION_LEN_MS);
+    if std::fs::metadata(&path).map(|m| m.len()).ok() != Some(bytes.len() as u64) {
+        std::fs::create_dir_all(&dir)?;
+        let tmp = dir.join("calibration-click.wav.tmp");
+        std::fs::write(&tmp, &bytes)?;
+        std::fs::rename(&tmp, &path)?;
+    }
+    Ok(path)
+}
+
+/// 16-bit mono 24 kHz WAV: a 4 ms 2 kHz tone burst with a sharp attack at
+/// every whole second of `len_ms`.
+pub fn click_wav(len_ms: u64) -> Vec<u8> {
+    const RATE: u32 = 24_000;
+    let samples = (len_ms * RATE as u64 / 1000) as usize;
+    let mut pcm = vec![0i16; samples];
+    let click = (RATE as usize) * 4 / 1000;
+    for start in (0..samples).step_by(RATE as usize) {
+        for i in 0..click.min(samples - start) {
+            let t = i as f64 / RATE as f64;
+            let env = (-(i as f64) / (click as f64 / 4.0)).exp();
+            let v = (2.0 * std::f64::consts::PI * 2000.0 * t).sin() * env * 0.9;
+            pcm[start + i] = (v * i16::MAX as f64) as i16;
+        }
+    }
+    let data_len = (samples * 2) as u32;
+    let mut out = Vec::with_capacity(44 + samples * 2);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&RATE.to_le_bytes());
+    out.extend_from_slice(&(RATE * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for s in pcm {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    out
+}
 
 fn dummy_node() -> pixelplus_core::model::Node {
     pixelplus_core::model::Node {

@@ -46,7 +46,9 @@ pub mod timing;
 #[cfg(target_os = "linux")]
 pub mod pinmux;
 
-pub use backend::{NullOutput, OutputStats, PixelOutput, SimHandle, SimOutput, SimSnapshot};
+pub use backend::{
+    NullOutput, OutputStats, PixelOutput, PresentTiming, SimHandle, SimOutput, SimSnapshot,
+};
 pub use decoder::{DecodedFrame, DecodedOutput, WsDecoder};
 pub use encoder::{BufferState, EncodeReport, FrameBufferMut, FrameBufferRef, WsEncoder};
 pub use error::{OutputError, Result};
@@ -55,7 +57,7 @@ pub use layout::{OutputLayout, OutputMode};
 pub use patterns::{ScopePattern, TestPattern};
 pub use pi_config::DpiSoc;
 pub use pipeline::{to_wire_order, PixelPipeline};
-pub use timing::{BitTiming, DpiGeometry, Ws281xSpec, PIXEL_CLOCK_HZ};
+pub use timing::{BitTiming, DpiGeometry, VblankModel, Ws281xSpec, PIXEL_CLOCK_HZ};
 
 #[cfg(target_os = "linux")]
 pub use backend::{detect_soc, DpiConfig, DpiOutput};

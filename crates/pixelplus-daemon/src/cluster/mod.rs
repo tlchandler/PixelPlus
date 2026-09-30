@@ -14,10 +14,10 @@
 //! |---|---|
 //! | [`proto`] | wire formats (JSON on the cluster port, binary overlay frames), HMAC, replay guard |
 //! | [`sig`] | per-follower keys (X25519 at adoption), signed HTTP calls |
-//! | [`clock`] | min-RTT clock offset filter |
+//! | [`clock`] | leader clock model (4-timestamp exchange, offset + drift fit) |
 //! | [`manifest`] | leader → follower manifests and the follower-local show |
 //! | [`slices`] | leader slice cache (keys, generation, cleanup) |
-//! | [`net`] | interfaces, hostname, hardware |
+//! | [`net`] | interfaces, hostname, hardware, socket priority, kernel timestamps |
 //! | [`leader`] | adoption, sync sender, node health, slice warming |
 //! | [`follower`] | adopt/release/command handling, manifest + slice download, sync receiver |
 //! | [`discovery`] | beacons, UDP receive loop, mDNS |
@@ -40,12 +40,12 @@ use crate::player::{PlayerCmd, TestRequest};
 use crate::state::{AppInner, AppState};
 use parking_lot::{Mutex, RwLock};
 use pixelplus_core::model::{BoardKind, EffectPreset, NodeRole};
-use proto::{Beacon, FileProgress, SyncState};
+use proto::{Beacon, FileProgress, SyncQuality, SyncState};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -87,7 +87,12 @@ pub struct ClusterSettings {
     pub offline_after: Duration,
     /// Followers re-check their manifest at least this often.
     pub manifest_poll: Duration,
+    /// Time between ping bursts (a fast 16-ping burst goes out after joining,
+    /// a leader restart or a detected clock step).
     pub ping_interval: Duration,
+    /// Pings per regular burst and their spacing.
+    pub ping_burst: usize,
+    pub ping_gap: Duration,
     pub sync_interval: Duration,
 }
 
@@ -128,7 +133,9 @@ impl ClusterSettings {
             beacon_interval: Duration::from_secs(2),
             offline_after: Duration::from_secs(6),
             manifest_poll: Duration::from_secs(30),
-            ping_interval: Duration::from_secs(1),
+            ping_interval: Duration::from_secs(2),
+            ping_burst: 5,
+            ping_gap: Duration::from_millis(20),
             sync_interval: Duration::from_millis(250),
         }
     }
@@ -180,6 +187,15 @@ pub struct NodeStatus {
     /// Estimated sync accuracy (ms); 0 when unknown / not applicable.
     pub sync_offset_ms: f64,
     pub sync_state: SyncState,
+    /// Clock / timeline sync quality (followers running protocol 2).
+    #[serde(default)]
+    pub sync: Option<SyncQuality>,
+    /// Wi-Fi power saving is on (bad for sync), `None` when unknown / wired.
+    #[serde(default)]
+    pub wifi_power_save: Option<bool>,
+    /// Cluster protocol version the node runs.
+    #[serde(default)]
+    pub protocol: u32,
     pub files: FileProgress,
     pub ip: Option<String>,
     pub version: Option<String>,
@@ -353,15 +369,32 @@ pub(crate) struct FollowerRuntime {
     pub last_leader_contact: Option<Instant>,
     pub leader_udp: Option<SocketAddr>,
     pub last_sync_sent_at: Option<u64>,
+    /// Anchor epoch of the last sync packet (a restarted leader starts over).
+    pub last_sync_epoch: Option<u64>,
     /// Leader boot id and highest sequence number of accepted overlay frames.
     pub overlay_boot: String,
     pub overlay_seq: u64,
-    /// Pings sent recently: `t0` → when (a pong must answer one of them).
-    pub pings: HashMap<u64, Instant>,
+    /// Pings sent recently: `t0` → record (a pong must answer one of them).
+    pub pings: HashMap<u64, PingRecord>,
+    /// Pings of the last 90 s and whether they were answered (loss %).
+    pub ping_log: std::collections::VecDeque<(Instant, u64, bool)>,
+    /// The leader runs another cluster protocol version.
+    pub protocol_problem: Option<String>,
     /// Last challenge ping sent because of an unknown leader boot.
     pub last_challenge: Option<Instant>,
     /// Sequences whose slice is on disk and verified.
     pub local_sequences: std::collections::HashSet<String>,
+}
+
+/// A ping in flight.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PingRecord {
+    pub at: Instant,
+    /// Cluster clock when it actually left (after encoding).
+    pub sent_ms: f64,
+    pub burst: u32,
+    /// Already used to confirm a new leader run.
+    pub confirmed: bool,
 }
 
 /// Leader-side health tracking per follower.
@@ -374,6 +407,8 @@ pub(crate) struct Health {
     /// unauthenticated) may still be in the peer table for a moment.
     pub adopted_at: Option<Instant>,
     pub warned_foreign: bool,
+    pub warned_power_save: bool,
+    pub warned_protocol: bool,
 }
 
 /// Extra state carried in sync packets that the status alone cannot express.
@@ -393,7 +428,13 @@ pub(crate) struct Shared {
     pub http: reqwest::Client,
     pub events: broadcast::Sender<ClusterEvent>,
     pub peers: RwLock<HashMap<String, Peer>>,
-    pub clock: Mutex<clock::ClockSync>,
+    pub clock: Mutex<clock::ClockModel>,
+    /// Wakes the follower ping loop (fast burst after a reset).
+    pub ping_trigger: Notify,
+    /// The cluster socket delivers kernel receive timestamps.
+    pub kernel_ts: AtomicBool,
+    /// Smoothed time to encode + MAC a pong (ms), added to its `t2`.
+    pub pong_encode_ms: Mutex<f64>,
     pub follower: Mutex<FollowerRuntime>,
     pub manifest_trigger: Notify,
     /// Serializes follower show installs with adopt / release, so a sync that
@@ -432,6 +473,16 @@ impl Shared {
         self.started.elapsed().as_secs_f64() * 1000.0
     }
 
+    /// When a datagram arrived, on the cluster clock: its kernel receive
+    /// timestamp where available (see [`net::enable_rx_timestamps`]),
+    /// otherwise now.
+    pub fn rx_time_ms(&self, stamp_ns: Option<i128>) -> f64 {
+        let mono = self.now_ms();
+        stamp_ns
+            .and_then(|s| net::stamp_to_mono_ms(s, net::real_now_ns(), mono))
+            .unwrap_or(mono)
+    }
+
     pub fn stop_rx(&self) -> watch::Receiver<bool> {
         self.shutdown.subscribe()
     }
@@ -452,16 +503,26 @@ impl Shared {
     /// Send a JSON datagram on the cluster socket (best effort), authenticated
     /// with `key` when given.
     pub async fn send_json(&self, msg: &proto::Msg, key: Option<&str>, dests: &[SocketAddr]) {
+        let bytes = self.encode_json(msg, key);
+        self.send_bytes(&bytes, dests).await;
+    }
+
+    /// Serialize (and MAC) a cluster packet.
+    pub fn encode_json(&self, msg: &proto::Msg, key: Option<&str>) -> Vec<u8> {
+        proto::encode(msg, key.filter(|k| !k.is_empty()).map(|k| self.stamp(k)))
+    }
+
+    /// Send encoded bytes on the cluster socket (best effort).
+    pub async fn send_bytes(&self, bytes: &[u8], dests: &[SocketAddr]) {
         let Some(sock) = self.socket.get() else {
             return;
         };
-        let bytes = proto::encode(msg, key.filter(|k| !k.is_empty()).map(|k| self.stamp(k)));
         if bytes.len() > proto::MAX_JSON_PACKET {
             tracing::warn!("cluster packet too large ({} bytes), not sent", bytes.len());
             return;
         }
         for d in dests {
-            if let Err(e) = sock.send_to(&bytes, d).await {
+            if let Err(e) = sock.send_to(bytes, d).await {
                 tracing::trace!("cluster send to {d} failed: {e}");
             }
         }
@@ -798,6 +859,9 @@ pub async fn start_with(
         events,
         peers: Default::default(),
         clock: Default::default(),
+        ping_trigger: Notify::new(),
+        kernel_ts: AtomicBool::new(false),
+        pong_encode_ms: Mutex::new(0.0),
         follower: Default::default(),
         manifest_trigger: Notify::new(),
         install_lock: tokio::sync::Mutex::new(()),

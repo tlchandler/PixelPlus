@@ -265,6 +265,8 @@ export const api = {
 	setBrightness: (brightness: number) => put('/player/brightness', { brightness }),
 	blackout: (enabled: boolean) => post('/player/blackout', { enabled }),
 	applyEffect: (effect: T.EffectPreset | null) => post('/player/effect', { effect }),
+	/** "Sync lights to sound": click + white flash every second on every controller. */
+	calibration: (on: boolean) => post('/player/calibration', { on }),
 
 	// ---- tests & tools
 	testStart: (req: T.TestRequest) => post('/test/start', req),

@@ -2,7 +2,8 @@
 // End-to-end scenario against a REAL three-node cluster (leader + two followers on
 // this machine, started with scripts/dev-cluster.sh): setup wizard, discovery and
 // adoption, xLights import, .fseq + audio upload, follower slices (byte-checked),
-// playlist + schedule, frame-accurate sync across nodes (via GET /debug/output),
+// playlist + schedule, frame-accurate and millisecond sync across nodes (via GET /debug/output),
+// sync quality reports, "Sync lights to sound" calibration,
 // tools (tests, fault finder, blackout, brightness, looks, overlays, requests,
 // snapshots, health, power, sensors, games/TTS without sidecars), password,
 // follower restart mid-show, leader crash, live prop changes, remove + re-adopt.
@@ -159,6 +160,9 @@ async function tap(c) {
 		...d,
 		seq: d.sequence?.id ?? null,
 		frame: d.sequence?.frame ?? null,
+		// Timeline position (ms) at the moment the frame lights up (wall clock, µs precision).
+		posMs: d.posMs ?? null,
+		lightWallMs: d.lightWallMs ?? null,
 		rgb: d.outputs.map((o) => Buffer.from(o.rgb, 'base64')),
 		wire: d.outputs.map((o) => Buffer.from(o.wire, 'base64')),
 		ppo: d.outputs.map((o) => o.pixels)
@@ -553,6 +557,54 @@ async function phaseShow() {
 		log(`worst follower offset ${worst.toFixed(2)} frames`);
 	});
 
+	await step('timeline sync in milliseconds: followers within 2 ms of the leader', async () => {
+		// Every tap says which timeline position (posMs) its node shows at which
+		// wall-clock instant (lightWallMs, µs precision). All nodes share this
+		// machine's clock, so (posMs − lightWallMs) differences are the timeline
+		// offsets in ms, free of the ±1-frame quantisation of frame numbers.
+		const measure = async (label, n) => {
+			const offs = { f1: [], f2: [] };
+			for (let k = 0; k < n; k++) {
+				const [l, a, b] = await Promise.all([tap(L), tap(F1), tap(F2)]);
+				if ([l, a, b].some((t) => t.seq !== S.seq.id || t.posMs == null)) break;
+				const base = l.posMs - l.lightWallMs;
+				offs.f1.push(a.posMs - a.lightWallMs - base);
+				offs.f2.push(b.posMs - b.lightWallMs - base);
+				await sleep(100);
+			}
+			check(offs.f1.length >= Math.min(10, n), `${label}: only ${offs.f1.length} samples`);
+			for (const f of ['f1', 'f2']) {
+				const xs = offs[f];
+				const abs = xs.map(Math.abs).sort((x, y) => x - y);
+				const mean = xs.reduce((s, x) => s + x, 0) / xs.length;
+				const p95 = abs[Math.floor(abs.length * 0.95)];
+				const worst = abs.at(-1);
+				log(
+					`${label} ${f}: mean ${mean.toFixed(3)} ms, p95 |err| ${p95.toFixed(3)} ms, worst ${worst.toFixed(3)} ms (${xs.length} samples)`
+				);
+				if (process.env.PP_E2E_SYNC_MS !== 'off')
+					check(worst < Number(process.env.PP_E2E_SYNC_MS ?? 2), `${label} ${f} timeline error ${worst.toFixed(3)} ms`);
+			}
+		};
+		// While playing on from the scheduled start…
+		await measure('playing', 15);
+		// …and after a seek (followers jump, then converge).
+		await L.post('/player/seek', { posMs: 2000 });
+		await sleep(1500);
+		await measure('after seek', 30);
+		// Each follower reports its timing quality to the leader (Controllers page badge).
+		for (const n of (await L.get('/nodes')).filter((x) => x.role === 'follower')) {
+			eq(n.protocol, 2, `${n.name} cluster protocol`);
+			check(n.sync && n.sync.samples > 0, `${n.name} reports sync quality: ${JSON.stringify(n.sync)}`);
+			check(n.sync.offsetErrorMs < 1, `${n.name} clock error bound ${n.sync.offsetErrorMs} ms`);
+			check(n.sync.lossPct <= 10, `${n.name} lost ${n.sync.lossPct} % of clock probes`);
+			log(
+				`${n.name}: clock ±${n.sync.offsetErrorMs} ms, RTT ${n.sync.rttMs}/${n.sync.rttP50Ms}/${n.sync.rttP95Ms} ms, ` +
+					`drift ${n.sync.driftPpm} ppm, kernel stamps ${n.sync.kernelTimestamps}`
+			);
+		}
+	});
+
 	await step('seek, pause/resume keep the followers in step', async () => {
 		await L.post('/player/seek', { posMs: 12000 });
 		await sleep(700);
@@ -750,8 +802,10 @@ async function phaseTools() {
 		);
 		const h = await L.post('/health/run');
 		const ids = h.checks.map((c) => c.id);
-		for (const id of ['followers', 'disk', 'audio', 'output', 'clock', 'sequences', 'wiring', 'schedule'])
+		for (const id of ['followers', 'sync', 'disk', 'audio', 'output', 'clock', 'sequences', 'wiring', 'schedule'])
 			check(ids.includes(id), `health check ${id}`);
+		const timing = h.checks.find((c) => c.id === 'sync');
+		check(timing.status === 'ok' && /within ±/.test(timing.detail), `timing check: ${timing.detail}`);
 		const audio = h.checks.find((c) => c.id === 'audio');
 		check(
 			audio.status === 'warn' && /turned off/.test(audio.detail),
@@ -778,6 +832,40 @@ async function phaseTools() {
 		);
 		const hist = await L.get('/system/sensors/history?minutes=10');
 		check(Object.keys(hist.series).length > 0, 'sensor history');
+	});
+
+	await step('sync lights to sound: calibration flashes on every controller, delay moves the lights', async () => {
+		const before = (await L.get('/show')).settings.audio.outputDelayMs ?? 0;
+		await L.post('/player/calibration', { on: true });
+		await until('calibration running everywhere', async () =>
+			(await Promise.all([L, F1, F2].map((c) => c.get('/player')))).every((p) => p.item?.type === 'calibration')
+		);
+		// Every controller flashes white in the same 50 ms after each whole second.
+		const flashed = new Set();
+		const t0 = Date.now();
+		while (flashed.size < 3 && Date.now() - t0 < 6000) {
+			const taps = await Promise.all([tap(L), tap(F1), tap(F2)]);
+			taps.forEach((t, i) => {
+				if (t.rgb.some((o) => o.length && o.every((b) => b === 255))) flashed.add(i);
+			});
+			await sleep(5);
+		}
+		eq(flashed.size, 3, 'all three controllers flashed');
+		// The sound delay shifts the lights timeline on every node at once.
+		const pos = async () => {
+			const [l, a] = await Promise.all([tap(L), tap(F1)]);
+			return [l.posMs - l.lightWallMs, a.posMs - a.lightWallMs];
+		};
+		const [l0, f0] = await pos();
+		await L.put('/show/settings', { audio: { outputDelayMs: 250 } });
+		await sleep(1200);
+		const [l1, f1] = await pos();
+		check(Math.abs(l0 - l1 - 250) < 30, `leader lights moved by ${(l0 - l1).toFixed(1)} ms`);
+		check(Math.abs(f0 - f1 - 250) < 30, `follower lights moved by ${(f0 - f1).toFixed(1)} ms`);
+		check(Math.abs(l1 - f1) < 2, `follower within ${Math.abs(l1 - f1).toFixed(3)} ms after the change`);
+		await L.put('/show/settings', { audio: { outputDelayMs: before } });
+		await L.post('/player/calibration', { on: false });
+		await until('calibration stopped', async () => (await L.get('/player')).item?.type !== 'calibration');
 	});
 
 	await step('games and TTS without their sidecars degrade gracefully', async () => {

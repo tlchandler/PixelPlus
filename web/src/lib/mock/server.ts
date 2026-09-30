@@ -845,6 +845,21 @@ export class MockServer {
 			this.blackout = !!body.enabled;
 			this.#pushStatus();
 		});
+		r('POST', '/player/calibration', ({ body }) => {
+			const on = body?.on ?? true;
+			if (on)
+				this.play = {
+					state: 'playing',
+					queue: [{ id: 'calibration', type: 'calibration' } as unknown as PlaylistItem],
+					index: 0,
+					startedAt: Date.now(),
+					single: { id: 'calibration', type: 'calibration' } as unknown as PlaylistItem
+				};
+			else if (this.play.queue[this.play.index]?.type === ('calibration' as string))
+				this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
+			this.#pushStatus();
+			return { ok: true, on };
+		});
 		r('POST', '/player/effect', ({ body }) => {
 			if (!body.effect) {
 				if (this.play.state === 'effect') this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
@@ -1281,19 +1296,44 @@ export class MockServer {
 
 	#nodesNow(): NodeStatus[] {
 		const now = new Date().toISOString();
-		return this.show.nodes.map((n, i) => ({
-			id: n.id,
-			name: n.name,
-			online: true,
-			lastSeen: now,
-			board: n.board,
-			syncOffsetMs: n.role === 'leader' ? 0 : +(0.4 + Math.random() * 1.6).toFixed(1),
-			syncState: i > 1 && Date.now() - this.started < 20000 ? 'syncing' : 'synced',
-			files: {
-				pending: i > 1 && Date.now() - this.started < 20000 ? 3 : 0,
-				total: this.show.sequences.length
-			}
-		}));
+		return this.show.nodes.map((n, i) => {
+			const leader = n.role === 'leader';
+			// Demo timing: the first follower on good Wi-Fi, the next one on a busier link.
+			const err = leader ? 0 : +((i === 1 ? 0.25 : 1.4) + Math.random() * 0.15).toFixed(2);
+			return {
+				id: n.id,
+				name: n.name,
+				role: n.role,
+				online: true,
+				lastSeen: now,
+				board: n.board,
+				syncOffsetMs: err,
+				syncState: i > 1 && Date.now() - this.started < 20000 ? 'syncing' : 'synced',
+				files: {
+					pending: i > 1 && Date.now() - this.started < 20000 ? 3 : 0,
+					total: this.show.sequences.length
+				},
+				sync: leader
+					? null
+					: {
+							offsetErrorMs: err,
+							jitterMs: +(err / 5).toFixed(2),
+							driftPpm: i === 1 ? 18.4 : -42.1,
+							rttMs: +(err * 1.6).toFixed(2),
+							rttP50Ms: +(err * 3).toFixed(2),
+							rttP95Ms: +(err * 9).toFixed(2),
+							lossPct: i === 1 ? 0 : 3,
+							samples: 42,
+							timelineErrorMs: +(err / 4).toFixed(2),
+							refreshHz: n.board === 'difftxlarge' ? 40.3 : 80.2,
+							kernelTimestamps: true
+						},
+				wifiPowerSave: leader ? null : false,
+				protocol: 2,
+				problem: null,
+				version: '0.1.0'
+			};
+		});
 	}
 
 	// ------------------------------------------------------------------ playback
@@ -1322,6 +1362,7 @@ export class MockServer {
 
 	#itemDuration(it?: PlaylistItem): number {
 		if (!it) return 0;
+		if ((it.type as string) === 'calibration') return 60000;
 		switch (it.type) {
 			case 'sequence':
 				return this.show.sequences.find((s) => s.id === it.sequenceId)?.durationMs ?? 60000;
@@ -1341,6 +1382,7 @@ export class MockServer {
 
 	itemName(it?: PlaylistItem): string {
 		if (!it) return '';
+		if ((it.type as string) === 'calibration') return 'Sync lights to sound';
 		switch (it.type) {
 			case 'sequence':
 				return this.show.sequences.find((s) => s.id === it.sequenceId)?.name ?? 'Sequence';

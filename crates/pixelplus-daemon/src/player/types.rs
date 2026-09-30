@@ -82,6 +82,17 @@ pub struct PlayerStatus {
     /// Human readable problem that stopped playback, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Engine-internal (not serialized): the lights timeline, stamped with
+    /// the engine's own clock, for the leader's sync packets.
+    #[serde(skip)]
+    pub anchor: Option<super::Anchor>,
+    /// Engine-internal: follower's smoothed error following the leader (ms).
+    #[serde(skip)]
+    pub sync_error_ms: Option<f64>,
+    /// Engine-internal: refresh rate of the pixel output (Hz) when scanned
+    /// out on a vblank grid (DPI).
+    #[serde(skip)]
+    pub refresh_hz: Option<f64>,
 }
 
 /// What to play. Body of `POST /player/play`.

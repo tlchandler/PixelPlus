@@ -20,6 +20,13 @@ pub struct TapFrame {
     pub wall_ms: i64,
     /// Sequence being shown and the frame index read from it.
     pub sequence: Option<(String, u32)>,
+    /// Timeline position (ms, not quantised to frames) the frame was chosen for.
+    pub pos_ms: Option<f64>,
+    /// Wall clock (ms since the Unix epoch, µs precision) at which the frame
+    /// is predicted to light up (`pos_ms` is the timeline position then).
+    pub light_wall_ms: f64,
+    /// The same instant on the engine clock (ms since the daemon started).
+    pub light_ms: f64,
     /// Master brightness applied (0..100, includes fades and blackout).
     pub master: u8,
     pub pixels_per_output: Vec<u32>,
@@ -36,6 +43,12 @@ pub struct TapMeta<'a> {
     pub at_ms: f64,
     /// Sequence id and frame index shown.
     pub sequence: Option<(&'a str, u32)>,
+    /// Timeline position the frame was chosen for.
+    pub pos_ms: Option<f64>,
+    /// Engine clock (ms) at which the frame lights up.
+    pub light_at_ms: f64,
+    /// Engine clock (ms) now, to convert `light_at_ms` to wall time.
+    pub engine_now_ms: f64,
     pub master: u8,
 }
 
@@ -61,8 +74,13 @@ impl OutputTap {
         let mut t = self.last.lock();
         t.frame_no = meta.frame_no;
         t.at_ms = meta.at_ms;
-        t.wall_ms = chrono::Utc::now().timestamp_millis();
+        let wall = chrono::Utc::now();
+        t.wall_ms = wall.timestamp_millis();
+        let wall_ms = wall.timestamp_micros() as f64 / 1000.0;
+        t.light_wall_ms = wall_ms - (meta.engine_now_ms - meta.light_at_ms);
+        t.light_ms = meta.light_at_ms;
         t.sequence = meta.sequence.map(|(id, f)| (id.to_string(), f));
+        t.pos_ms = meta.pos_ms;
         t.master = meta.master;
         t.pixels_per_output.clear();
         t.pixels_per_output.extend_from_slice(ppo);
@@ -165,6 +183,9 @@ mod tests {
                 frame_no: 7,
                 at_ms: 1.0,
                 sequence: Some(("s", 3)),
+                pos_ms: Some(80.0),
+                light_at_ms: 1.0,
+                engine_now_ms: 1.0,
                 master: 100,
             },
             &[1, 2],

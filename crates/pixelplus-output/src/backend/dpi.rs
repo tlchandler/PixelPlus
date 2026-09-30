@@ -13,15 +13,21 @@
 //! scanned out, then queues a flip. If the previous flip has not completed
 //! yet it first waits for it (at most one refresh period), so call it from a
 //! dedicated output thread.
+//!
+//! Every flip completion carries the vblank sequence number and the
+//! CLOCK_MONOTONIC time scan-out of the new frame started. They feed a
+//! [`VblankModel`] (the free-running vblank grid), exposed through
+//! [`PixelOutput::present_timing`] so the player can choose each frame for
+//! the moment it actually lights up and pace itself from vblanks.
 
-use super::{OutputStats, PixelOutput};
+use super::{OutputStats, PixelOutput, PresentTiming};
 use crate::encoder::{BufferState, FrameBufferMut, WsEncoder};
 use crate::error::{OutputError, Result};
 use crate::frame::{OutputFrame, OutputFrameRef};
 use crate::layout::OutputLayout;
 use crate::pi_config::DpiSoc;
 use crate::pinmux::PinMux;
-use crate::timing::DpiGeometry;
+use crate::timing::{DpiGeometry, VblankModel, RESET_MIN_NS};
 use drm::buffer::{Buffer as _, DrmFourcc};
 use drm::control::{
     connector, crtc, dumbbuffer::DumbBuffer, framebuffer, Device as ControlDevice, Event, Mode,
@@ -163,6 +169,36 @@ struct Runtime {
     pending: Option<usize>,
     encoder: WsEncoder,
     pins: Option<(PinMux, Vec<u8>)>,
+    /// Vblank grid from flip events (CLOCK_MONOTONIC ns).
+    vblank: VblankModel,
+    /// Predicted vblank (ns) of the pending flip.
+    expected: Option<u64>,
+    /// Flips that completed a refresh later than predicted.
+    late: u64,
+}
+
+/// CLOCK_MONOTONIC now, in nanoseconds (the clock of DRM event timestamps).
+fn mono_now_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: valid out-pointer for the duration of the call.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    (ts.tv_sec as u64).saturating_mul(1_000_000_000) + ts.tv_nsec as u64
+}
+
+/// Convert a CLOCK_MONOTONIC timestamp to an [`Instant`] (which uses the
+/// same clock on Linux, but has no public constructor from raw values).
+fn mono_to_instant(ns: u64) -> Instant {
+    let (now_i, now_ns) = (Instant::now(), mono_now_ns());
+    if ns <= now_ns {
+        now_i
+            .checked_sub(Duration::from_nanos(now_ns - ns))
+            .unwrap_or(now_i)
+    } else {
+        now_i + Duration::from_nanos(ns - now_ns)
+    }
 }
 
 // SAFETY: the raw pointers in `MappedBuffer` point into mappings owned by
@@ -213,6 +249,13 @@ impl Runtime {
             for event in events {
                 if let Event::PageFlip(flip) = event {
                     if flip.crtc == self.crtc {
+                        let t_ns = u64::try_from(flip.duration.as_nanos()).unwrap_or(u64::MAX);
+                        if let Some(exp) = self.expected.take() {
+                            if self.vblank.is_late(exp, t_ns) {
+                                self.late += 1;
+                            }
+                        }
+                        self.vblank.observe(flip.frame, t_ns);
                         self.front = index;
                         self.pending = None;
                     }
@@ -245,7 +288,22 @@ impl Runtime {
             .page_flip(self.crtc, fb, PageFlipFlags::EVENT, None)
             .map_err(|e| OutputError::io("queueing page flip", e))?;
         self.pending = Some(back);
+        // It takes effect at the next vblank (unless queued too late).
+        self.expected = self.vblank.next_at_or_after(mono_now_ns() + 1);
         Ok((waited, report.truncated_outputs > 0))
+    }
+
+    fn present_timing(&self) -> Option<PresentTiming> {
+        let last = self.vblank.last_ns()?;
+        let g = self.geometry();
+        Some(PresentTiming {
+            last_vblank: mono_to_instant(last),
+            period: Duration::from_nanos(self.vblank.period_ns().round() as u64),
+            pending_vblank: self.pending.and(self.expected).map(mono_to_instant),
+            line: Duration::from_nanos(g.line_ns().round() as u64),
+            reset: Duration::from_nanos(RESET_MIN_NS as u64),
+            bottom_aligned: self.encoder.bottom_align(),
+        })
     }
 }
 
@@ -255,6 +313,7 @@ pub struct DpiOutput {
     layout: OutputLayout,
     stats: OutputStats,
     rt: Option<Runtime>,
+    bottom_align: bool,
 }
 
 impl std::fmt::Debug for DpiOutput {
@@ -277,6 +336,7 @@ impl DpiOutput {
             layout,
             stats,
             rt: None,
+            bottom_align: false,
         }
     }
 
@@ -350,6 +410,9 @@ impl DpiOutput {
             pending: None,
             encoder,
             pins: None,
+            vblank: VblankModel::new(geometry.frame_ns()),
+            expected: None,
+            late: 0,
         };
         // Both buffers start as a valid idle waveform (all lines low).
         let empty = OutputFrameRef::default();
@@ -454,7 +517,9 @@ impl PixelOutput for DpiOutput {
             return Ok(());
         }
         match self.open() {
-            Ok(rt) => {
+            Ok(mut rt) => {
+                rt.encoder.set_bottom_align(self.bottom_align);
+                self.stats.bottom_aligned = self.bottom_align;
                 let g = rt.geometry();
                 self.stats.refresh_hz = Some(g.refresh_hz());
                 self.stats.max_pixels_per_output = Some(g.pixels_per_output);
@@ -482,6 +547,8 @@ impl PixelOutput for DpiOutput {
                     .record_encode(started.elapsed().saturating_sub(waited));
                 self.stats.truncated_frames += u64::from(truncated);
                 self.stats.frames += 1;
+                self.stats.late_flips = rt.late;
+                self.stats.vblank_period_us = Some(rt.vblank.period_ns() / 1000.0);
                 Ok(())
             }
             Err(e) => {
@@ -516,6 +583,18 @@ impl PixelOutput for DpiOutput {
 
     fn stats(&self) -> OutputStats {
         self.stats.clone()
+    }
+
+    fn present_timing(&self) -> Option<PresentTiming> {
+        self.rt.as_ref().and_then(Runtime::present_timing)
+    }
+
+    fn set_bottom_align(&mut self, on: bool) {
+        self.bottom_align = on;
+        self.stats.bottom_aligned = on;
+        if let Some(rt) = self.rt.as_mut() {
+            rt.encoder.set_bottom_align(on);
+        }
     }
 }
 

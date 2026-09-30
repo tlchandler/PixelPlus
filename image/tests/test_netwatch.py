@@ -100,6 +100,7 @@ class FakeNM:
         self.up_ok = True
         self.calls = []
         self.stations_n = 0
+        self.ps = True
 
     def wifi_device(self):
         return "wlan0"
@@ -152,6 +153,14 @@ class FakeNM:
     def ip4_of(self, dev):
         return ["192.168.1.77"]
 
+    def power_save(self, iface):
+        return self.ps
+
+    def power_save_off(self, iface):
+        self.calls.append(f"power_save off {iface}")
+        self.ps = False
+        return self.ps
+
 
 class Clock:
     def __init__(self):
@@ -195,6 +204,24 @@ class StateMachineTests(unittest.TestCase):
         while self.clock.t < end:
             self.nw.tick()
             self.clock.sleep(step)
+
+    def test_wifi_power_save_is_turned_off_when_online(self):
+        self.nm.online_dev = {"device": "wlan0", "connection": "pixelplus-wifi"}
+        self.nw.tick()
+        self.assertIn("power_save off wlan0", self.nm.calls)
+        self.assertFalse(self.nm.ps)
+        # Re-checked only every few minutes; it came back on meanwhile.
+        self.nm.ps = True
+        self.nm.calls.clear()
+        self.advance(60)
+        self.assertNotIn("power_save off wlan0", self.nm.calls)
+        self.advance(netwatch.POWER_SAVE_EVERY)
+        self.assertIn("power_save off wlan0", self.nm.calls)
+        # Ethernet: not touched.
+        self.nm.calls.clear()
+        self.nm.online_dev = {"device": "eth0", "connection": "Wired"}
+        self.advance(netwatch.POWER_SAVE_EVERY + 10)
+        self.assertNotIn("power_save off wlan0", self.nm.calls)
 
     def test_online_at_boot(self):
         self.nm.online_dev = {"device": "wlan0", "connection": "pixelplus-wifi"}

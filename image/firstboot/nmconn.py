@@ -261,6 +261,16 @@ def split_terse(line: str) -> List[str]:
     return fields
 
 
+def parse_power_save(text: str) -> Optional[bool]:
+    """`iw dev wlan0 get power_save` -> True (on), False (off), None (unknown)."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith("Power save:"):
+            v = line.split(":", 1)[1].strip().lower()
+            return {"on": True, "off": False}.get(v)
+    return None
+
+
 class NM:
     def __init__(self, run: Runner = default_runner):
         self.run = run
@@ -290,6 +300,21 @@ class NM:
     def radio_on(self) -> None:
         self.ok("rfkill", "unblock", "wifi")
         self.ok("nmcli", "radio", "wifi", "on")
+
+    def power_save(self, iface: str) -> Optional[bool]:
+        """Wi-Fi power saving state of `iface` (None when unknown)."""
+        return parse_power_save(self.out("iw", "dev", iface, "get", "power_save", timeout=5))
+
+    def power_save_off(self, iface: str) -> Optional[bool]:
+        """Turn Wi-Fi power saving off if it is on. It delays packets for a dozing
+        station by 50-1000 ms, which breaks show sync; NetworkManager's
+        `wifi.powersave = 2` normally handles this, `iw` is the fallback.
+        Returns the state afterwards (None when unknown / no Wi-Fi)."""
+        state = self.power_save(iface)
+        if state:
+            self.ok("iw", "dev", iface, "set", "power_save", "off", timeout=5)
+            state = self.power_save(iface)
+        return state
 
     def devices(self) -> List[Dict[str, str]]:
         out = self.out("nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status")

@@ -10,12 +10,14 @@
 
 use super::leader::{error_message, AdoptCall, AdoptReply};
 use super::manifest::{self, ManifestSequence, NodeManifest};
-use super::proto::{self, FileProgress, FollowerReport, Msg, Ping, Pong, SyncState};
+use super::proto::{self, FileProgress, FollowerReport, Msg, Ping, Pong, SyncQuality, SyncState};
 use super::sig;
-use super::{net, sleep_or_stop, to_player, ClusterCommand, Shared};
+use super::{net, sleep_or_stop, to_player, ClusterCommand, PingRecord, Shared};
 use crate::api::{ApiError, ApiResult};
 use crate::node::LocalRole;
-use crate::player::{OverlayCmd, PlayerCmd, PlayerState, SyncPacket, TestRequest, TestTarget};
+use crate::player::{
+    Anchor, OverlayCmd, PlayerCmd, PlayerState, SyncPacket, TestRequest, TestTarget,
+};
 use crate::state::AppState;
 use anyhow::Context;
 use pixelplus_core::model::{Node, NodeRole};
@@ -32,6 +34,10 @@ use tokio::io::AsyncWriteExt;
 const LEADER_GONE: Duration = Duration::from_secs(10 * 60);
 /// A pong must answer a ping sent within this time.
 const PING_FRESH: Duration = Duration::from_secs(5);
+/// Ping loss is counted over this window.
+const LOSS_WINDOW: Duration = Duration::from_secs(90);
+/// Fast-start burst: pings and their spacing (a usable estimate in ~200 ms).
+const FAST_BURST: (usize, Duration) = (16, Duration::from_millis(10));
 
 /// A verified local slice.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -124,15 +130,20 @@ fn is_follower_with_leader(state: &AppState) -> bool {
 /// This follower's status (sent to the leader inside beacons).
 pub(crate) fn report(state: &AppState, sh: &Shared) -> FollowerReport {
     let identity = state.identity();
+    let quality = sync_quality(state, sh);
     let f = sh.follower.lock();
-    let clock = sh.clock.lock();
+    let converged = sh.clock.lock().converged();
     let contact = f
         .last_leader_contact
         .is_some_and(|t| t.elapsed() < sh.settings.offline_after);
-    let problem = f.problem.clone().or_else(|| f.missing.clone());
+    let problem = f
+        .protocol_problem
+        .clone()
+        .or_else(|| f.problem.clone())
+        .or_else(|| f.missing.clone());
     let sync_state = if identity.leader_id.is_none() || !contact {
         SyncState::Offline
-    } else if clock.offset_ms().is_none()
+    } else if !converged
         || f.syncing
         || f.files.pending > 0
         || problem.is_some()
@@ -142,14 +153,60 @@ pub(crate) fn report(state: &AppState, sh: &Shared) -> FollowerReport {
     } else {
         SyncState::Synced
     };
+    let clock = sh.clock.lock();
+    let now = sh.now_ms();
     FollowerReport {
         state: sync_state,
-        sync_offset_ms: clock.accuracy_ms().map(|a| (a * 10.0).round() / 10.0),
-        clock_offset_ms: clock.offset_ms().map(|o| (o * 10.0).round() / 10.0),
+        sync_offset_ms: clock.uncertainty_ms().map(round2),
+        clock_offset_ms: clock.offset_at(now).map(round2),
         manifest_version: f.manifest_version,
         files: f.files,
         problem,
+        quality,
+        wifi_power_save: crate::services::network::wifi_power_save(),
     }
+}
+
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+/// Clock and timeline sync quality (see [`SyncQuality`]).
+pub(crate) fn sync_quality(state: &AppState, sh: &Shared) -> Option<SyncQuality> {
+    let clock = sh.clock.lock();
+    let fit = clock.fit()?;
+    let d = clock.delay_stats();
+    let loss_pct = {
+        let f = sh.follower.lock();
+        let judged: Vec<bool> = f
+            .ping_log
+            .iter()
+            .filter(|(at, _, _)| at.elapsed() > Duration::from_secs(2))
+            .map(|(_, _, answered)| *answered)
+            .collect();
+        if judged.is_empty() {
+            0.0
+        } else {
+            100.0 * judged.iter().filter(|a| !**a).count() as f64 / judged.len() as f64
+        }
+    };
+    let player = state.services.player.get().map(|p| p.status());
+    Some(SyncQuality {
+        offset_error_ms: round2(clock.uncertainty_ms().unwrap_or(fit.min_delay / 2.0)),
+        jitter_ms: round2(clock.jitter_ms().unwrap_or(fit.rms)),
+        drift_ppm: (clock.skew_ppm().unwrap_or(0.0) * 10.0).round() / 10.0,
+        rtt_ms: round2(d.min),
+        rtt_p50_ms: round2(d.p50),
+        rtt_p95_ms: round2(d.p95),
+        loss_pct: loss_pct.round(),
+        samples: d.samples as u32,
+        timeline_error_ms: player.as_ref().and_then(|p| p.sync_error_ms).map(round2),
+        refresh_hz: player
+            .as_ref()
+            .and_then(|p| p.refresh_hz)
+            .map(|h| (h * 10.0).round() / 10.0),
+        kernel_timestamps: sh.kernel_ts.load(std::sync::atomic::Ordering::Relaxed),
+    })
 }
 
 /// Where to send pings / unicast beacons for the leader.
@@ -182,17 +239,53 @@ fn touch_leader(sh: &Shared, src: SocketAddr, leader_version: Option<u64>) -> bo
 // UDP handlers
 // ---------------------------------------------------------------------------
 
-/// The leader restarted: its clock starts over, so forget packet ordering.
+/// The leader restarted: its clock starts over, so forget packet ordering
+/// and re-learn its clock with a fast ping burst.
 fn leader_boot(sh: &Shared, boot: &str) {
     let restarted = sh.clock.lock().observe_boot(boot);
     if restarted {
         tracing::info!("the show leader restarted");
-        sh.follower.lock().last_sync_sent_at = None;
+        let mut f = sh.follower.lock();
+        f.last_sync_sent_at = None;
+        f.last_sync_epoch = None;
+        drop(f);
+        sh.ping_trigger.notify_one();
     }
+}
+
+/// A protocol mismatch message for the UI, if the versions differ.
+pub(crate) fn protocol_mismatch(
+    peer_proto: u32,
+    peer_ver: &str,
+    peer_is_leader: bool,
+) -> Option<String> {
+    (peer_proto != proto::PROTOCOL_VERSION).then(|| {
+        let (who, other) = if peer_is_leader {
+            ("The show leader", "this controller")
+        } else {
+            ("This controller", "the show leader")
+        };
+        format!(
+            "{who} runs PixelPlus {peer_ver} (cluster protocol {peer_proto}) but {other} runs {} \
+             (protocol {}); update both to the same version. Until then lights may drift apart.",
+            super::VERSION,
+            proto::PROTOCOL_VERSION
+        )
+    })
 }
 
 pub(crate) fn on_leader_beacon(state: &AppState, sh: &Shared, b: &proto::Beacon, src: SocketAddr) {
     leader_boot(sh, &b.boot);
+    {
+        let problem = protocol_mismatch(b.proto, &b.ver, true);
+        let mut f = sh.follower.lock();
+        if problem != f.protocol_problem {
+            if let Some(p) = &problem {
+                tracing::warn!("{p}");
+            }
+            f.protocol_problem = problem;
+        }
+    }
     if touch_leader(sh, src, Some(b.show_version)) {
         sh.manifest_trigger.notify_one();
     }
@@ -220,31 +313,105 @@ pub(crate) fn on_leader_beacon(state: &AppState, sh: &Shared, b: &proto::Beacon,
     }
 }
 
-pub(crate) fn on_pong(state: &AppState, sh: &Shared, p: Pong, src: SocketAddr) {
-    let t2 = sh.now_ms();
+pub(crate) fn on_pong(state: &AppState, sh: &Shared, p: Pong, src: SocketAddr, rx_ms: f64) {
     let identity = state.identity();
     if identity.role != LocalRole::Follower || identity.leader_id.as_deref() != Some(p.id.as_str())
     {
         return;
     }
     leader_boot(sh, &p.boot);
-    sh.clock.lock().add(p.t0, p.t1, t2);
+    // Only pongs answering one of our recent pings count (their t0 is ours).
+    let record = {
+        let mut f = sh.follower.lock();
+        if let Some(entry) = f
+            .ping_log
+            .iter_mut()
+            .find(|(_, b, _)| same_t0(f64::from_bits(*b), p.t0))
+        {
+            entry.2 = true;
+        }
+        let key = ping_key(&f.pings, p.t0);
+        key.and_then(|k| f.pings.remove(&k))
+    };
+    if let Some(r) = record.filter(|r| r.at.elapsed() < PING_FRESH) {
+        let t2 = p.t2.unwrap_or(p.t1);
+        let first = {
+            let mut clock = sh.clock.lock();
+            let first = clock.fit().is_none();
+            clock.add(r.sent_ms, p.t1, t2, rx_ms, r.burst);
+            first
+        };
+        if first {
+            // Pings sent before this leader (run) answered at all — while
+            // adopting, or while it restarted — are not network loss.
+            sh.follower
+                .lock()
+                .ping_log
+                .retain(|(at, _, answered)| *answered || *at >= r.at);
+        }
+    }
     touch_leader(sh, src, None);
 }
 
 /// Convert a leader sync packet to the local clock (see module docs of
-/// [`crate::cluster`]): the returned packet's `sent_at_ms` is *local*
-/// monotonic ms and `pos_ms` is the leader position at that instant.
-pub fn localize_sync(mut p: SyncPacket, offset_ms: Option<f64>, local_now_ms: f64) -> SyncPacket {
-    // Transit time of the packet. Implausible values (a stale estimate right
-    // after a leader restart) count as zero rather than jumping the show.
-    let age = offset_ms
-        .map(|o| local_now_ms - (p.sent_at_ms as f64 - o))
-        .filter(|a| (0.0..=2_000.0).contains(a))
-        .unwrap_or(0.0);
-    if p.state == PlayerState::Playing {
-        p.pos_ms += age.round() as u64;
+/// [`crate::cluster`]): the anchor's time becomes local time (and its rate
+/// local rate, including the clock drift); `sent_at_ms` is local now and
+/// `pos_ms` the leader position then.
+pub fn localize_sync(
+    mut p: SyncPacket,
+    clock: &super::clock::ClockModel,
+    local_now_ms: f64,
+) -> SyncPacket {
+    let playing = matches!(p.state, PlayerState::Playing | PlayerState::Effect);
+    let anchor = match (p.anchor, clock.fit()) {
+        (Some(a), Some(fit)) => {
+            // target(t) = pos + rate · (leader(t) − at), leader(t) = t + a + b (t − t_ref)
+            let at_local = clock.to_local(a.at_ms).unwrap_or(local_now_ms);
+            Some(Anchor {
+                pos_ms: a.pos_ms,
+                at_ms: at_local,
+                rate: a.rate * (1.0 + fit.b),
+                epoch: a.epoch,
+            })
+        }
+        // No clock estimate yet: assume zero transit.
+        (Some(a), None) => Some(Anchor {
+            pos_ms: a.pos_at(a.at_ms),
+            at_ms: local_now_ms,
+            rate: a.rate,
+            epoch: a.epoch,
+        }),
+        // Protocol 1 leader: integer-ms position at its send time.
+        (None, fit) => {
+            let age = fit
+                .map(|f| local_now_ms - (p.sent_at_ms as f64 - f.offset_at(local_now_ms)))
+                .filter(|a| (0.0..=2_000.0).contains(a))
+                .unwrap_or(0.0);
+            Some(Anchor {
+                pos_ms: p.pos_ms as f64 + if playing { age } else { 0.0 },
+                at_ms: local_now_ms,
+                rate: if playing { 1.0 } else { 0.0 },
+                epoch: 0,
+            })
+        }
+    };
+    // Implausible anchors (a stale estimate right after a leader restart)
+    // count as "now" rather than jumping the show.
+    let anchor = anchor.map(|a| {
+        if (a.at_ms - local_now_ms).abs() > 10_000.0 {
+            Anchor {
+                pos_ms: p.anchor.map_or(p.pos_ms as f64, |x| x.pos_ms),
+                at_ms: local_now_ms,
+                ..a
+            }
+        } else {
+            a
+        }
+    });
+    if let Some(a) = anchor {
+        p.pos_ms = a.pos_at(local_now_ms).max(0.0).round() as u64;
     }
+    p.anchor = anchor;
     p.sent_at_ms = local_now_ms.round() as u64;
     p
 }
@@ -267,6 +434,7 @@ pub(crate) async fn on_sync(state: &AppState, sh: &Shared, p: SyncPacket, src: S
             }
         }
         f.last_sync_sent_at = Some(p.sent_at_ms);
+        f.last_sync_epoch = p.anchor.map(|a| a.epoch);
         f.missing = match (&p.item, p.state) {
             (Some(item), PlayerState::Playing | PlayerState::Paused)
                 if item.kind == "sequence" && !f.local_sequences.contains(&item.id) =>
@@ -282,8 +450,8 @@ pub(crate) async fn on_sync(state: &AppState, sh: &Shared, p: SyncPacket, src: S
     if touch_leader(sh, src, Some(p.show_version)) {
         sh.manifest_trigger.notify_one();
     }
-    let offset = sh.clock.lock().offset_ms();
-    to_player(state, PlayerCmd::Sync(localize_sync(p, offset, local_now))).await;
+    let local = localize_sync(p, &sh.clock.lock(), local_now);
+    to_player(state, PlayerCmd::Sync(local)).await;
 }
 
 pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]) {
@@ -340,32 +508,82 @@ pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]
 }
 
 /// Send a clock probe to `dest`, remembering it (pongs must answer one).
-async fn send_ping(state: &AppState, sh: &Shared, dest: SocketAddr) {
+async fn send_ping(state: &AppState, sh: &Shared, dest: SocketAddr, burst: u32) {
     let identity = state.identity();
-    let t0 = sh.now_ms();
+    // µs precision: the echo must come back as the same number.
+    let t0 = (sh.now_ms() * 1000.0).round() / 1000.0;
     {
         let mut f = sh.follower.lock();
-        f.pings.retain(|_, at| at.elapsed() < PING_FRESH);
-        if f.pings.len() >= 64 {
-            return;
+        f.pings.retain(|_, r| r.at.elapsed() < PING_FRESH);
+        // Unanswered fast bursts (the leader not answering yet) must not block
+        // later pings: make room by forgetting the oldest.
+        while f.pings.len() >= 64 {
+            let Some(oldest) = f.pings.iter().min_by_key(|(_, r)| r.at).map(|(k, _)| *k) else {
+                break;
+            };
+            f.pings.remove(&oldest);
         }
-        f.pings.insert(t0.to_bits(), Instant::now());
     }
     let ping = Msg::Ping(Ping {
         id: identity.id.clone(),
         t0,
     });
-    sh.send_json(&ping, identity.cluster_key.as_deref(), &[dest])
-        .await;
+    let bytes = sh.encode_json(&ping, identity.cluster_key.as_deref());
+    // The ping leaves now, after encoding: that is the send time that counts.
+    let sent_ms = sh.now_ms();
+    {
+        let mut f = sh.follower.lock();
+        f.pings.insert(
+            t0.to_bits(),
+            PingRecord {
+                at: Instant::now(),
+                sent_ms,
+                burst,
+                confirmed: false,
+            },
+        );
+        f.ping_log.push_back((Instant::now(), t0.to_bits(), false));
+        while f
+            .ping_log
+            .front()
+            .is_some_and(|(at, _, _)| at.elapsed() > LOSS_WINDOW)
+            || f.ping_log.len() > 1024
+        {
+            f.ping_log.pop_front();
+        }
+    }
+    sh.send_bytes(&bytes, &[dest]).await;
 }
 
-/// `t0` is one of our pings from the last few seconds (consumed): the pong
+/// JSON float round trips are not always bit-exact (the parser may be off by
+/// one unit in the last place), so an echoed `t0` is matched with a tolerance.
+fn same_t0(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-6
+}
+
+/// The key of the ping record whose `t0` matches `t0`.
+fn ping_key(pings: &HashMap<u64, PingRecord>, t0: f64) -> Option<u64> {
+    if pings.contains_key(&t0.to_bits()) {
+        return Some(t0.to_bits());
+    }
+    pings
+        .keys()
+        .copied()
+        .find(|k| same_t0(f64::from_bits(*k), t0))
+}
+
+/// `t0` is one of our pings from the last few seconds (used once): the pong
 /// carrying it is live, not a replay. The only way to accept a new leader run.
 pub(crate) fn answers_recent_ping(sh: &Shared, t0: f64) -> bool {
     let mut f = sh.follower.lock();
-    f.pings
-        .remove(&t0.to_bits())
-        .is_some_and(|at| at.elapsed() < PING_FRESH)
+    let key = ping_key(&f.pings, t0);
+    match key.and_then(|k| f.pings.get_mut(&k)) {
+        Some(r) if !r.confirmed && r.at.elapsed() < PING_FRESH => {
+            r.confirmed = true;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// An authenticated packet from an unknown leader run arrived from `src`:
@@ -380,19 +598,43 @@ pub(crate) async fn challenge(state: &AppState, sh: &Shared, src: SocketAddr) {
         }
         f.last_challenge = Some(Instant::now());
     }
-    send_ping(state, sh, src).await;
+    send_ping(state, sh, src, 0).await;
 }
 
+/// Clock probes: a burst of `ping_burst` pings `ping_gap` apart every
+/// `ping_interval`, or a fast 16 × 10 ms burst while the clock model needs
+/// samples (just adopted, leader restarted, step detected).
 async fn ping_loop(state: AppState, sh: Arc<Shared>) {
     let mut stop = sh.stop_rx();
+    let mut burst: u32 = 0;
     loop {
+        let mut fast = false;
         if is_follower_with_leader(&state) {
             if let Some(dest) = leader_addr(&state, &sh) {
-                send_ping(&state, &sh, dest).await;
+                fast = sh.clock.lock().needs_burst();
+                let (n, gap) = if fast {
+                    FAST_BURST
+                } else {
+                    (sh.settings.ping_burst.max(1), sh.settings.ping_gap)
+                };
+                burst = burst.wrapping_add(1).max(1);
+                for i in 0..n {
+                    if i > 0 && sleep_or_stop(&mut stop, gap).await {
+                        return;
+                    }
+                    send_ping(&state, &sh, dest, burst).await;
+                }
             }
         }
-        if sleep_or_stop(&mut stop, sh.settings.ping_interval).await {
-            return;
+        let wait = if fast {
+            Duration::from_millis(200)
+        } else {
+            sh.settings.ping_interval
+        };
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = sh.ping_trigger.notified() => {}
+            r = stop.changed() => if r.is_err() || *stop.borrow() { return },
         }
     }
 }
@@ -580,6 +822,7 @@ pub async fn handle_adopt(
     *sh.join.lock() = None;
     if changed_leader {
         sh.clock.lock().reset();
+        sh.ping_trigger.notify_one();
         if let Some(old) = &identity.leader_id {
             sh.replay.lock().forget(old);
         }
@@ -697,6 +940,7 @@ pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
         item: None,
         pos_ms: 0,
         sent_at_ms: sh.now_ms().round() as u64,
+        anchor: None,
         effect: None,
         test: None,
         brightness: 100,
@@ -1207,6 +1451,7 @@ mod tests {
             }),
             pos_ms: pos,
             sent_at_ms: sent,
+            anchor: None,
             effect: None,
             test: None,
             brightness: 100,
@@ -1214,35 +1459,179 @@ mod tests {
         }
     }
 
+    /// A clock model that knows leader = local + `offset` and a drift `b`.
+    fn model(offset: f64, b: f64) -> super::super::clock::ClockModel {
+        let mut m = super::super::clock::ClockModel::default();
+        // Samples 20 s apart (the drift is only fitted over ≥ 10 s).
+        for (i, t) in [0.0, 10_000.0, 20_000.0, 30_000.0].into_iter().enumerate() {
+            let o = offset + b * (t - 30_000.0);
+            m.add(t - 1.0, t + o, t + o, t + 1.0, i as u32);
+        }
+        m
+    }
+
     #[test]
-    fn localize_accounts_for_transit_time() {
+    fn localize_legacy_packets_accounts_for_transit_time() {
         // Leader clock = local + 10_000. Sent at leader 20_000 (= local 10_000),
         // received at local 10_004: the leader has moved on by 4 ms.
-        let p = localize_sync(
-            pkt(PlayerState::Playing, 5_000, 20_000),
-            Some(10_000.0),
-            10_004.0,
-        );
+        let m = model(10_000.0, 0.0);
+        let p = localize_sync(pkt(PlayerState::Playing, 5_000, 20_000), &m, 10_004.0);
         assert_eq!(p.pos_ms, 5_004);
         assert_eq!(p.sent_at_ms, 10_004);
+        let a = p.anchor.unwrap();
+        assert_eq!((a.pos_ms, a.at_ms, a.rate), (5_004.0, 10_004.0, 1.0));
 
         // Paused: position frozen.
-        let p = localize_sync(
-            pkt(PlayerState::Paused, 5_000, 20_000),
-            Some(10_000.0),
-            10_004.0,
-        );
+        let p = localize_sync(pkt(PlayerState::Paused, 5_000, 20_000), &m, 10_004.0);
         assert_eq!(p.pos_ms, 5_000);
+        assert_eq!(p.anchor.unwrap().rate, 0.0);
 
         // No clock estimate yet: assume zero transit.
-        let p = localize_sync(pkt(PlayerState::Playing, 5_000, 20_000), None, 77.0);
+        let empty = super::super::clock::ClockModel::default();
+        let p = localize_sync(pkt(PlayerState::Playing, 5_000, 20_000), &empty, 77.0);
         assert_eq!((p.pos_ms, p.sent_at_ms), (5_000, 77));
 
         // Absurd ages (stale estimate) are ignored.
-        let p = localize_sync(pkt(PlayerState::Playing, 0, 0), Some(1e9), 1.0);
+        let p = localize_sync(pkt(PlayerState::Playing, 0, 0), &model(1e9, 0.0), 1.0);
         assert_eq!(p.pos_ms, 0);
-        let p = localize_sync(pkt(PlayerState::Playing, 0, 100), Some(0.0), 1.0);
+        let p = localize_sync(pkt(PlayerState::Playing, 0, 100), &model(0.0, 0.0), 1.0);
         assert_eq!(p.pos_ms, 0);
+    }
+
+    #[test]
+    fn localize_anchor_to_local_time_and_rate() {
+        // Leader = local + 10 000 at local 30 000, running 50 ppm fast.
+        let m = model(10_000.0, 50e-6);
+        let mut p = pkt(PlayerState::Playing, 0, 0);
+        p.anchor = Some(Anchor {
+            pos_ms: 1_234.5,
+            at_ms: 40_000.0, // = local 30 000
+            rate: 1.0,
+            epoch: 7,
+        });
+        let p = localize_sync(p, &m, 30_010.0);
+        let a = p.anchor.unwrap();
+        assert!((a.at_ms - 30_000.0).abs() < 1e-3, "{}", a.at_ms);
+        assert!((a.rate - (1.0 + 50e-6)).abs() < 1e-9);
+        assert_eq!(a.epoch, 7);
+        // 10 s later the follower's target has gained 0.5 ms on its own clock.
+        assert!((a.pos_at(40_000.0) - (1_234.5 + 10_000.5)).abs() < 1e-3);
+        assert_eq!(p.pos_ms, 1_245); // at local 30 010
+    }
+
+    /// End to end on simulated clocks: leader timeline → anchors (every
+    /// 250 ms, lossy) → follower clock model (ping bursts over the same lossy,
+    /// jittery path) → `localize_sync` → the follower's servo, evaluated every
+    /// 25 ms frame against the leader's true position. The old design (1-frame
+    /// deadband, 3 timestamps, min-RTT of 8) showed a 0–25 ms sawtooth here
+    /// (see docs/ARCHITECTURE.md §7.4); now the error stays well under 0.5 ms.
+    #[test]
+    fn follower_timeline_tracks_the_leader_through_jitter_drift_and_loss() {
+        use super::super::clock::tests::{Clocks, Path, Rng};
+        use super::super::clock::ClockModel;
+        use crate::player::clock::{Servo, ServoGains};
+        let cases = [
+            ("loopback, 0 ppm", Path::LOOPBACK, 0.0, 0.05),
+            ("wifi, +30 ppm", Path::WIFI, 30.0, 0.5),
+            ("wifi, −50 ppm", Path::WIFI, -50.0, 0.5),
+            ("wifi, +100 ppm", Path::WIFI, 100.0, 0.5),
+            ("bad wifi, −50 ppm", Path::BAD_WIFI, -50.0, 1.0),
+        ];
+        for (name, path, drift, bound) in cases {
+            let clocks = Clocks {
+                start: 0.0,
+                drift_ppm: drift,
+                step: None,
+            };
+            let mut rng = Rng(0x5EED ^ drift.to_bits());
+            let mut model = ClockModel::default();
+            let mut servo: Option<Servo> = None;
+            let mut anchor: Option<Anchor> = None;
+            let mut in_flight: Vec<(f64, SyncPacket)> = Vec::new();
+            let start = 1_000.0; // leader timeline = T − start
+            let (mut next_burst, mut next_sync, mut burst) = (start, start, 0u32);
+            let mut errs = Vec::new();
+            let mut t = start;
+            let end = start + 30.0 * 60_000.0;
+            while t < end {
+                // Pings: a burst every 2 s (fast 16 × 10 ms while needed).
+                if t >= next_burst {
+                    burst += 1;
+                    let fast = model.needs_burst();
+                    let (n, gap) = if fast { (16, 10.0) } else { (5, 20.0) };
+                    for i in 0..n {
+                        let ts = t + i as f64 * gap;
+                        if let Some((up, down)) = path.sample(&mut rng) {
+                            let proc = 0.2 + rng.uniform();
+                            let t1 = ts + up;
+                            model.add(
+                                clocks.local(ts),
+                                t1,
+                                t1 + proc,
+                                clocks.local(t1 + proc + down),
+                                burst,
+                            );
+                        }
+                    }
+                    next_burst += if fast { 200.0 } else { 2_000.0 };
+                }
+                // Sync packets: the leader's anchor, sent every 250 ms,
+                // delivered after the path's (jittery, lossy) delay.
+                if t >= next_sync {
+                    next_sync += 250.0;
+                    if let Some((_, down)) = path.sample(&mut rng) {
+                        let mut p = pkt(PlayerState::Playing, 0, t as u64);
+                        p.anchor = Some(Anchor {
+                            pos_ms: t - start,
+                            at_ms: t,
+                            rate: 1.0,
+                            epoch: 1,
+                        });
+                        in_flight.push((t + down, p));
+                    }
+                }
+                in_flight.sort_by(|a, b| a.0.total_cmp(&b.0));
+                while in_flight.first().is_some_and(|(at, _)| *at <= t) {
+                    let (_, p) = in_flight.remove(0);
+                    let rx = clocks.local(t);
+                    let local = localize_sync(p, &model, rx);
+                    anchor = local.anchor;
+                    let a = anchor.unwrap();
+                    servo
+                        .get_or_insert_with(|| Servo::new(a.pos_at(rx), rx, ServoGains::FOLLOWER))
+                        .update(a.pos_at(rx), Some(a.rate), Some(a.epoch), rx);
+                }
+                // Output frames every 25 ms: follow the anchor, compare.
+                if (t - start) % 25.0 != 0.0 {
+                    t += 5.0;
+                    continue;
+                }
+                if let (Some(s), Some(a)) = (servo.as_mut(), anchor) {
+                    let l = clocks.local(t);
+                    s.update(a.pos_at(l), Some(a.rate), Some(a.epoch), l);
+                    if t > start + 30_000.0 {
+                        errs.push(s.pos_at(l) - (t - start));
+                    }
+                }
+                t += 5.0;
+            }
+            let mut abs: Vec<f64> = errs.iter().map(|e| e.abs()).collect();
+            abs.sort_by(f64::total_cmp);
+            let mean = abs.iter().sum::<f64>() / abs.len() as f64;
+            let p95 = abs[abs.len() * 95 / 100];
+            let worst = *abs.last().unwrap();
+            eprintln!(
+                "{name}: timeline error over 30 min: mean {mean:.3} ms, p95 {p95:.3} ms, worst {worst:.3} ms"
+            );
+            assert!(worst < bound, "{name}: worst {worst} ms");
+        }
+    }
+
+    #[test]
+    fn protocol_mismatch_is_explained() {
+        assert!(protocol_mismatch(proto::PROTOCOL_VERSION, "x", true).is_none());
+        let m = protocol_mismatch(1, "0.1.0", true).unwrap();
+        assert!(m.contains("protocol 1") && m.contains("update both"), "{m}");
     }
 
     #[test]

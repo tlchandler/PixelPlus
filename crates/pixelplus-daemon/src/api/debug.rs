@@ -19,7 +19,10 @@ struct OutputQuery {
 }
 
 /// `GET /debug/output`: the last frame written to this controller's outputs
-/// `{frameNo, atMs, wallMs, sequence: {id, frame} | null, master, player, outputs: [{index, pixels, rgb, wire}]}`
+/// `{frameNo, atMs, wallMs, sequence: {id, frame} | null, posMs, lightWallMs, master, player, outputs: [{index, pixels, rgb, wire}]}`
+/// (`posMs`: the unquantised timeline position the frame was chosen for, valid at
+/// `lightWallMs`, the wall-clock time the frame lights up; compare nodes with
+/// `posMs − lightWallMs`)
 /// with `rgb` (rendered, colour order not applied) and `wire` (what the output
 /// backend received) base64-encoded.
 async fn output(
@@ -47,6 +50,8 @@ async fn output(
         "atMs": frame.at_ms,
         "wallMs": frame.wall_ms,
         "sequence": frame.sequence.as_ref().map(|(id, f)| json!({"id": id, "frame": f})),
+        "posMs": frame.pos_ms,
+        "lightWallMs": frame.light_wall_ms,
         "master": frame.master,
         "player": player,
         "outputs": outputs,

@@ -9,7 +9,7 @@ use super::{
 };
 use crate::api::{ApiError, ApiResult};
 use crate::node::LocalRole;
-use crate::player::{PlayerState, PlayerStatus, SyncPacket};
+use crate::player::{Anchor, PlayerState, PlayerStatus, SyncPacket};
 use crate::state::AppState;
 use pixelplus_core::model::{BoardKind, Node, NodeRole, OutputConfig, Show};
 use serde::{Deserialize, Serialize};
@@ -244,6 +244,9 @@ fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus
             .map(|r| r.state)
             .unwrap_or(SyncState::Synced),
         files: report.as_ref().map(|r| r.files).unwrap_or_default(),
+        sync: report.as_ref().and_then(|r| r.quality),
+        wifi_power_save: crate::services::network::wifi_power_save(),
+        protocol: super::proto::PROTOCOL_VERSION,
         ip: net::interfaces().ips.first().map(|i| i.to_string()),
         version: Some(super::VERSION.to_string()),
         pi_model: net::pi_model(),
@@ -282,7 +285,9 @@ fn follower_status(
                 }
             })
         }
-        _ if online => report.problem.clone(),
+        _ if online => m
+            .and_then(|p| super::follower::protocol_mismatch(p.beacon.proto, &p.beacon.ver, false))
+            .or_else(|| report.problem.clone()),
         _ => None,
     };
     NodeStatus {
@@ -302,6 +307,9 @@ fn follower_status(
         } else {
             FileProgress::default()
         },
+        sync: report.quality.filter(|_| online),
+        wifi_power_save: report.wifi_power_save.filter(|_| online),
+        protocol: peer.map_or(0, |p| p.beacon.proto),
         ip: peer.map(|p| p.addr.ip().to_string()),
         version: peer.map(|p| p.beacon.ver.clone()),
         pi_model: node
@@ -349,6 +357,9 @@ pub(crate) fn nodes_status(state: &AppState, sh: &Shared) -> Vec<NodeStatus> {
                         SyncState::Offline
                     },
                     files: FileProgress::default(),
+                    sync: None,
+                    wifi_power_save: None,
+                    protocol: leader.beacon.proto,
                     ip: Some(leader.addr.ip().to_string()),
                     version: Some(leader.beacon.ver.clone()),
                     pi_model: leader.beacon.pi.clone(),
@@ -969,20 +980,41 @@ pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
 // ---------------------------------------------------------------------------
 
 /// A follower's (authenticated, fresh) clock probe: answer with a pong MACed
-/// with its key.
-pub(crate) async fn on_ping(state: &AppState, sh: &Shared, ping: Ping, key: &str, src: SocketAddr) {
-    let t1 = sh.now_ms();
+/// with its key. `rx_ms` is when the ping arrived (kernel stamp): `t1`. `t2`
+/// is when the pong leaves: stamped just before encoding, plus the usual
+/// encoding time, so the follower can exclude our processing time.
+pub(crate) async fn on_ping(
+    state: &AppState,
+    sh: &Shared,
+    ping: Ping,
+    key: &str,
+    src: SocketAddr,
+    rx_ms: f64,
+) {
     let identity = state.identity();
     if identity.role != LocalRole::Leader {
         return;
     }
+    let encode_ms = *sh.pong_encode_ms.lock();
+    let stamped = sh.now_ms();
     let pong = Msg::Pong(Pong {
         id: identity.id.clone(),
         t0: ping.t0,
-        t1,
+        t1: rx_ms,
+        t2: Some(stamped + encode_ms),
         boot: sh.boot.clone(),
     });
-    sh.send_json(&pong, Some(key), &[src]).await;
+    let bytes = sh.encode_json(&pong, Some(key));
+    let took = sh.now_ms() - stamped;
+    {
+        let mut e = sh.pong_encode_ms.lock();
+        *e = if *e == 0.0 {
+            took
+        } else {
+            *e * 0.9 + took * 0.1
+        };
+    }
+    sh.send_bytes(&bytes, &[src]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,6 +1136,36 @@ pub(crate) async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                 }
                 h.problem = problem;
             }
+            // Timing problems: Wi-Fi power save, protocol mismatch (warn once each).
+            if let Some(p) = m.filter(|_| online) {
+                let ps = p
+                    .beacon
+                    .report
+                    .as_ref()
+                    .and_then(|r| r.wifi_power_save)
+                    .unwrap_or(false);
+                if ps && !h.warned_power_save {
+                    log_warning(
+                        state,
+                        format!(
+                            "{}: Wi-Fi power saving is on, which delays packets by up to a second \
+                             and hurts sync. Update PixelPlus on it or run \
+                             `iw dev wlan0 set power_save off`.",
+                            node.name
+                        ),
+                    );
+                }
+                h.warned_power_save = ps;
+                let mismatch = p.beacon.proto != proto::PROTOCOL_VERSION;
+                if mismatch && !h.warned_protocol {
+                    if let Some(msg) =
+                        super::follower::protocol_mismatch(p.beacon.proto, &p.beacon.ver, false)
+                    {
+                        log_warning(state, format!("{}: {msg}", node.name));
+                    }
+                }
+                h.warned_protocol = mismatch;
+            }
             let Some(peer) = peer.filter(|p| p.last_seen.elapsed() < sh.settings.offline_after)
             else {
                 continue;
@@ -1211,16 +1273,20 @@ pub(crate) async fn check_health(state: &AppState, sh: &Arc<Shared>) {
 // Sync sender
 // ---------------------------------------------------------------------------
 
-/// Leader position right now, extrapolated from the last status update.
-fn position_now(status: &PlayerStatus, received: Instant) -> u64 {
-    let mut pos = status.pos_ms;
-    if status.state == PlayerState::Playing {
-        pos += received.elapsed().as_millis() as u64;
-        if status.duration_ms > 0 {
-            pos = pos.min(status.duration_ms);
+/// Leader position right now: from the engine's timeline anchor, or (a
+/// player without one) extrapolated from the last status update.
+fn position_now(status: &PlayerStatus, received: Instant, now_ms: f64) -> f64 {
+    let mut pos = match status.anchor {
+        Some(a) => a.pos_at(now_ms),
+        None if status.state == PlayerState::Playing => {
+            status.pos_ms as f64 + received.elapsed().as_secs_f64() * 1000.0
         }
+        None => status.pos_ms as f64,
+    };
+    if status.duration_ms > 0 && status.state == PlayerState::Playing {
+        pos = pos.min(status.duration_ms as f64);
     }
-    pos
+    pos.max(0.0)
 }
 
 /// Does `new` differ from `old` in a way followers must hear about at once?
@@ -1229,12 +1295,17 @@ pub(crate) fn significant_change(old: &PlayerStatus, old_at: Instant, new: &Play
         || old.item != new.item
         || old.blackout != new.blackout
         || old.brightness != new.brightness
+        || old.anchor.map(|a| a.epoch) != new.anchor.map(|a| a.epoch)
     {
         return true;
     }
+    if new.anchor.is_some() {
+        return false; // seeks change the epoch
+    }
     // A seek: the position jumped away from where it should be.
-    let expected = position_now(old, old_at) as i64;
-    (new.pos_ms as i64 - expected).abs() > 150
+    let now = old_at.elapsed().as_secs_f64() * 1000.0;
+    let expected = position_now(old, old_at, now);
+    (new.pos_ms as f64 - expected).abs() > 150.0
 }
 
 pub(crate) fn build_sync(
@@ -1275,13 +1346,28 @@ pub(crate) fn build_sync(
             }
             t
         });
+    let now = sh.now_ms();
+    let playing = matches!(status.state, PlayerState::Playing | PlayerState::Effect);
+    // The engine's anchor is on the engine clock, which is the cluster clock
+    // (both count from the daemon start). A player without one (tests, idle)
+    // gets an anchor made up from its status.
+    let anchor = status
+        .anchor
+        .unwrap_or_else(|| Anchor {
+            pos_ms: position_now(status, received, now),
+            at_ms: now,
+            rate: if playing { 1.0 } else { 0.0 },
+            epoch: 0,
+        })
+        .rounded();
     SyncPacket {
         leader: identity.id,
         show_version: show.version,
         state: status.state,
         item: status.item.clone(),
-        pos_ms: position_now(status, received),
-        sent_at_ms: sh.now_ms().round() as u64,
+        pos_ms: position_now(status, received, now).round() as u64,
+        sent_at_ms: now.round() as u64,
+        anchor: Some(anchor),
         effect,
         test,
         brightness: status.brightness,
@@ -1460,6 +1546,19 @@ mod tests {
         let mut s = base.clone();
         s.item = None;
         assert!(significant_change(&base, at, &s));
+        // With anchors, a new epoch (seek, pause, jump) is what counts.
+        let mut a = base.clone();
+        a.anchor = Some(Anchor {
+            pos_ms: 1000.0,
+            at_ms: 0.0,
+            rate: 1.0,
+            epoch: 4,
+        });
+        let mut b = a.clone();
+        b.pos_ms = 20_000;
+        assert!(!significant_change(&a, at, &b));
+        b.anchor.as_mut().unwrap().epoch = 5;
+        assert!(significant_change(&a, at, &b));
     }
 
     #[test]
@@ -1471,10 +1570,19 @@ mod tests {
             duration_ms: 1200,
             ..Default::default()
         };
-        assert_eq!(position_now(&s, at), 1200, "clamped to the duration");
+        assert_eq!(position_now(&s, at, 0.0), 1200.0, "clamped to the duration");
         s.duration_ms = 0;
-        assert!(position_now(&s, at) >= 1500);
+        assert!(position_now(&s, at, 0.0) >= 1500.0);
         s.state = PlayerState::Paused;
-        assert_eq!(position_now(&s, at), 1000);
+        assert_eq!(position_now(&s, at, 0.0), 1000.0);
+        // With an anchor the engine's own timestamp counts, to the µs.
+        s.state = PlayerState::Playing;
+        s.anchor = Some(Anchor {
+            pos_ms: 1000.25,
+            at_ms: 5000.0,
+            rate: 1.0,
+            epoch: 1,
+        });
+        assert_eq!(position_now(&s, at, 5010.5), 1010.75);
     }
 }

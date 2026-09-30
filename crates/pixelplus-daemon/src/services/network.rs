@@ -144,6 +144,76 @@ pub fn managed() -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Wi-Fi power save (bad for show sync)
+// ---------------------------------------------------------------------------
+//
+// brcmfmac enables power saving by default: frames for a dozing station wait
+// at the access point for its next wake-up, adding 50–1000 ms spikes to clock
+// probes and sync packets. The image turns it off (NetworkManager
+// `wifi.powersave = 2` plus an `iw` fallback in firstboot/netwatch); this
+// check catches controllers where that did not stick.
+
+/// Wireless interface checked for power save.
+const WIFI_IFACE: &str = "wlan0";
+
+static WIFI_POWER_SAVE: parking_lot::Mutex<Option<bool>> = parking_lot::const_mutex(None);
+static WIFI_WATCH: std::sync::Once = std::sync::Once::new();
+
+/// Parse `iw dev wlan0 get power_save` ("Power save: on").
+pub fn parse_power_save(text: &str) -> Option<bool> {
+    let v = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Power save:"))?
+        .trim()
+        .to_ascii_lowercase();
+    match v.as_str() {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether Wi-Fi power saving is on, `None` when not on Wi-Fi or unknown.
+/// Cached; refreshed every minute in the background (first call starts it).
+/// `PIXELPLUS_WIFI_POWERSAVE=on|off` overrides it (development, tests).
+pub fn wifi_power_save() -> Option<bool> {
+    if let Ok(v) = std::env::var("PIXELPLUS_WIFI_POWERSAVE") {
+        return match v.trim() {
+            "on" | "1" => Some(true),
+            "off" | "0" => Some(false),
+            _ => None,
+        };
+    }
+    if tokio::runtime::Handle::try_current().is_ok() {
+        WIFI_WATCH.call_once(|| {
+            tokio::spawn(async {
+                loop {
+                    let v = read_wifi_power_save().await;
+                    *WIFI_POWER_SAVE.lock() = v;
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+            });
+        });
+    }
+    *WIFI_POWER_SAVE.lock()
+}
+
+async fn read_wifi_power_save() -> Option<bool> {
+    let oper = std::fs::read_to_string(format!("/sys/class/net/{WIFI_IFACE}/operstate")).ok()?;
+    if oper.trim() != "up" || !have("iw") {
+        return None;
+    }
+    let out = run(
+        "iw",
+        &["dev", WIFI_IFACE, "get", "power_save"],
+        Duration::from_secs(3),
+    )
+    .await
+    .ok()?;
+    parse_power_save(&out.stdout)
+}
+
+// ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
@@ -637,6 +707,16 @@ mod tests {
         assert!(validate(&c).is_ok());
         c.ethernet.dns = Some("dns.google".into());
         assert!(validate(&c).is_err());
+    }
+
+    #[test]
+    fn power_save_parsing() {
+        assert_eq!(parse_power_save("Power save: on\n"), Some(true));
+        assert_eq!(parse_power_save("\tPower save: off"), Some(false));
+        assert_eq!(
+            parse_power_save("command failed: No such device (-19)"),
+            None
+        );
     }
 
     #[test]

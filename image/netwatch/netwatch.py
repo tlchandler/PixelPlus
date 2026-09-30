@@ -219,6 +219,7 @@ class Netwatch:
         self.server: Optional[portal.PortalServer] = None
         self.hostname = socket.gethostname()
         self.last_online: Optional[float] = None
+        self.power_save_checked: Optional[float] = None
         self.persist = load_state()
         if not self.persist.get("devicePassword"):
             self.persist["devicePassword"] = new_device_password()
@@ -453,6 +454,8 @@ class Netwatch:
             if online:
                 if self.state != "ONLINE" or self.offline_since is not None:
                     LOG.info("online via %s (%s)", online["device"], online["connection"])
+                if online.get("device") == self.iface:
+                    self.check_power_save(now)
                 self.offline_since = None
                 self.last_online = now
                 if not self.persist.get("everOnline"):
@@ -503,6 +506,21 @@ class Netwatch:
             ):
                 self.retry_known()
 
+    def check_power_save(self, now: float) -> None:
+        """Belt and braces for NetworkManager's `wifi.powersave = 2`: Wi-Fi power
+        saving delays packets by 50-1000 ms and breaks show sync. Checked on
+        joining a network and every POWER_SAVE_EVERY seconds."""
+        if self.power_save_checked is not None and now - self.power_save_checked < POWER_SAVE_EVERY:
+            return
+        self.power_save_checked = now
+        before = self.nm.power_save(self.iface)
+        if before:
+            after = self.nm.power_save_off(self.iface)
+            if after is False:
+                LOG.info("Wi-Fi power saving was on; turned it off (it hurts show sync)")
+            else:
+                LOG.warning("Wi-Fi power saving is on and could not be turned off")
+
     def retry_known(self) -> None:
         LOG.info("no phone connected - checking whether a known network is back")
         self.last_retry = self.clock()
@@ -538,6 +556,9 @@ class Netwatch:
             except Exception:  # never die: this is the user's way back in
                 LOG.exception("netwatch tick failed")
             self.sleep(3)
+
+
+POWER_SAVE_EVERY = 300
 
 
 def main(argv=None) -> int:

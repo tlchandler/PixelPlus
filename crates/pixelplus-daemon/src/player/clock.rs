@@ -2,16 +2,22 @@
 //!
 //! * [`MonoClock`]: a pausable, seekable monotonic position clock (used when no
 //!   audio plays, and as the fallback when the audio device fails).
-//! * [`SlewClock`]: follower position tracking with slew/jump correction
-//!   (ARCHITECTURE §7.4: drift > 1 frame → slew, > 250 ms → jump).
+//! * [`Servo`]: a position clock that follows a target timeline continuously
+//!   (ARCHITECTURE §7.4): followers track the leader's timeline anchor, the
+//!   leader tracks its audio clock. Small errors are removed by a bounded rate
+//!   slew (no deadband), large ones (> [`JUMP_THRESHOLD_MS`]) or a new epoch
+//!   (seek, new item) by a jump.
+//! * Presentation-time frame selection ([`frame_for_slot`], [`next_update`]).
 //! * Crossfade / fade helpers shared by lights and audio.
 //!
 //! Everything takes explicit `now` values so it is tested with a fake clock.
 
 /// Jump instead of slewing beyond this error (ms).
-pub const JUMP_THRESHOLD_MS: f64 = 250.0;
-/// Maximum slew rate deviation (±10 %).
-pub const MAX_SLEW: f64 = 0.10;
+pub const JUMP_THRESHOLD_MS: f64 = 100.0;
+/// Maximum slew rate deviation (±2 %, invisible for lights).
+pub const MAX_SLEW: f64 = 0.02;
+/// Largest believable rate deviation of a tracked timeline (±0.5 %).
+pub const MAX_FREQ: f64 = 0.005;
 
 /// Pausable monotonic position clock. Times are in ms on any monotonic base.
 #[derive(Debug, Clone)]
@@ -52,81 +58,239 @@ impl MonoClock {
     }
 }
 
-/// What a sync update did.
+/// What a servo update did.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SyncAction {
-    /// Within one frame: nothing to do.
-    InSync,
-    /// Correcting gradually with this rate (1.0 = real time).
+    /// Following: slewing with this rate (1.0 = real time).
     Slew(f64),
-    /// Error too large: jumped to the target.
+    /// Error too large or a new epoch: jumped to the target.
     Jump,
+    /// Not running (paused / holding): set to the target.
+    Hold,
 }
 
-/// Follower playback clock that converges on the leader's position.
+/// Loop gains of a [`Servo`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ServoGains {
+    /// Proportional gain (1/ms): the error is removed with time constant 1/kp.
+    pub kp: f64,
+    /// Integral gain (1/ms²): learns a rate the feed-forward does not know.
+    pub ki: f64,
+}
+
+impl ServoGains {
+    /// Followers: the target's rate is known (feed-forward), so a fast P loop
+    /// (τ = 0.5 s) suffices; model updates of a fraction of a millisecond are
+    /// smoothed out over about a second.
+    pub const FOLLOWER: ServoGains = ServoGains {
+        kp: 1.0 / 500.0,
+        ki: 0.0,
+    };
+    /// Leader tracking its audio clock: the audio clock is noisy (ALSA delay
+    /// jitter, 10 ms steps on the Pi headphone jack) and its rate relative to
+    /// the monotonic clock is unknown (sound-card crystal): a slow, critically
+    /// damped PI loop (τ ≈ 2 s) filters the jitter and learns the rate.
+    pub const AUDIO: ServoGains = ServoGains {
+        kp: 1.0 / 2000.0,
+        ki: 1.0 / 2000.0 / 2000.0 / 4.0,
+    };
+}
+
+/// A position clock that follows a target timeline (see the module docs).
+///
+/// `update` is called every output frame with the target position *now*
+/// and, when known, the target's rate (feed-forward). Between updates the
+/// position advances at the current rate, so it can be evaluated at any time
+/// ([`Servo::pos_at`]), e.g. at the moment a frame will light up.
 #[derive(Debug, Clone)]
-pub struct SlewClock {
+pub struct Servo {
     pos: f64,
     last: f64,
+    /// Rate applied until the next update.
     rate: f64,
+    /// Learnt rate of the target (integrator) when no feed-forward is given.
+    freq: f64,
     running: bool,
+    epoch: Option<u64>,
+    gains: ServoGains,
+    /// Smoothed |error| (ms) for diagnostics.
+    err_avg: f64,
+    jumps: u64,
 }
 
-impl SlewClock {
-    pub fn new(pos_ms: f64, now_ms: f64) -> Self {
-        SlewClock {
+impl Servo {
+    pub fn new(pos_ms: f64, now_ms: f64, gains: ServoGains) -> Self {
+        Servo {
             pos: pos_ms,
             last: now_ms,
             rate: 1.0,
+            freq: 1.0,
             running: true,
+            epoch: None,
+            gains,
+            err_avg: 0.0,
+            jumps: 0,
         }
     }
 
-    /// Position now (advances the internal state).
+    /// Jumps so far (a discontinuity of the followed timeline).
+    pub fn jumps(&self) -> u64 {
+        self.jumps
+    }
+
+    /// Advance to `now` and return the position.
     pub fn advance(&mut self, now_ms: f64) -> f64 {
-        let dt = (now_ms - self.last).max(0.0);
-        if self.running {
-            self.pos += dt * self.rate;
+        let dt = now_ms - self.last;
+        if dt > 0.0 {
+            if self.running {
+                self.pos += dt * self.rate;
+            }
+            self.last = now_ms;
         }
-        self.last = now_ms;
         self.pos
     }
 
+    /// Position at `t` (usually slightly in the future: when the next frame
+    /// lights up), extrapolated with the current rate. Does not change state.
+    pub fn pos_at(&self, t_ms: f64) -> f64 {
+        if self.running {
+            self.pos + (t_ms - self.last) * self.rate
+        } else {
+            self.pos
+        }
+    }
+
+    /// Position at the last update.
     pub fn pos(&self) -> f64 {
         self.pos
+    }
+
+    /// Rate applied until the next update (timeline ms per clock ms; 0 when
+    /// not running).
+    pub fn rate(&self) -> f64 {
+        if self.running {
+            self.rate
+        } else {
+            0.0
+        }
+    }
+
+    pub fn running(&self) -> bool {
+        self.running
+    }
+
+    /// The followed timeline's own rate as learnt (or given as
+    /// feed-forward), without the error correction; 0 when not running.
+    /// Smooth, so it is what sync anchors carry.
+    pub fn freq(&self) -> f64 {
+        if self.running {
+            self.freq
+        } else {
+            0.0
+        }
+    }
+
+    /// Smoothed absolute tracking error (ms).
+    pub fn error_ms(&self) -> f64 {
+        self.err_avg
     }
 
     pub fn set_running(&mut self, running: bool, now_ms: f64) {
         self.advance(now_ms);
         self.running = running;
-        if !running {
-            self.rate = 1.0;
-        }
     }
 
-    /// Feed the leader's position `target_ms` valid at local time `now_ms`.
-    /// `frame_ms` is the tolerance (one frame).
-    pub fn update(&mut self, target_ms: f64, now_ms: f64, frame_ms: f64) -> SyncAction {
+    /// Follow `target_ms` (the target position at `now_ms`). `target_rate`
+    /// is the target's own rate if known (feed-forward); `epoch` changes on
+    /// seeks and new items and forces a jump.
+    pub fn update(
+        &mut self,
+        target_ms: f64,
+        target_rate: Option<f64>,
+        epoch: Option<u64>,
+        now_ms: f64,
+    ) -> SyncAction {
+        let dt = (now_ms - self.last).max(0.0);
         let pos = self.advance(now_ms);
         let err = target_ms - pos;
-        let tolerance = frame_ms.max(1.0);
-        if err.abs() > JUMP_THRESHOLD_MS || !self.running {
+        let new_epoch = epoch.is_some() && epoch != self.epoch;
+        if epoch.is_some() {
+            self.epoch = epoch;
+        }
+        if !self.running {
             self.pos = target_ms;
-            self.rate = 1.0;
-            if err.abs() > JUMP_THRESHOLD_MS {
-                return SyncAction::Jump;
+            return SyncAction::Hold;
+        }
+        if new_epoch || err.abs() > JUMP_THRESHOLD_MS {
+            self.pos = target_ms;
+            let r = target_rate.unwrap_or(self.freq);
+            self.freq = r.clamp(1.0 - MAX_FREQ, 1.0 + MAX_FREQ);
+            self.rate = if target_rate == Some(0.0) {
+                0.0
+            } else {
+                self.freq
+            };
+            self.err_avg = 0.0;
+            self.jumps += 1;
+            return SyncAction::Jump;
+        }
+        let a = (dt / 1000.0).min(1.0);
+        self.err_avg += a * (err.abs() - self.err_avg);
+        let ff = match target_rate {
+            Some(r) => {
+                self.freq = r;
+                r
             }
-            return SyncAction::InSync;
-        }
-        if err.abs() > tolerance {
-            // Remove the error over about one second, bounded to ±10 %.
-            self.rate = 1.0 + (err / 1000.0).clamp(-MAX_SLEW, MAX_SLEW);
-            SyncAction::Slew(self.rate)
-        } else {
-            self.rate = 1.0;
-            SyncAction::InSync
-        }
+            None => {
+                self.freq =
+                    (self.freq + self.gains.ki * err * dt).clamp(1.0 - MAX_FREQ, 1.0 + MAX_FREQ);
+                self.freq
+            }
+        };
+        let correction = (self.gains.kp * err).clamp(-MAX_SLEW, MAX_SLEW);
+        self.rate = (ff + correction).max(0.0);
+        SyncAction::Slew(self.rate)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Presentation-time frame selection
+// ---------------------------------------------------------------------------
+
+/// The frame to show in a presentation slot that lights up at timeline
+/// position `pos_ms` and stays until the next update, `slot_ms` later: the
+/// frame whose interval covers the middle of the slot. Every node then
+/// changes frames within ±slot/2 of the ideal instant instead of 0..slot late.
+pub fn frame_for_slot(pos_ms: f64, slot_ms: f64, frame_ms: f64) -> u32 {
+    if frame_ms <= 0.0 {
+        return 0;
+    }
+    ((pos_ms + slot_ms.max(0.0) / 2.0) / frame_ms)
+        .floor()
+        .clamp(0.0, u32::MAX as f64) as u32
+}
+
+/// When (clock ms) the next update should light up so that the frame after
+/// `shown` appears as close as possible to its ideal instant.
+///
+/// The timeline advances at `rate` from `pos_ms` at `now_ms`. With a
+/// presentation slot of `slot_ms` (refresh period, or the software-timer
+/// granularity) [`frame_for_slot`] switches to the next frame as soon as the
+/// slot starts less than half a slot before the boundary, so that is the
+/// target. `None` when the timeline is not moving.
+pub fn next_update(
+    pos_ms: f64,
+    rate: f64,
+    now_ms: f64,
+    shown: u32,
+    frame_ms: f64,
+    slot_ms: f64,
+) -> Option<f64> {
+    if rate <= 0.0 || frame_ms <= 0.0 {
+        return None;
+    }
+    let boundary = (shown as f64 + 1.0) * frame_ms - slot_ms / 2.0;
+    Some(now_ms + (boundary - pos_ms) / rate)
 }
 
 /// Equal-power gain for a fade level in 0..=1 (sin curve). A fade-in at level
@@ -222,44 +386,138 @@ mod tests {
     }
 
     #[test]
-    fn slew_small_errors_jump_large() {
-        let mut c = SlewClock::new(0.0, 0.0);
-        // Perfect: in sync.
-        assert_eq!(c.update(100.0, 100.0, 25.0), SyncAction::InSync);
-        // 20 ms behind with a 25 ms frame: still in sync.
-        assert_eq!(c.update(220.0, 200.0, 25.0), SyncAction::InSync);
-        // 100 ms behind: slew faster.
-        match c.update(400.0, 300.0, 25.0) {
-            SyncAction::Slew(r) => assert!(r > 1.0 && r <= 1.0 + MAX_SLEW),
-            other => panic!("expected slew, got {other:?}"),
+    fn servo_follows_without_deadband() {
+        // Target runs 40 ppm fast and starts 3 ms ahead: the servo converges
+        // to well under 0.5 ms and stays there (no ±1 frame sawtooth).
+        let mut c = Servo::new(0.0, 0.0, ServoGains::FOLLOWER);
+        let r = 1.0 + 40e-6;
+        let target = |t: f64| 3.0 + t * r;
+        let mut worst_late = 0.0f64;
+        let mut t = 0.0;
+        while t < 600_000.0 {
+            let a = c.update(target(t), Some(r), Some(1), t);
+            if t > 0.0 {
+                assert!(matches!(a, SyncAction::Slew(_)), "{a:?} at {t}");
+            }
+            if t > 3_000.0 {
+                worst_late = worst_late.max((c.pos_at(t + 12.0) - target(t + 12.0)).abs());
+            }
+            t += 25.0;
         }
-        // Converges: after a few seconds of updates the error is within a frame.
-        let mut now = 300.0;
-        let mut target = 400.0;
-        for _ in 0..40 {
-            now += 250.0;
-            target += 250.0;
-            c.update(target, now, 25.0);
-        }
-        assert!((c.advance(now) - target).abs() <= 25.0, "converged");
-        // 1 s ahead of target: jump.
-        assert_eq!(c.update(target, now, 25.0), SyncAction::InSync);
-        assert_eq!(c.update(target + 1000.0, now, 25.0), SyncAction::Jump);
-        assert_eq!(c.pos(), target + 1000.0);
-        // Ahead by 100 ms: slew slower.
-        match c.update(target + 900.0, now, 25.0) {
-            SyncAction::Slew(r) => assert!((1.0 - MAX_SLEW..1.0).contains(&r)),
-            other => panic!("expected slew, got {other:?}"),
+        assert!(worst_late < 0.05, "tracking error {worst_late} ms");
+        // Slewing is bounded.
+        let mut c = Servo::new(0.0, 0.0, ServoGains::FOLLOWER);
+        match c.update(90.0, Some(1.0), None, 25.0) {
+            SyncAction::Slew(r) => assert!((r - (1.0 + MAX_SLEW)).abs() < 1e-12),
+            other => panic!("{other:?}"),
         }
     }
 
     #[test]
-    fn slew_clock_hold() {
-        let mut c = SlewClock::new(1000.0, 0.0);
-        c.set_running(false, 100.0);
-        assert_eq!(c.advance(5000.0), 1100.0);
-        c.set_running(true, 5000.0);
-        assert_eq!(c.advance(5100.0), 1200.0);
+    fn servo_jumps_on_large_errors_and_new_epochs() {
+        let mut c = Servo::new(0.0, 0.0, ServoGains::FOLLOWER);
+        assert_eq!(c.update(100.0, Some(1.0), Some(1), 100.0), SyncAction::Jump);
+        assert!(matches!(
+            c.update(200.5, Some(1.0), Some(1), 200.0),
+            SyncAction::Slew(_)
+        ));
+        // Seek: small error but a new epoch.
+        assert_eq!(c.update(260.0, Some(1.0), Some(2), 250.0), SyncAction::Jump);
+        assert_eq!(c.pos(), 260.0);
+        // 150 ms off: jump.
+        assert_eq!(c.update(450.0, Some(1.0), Some(2), 300.0), SyncAction::Jump);
+        // Paused: held on the target.
+        c.set_running(false, 300.0);
+        assert_eq!(
+            c.update(451.0, Some(0.0), Some(2), 1000.0),
+            SyncAction::Hold
+        );
+        assert_eq!(c.pos_at(5_000.0), 451.0);
+        assert_eq!(c.rate(), 0.0);
+        c.set_running(true, 1000.0);
+        c.update(451.0, Some(1.0), Some(2), 1000.0);
+        assert!((c.pos_at(1100.0) - 551.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn audio_servo_learns_the_rate_and_filters_jitter() {
+        // A sound card 120 ppm slow whose reported position is off by up to
+        // ±5 ms (the Pi headphone jack's delay moves in 10 ms steps) plus
+        // ±2 ms of scheduling noise.
+        let mut c = Servo::new(0.0, 0.0, ServoGains::AUDIO);
+        let rate = 1.0 - 120e-6;
+        let mut seed = 1u64;
+        let mut uniform = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+        };
+        let (mut worst, mut sum, mut n) = (0.0f64, 0.0, 0.0);
+        let mut t = 0.0;
+        while t < 300_000.0 {
+            let truth: f64 = t * rate;
+            let reported = truth + 5.0 * uniform() + 2.0 * uniform();
+            c.update(reported, None, Some(1), t);
+            if t > 60_000.0 {
+                let e = (c.pos() - truth).abs();
+                worst = worst.max(e);
+                sum += e;
+                n += 1.0;
+            }
+            t += 25.0;
+        }
+        assert!(worst < 1.5, "worst {worst} ms against ±7 ms of noise");
+        assert!(sum / n < 0.4, "mean {} ms", sum / n);
+        assert!((c.freq() - rate).abs() < 30e-6, "rate {}", c.freq());
+    }
+
+    #[test]
+    fn slot_centred_frame_choice() {
+        // 25 ms frames, a 10 ms refresh slot starting at 99 ms: the slot's
+        // middle (104 ms) is in frame 4.
+        assert_eq!(frame_for_slot(99.0, 10.0, 25.0), 4);
+        assert_eq!(frame_for_slot(94.0, 10.0, 25.0), 3);
+        assert_eq!(frame_for_slot(95.0, 10.0, 25.0), 4);
+        assert_eq!(frame_for_slot(-30.0, 10.0, 25.0), 0);
+        assert_eq!(frame_for_slot(10.0, 0.0, 0.0), 0);
+        // Long slots (R > F) show the frame at the middle of the slot.
+        assert_eq!(frame_for_slot(100.0, 50.0, 25.0), 5);
+    }
+
+    #[test]
+    fn next_update_lands_on_frame_boundaries() {
+        // Frame 3 shown at pos 80 (now 1000); frame 4 starts at 100 ms. With
+        // a 10 ms slot the update should light up at pos 95 → 15 ms from now.
+        let t = next_update(80.0, 1.0, 1000.0, 3, 25.0, 10.0).unwrap();
+        assert!((t - 1015.0).abs() < 1e-9);
+        assert_eq!(frame_for_slot(95.0, 10.0, 25.0), 4);
+        // At a slower rate it takes longer.
+        let t = next_update(80.0, 0.5, 1000.0, 3, 25.0, 10.0).unwrap();
+        assert!((t - 1030.0).abs() < 1e-9);
+        assert_eq!(next_update(80.0, 0.0, 1000.0, 3, 25.0, 10.0), None);
+        // Error of a node presenting on a free-running 12.6 ms vblank grid:
+        // every frame change lands within ±R/2 of its ideal instant.
+        let r = 12.6;
+        let frame = 25.0;
+        let mut worst = 0.0f64;
+        let mut shown = 0;
+        let mut v = 3.3; // first vblank
+        let mut next = next_update(0.0, 1.0, 0.0, shown, frame, r).unwrap();
+        while v < 60_000.0 {
+            if v + 1e-9 >= next {
+                let idx = frame_for_slot(v, r, frame);
+                if idx != shown {
+                    // Frame idx should appear at idx·F; it appears at v.
+                    assert_eq!(idx, shown + 1, "no frame skipped");
+                    worst = worst.max((v - idx as f64 * frame).abs());
+                    shown = idx;
+                }
+                next = next_update(v, 1.0, v, shown, frame, r).unwrap();
+            }
+            v += r;
+        }
+        assert!(worst <= r / 2.0 + 1e-9);
     }
 
     #[test]

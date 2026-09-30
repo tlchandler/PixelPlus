@@ -42,6 +42,40 @@ use pixelplus_core::model::EffectPreset;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch};
 
+/// A point of a playback timeline: position `pos_ms` at clock time `at_ms`,
+/// advancing at `rate` timeline ms per clock ms (0 while paused). The clock is
+/// the leader's cluster clock in sync packets and the local clock once a
+/// follower has converted it ([`crate::cluster::follower::localize_sync`]).
+/// `epoch` changes whenever the timeline is discontinuous (new item, seek,
+/// pause/resume, a jump of the leader's audio clock): followers jump instead
+/// of slewing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Anchor {
+    pub pos_ms: f64,
+    pub at_ms: f64,
+    pub rate: f64,
+    pub epoch: u64,
+}
+
+impl Anchor {
+    /// Timeline position at clock time `t_ms`.
+    pub fn pos_at(&self, t_ms: f64) -> f64 {
+        self.pos_ms + self.rate * (t_ms - self.at_ms)
+    }
+
+    /// Rounded to the microsecond (keeps packets short).
+    pub fn rounded(self) -> Anchor {
+        let us = |v: f64| (v * 1000.0).round() / 1000.0;
+        Anchor {
+            pos_ms: us(self.pos_ms),
+            at_ms: us(self.at_ms),
+            rate: (self.rate * 1e9).round() / 1e9,
+            epoch: self.epoch,
+        }
+    }
+}
+
 /// Leader → follower playback sync (ARCHITECTURE §7.4).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +90,11 @@ pub struct SyncPacket {
     pub pos_ms: u64,
     /// Leader monotonic clock (ms) when the packet was sent.
     pub sent_at_ms: u64,
+    /// The timeline (protocol 2): followers compute the position for any
+    /// moment from it, so packets are idempotent and loss costs nothing.
+    /// `pos_ms`/`sent_at_ms` above are its integer-ms rendering for protocol 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<Anchor>,
     /// Effect being shown (already passed through `stamp_world_bounds`).
     #[serde(default)]
     pub effect: Option<EffectPreset>,
@@ -91,6 +130,9 @@ pub enum PlayerCmd {
     },
     /// Follower: follow the leader's playback.
     Sync(SyncPacket),
+    /// "Sync lights to sound": play (`true`) or stop the calibration pattern
+    /// (a click every second, every prop flashing white with it).
+    Calibrate(bool),
     /// Overlay control for a prop (games, text, QR, fault finder).
     Overlay(OverlayCmd),
     /// Show changed (new version): rebuild maps, reload files. (The engine

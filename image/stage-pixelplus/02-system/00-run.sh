@@ -52,6 +52,12 @@ WirelessEnabled=true
 WWANEnabled=false
 STATE
 
+# --- Wi-Fi power saving off (50-1000 ms latency spikes break show sync). The
+#     package's appliance config (50-pixelplus.conf) says the same; this file is
+#     independent of the package so the image never ships with it on.
+install -D -m 0644 files/nm-wifi-powersave.conf \
+	"${ROOTFS_DIR}/etc/NetworkManager/conf.d/40-pixelplus-wifi-powersave.conf"
+
 install -m 0644 files/zramswap "${ROOTFS_DIR}/tmp/pixelplus-zramswap"
 
 on_chroot <<'CHROOT'

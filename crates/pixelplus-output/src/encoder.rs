@@ -30,6 +30,17 @@
 //! high times are exactly T0H / T1H on every bank; banks are merely skewed by
 //! 104 ns from each other, which WS281x strings do not care about.
 //!
+//! ## Latch alignment ("bottom-aligned" strings, experimental)
+//!
+//! By default every output's data starts at line 0, so a string of *L* LEDs
+//! latches (shows its new colours) about `L × line + reset` after scan-out
+//! starts: strings of different lengths change at different times (up to
+//! 49 ms apart at 1600 LEDs). With [`WsEncoder::set_bottom_align`] output *k*
+//! starts at line `N − L_k` instead, where *N* is the longest output of the
+//! frame; the leading low lines are just a longer reset, and every string
+//! latches at `N × line + reset`. Must be validated on real pixels (see
+//! `DESIGN.md`, bring-up checklist).
+//!
 //! ## Speed
 //!
 //! Eight outputs' bytes are packed into a `u64` and bit-transposed with three
@@ -267,6 +278,7 @@ pub struct WsEncoder {
     layout: OutputLayout,
     geometry: DpiGeometry,
     lanes: Vec<LaneTables>,
+    bottom_align: bool,
 }
 
 impl WsEncoder {
@@ -325,7 +337,20 @@ impl WsEncoder {
             layout,
             geometry,
             lanes,
+            bottom_align: false,
         })
+    }
+
+    /// Start every output's data so that all outputs end on the same line
+    /// (the longest output's last line): every string then latches at the
+    /// same moment. See the module docs. Off by default.
+    pub fn set_bottom_align(&mut self, on: bool) {
+        self.bottom_align = on;
+    }
+
+    /// Whether outputs are bottom-aligned (see [`WsEncoder::set_bottom_align`]).
+    pub fn bottom_align(&self) -> bool {
+        self.bottom_align
     }
 
     /// The layout this encoder drives.
@@ -381,12 +406,21 @@ impl WsEncoder {
             .count() as u32;
         let data_lines = longest.min(capacity);
         let lines = data_lines.max(state.dirty_lines as usize);
+        // Bottom alignment: output `o` starts `shift[o]` lines late.
+        let shifts: Vec<usize> = if self.bottom_align {
+            frame
+                .iter()
+                .map(|o| data_lines - o.len().div_ceil(3).min(capacity))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let mut lane_lines = [EMPTY_LANE_LINE; MAX_LANES];
         for y in 0..lines {
             if y < data_lines {
                 for (tables, out) in self.lanes.iter().zip(lane_lines.iter_mut()) {
-                    *out = Self::compute_lane_line(tables, frame, y);
+                    *out = Self::compute_lane_line(tables, frame, y, &shifts);
                 }
             } else {
                 lane_lines = [EMPTY_LANE_LINE; MAX_LANES];
@@ -426,13 +460,22 @@ impl WsEncoder {
     }
 
     #[inline]
-    fn compute_lane_line(tables: &LaneTables, frame: &OutputFrameRef<'_>, y: usize) -> LaneLine {
+    fn compute_lane_line(
+        tables: &LaneTables,
+        frame: &OutputFrameRef<'_>,
+        y: usize,
+        shifts: &[usize],
+    ) -> LaneLine {
         let mut out = EMPTY_LANE_LINE;
-        let base = y * 3;
         for group in &tables.groups {
             let mut active = 0usize;
             let mut rows = [0u64; 3];
             for (i, &o) in group.outputs[..group.len].iter().enumerate() {
+                let shift = shifts.get(o).copied().unwrap_or(0);
+                if y < shift {
+                    continue; // bottom-aligned: this output has not started yet
+                }
+                let base = (y - shift) * 3;
                 let bytes = frame.output(o);
                 if let Some(px) = bytes.get(base..base + 3) {
                     active |= 1 << i;
@@ -643,6 +686,33 @@ mod tests {
             .encode_to_vec(&OutputFrameRef::new(vec![&short]))
             .unwrap();
         assert_eq!(words, fresh, "incremental result must equal a fresh encode");
+    }
+
+    #[test]
+    fn bottom_align_shifts_short_outputs_down() {
+        let mut enc = direct_encoder(8);
+        enc.set_bottom_align(true);
+        assert!(enc.bottom_align());
+        // Port 1 (bit 1): 4 LEDs; port 2 (bit 2): 1 LED (all ones).
+        let p1 = [0xFFu8; 12];
+        let p2 = [0xFFu8; 3];
+        let fb = enc
+            .encode_to_vec(&OutputFrameRef::new(vec![&p1, &p2]))
+            .unwrap();
+        let line = |y: usize| &fb[y * 1152..(y + 1) * 1152];
+        // Lines 0..3 carry only port 1; port 2 starts on line 3 (= 4 − 1).
+        for y in 0..3 {
+            assert_eq!(line(y)[0], 0b10, "line {y}");
+        }
+        assert_eq!(line(3)[0], 0b110);
+        assert!(line(4).iter().all(|&w| w == 0));
+        // Top-aligned (default): port 2 is on line 0.
+        enc.set_bottom_align(false);
+        let fb = enc
+            .encode_to_vec(&OutputFrameRef::new(vec![&p1, &p2]))
+            .unwrap();
+        assert_eq!(fb[0], 0b110);
+        assert_eq!(fb[1152], 0b10);
     }
 
     #[test]

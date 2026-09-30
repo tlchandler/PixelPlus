@@ -19,7 +19,7 @@ pub use sim::{SimHandle, SimOutput, SimSnapshot};
 use crate::error::Result;
 use crate::frame::OutputFrameRef;
 use serde::Serialize;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Running statistics of a backend (serialised camelCase for the API).
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -51,6 +51,53 @@ pub struct OutputStats {
     pub max_pixels_per_output: Option<u32>,
     /// Most recent error message, if any.
     pub last_error: Option<String>,
+    /// Measured refresh period (from page-flip timestamps), microseconds.
+    pub vblank_period_us: Option<f64>,
+    /// Frames that reached the pixels one refresh later than predicted
+    /// (the output thread queued them too close to the vblank).
+    pub late_flips: u64,
+    /// Outputs are bottom-aligned (all strings latch together, experimental).
+    pub bottom_aligned: bool,
+}
+
+/// When a frame written to a scanned-out backend (DPI) reaches the pixels.
+///
+/// The display scans out on a free-running vblank grid: a frame queued now
+/// is shown from the first vblank after the pending one (if any) completes,
+/// and a string of *L* LEDs latches `L × line + reset` after scan-out starts
+/// (all strings latch after the longest when [`Self::bottom_aligned`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PresentTiming {
+    /// Start of scan-out (first active line) of the latest completed flip.
+    pub last_vblank: Instant,
+    /// Refresh period (measured).
+    pub period: Duration,
+    /// Vblank at which a queued, not yet completed flip takes effect.
+    pub pending_vblank: Option<Instant>,
+    /// Scan-out time of one line (one LED of every output).
+    pub line: Duration,
+    /// WS281x reset (latch) time after a string's last LED.
+    pub reset: Duration,
+    /// Strings are bottom-aligned: every string latches after the longest.
+    pub bottom_aligned: bool,
+}
+
+impl PresentTiming {
+    /// The first vblank at or after `t` on the grid.
+    pub fn vblank_at_or_after(&self, t: Instant) -> Instant {
+        if t <= self.last_vblank || self.period.is_zero() {
+            return self.last_vblank;
+        }
+        let p = self.period.as_secs_f64();
+        let n = ((t - self.last_vblank).as_secs_f64() / p).ceil();
+        self.last_vblank + Duration::from_secs_f64(n * p)
+    }
+
+    /// Delay from start of scan-out until a string whose data occupies
+    /// `lines` lines (LEDs) shows its new colours.
+    pub fn latch_after(&self, lines: f64) -> Duration {
+        self.line.mul_f64(lines.max(0.0)) + self.reset
+    }
 }
 
 impl OutputStats {
@@ -99,6 +146,17 @@ pub trait PixelOutput: Send {
 
     /// Current statistics.
     fn stats(&self) -> OutputStats;
+
+    /// Presentation timing for scanned-out backends (DPI); `None` when frames
+    /// are shown as soon as they are written (simulation, null).
+    fn present_timing(&self) -> Option<PresentTiming> {
+        None
+    }
+
+    /// Bottom-align outputs so every string latches at the same moment (see
+    /// [`crate::WsEncoder::set_bottom_align`]). Backends without an encoder
+    /// ignore it.
+    fn set_bottom_align(&mut self, _on: bool) {}
 }
 
 impl<T: PixelOutput + ?Sized> PixelOutput for Box<T> {
@@ -116,5 +174,42 @@ impl<T: PixelOutput + ?Sized> PixelOutput for Box<T> {
 
     fn stats(&self) -> OutputStats {
         (**self).stats()
+    }
+
+    fn present_timing(&self) -> Option<PresentTiming> {
+        (**self).present_timing()
+    }
+
+    fn set_bottom_align(&mut self, on: bool) {
+        (**self).set_bottom_align(on)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn present_timing_grid() {
+        let t0 = Instant::now();
+        let p = PresentTiming {
+            last_vblank: t0,
+            period: Duration::from_millis(10),
+            pending_vblank: None,
+            line: Duration::from_nanos(30_625),
+            reset: Duration::from_micros(280),
+            bottom_aligned: false,
+        };
+        assert_eq!(p.vblank_at_or_after(t0), t0);
+        assert_eq!(
+            p.vblank_at_or_after(t0 + Duration::from_millis(1)),
+            t0 + Duration::from_millis(10)
+        );
+        let v = p.vblank_at_or_after(t0 + Duration::from_millis(35));
+        assert!((v - t0).as_secs_f64() - 0.040 < 1e-9);
+        assert_eq!(
+            p.latch_after(100.0),
+            Duration::from_nanos(3_062_500) + Duration::from_micros(280)
+        );
     }
 }

@@ -220,6 +220,18 @@ def ensure_radio(sysops: Sys, s: pptxt.Settings) -> None:
     sysops.run(["nmcli", "radio", "wifi", "on"])
 
 
+def wifi_power_save_off(sysops: Sys, iface: str = "wlan0") -> None:
+    """Wi-Fi power saving adds 50-1000 ms latency spikes that break show sync.
+    The image sets NetworkManager's `wifi.powersave = 2`; this is the fallback
+    for the running boot (netwatch keeps checking later)."""
+    if not os.path.exists(rootp(f"/sys/class/net/{iface}")):
+        return
+    state = nmconn.parse_power_save(sysops.output(["iw", "dev", iface, "get", "power_save"], timeout=5) or "")
+    if state is not False:
+        LOG.info("Wi-Fi power saving -> off")
+        sysops.run(["iw", "dev", iface, "set", "power_save", "off"], timeout=5)
+
+
 def apply_hostname(sysops: Sys, name: str) -> None:
     LOG.info("hostname -> %s", name)
     if not sysops.run(["hostnamectl", "set-hostname", name]):
@@ -599,6 +611,7 @@ def apply(sysops: Sys, force: bool = False, allow_reboot: bool = True) -> int:
         s = pptxt.Settings()
 
     ensure_radio(sysops, s)
+    wifi_power_save_off(sysops)
 
     board = s.board if s.board != "auto" else None
     need_reboot = board_config(sysops, boot_dir, board, state, allow_reboot)

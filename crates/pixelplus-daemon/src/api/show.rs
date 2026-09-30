@@ -148,6 +148,13 @@ async fn put_settings(
             let new: ShowSettings = serde_json::from_value(value)
                 .map_err(|e| ApiError::bad_request(format!("Those settings aren't valid: {e}")))?;
             validate_security(&new.security)?;
+            if !pixelplus_core::model::OUTPUT_DELAY_RANGE_MS.contains(&new.audio.output_delay_ms) {
+                return Err(ApiError::bad_request(format!(
+                    "The sound delay must be between {} and {} ms.",
+                    pixelplus_core::model::OUTPUT_DELAY_RANGE_MS.start(),
+                    pixelplus_core::model::OUTPUT_DELAY_RANGE_MS.end()
+                )));
+            }
             s.settings = new.clone();
             Ok(new)
         })

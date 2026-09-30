@@ -259,6 +259,21 @@ Measure on hardware with the same example. (The whole test-suite, including
 the full 60 × 1600 round trip, also passes for `aarch64-unknown-linux-gnu`
 under qemu-user.)
 
+### Latch alignment (experimental, off by default)
+
+A WS281x string shows new colours when its data ends and the line stays low
+for the reset time. With every output starting at line 0, a string of *L*
+LEDs latches `L × line + reset` after scan-out starts, so on one controller a
+100-LED and a 1600-LED string change up to 46 ms apart. `WsEncoder::set_bottom_align`
+(`settings.output.latchAlign`, forwarded by `PixelOutput::set_bottom_align`)
+starts output *k*'s data at line `N − L_k`, *N* = the longest output of the
+frame: the leading low lines are just a longer reset, and every string latches
+at `N × line + reset`. The incremental encode is unaffected (every line up to
+the longest is rewritten each frame). `DecodedOutput::data_end_ns` records when
+each output's last bit ends; the tests prove bottom-aligned outputs of 3, 7 and
+12 LEDs end within one bit period of each other (bank skew) on both layouts,
+and round-trip byte-exactly. Must be validated on real pixels (§13 item 14).
+
 ## 9. Device tree overlay and boot configuration
 
 `overlays/pixelplus-dpi.dts` (Pi 0–4, target `&dpi`) and
@@ -304,7 +319,7 @@ PixelPlus does not emit them.
 
 ## 10. Backends
 
-`PixelOutput { start, write_frame, stop, stats }`:
+`PixelOutput { start, write_frame, stop, stats, present_timing, set_bottom_align }`:
 
 * **`DpiOutput`** — DRM/KMS. Chosen over `/dev/fb0` because fbdev emulation
   binds to whichever connector the kernel prefers (often HDMI), cannot be
@@ -325,13 +340,24 @@ PixelPlus does not emit them.
   device is missing the error says to run `pixelplus config-txt` and reboot.
   DRM master is needed; a desktop session on the same card will make
   `start()` fail with a clear message.
+  **Presentation timing:** every page-flip event carries the vblank sequence
+  number and the CLOCK_MONOTONIC time scan-out of the new frame started; they
+  feed a `VblankModel` (period refined as Δt/Δsequence, robust to skipped
+  vblanks) and `present_timing()` reports the last vblank, the period, the
+  vblank a pending flip will take effect at, and the line/reset times. The
+  player uses it to pace itself from the vblank grid and to choose each frame
+  for its light-up time (ARCHITECTURE §7.4.6). `OutputStats::late_flips` counts
+  flips that landed a refresh later than predicted (the player queued too late).
 * **`SimOutput`** — keeps the last frame per output in memory (`SimHandle`
   for the UI preview). `SimOutput::verifying(layout, geometry)` additionally
   encodes every frame, runs it through the **independent decoder**
   (`WsDecoder`: replays scan-out including blanking, models the 573 latches,
   measures every pulse against `Ws281xSpec::COMMON`) and fails the frame on
   any data or timing error. The test-suite uses it for randomised round trips
-  of all boards, and for a full 60 × 1600 frame.
+  of all boards, and for a full 60 × 1600 frame. `SimOutput::with_refresh(period)`
+  (daemon: `PIXELPLUS_SIM_REFRESH_HZ`) simulates a free-running vblank grid
+  with a random phase, so presentation-time pacing runs and is tested without
+  hardware.
 * **`NullOutput`** — counts and discards.
 
 ## 11. Colour pipeline
@@ -425,6 +451,26 @@ pixels), `pixelplus test-output --pattern scope --scope <name>`, root shell.
 13. **Conflicting overlays.** The generated fragment warns about w1-gpio
     (GPIO4), SPI0 (GPIO7–11), UART0 (GPIO14/15), I²S (GPIO18–21) and PWM/fan
     pins; confirm none are enabled in `/boot/firmware/config.txt`.
+14. **Latch alignment (bottom-aligned strings) on real pixels** — *must pass
+    before `settings.output.latchAlign` may be recommended.* Wire strings of
+    very different lengths (e.g. 50 and 800 LEDs) to two ports, turn on
+    Settings → Audio → "Strings change together", play `checker` or a sequence
+    that changes every frame, and check: (a) no flicker, wrong colours or a
+    stuck first LED on each pixel type you support (WS2811 12 V, WS2812B, and
+    clones: a few may treat a very long initial low differently); (b) on the
+    scope, both strings' last data bits end at the same time (± a few hundred
+    ns, the bank skew on the difftxlarge) and the data of the short string
+    starts late in the frame; (c) with latched mode (difftxlarge) all three
+    banks still latch correctly (`identify` into all 60 outputs). Record
+    results per pixel type; if any fails, keep the setting off for that setup.
+15. **Vblank timestamps vs. real light-up.** The presentation model assumes
+    DRM's flip timestamp marks the start of active scan-out (first data line)
+    on vc4 (Pi 0–4) and RP1 (Pi 5). Put the scope on a data pin and toggle a
+    GPIO from a tiny test program at the flip event time (or use the SYNC
+    header, docs/HARDWARE-NOTES.md): the first data bit should follow the
+    timestamp by less than one line (30.6 µs). If it is a fixed offset, add it
+    to `PresentTiming` for that SoC. Check `lateFlips` stays ~0 in the output
+    stats during a show (else the tick margin is too small on that Pi).
 
 ### Board peripherals (`pixelplus-hw`)
 

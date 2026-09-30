@@ -103,7 +103,9 @@ scripts/dev-cluster.sh start --fresh    # a real leader + 2 followers on your PC
 node scripts/e2e/run.mjs                # the full end-to-end scenario
 ```
 
-The design authority is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The design authority is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (multi-controller timing:
+§7.4); board-level timing notes for future hardware revisions are in
+[docs/HARDWARE-NOTES.md](docs/HARDWARE-NOTES.md).
 
 ## License
 
