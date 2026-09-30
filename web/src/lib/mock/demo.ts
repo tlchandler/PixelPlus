@@ -351,14 +351,14 @@ export function buildDemoShow(): Show {
 		target: { all: true }
 	});
 	const effects = [
-		fx('ewarmwht01', 'Warm White Glow', 'twinkle', { colors: ['#ffd9a0', '#ffc070'], density: 0.8, speed: 0.4 }),
+		fx('ewarmwht01', 'Warm White Glow', 'twinkle', { colors: ['#ffc98a', '#ffb46b'], density: 0.6, speed: 0.5, glow: 0.3 }),
 		fx('ecandy0001', 'Candy Cane Stripes', 'candycane', {}),
-		fx('erainbow01', 'Rainbow Flow', 'rainbow', { speed: 0.8 }),
+		fx('erainbow01', 'Rainbow Flow', 'rainbow', { speed: 0.3, mode: 'across' }),
 		fx('esnow00001', 'Gentle Snowfall', 'snow', {}),
 		fx('efire00001', 'Yule Fire', 'fire', {}),
-		fx('ewash00001', 'Classic Color Wash', 'colorwash', { colors: ['#ff2a2a', '#1fbf4f', '#ffd700'] }),
-		fx('ewave00001', 'Northern Lights', 'wave', { colors: ['#1ee3a0', '#5b2bff'], speed: 0.5 }),
-		fx('emeteor001', 'Icicle Drip', 'meteor', { colors: ['#bfe6ff'] }),
+		fx('ewash00001', 'Classic Color Wash', 'colorwash', { colors: ['#ff2a2a', '#1fbf4f', '#ffd700'], speed: 0.1, spread: 0.5 }),
+		fx('ewave00001', 'Northern Lights', 'wave', { colors: ['#1ee3a0', '#5b2bff', '#0a2a6a'], speed: 0.15, wavelength: 0.8 }),
+		fx('emeteor001', 'Icicle Drip', 'meteor', { colors: ['#bfe6ff'], speed: 40, tailLength: 20, count: 2 }),
 		fx('esparkle01', 'Blue Sparkle', 'sparkle', {}),
 		fx('ebreathe01', 'Red & Green Breathe', 'breathe', {})
 	];

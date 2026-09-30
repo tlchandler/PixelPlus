@@ -255,7 +255,11 @@ export interface ParamSpec {
 	max?: number;
 	step?: number;
 	default: ParamValue;
-	options?: { value: string; label: string }[] | string[];
+	options?: string[];
+	/** Unit shown after numbers ("px/s", "Hz", "%", "s"). */
+	unit?: string;
+	/** One-sentence explanation. */
+	help?: string;
 }
 export type EffectSchema = Record<string, ParamSpec[]>;
 
@@ -673,8 +677,10 @@ export interface UpdateInfo {
 }
 
 export interface ImportPreview {
+	/** In the preview, `segments[].nodeId` holds the xLights controller name until applied. */
 	props: Prop[];
-	controllers: { name: string; suggestedNodeId?: Id; ports: number }[];
+	controllers: { name: string; suggestedNodeId?: Id; ip?: string; protocol?: string; ports: number; propCount?: number }[];
+	groups?: PropGroup[];
 	warnings: string[];
 }
 

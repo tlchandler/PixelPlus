@@ -1134,15 +1134,15 @@ export class MockServer {
 		for (const ch of seqId) h = (h * 31 + ch.charCodeAt(0)) | 0;
 		const section = Math.floor(posMs / 7000);
 		const programs: [EffectPreset['effect'], Record<string, unknown>][] = [
-			['wave', { colors: ['#ff2244', '#1133ff'], wavelength: 0.35, speed: 1.4 }],
-			['chase', { colors: ['#ff1a1a', '#18c24a', '#ffffff'], size: 6, speed: 2 }],
-			['rainbow', { speed: 1.6, spread: 1.3 }],
-			['twinkle', { colors: ['#ffffff', '#a8d8ff'], density: 0.6, speed: 2 }],
-			['meteor', { colors: ['#9fe3ff'], tail: 0.35, speed: 1.4 }],
-			['candycane', { colors: ['#ff1111', '#ffffff'], speed: 2.5, stripe: 4 }],
-			['sparkle', { colors: ['#401060', '#ffffff'], density: 0.15, speed: 2 }],
-			['colorwash', { colors: ['#ff2a2a', '#1fbf4f', '#ffd700'], speed: 2 }],
-			['fire', { intensity: 0.9, speed: 1.4 }]
+			['wave', { colors: ['#ff2244', '#1133ff', '#ffffff'], wavelength: 0.35, speed: 0.6 }],
+			['chase', { colors: ['#ff1a1a', '#18c24a', '#ffffff'], size: 6, gap: 2, speed: 22 }],
+			['rainbow', { speed: 0.5, spread: 1.3, mode: 'across' }],
+			['twinkle', { colors: ['#ffffff', '#a8d8ff'], density: 0.6, speed: 2, glow: 0.12 }],
+			['meteor', { colors: ['#9fe3ff'], tailLength: 25, speed: 70, count: 2 }],
+			['candycane', { colors: ['#ff1111', '#ffffff'], speed: 10, stripeWidth: 4 }],
+			['sparkle', { colors: ['#401060'], sparkleColor: '#ffffff', density: 0.15, speed: 2 }],
+			['colorwash', { colors: ['#ff2a2a', '#1fbf4f', '#ffd700'], speed: 0.3, spread: 0.6 }],
+			['fire', { height: 0.9, speed: 1.4 }]
 		];
 		const [kind, params] = programs[Math.abs(h + section * 7) % programs.length];
 		const beat = 0.55 + 0.45 * Math.pow(Math.max(0, Math.cos((posMs / 500) * Math.PI)), 6);

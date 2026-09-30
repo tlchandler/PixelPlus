@@ -107,6 +107,13 @@
 			if (box.x > cw || box.y > ch || box.x + box.w < 0 || box.y + box.h < 0) continue;
 			const off = offsets.get(p.id);
 			const pts = propPoints(p);
+			const rot = l.rotation ? (l.rotation * Math.PI) / 180 : 0;
+			if (rot) {
+				ctx.save();
+				ctx.translate(box.x + box.w / 2, box.y + box.h / 2);
+				ctx.rotate(rot);
+				ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2));
+			}
 			const dot = p.matrix ? Math.max(1, (box.w / p.matrix.width) * 0.8) : dotBase;
 			if (off != null && rgb.length >= off + p.pixelCount * 3) drawPixels(ctx, pts, rgb, off, p.pixelCount, box, dot, !p.matrix);
 			else {
@@ -114,6 +121,7 @@
 				for (let i = 0; i < p.pixelCount; i += p.pixelCount > 1000 ? 3 : 1)
 					ctx.fillRect(box.x + pts[i * 2] * box.w - 1, box.y + pts[i * 2 + 1] * box.h - 1, 2, 2);
 			}
+			if (rot) ctx.restore();
 			const isSel = selected === p.id;
 			const isHi = highlight.includes(p.id) || hover === p.id;
 			if (edit || isSel || isHi) {

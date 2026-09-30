@@ -2,7 +2,7 @@
 # daemon build never needs WebKit/GTK). Build: see docs/BUILDING.md.
 [workspace]
 resolver = "2"
-members = ["core", "src-tauri"]
+members = ["core"]
 
 [workspace.package]
 version = "0.1.0"

@@ -60,6 +60,7 @@ function mix(a: [number, number, number], b: [number, number, number], t: number
 
 /**
  * Render `n` pixels of effect `kind` at time `t` (seconds) into `out` starting at byte `off`.
+ * Parameter keys match pixelplus-core `param_schema` (effects/params.rs).
  */
 export function renderEffect(
 	kind: EffectKind,
@@ -70,12 +71,14 @@ export function renderEffect(
 	off = 0,
 	ctx: RenderCtx = {}
 ): void {
-	const speed = num(params, 'speed', 1);
 	const bright = num(params, 'brightness', 100) / 100;
 	const seed = ctx.seed ?? 0;
 	const cols = colorsOf(params, ['#ff2a2a', '#ffffff']);
-	const pos = (i: number) => (ctx.xs ? ctx.xs[i] : n > 1 ? i / (n - 1) : 0);
+	const col = (k: string, d: string) => rgb(typeof params[k] === 'string' ? (params[k] as string) : d);
+	const along = (i: number) => (n > 1 ? i / (n - 1) : 0);
+	const pos = (i: number) => (ctx.xs ? ctx.xs[i] : along(i));
 	const ypos = (i: number) => (ctx.ys ? ctx.ys[i] : 0.5);
+	const rev = params.direction === 'reverse' ? -1 : 1;
 	const put = (i: number, c: [number, number, number], k = 1) => {
 		const j = off + i * 3;
 		out[j] = Math.max(0, Math.min(255, c[0] * k * bright));
@@ -83,201 +86,316 @@ export function renderEffect(
 		out[j + 2] = Math.max(0, Math.min(255, c[2] * k * bright));
 	};
 	switch (kind) {
-		case 'solid':
-			for (let i = 0; i < n; i++) put(i, cols[0]);
+		case 'solid': {
+			const c = col('color', '#ffb46b');
+			for (let i = 0; i < n; i++) put(i, c);
 			break;
+		}
 		case 'chase': {
-			const size = Math.max(1, num(params, 'size', 4));
-			const dir = params.reverse ? -1 : 1;
-			const shift = t * speed * 12 * dir;
+			const size = Math.max(1, num(params, 'size', 3));
+			const gap = Math.max(0, num(params, 'gap', 3));
+			const bg = col('background', '#000000');
+			const fade = params.fade !== false;
+			const period = size + gap;
+			const shift = t * num(params, 'speed', 8) * rev;
 			for (let i = 0; i < n; i++) {
-				const band = Math.floor((i + shift + 100000 * size) / size);
-				put(i, cols[((band % cols.length) + cols.length) % cols.length]);
+				const p = i - shift + 1e6 * period;
+				const band = Math.floor(p / period);
+				const inBand = p - band * period;
+				if (inBand < size) {
+					const k = fade ? 0.35 + 0.65 * (inBand / size) : 1;
+					put(i, mix(bg, cols[band % cols.length], k));
+				} else put(i, bg);
 			}
 			break;
 		}
 		case 'twinkle': {
 			const dens = num(params, 'density', 0.4);
+			const glow = num(params, 'glow', 0.1);
+			const speed = num(params, 'speed', 1);
 			for (let i = 0; i < n; i++) {
 				const ph = hash(i, seed) * 10;
 				const rate = 0.6 + hash(i, seed + 7) * 1.2;
 				const v = Math.max(0, Math.sin((t * speed * rate + ph) * Math.PI));
-				const on = hash(i, seed + 3) < dens + 0.2;
+				const on = hash(i, seed + 3) < dens;
 				const c = cols[Math.floor(hash(i, seed + 11) * cols.length)];
-				put(i, c, on ? 0.12 + 0.88 * v * v : 0.06);
+				put(i, c, on ? glow + (1 - glow) * v * v : glow);
 			}
 			break;
 		}
 		case 'rainbow': {
 			const spread = num(params, 'spread', 1);
-			for (let i = 0; i < n; i++) put(i, hsv(pos(i) * spread - t * speed * 0.25, 1, 1));
+			const sat = num(params, 'saturation', 1);
+			const across = params.mode === 'across';
+			for (let i = 0; i < n; i++) put(i, hsv((across ? pos(i) : along(i)) * spread - t * num(params, 'speed', 0.25) * rev, sat, 1));
 			break;
 		}
 		case 'colorwash': {
 			const L = cols.length;
-			const f = (t * speed * 0.25) % L;
-			const a = Math.floor(f);
-			const c = mix(cols[a % L], cols[(a + 1) % L], f - a);
-			for (let i = 0; i < n; i++) put(i, c);
+			const spread = num(params, 'spread', 0);
+			for (let i = 0; i < n; i++) {
+				const f = (((t * num(params, 'speed', 0.05) * L + pos(i) * spread * L) % L) + L) % L;
+				const a = Math.floor(f);
+				put(i, mix(cols[a % L], cols[(a + 1) % L], f - a));
+			}
 			break;
 		}
 		case 'candycane': {
-			const w = Math.max(1, num(params, 'stripe', 5));
+			const w = Math.max(1, num(params, 'stripeWidth', 4));
 			const c2 = cols.length > 1 ? cols : [cols[0], [255, 255, 255] as [number, number, number]];
 			for (let i = 0; i < n; i++) {
-				const band = Math.floor((i + t * speed * 8) / w);
-				put(i, c2[band % 2]);
+				const band = Math.floor((i - t * num(params, 'speed', 3) * rev + 1e6 * w) / w);
+				put(i, c2[band % c2.length]);
 			}
 			break;
 		}
 		case 'fire': {
-			const heat = num(params, 'intensity', 0.8);
+			const height = num(params, 'height', 0.8);
+			const speed = num(params, 'speed', 1);
+			const pal = String(params.palette ?? 'classic');
+			const tint: Record<string, [number, number, number]> = {
+				classic: [255, 150, 30],
+				ember: [255, 70, 10],
+				blue: [40, 120, 255],
+				green: [60, 255, 80],
+				purple: [190, 60, 255]
+			};
+			const base = tint[pal] ?? tint.classic;
 			for (let i = 0; i < n; i++) {
 				const y = ctx.ys ? 1 - ypos(i) : (i % 20) / 20;
 				const flick = hash(i, Math.floor(t * 18 * speed) + seed);
-				const h = Math.max(0, Math.min(1, heat * (1.15 - y) * (0.55 + 0.45 * flick)));
-				put(i, [255 * Math.min(1, h * 1.6), 255 * Math.max(0, h - 0.35) * 1.2, 40 * Math.max(0, h - 0.8)]);
+				const h = Math.max(0, Math.min(1, (height * 1.2 - y) * (0.55 + 0.45 * flick)));
+				const hot = Math.max(0, h - 0.55) * 2;
+				put(i, [Math.min(255, base[0] * h + 255 * hot * 0.4), Math.min(255, base[1] * h * h + 200 * hot * 0.5), Math.min(255, base[2] * h + 120 * hot * 0.3)]);
 			}
 			break;
 		}
 		case 'snow': {
-			const dens = num(params, 'density', 0.3);
-			const bg = cols.length > 1 ? cols[1] : ([0, 8, 30] as [number, number, number]);
+			const dens = num(params, 'density', 0.35);
+			const flake = Math.max(0.01, num(params, 'flakeSize', 0.06));
+			const wind = num(params, 'wind', 0);
+			const c = col('color', '#ffffff');
+			const bg = col('background', '#00061a');
 			for (let i = 0; i < n; i++) {
-				const lane = Math.floor(pos(i) * 40);
-				const fall = (t * speed * 0.35 + hash(lane, seed)) % 1;
+				const x = pos(i) + wind * t * 0.1;
+				const lane = Math.floor((((x % 1) + 1) % 1) * 40);
+				const fall = (t * num(params, 'speed', 0.25) + hash(lane, seed)) % 1;
 				const y = ctx.ys ? ypos(i) : (i % 25) / 25;
 				const d = Math.abs(y - fall);
-				const on = hash(lane, seed + 5) < dens + 0.35 && d < 0.06;
-				put(i, on ? mix(bg, cols[0], 1 - d / 0.06) : bg);
+				const on = hash(lane, seed + 5) < dens + 0.2 && d < flake;
+				put(i, on ? mix(bg, c, 1 - d / flake) : bg);
 			}
 			break;
 		}
 		case 'sparkle': {
 			const dens = num(params, 'density', 0.08);
-			const base = cols[0];
-			const spark = cols[1] ?? ([255, 255, 255] as [number, number, number]);
-			const frame = Math.floor(t * 14 * speed);
-			for (let i = 0; i < n; i++) put(i, hash(i, frame + seed) < dens ? spark : base, hash(i, frame + seed) < dens ? 1 : 0.55);
+			const spark = col('sparkleColor', '#ffffff');
+			const frame = Math.floor(t * 14 * num(params, 'speed', 1));
+			for (let i = 0; i < n; i++) {
+				const hit = hash(i, frame + seed) < dens;
+				put(i, hit ? spark : cols[i % cols.length]);
+			}
 			break;
 		}
 		case 'wave': {
 			const wl = Math.max(0.05, num(params, 'wavelength', 0.5));
+			const dir = String(params.direction ?? 'right');
+			const along_ = params.mode === 'along';
+			const L = cols.length;
 			for (let i = 0; i < n; i++) {
-				const v = (Math.sin(((pos(i) / wl) * 2 - t * speed) * Math.PI) + 1) / 2;
-				put(i, mix(cols[0], cols[1] ?? [0, 0, 0], 1 - v), 0.25 + 0.75 * v);
+				const x = along_ ? along(i) : pos(i);
+				const y = along_ ? 0.5 : ypos(i);
+				let u = x;
+				if (dir === 'left') u = 1 - x;
+				else if (dir === 'up') u = 1 - y;
+				else if (dir === 'down') u = y;
+				else if (dir === 'out' || dir === 'in') {
+					const r = Math.hypot(x - 0.5, y - 0.5);
+					u = dir === 'out' ? r : 1 - r;
+				}
+				const f = ((((u / wl - t * num(params, 'speed', 0.3)) % 1) + 1) % 1) * L;
+				const a = Math.floor(f);
+				put(i, mix(cols[a % L], cols[(a + 1) % L], f - a));
 			}
 			break;
 		}
 		case 'meteor': {
-			const tail = Math.max(0.02, num(params, 'tail', 0.2));
-			const head = (t * speed * 0.45) % 1.4;
+			const tail = Math.max(1, num(params, 'tailLength', 15));
+			const count = Math.max(1, Math.round(num(params, 'count', 1)));
+			const speed = num(params, 'speed', 30);
+			const sparkle = params.sparkleTail !== false;
+			const span = n + tail;
 			for (let i = 0; i < n; i++) {
-				const d = head - pos(i);
-				const k = d >= 0 && d < tail ? Math.pow(1 - d / tail, 2) : 0;
-				put(i, cols[0], k * (0.7 + 0.3 * hash(i, Math.floor(t * 20))));
+				let k = 0;
+				for (let m = 0; m < count; m++) {
+					const headRaw = (t * speed + (m * span) / count + hash(m, seed) * 7) % span;
+					const head = rev > 0 ? headRaw : n - headRaw;
+					const d = rev > 0 ? head - i : i - head;
+					if (d >= 0 && d < tail) k = Math.max(k, Math.pow(1 - d / tail, 2) * (sparkle ? 0.6 + 0.4 * hash(i, Math.floor(t * 20)) : 1));
+				}
+				put(i, cols[0], k);
 			}
 			break;
 		}
 		case 'strobe': {
-			const rate = num(params, 'rate', 6);
-			const on = (t * rate) % 1 < 0.18;
-			for (let i = 0; i < n; i++) put(i, cols[0], on ? 1 : 0);
+			const rate = num(params, 'rate', 4);
+			const duty = num(params, 'duty', 0.15);
+			const c = col('color', '#ffffff');
+			const cyc = Math.floor(t * rate);
+			const on = (t * rate) % 1 < duty;
+			const pattern = String(params.pattern ?? 'all');
+			for (let i = 0; i < n; i++) {
+				let lit = on;
+				if (pattern === 'random') lit = on && hash(i, cyc + seed) < 0.3;
+				else if (pattern === 'alternate') lit = on && (i + cyc) % 2 === 0;
+				put(i, c, lit ? 1 : 0);
+			}
 			break;
 		}
 		case 'breathe': {
-			const v = (Math.sin(t * speed * Math.PI * 0.8) + 1) / 2;
-			const L = cols.length;
-			const which = Math.floor((t * speed * 0.4) / 1) % L;
-			for (let i = 0; i < n; i++) put(i, cols[which], 0.08 + 0.92 * v * v);
+			const period = Math.max(0.2, num(params, 'period', 4));
+			const minB = num(params, 'minBrightness', 0.05);
+			const ph = t / period;
+			const v = (1 - Math.cos((ph % 1) * Math.PI * 2)) / 2;
+			const c = cols[Math.floor(ph) % cols.length];
+			for (let i = 0; i < n; i++) put(i, c, minB + (1 - minB) * v);
 			break;
 		}
 	}
 }
 
-const COLORS = (d: string[]): ParamSpec => ({ key: 'colors', label: 'Colors', kind: 'colors', default: d });
-const SPEED: ParamSpec = { key: 'speed', label: 'Speed', kind: 'number', min: 0.1, max: 5, step: 0.1, default: 1 };
-const BRIGHT: ParamSpec = {
-	key: 'brightness',
-	label: 'Brightness',
-	kind: 'number',
-	min: 5,
-	max: 100,
-	step: 5,
-	default: 100
+const P = {
+	color: (key: string, label: string, d: string, help?: string): ParamSpec => ({ key, label, kind: 'color', default: d, help }),
+	colors: (key: string, label: string, d: string[], help?: string): ParamSpec => ({ key, label, kind: 'colors', default: d, help }),
+	num: (key: string, label: string, min: number, max: number, step: number, d: number, unit?: string, help?: string): ParamSpec => ({
+		key,
+		label,
+		kind: 'number',
+		min,
+		max,
+		step,
+		default: d,
+		unit,
+		help
+	}),
+	bool: (key: string, label: string, d: boolean): ParamSpec => ({ key, label, kind: 'bool', default: d }),
+	sel: (key: string, label: string, options: string[], d: string, help?: string): ParamSpec => ({ key, label, kind: 'select', options, default: d, help })
 };
+const BRIGHT = P.num('brightness', 'Brightness', 0, 100, 1, 100, '%', 'Overall brightness of this look.');
+const DIR = P.sel('direction', 'Direction', ['forward', 'reverse'], 'forward', "Which way along the prop's pixels the pattern moves.");
 
-/** Default parameter schema (the daemon serves the authoritative one at GET /effects/schema). */
+/**
+ * Fallback copy of the daemon's parameter schema (GET /effects/schema is authoritative),
+ * mirroring crates/pixelplus-core/src/effects/params.rs.
+ */
 export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
-	solid: [COLORS(['#ffb347']), BRIGHT],
+	solid: [P.color('color', 'Color', '#ffb46b'), BRIGHT],
 	chase: [
-		COLORS(['#ff2a2a', '#1fbf4f']),
-		SPEED,
-		{ key: 'size', label: 'Band size', kind: 'number', min: 1, max: 30, step: 1, default: 4 },
-		{ key: 'reverse', label: 'Reverse direction', kind: 'bool', default: false },
+		P.colors('colors', 'Colors', ['#ff0000', '#00c000'], 'Each band of lit pixels takes the next colour.'),
+		P.color('background', 'Background', '#000000'),
+		P.num('speed', 'Speed', 0, 60, 0.5, 8, 'px/s', '0 holds the pattern still.'),
+		P.num('size', 'Band size', 1, 50, 1, 3, 'px'),
+		P.num('gap', 'Gap', 0, 50, 1, 3, 'px', 'Unlit pixels between bands.'),
+		DIR,
+		P.bool('fade', 'Fading tail', true),
 		BRIGHT
 	],
 	twinkle: [
-		COLORS(['#fff4d6', '#ffd27a']),
-		SPEED,
-		{ key: 'density', label: 'Density', kind: 'number', min: 0, max: 1, step: 0.05, default: 0.4 },
+		P.colors('colors', 'Colors', ['#ffb46b']),
+		P.num('density', 'Density', 0, 1, 0.01, 0.4, undefined, 'Share of pixels twinkling at any moment.'),
+		P.num('speed', 'Speed', 0.1, 5, 0.1, 1),
+		P.num('glow', 'Base glow', 0, 0.8, 0.01, 0.1, undefined, 'How bright pixels stay between twinkles.'),
 		BRIGHT
 	],
-	rainbow: [SPEED, { key: 'spread', label: 'Spread', kind: 'number', min: 0.2, max: 5, step: 0.1, default: 1 }, BRIGHT],
-	colorwash: [COLORS(['#ff2a2a', '#1fbf4f', '#2a6bff']), SPEED, BRIGHT],
+	rainbow: [
+		P.num('speed', 'Speed', 0, 5, 0.05, 0.25, 'cycles/s'),
+		P.num('spread', 'Rainbows across', 0.1, 10, 0.1, 1),
+		P.num('saturation', 'Saturation', 0, 1, 0.01, 1),
+		P.sel('mode', 'Spread', ['along', 'across'], 'along', "Along each prop's pixels, or across the whole display."),
+		DIR,
+		BRIGHT
+	],
+	colorwash: [
+		P.colors('colors', 'Colors', ['#ff0000', '#00c000', '#0040ff']),
+		P.num('speed', 'Speed', 0, 2, 0.01, 0.05, 'cycles/s', 'Trips through the whole colour list per second.'),
+		P.num('spread', 'Spread', 0, 2, 0.05, 0, undefined, '0 = every prop the same colour; higher staggers colours across the display.'),
+		BRIGHT
+	],
 	candycane: [
-		COLORS(['#ff1a1a', '#ffffff']),
-		SPEED,
-		{ key: 'stripe', label: 'Stripe width', kind: 'number', min: 1, max: 20, step: 1, default: 5 },
+		P.colors('colors', 'Stripe colors', ['#ff0000', '#ffffff']),
+		P.num('stripeWidth', 'Stripe width', 1, 50, 1, 4, 'px'),
+		P.num('speed', 'Speed', 0, 30, 0.5, 3, 'px/s'),
+		DIR,
 		BRIGHT
 	],
-	fire: [SPEED, { key: 'intensity', label: 'Intensity', kind: 'number', min: 0.2, max: 1.2, step: 0.05, default: 0.8 }, BRIGHT],
+	fire: [
+		P.sel('palette', 'Flame color', ['classic', 'ember', 'blue', 'green', 'purple'], 'classic'),
+		P.num('height', 'Flame height', 0.1, 1.5, 0.05, 0.8),
+		P.num('speed', 'Speed', 0.1, 4, 0.1, 1),
+		BRIGHT
+	],
 	snow: [
-		COLORS(['#ffffff', '#001030']),
-		SPEED,
-		{ key: 'density', label: 'Density', kind: 'number', min: 0, max: 1, step: 0.05, default: 0.3 },
+		P.color('color', 'Snow color', '#ffffff'),
+		P.color('background', 'Sky color', '#00061a'),
+		P.num('density', 'Amount of snow', 0, 1, 0.01, 0.35),
+		P.num('speed', 'Fall speed', 0.05, 2, 0.05, 0.25, undefined, 'Prop heights per second.'),
+		P.num('flakeSize', 'Flake size', 0.01, 0.3, 0.01, 0.06),
+		P.num('wind', 'Wind', -1, 1, 0.05, 0),
 		BRIGHT
 	],
 	sparkle: [
-		COLORS(['#1238ff', '#ffffff']),
-		SPEED,
-		{ key: 'density', label: 'Density', kind: 'number', min: 0.01, max: 0.5, step: 0.01, default: 0.08 },
+		P.colors('colors', 'Background colors', ['#0a1a4a']),
+		P.color('sparkleColor', 'Sparkle color', '#ffffff'),
+		P.num('density', 'Density', 0, 1, 0.01, 0.08),
+		P.num('speed', 'Speed', 0.2, 5, 0.1, 1),
 		BRIGHT
 	],
 	wave: [
-		COLORS(['#27d3ff', '#6a2bff']),
-		SPEED,
-		{ key: 'wavelength', label: 'Wavelength', kind: 'number', min: 0.05, max: 2, step: 0.05, default: 0.5 },
+		P.colors('colors', 'Colors', ['#0020ff', '#00c8ff', '#ffffff']),
+		P.num('speed', 'Speed', 0, 5, 0.05, 0.3, 'waves/s'),
+		P.num('wavelength', 'Wave length', 0.05, 4, 0.05, 0.5, undefined, 'Length of one wave as a share of the display (or prop).'),
+		P.sel('direction', 'Direction', ['right', 'left', 'up', 'down', 'out', 'in'], 'right'),
+		P.sel('mode', 'Spread', ['across', 'along'], 'across', "Across the whole display, or along each prop's pixels."),
 		BRIGHT
 	],
 	meteor: [
-		COLORS(['#bfe6ff']),
-		SPEED,
-		{ key: 'tail', label: 'Tail length', kind: 'number', min: 0.02, max: 0.8, step: 0.02, default: 0.2 },
+		P.colors('colors', 'Colors', ['#ffffff']),
+		P.num('speed', 'Speed', 1, 200, 1, 30, 'px/s'),
+		P.num('tailLength', 'Tail length', 1, 100, 1, 15, 'px'),
+		P.num('count', 'Meteors per prop', 1, 20, 1, 1),
+		DIR,
+		P.bool('sparkleTail', 'Sparkling tail', true),
 		BRIGHT
 	],
 	strobe: [
-		COLORS(['#ffffff']),
-		{ key: 'rate', label: 'Flashes per second', kind: 'number', min: 1, max: 20, step: 1, default: 6 },
+		P.color('color', 'Color', '#ffffff'),
+		P.num('rate', 'Flashes per second', 0.5, 20, 0.5, 4, 'Hz'),
+		P.num('duty', 'Flash length', 0.02, 0.9, 0.01, 0.15, undefined, 'Share of each cycle the lights are on.'),
+		P.sel('pattern', 'Pattern', ['all', 'random', 'alternate'], 'all'),
 		BRIGHT
 	],
-	breathe: [COLORS(['#ff2a2a', '#1fbf4f']), SPEED, BRIGHT]
+	breathe: [
+		P.colors('colors', 'Colors', ['#ff0000', '#00c000'], 'Each breath uses the next colour.'),
+		P.num('period', 'Breath length', 0.5, 20, 0.1, 4, 's'),
+		P.num('minBrightness', 'Lowest brightness', 0, 1, 0.01, 0.05),
+		BRIGHT
+	]
 };
 
 export const EFFECT_META: Record<EffectKind, { label: string; blurb: string }> = {
-	solid: { label: 'Solid', blurb: 'One steady color' },
-	chase: { label: 'Chase', blurb: 'Bands of color running along each prop' },
-	twinkle: { label: 'Twinkle', blurb: 'Gentle random twinkling' },
-	rainbow: { label: 'Rainbow', blurb: 'Flowing rainbow across the display' },
-	colorwash: { label: 'Color wash', blurb: 'Slow fade through colors' },
-	candycane: { label: 'Candy cane', blurb: 'Moving stripes' },
-	fire: { label: 'Fire', blurb: 'Flickering flames' },
-	snow: { label: 'Snowfall', blurb: 'Falling flakes' },
-	sparkle: { label: 'Sparkle', blurb: 'Glints over a base color' },
-	wave: { label: 'Wave', blurb: 'Rolling waves between two colors' },
-	meteor: { label: 'Meteor', blurb: 'Shooting stars with tails' },
-	strobe: { label: 'Strobe', blurb: 'Fast flashes' },
-	breathe: { label: 'Breathe', blurb: 'Slow pulsing glow' }
+	solid: { label: 'Solid', blurb: 'Every pixel one steady colour.' },
+	chase: { label: 'Chase', blurb: 'Bands of colour running along each prop.' },
+	twinkle: { label: 'Twinkle', blurb: 'Pixels gently fade in and out at random.' },
+	rainbow: { label: 'Rainbow', blurb: 'A flowing rainbow along each prop or across the display.' },
+	colorwash: { label: 'Color Wash', blurb: 'The whole display slowly blends through a list of colours.' },
+	candycane: { label: 'Candy Cane', blurb: 'Moving stripes, like a candy cane.' },
+	fire: { label: 'Fire', blurb: 'Flickering flames rising from the bottom of each prop.' },
+	snow: { label: 'Snow', blurb: 'Snowflakes drifting down.' },
+	sparkle: { label: 'Sparkle', blurb: 'Quick glints over a background colour.' },
+	wave: { label: 'Wave', blurb: 'Smooth waves of colour rolling across the display.' },
+	meteor: { label: 'Meteor', blurb: 'Shooting stars with fading tails.' },
+	strobe: { label: 'Strobe', blurb: 'Fast flashes.' },
+	breathe: { label: 'Breathe', blurb: 'Slowly brightens and dims, like breathing.' }
 };
 
 export function defaultParams(schema: ParamSpec[]): EffectParams {
