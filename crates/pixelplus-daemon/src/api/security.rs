@@ -345,6 +345,222 @@ pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> R
 }
 
 // ---------------------------------------------------------------------------
+// CSRF exemption for the root-mounted xLights FPP Connect API (F16, WS6)
+// ---------------------------------------------------------------------------
+
+/// Is this request "CORS-simple", i.e. one a foreign web page could send
+/// cross-site **without** a preflight? (GET/HEAD/POST with a form, multipart or
+/// text/plain body.) Anything else (PATCH/PUT/DELETE, or a POST with another
+/// content type) needs a preflight, which this server never grants, so a
+/// browser can't forge it.
+pub fn cors_simple(method: &Method, headers: &HeaderMap) -> bool {
+    match *method {
+        Method::GET | Method::HEAD => true,
+        Method::POST => {
+            let ct = headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            ct.is_empty()
+                || ct == "application/x-www-form-urlencoded"
+                || ct == "multipart/form-data"
+                || ct == "text/plain"
+        }
+        _ => false,
+    }
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim().trim_end_matches('=');
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        } as u32;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+/// The password of an `Authorization: Basic …` header (any user name; xLights
+/// sends `admin`).
+pub fn basic_auth_password(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, rest) = v.trim().split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("basic") {
+        return None;
+    }
+    let raw = String::from_utf8(base64_decode(rest)?).ok()?;
+    raw.split_once(':').map(|(_, p)| p.to_string())
+}
+
+/// Recently verified upload passwords: `(sha256(hash ‖ 0 ‖ password), until)`.
+/// xLights uploads in 16 MiB chunks; an Argon2 check per chunk would cost
+/// ~50 ms each, so a verified password is remembered for 10 minutes (only a
+/// digest, bound to the stored hash, so changing the password invalidates it).
+static FPP_VERIFIED: parking_lot::Mutex<Vec<([u8; 32], std::time::Instant)>> =
+    parking_lot::const_mutex(Vec::new());
+const FPP_VERIFIED_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn fpp_digest(hash: &str, password: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(hash.as_bytes());
+    h.update([0u8]);
+    h.update(password.as_bytes());
+    h.finalize().into()
+}
+
+/// **CSRF-exemption hook for WS6's root-mounted FPP Connect routes**
+/// (`api/fppcompat.rs`, ARCHITECTURE §12.14). Those routes live outside
+/// `/api/v1`, so neither [`guard`] (Host allow-list, `X-PixelPlus-Request`)
+/// nor `auth::require_auth` runs for them, and xLights can't send the CSRF
+/// header. Call this first in every such handler (or as a `from_fn_with_state`
+/// layer on the fppcompat router) and return the `Err` response as is.
+///
+/// Rules, in order:
+/// 1. `settings.xlights.fppConnect` off → `404` (the feature is invisible).
+/// 2. Only from this network: the peer must be a LAN address ([`lan_peer`])
+///    and the request must not carry proxy headers ([`forwarded`]) — so a
+///    tunnel, `tailscale serve` or the public listener can never reach it →
+///    `404`.
+/// 3. Host allow-list as for `/api/v1` ([`host_allowed`]; DNS rebinding) →
+///    `421`.
+/// 4. Reads (GET/HEAD) pass (xLights probes `/config.php`, meta files).
+/// 5. Writes: when an upload password is set (`settings.xlights.passwordHash`)
+///    it must come as HTTP Basic auth (any user name; the sign-in throttle
+///    applies) → else `401` with `WWW-Authenticate: Basic`. Without a
+///    password, writes are accepted only when they are not CORS-simple
+///    ([`cors_simple`]: xLights uses `PATCH` and JSON `POST`s), which a foreign
+///    web page can't send → else `403 csrf`.
+#[allow(dead_code)] // called by api/fppcompat.rs (WS6)
+pub async fn fpp_compat_authorize(
+    state: &AppState,
+    peer: Option<SocketAddr>,
+    method: &Method,
+    headers: &HeaderMap,
+) -> Result<(), Response> {
+    let settings = state.store.get().settings.clone();
+    let not_found = || super::ApiError::not_found("That page").into_response();
+    if !settings.xlights.fpp_connect {
+        return Err(not_found());
+    }
+    let Some(peer) = peer else {
+        return Err(not_found());
+    };
+    if forwarded(headers) || !lan_peer(peer.ip()) {
+        return Err(not_found());
+    }
+    if let Some(h) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) {
+        let hostname = crate::cluster::net::hostname();
+        if !host_allowed(
+            h,
+            &hostname,
+            &state.identity().id,
+            &settings.security.allowed_hosts,
+        ) {
+            return Err(misdirected(h, false));
+        }
+    }
+    if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        return Ok(());
+    }
+    let hash = settings
+        .xlights
+        .password_hash
+        .as_deref()
+        .filter(|h| !h.is_empty());
+    let Some(hash) = hash else {
+        if cors_simple(method, headers) {
+            return Err(super::ApiError::new(
+                StatusCode::FORBIDDEN,
+                "csrf",
+                "Uploads must use PATCH or a JSON body (or set an xLights upload password).",
+            )
+            .into_response());
+        }
+        return Ok(());
+    };
+    let unauthorized = |msg: &str| {
+        let mut r = super::ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized", msg)
+            .into_response();
+        r.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Basic realm=\"PixelPlus xLights upload\""),
+        );
+        r
+    };
+    let Some(password) = basic_auth_password(headers) else {
+        return Err(unauthorized(
+            "Enter the PixelPlus xLights upload password in xLights (FPP Connect).",
+        ));
+    };
+    let digest = fpp_digest(hash, &password);
+    let now = std::time::Instant::now();
+    {
+        let mut cache = FPP_VERIFIED.lock();
+        cache.retain(|(_, until)| *until > now);
+        if cache.iter().any(|(d, _)| *d == digest) {
+            return Ok(());
+        }
+    }
+    let ip = Some(peer.ip());
+    if let Err(wait) = state.sessions.throttle.lock().check(ip, now) {
+        return Err(super::ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "throttled",
+            format!("Too many wrong passwords. Try again in {} s.", wait.as_secs().max(1)),
+        )
+        .into_response());
+    }
+    if super::auth::verify_password_async(hash, &password).await {
+        state.sessions.throttle.lock().success(ip);
+        let mut cache = FPP_VERIFIED.lock();
+        if cache.len() >= 16 {
+            cache.remove(0);
+        }
+        cache.push((digest, now + FPP_VERIFIED_TTL));
+        Ok(())
+    } else {
+        state.sessions.throttle.lock().failure(ip, now);
+        Err(unauthorized("Wrong xLights upload password."))
+    }
+}
+
+/// [`fpp_compat_authorize`] as a middleware, for
+/// `Router::layer(axum::middleware::from_fn_with_state(state, security::fpp_compat_guard))`
+/// on the root-mounted fppcompat router.
+#[allow(dead_code)] // used by api/fppcompat.rs (WS6)
+pub async fn fpp_compat_guard(
+    State(state): State<AppState>,
+    peer: super::Peer,
+    req: Request,
+    next: Next,
+) -> Response {
+    if let Err(r) = fpp_compat_authorize(&state, peer.0, req.method(), req.headers()).await {
+        return r;
+    }
+    next.run(req).await
+}
+
+// ---------------------------------------------------------------------------
 // Response headers
 // ---------------------------------------------------------------------------
 

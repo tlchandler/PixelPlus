@@ -338,3 +338,142 @@ async fn xlights_upload_password_is_write_only() {
     );
     assert!(stored.settings.xlights.fpp_connect);
 }
+
+// ---------------------------------------------------------------------
+// F16 hook: root-mounted FPP Connect routes (security::fpp_compat_guard)
+// ---------------------------------------------------------------------
+
+async fn fpp_send(
+    app: &TestApp,
+    method: &str,
+    peer: &str,
+    headers: &[(&str, &str)],
+) -> StatusCode {
+    use tower::ServiceExt;
+    let router = axum::Router::new()
+        .route(
+            "/api/file/{dir}",
+            axum::routing::any(|| async { "ok" }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            app.state.clone(),
+            super::security::fpp_compat_guard,
+        ))
+        .with_state(app.state.clone());
+    let mut b = Request::builder().method(method).uri("/api/file/sequences");
+    for (k, v) in headers {
+        b = b.header(*k, *v);
+    }
+    let mut r = b.body(Body::empty()).unwrap();
+    r.extensions_mut()
+        .insert(ConnectInfo::<SocketAddr>(peer.parse().unwrap()));
+    router.oneshot(r).await.unwrap().status()
+}
+
+fn basic(password: &str) -> String {
+    // "admin:<password>" in base64, the way xLights sends it.
+    let raw = format!("admin:{password}");
+    let t = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in raw.as_bytes().chunks(3) {
+        let b = [c[0], *c.get(1).unwrap_or(&0), *c.get(2).unwrap_or(&0)];
+        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        out.push(t[(n >> 18) as usize & 63] as char);
+        out.push(t[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { t[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { t[n as usize & 63] as char } else { '=' });
+    }
+    format!("Basic {out}")
+}
+
+#[tokio::test]
+async fn fpp_connect_hook_replaces_csrf_with_lan_and_upload_password() {
+    let app = TestApp::new();
+    let lan = "192.168.1.50:40000";
+    // Off by default: invisible.
+    assert_eq!(fpp_send(&app, "GET", lan, &[]).await, StatusCode::NOT_FOUND);
+    app.state
+        .store
+        .update(|s| {
+            s.settings.xlights.fpp_connect = true;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(fpp_send(&app, "GET", lan, &[]).await, StatusCode::OK);
+    // Never from the internet, a tunnel or a proxy.
+    assert_eq!(
+        fpp_send(&app, "GET", "203.0.113.9:1", &[]).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fpp_send(&app, "PATCH", "127.0.0.1:1", &[("cf-connecting-ip", "203.0.113.9")]).await,
+        StatusCode::NOT_FOUND
+    );
+    // DNS rebinding.
+    assert_eq!(
+        fpp_send(&app, "GET", lan, &[("host", "evil.example.com")]).await,
+        StatusCode::MISDIRECTED_REQUEST
+    );
+    // No password: only non-CORS-simple writes (a web page can't forge them).
+    assert_eq!(fpp_send(&app, "PATCH", lan, &[]).await, StatusCode::OK);
+    assert_eq!(
+        fpp_send(&app, "POST", lan, &[("content-type", "application/json")]).await,
+        StatusCode::OK
+    );
+    for ct in ["text/plain", "multipart/form-data; boundary=x"] {
+        assert_eq!(
+            fpp_send(&app, "POST", lan, &[("content-type", ct)]).await,
+            StatusCode::FORBIDDEN,
+            "{ct}"
+        );
+    }
+    // With an upload password: Basic auth required for every write.
+    let hash = super::auth::hash_password("xlights-secret").unwrap();
+    app.state
+        .store
+        .update(|s| {
+            s.settings.xlights.password_hash = Some(hash.clone());
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(fpp_send(&app, "PATCH", lan, &[]).await, StatusCode::UNAUTHORIZED);
+    let wrong = basic("nope-nope");
+    assert_eq!(
+        fpp_send(&app, "PATCH", lan, &[("authorization", &wrong)]).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let good = basic("xlights-secret");
+    assert_eq!(
+        fpp_send(&app, "PATCH", lan, &[("authorization", &good)]).await,
+        StatusCode::OK
+    );
+    // Remembered (no Argon2 per chunk), and a form POST with the password is fine.
+    assert_eq!(
+        fpp_send(
+            &app,
+            "POST",
+            lan,
+            &[("authorization", &good), ("content-type", "multipart/form-data; boundary=x")]
+        )
+        .await,
+        StatusCode::OK
+    );
+    // Reads stay open (xLights probes /config.php before it knows the password).
+    assert_eq!(fpp_send(&app, "GET", lan, &[]).await, StatusCode::OK);
+}
+
+#[test]
+fn basic_auth_header_parsing() {
+    let mut h = axum::http::HeaderMap::new();
+    h.insert(header::AUTHORIZATION, basic("pa:ss wörd").parse().unwrap());
+    assert_eq!(
+        super::security::basic_auth_password(&h).as_deref(),
+        Some("pa:ss wörd")
+    );
+    h.insert(header::AUTHORIZATION, "Bearer x".parse().unwrap());
+    assert_eq!(super::security::basic_auth_password(&h), None);
+    h.insert(header::AUTHORIZATION, "Basic !!!".parse().unwrap());
+    assert_eq!(super::security::basic_auth_password(&h), None);
+}

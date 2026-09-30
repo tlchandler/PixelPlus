@@ -1,6 +1,40 @@
 //! Content: sequences (`.fseq`), audio media, DJ clip rendering/upload and
 //! TTS proxy endpoints. Also hosts small helpers shared by the other
 //! system/content API modules (multipart streaming, player access).
+//!
+//! # Import functions for other modules (owned by WS2)
+//!
+//! Anything that receives sequence or audio files outside the multipart upload
+//! routes (xLights FPP Connect in `api/fppcompat.rs`, a future watch folder)
+//! must go through these two functions, so every file gets the same checks,
+//! thumbnail, song auto-linking, loudness measurement and beat analysis (F2):
+//!
+//! ```ignore
+//! // `src` is a complete file anywhere under the data directory (e.g.
+//! // `uploads/<name>.part`). It is always consumed: moved into place on
+//! // success, deleted on failure.
+//! pub async fn import_sequence_file(
+//!     state: &AppState,
+//!     src: PathBuf,
+//!     original_name: &str,          // "Wizards in Winter.fseq"
+//!     opts: SequenceImport,         // { name: Option<String>, audio: Option<(PathBuf, String)> }
+//! ) -> ApiResult<ImportedSequence>; // { sequence, warnings, replaced }
+//!
+//! pub async fn import_media_file(
+//!     state: &AppState,
+//!     src: PathBuf,
+//!     original_name: &str,          // "Wizards in Winter.mp3"
+//!     opts: MediaImport,            // { kind, name, replace_same_name }
+//! ) -> ApiResult<ImportedMedia>;    // { media, replaced, linked_sequence_ids }
+//! ```
+//!
+//! * A sequence whose `xlightsName` equals `original_name` is **replaced in
+//!   place** (same id, tags and playlist entries). Its song is linked from the
+//!   fseq header's media file name or a matching name.
+//! * With `replace_same_name`, audio whose original file name matches is
+//!   replaced in place too (same id and tags; the analysis is redone).
+//! * Errors are friendly [`ApiError`]s (400 for unreadable files).
+//! * Both functions write `show.json` once and queue the beat analysis.
 
 use super::crud::merge_patch;
 use super::{ApiError, ApiResult};
@@ -139,16 +173,17 @@ pub(crate) async fn ingest_audio(
         }
     };
     meta.original_name = original.to_string();
+    let size = tokio::fs::metadata(&tmp).await.ok().map(|m| m.len());
     let id = new_id();
     let rel = format!("media/{id}.{ext}");
-    tokio::fs::rename(&tmp, state.config.data_dir.join(&rel)).await?;
+    media_svc::move_file(&tmp, &state.config.data_dir.join(&rel)).await?;
     let _ = media_svc::write_meta(&state.config.media_dir(), &id, &meta);
     let target = state.store.get().settings.audio.target_lufs;
     Ok(Media {
         tags: Default::default(),
         analysis: Default::default(),
-        original_name: Default::default(),
-        original_size: Default::default(),
+        original_name: Some(original.to_string()),
+        original_size: size,
         id,
         name: name
             .filter(|n| !n.trim().is_empty())
@@ -553,17 +588,121 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
             "Choose an .fseq file exported from xLights (File → Export → FSEQ).",
         ));
     };
-    let t = seq_tmp.clone();
+    let done = import_sequence_file(
+        &state,
+        seq_tmp,
+        &fseq_name,
+        SequenceImport {
+            name: display,
+            audio,
+            hash: Some(hash),
+        },
+    )
+    .await?;
+    let mut v = serde_json::to_value(&done.sequence).map_err(ApiError::internal)?;
+    v["warnings"] = json!(done.warnings);
+    v["replaced"] = json!(done.replaced);
+    Ok(v)
+}
+
+/// How [`import_sequence_file`] should import a sequence.
+#[derive(Debug, Default)]
+pub struct SequenceImport {
+    /// Display name; default: the existing sequence's name, else the file name.
+    pub name: Option<String>,
+    /// The song uploaded with it: (file anywhere under the data dir, original name).
+    /// Consumed like the sequence file.
+    pub audio: Option<(PathBuf, String)>,
+    /// sha256 hex of `src` when the caller already computed it while receiving.
+    pub hash: Option<String>,
+}
+
+/// Result of [`import_sequence_file`].
+#[derive(Debug, Clone)]
+pub struct ImportedSequence {
+    pub sequence: Sequence,
+    /// Friendly notes, e.g. props the sequence has no channels for.
+    pub warnings: Vec<String>,
+    /// An existing sequence with the same xLights file name was replaced in place.
+    pub replaced: bool,
+}
+
+/// How [`import_media_file`] should import an audio file.
+#[derive(Debug, Clone)]
+pub struct MediaImport {
+    pub kind: MediaKind,
+    /// Display name; default: made from the file name.
+    pub name: Option<String>,
+    /// Replace an existing item whose original file name is the same (xLights
+    /// re-uploads), keeping its id, name and tags.
+    pub replace_same_name: bool,
+}
+
+impl Default for MediaImport {
+    fn default() -> Self {
+        MediaImport {
+            kind: MediaKind::Song,
+            name: None,
+            replace_same_name: false,
+        }
+    }
+}
+
+/// Result of [`import_media_file`].
+#[derive(Debug, Clone)]
+pub struct ImportedMedia {
+    pub media: Media,
+    pub replaced: bool,
+    /// Sequences that were waiting for this song and now play it.
+    pub linked_sequence_ids: Vec<String>,
+}
+
+/// Import a complete `.fseq` file (see the module docs). `src` is consumed.
+pub async fn import_sequence_file(
+    state: &AppState,
+    src: PathBuf,
+    original_name: &str,
+    opts: SequenceImport,
+) -> ApiResult<ImportedSequence> {
+    let fseq_name = sanitize_original(original_name);
+    let SequenceImport {
+        name: display,
+        audio,
+        hash,
+    } = opts;
+    let drop_all = |src: &PathBuf, audio: &Option<(PathBuf, String)>| {
+        let _ = std::fs::remove_file(src);
+        if let Some((a, _)) = audio {
+            let _ = std::fs::remove_file(a);
+        }
+    };
+    let t = src.clone();
     let info = match tokio::task::spawn_blocking(move || read_fseq_info(&t))
         .await
         .map_err(ApiError::internal)?
     {
         Ok(i) => i,
         Err(e) => {
-            cleanup(&seq_tmp, &audio);
+            drop_all(&src, &audio);
             return Err(ApiError::bad_request(format!(
                 "\"{fseq_name}\" isn't a sequence PixelPlus can play ({e}). Export it again from xLights as an .fseq file."
             )));
+        }
+    };
+    let hash = match hash.filter(|h| h.len() == 64) {
+        Some(h) => h,
+        None => {
+            let p = src.clone();
+            match tokio::task::spawn_blocking(move || pixelplus_core::fseq::sha256_file(p))
+                .await
+                .map_err(ApiError::internal)?
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    drop_all(&src, &audio);
+                    return Err(e.into());
+                }
+            }
         }
     };
     let show = state.store.get();
@@ -581,16 +720,19 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
     // whose hash, duration and follower slices describe the old file) is untouched.
     let mut new_media: Option<Media> = None;
     if let Some((tmp, fname)) = audio {
-        match ingest_audio(&state, tmp, &fname, MediaKind::Song, None).await {
+        match ingest_audio(state, tmp, &fname, MediaKind::Song, None).await {
             Ok(m) => new_media = Some(m),
             Err(e) => {
-                let _ = tokio::fs::remove_file(&seq_tmp).await;
+                let _ = tokio::fs::remove_file(&src).await;
                 return Err(e);
             }
         }
     }
     let rel = format!("sequences/{id}.fseq");
-    tokio::fs::rename(&seq_tmp, state.config.data_dir.join(&rel)).await?;
+    if let Err(e) = media_svc::move_file(&src, &state.config.data_dir.join(&rel)).await {
+        let _ = tokio::fs::remove_file(&src).await;
+        return Err(e.into());
+    }
     let name = display
         .or_else(|| existing.as_ref().map(|s| s.name.clone()))
         .unwrap_or_else(|| media_svc::display_name(&fseq_name));
@@ -601,13 +743,14 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
             .and_then(|s| s.media_id.clone())
             .or_else(|| {
                 find_audio_for(
-                    &state,
+                    state,
                     &show,
                     info.media_basename.as_deref(),
                     &[&fseq_name, &name],
                 )
             }),
     };
+    let new_media_id = new_media.as_ref().map(|m| m.id.clone());
     // Thumbnail.
     let thumb_rel = format!("thumbnails/{id}.png");
     let (src, dst, props) = (
@@ -627,8 +770,12 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
         };
     let warnings = channel_warnings(&show.props, info.channel_count);
     let seq = Sequence {
-        generated: Default::default(),
-        tags: Default::default(),
+        // An xLights upload replaces a generated show's file with a real one.
+        generated: None,
+        tags: existing
+            .as_ref()
+            .map(|s| s.tags.clone())
+            .unwrap_or_default(),
         id: id.clone(),
         name,
         file: rel,
@@ -656,10 +803,131 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
             }
         })
         .await?;
-    let mut v = serde_json::to_value(&seq).map_err(ApiError::internal)?;
-    v["warnings"] = json!(warnings);
-    v["replaced"] = json!(existing.is_some());
-    Ok(v)
+    if let Some(m) = new_media_id {
+        crate::services::analysis::enqueue_analysis(state, &m);
+    }
+    Ok(ImportedSequence {
+        sequence: seq,
+        warnings,
+        replaced: existing.is_some(),
+    })
+}
+
+/// A file name as the user knows it: no directories, no control characters.
+fn sanitize_original(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let s: String = base.chars().filter(|c| !c.is_control()).take(200).collect();
+    let s = s.trim().to_string();
+    if s.is_empty() {
+        "upload".into()
+    } else {
+        s
+    }
+}
+
+/// Import a complete audio file (see the module docs). `src` is consumed.
+pub async fn import_media_file(
+    state: &AppState,
+    src: PathBuf,
+    original_name: &str,
+    opts: MediaImport,
+) -> ApiResult<ImportedMedia> {
+    let fname = sanitize_original(original_name);
+    let existing = if opts.replace_same_name {
+        let show = state.store.get();
+        show.media
+            .iter()
+            .find(|m| {
+                m.kind == opts.kind
+                    && m.original_name
+                        .clone()
+                        .unwrap_or_else(|| media_original(state, m))
+                        == fname
+            })
+            .cloned()
+    } else {
+        None
+    };
+    let mut media = ingest_audio(state, src, &fname, opts.kind, opts.name).await?;
+    let replaced = existing.is_some();
+    if let Some(old) = &existing {
+        // Keep the identity: move the new file to the old id's name.
+        let ext = media.file.rsplit_once('.').map(|x| x.1).unwrap_or("mp3");
+        let rel = format!("media/{}.{ext}", old.id);
+        let data = &state.config.data_dir;
+        if rel != old.file {
+            media_svc::trash(data, &old.file);
+        }
+        media_svc::move_file(&data.join(&media.file), &data.join(&rel)).await?;
+        let dir = state.config.media_dir();
+        if let Some(meta) = media_svc::read_meta(&dir, &media.id) {
+            let _ = media_svc::write_meta(&dir, &old.id, &meta);
+        }
+        let _ = std::fs::remove_file(media_svc::meta_path(&dir, &media.id));
+        crate::services::analysis::forget(state, &old.id);
+        media = Media {
+            id: old.id.clone(),
+            name: old.name.clone(),
+            tags: old.tags.clone(),
+            file: rel,
+            analysis: None,
+            ..media
+        };
+    }
+    // Link sequences that were waiting for this song.
+    let show = state.store.get();
+    let mut link: Vec<String> = Vec::new();
+    if opts.kind == MediaKind::Song {
+        let key_orig = media_svc::match_key(&fname);
+        let key_name = media_svc::match_key(&media.name);
+        for s in show.sequences.iter().filter(|s| s.media_id.is_none()) {
+            let path = state.config.data_dir.join(&s.file);
+            let basename = tokio::task::spawn_blocking(move || {
+                FseqFile::open(&path)
+                    .ok()
+                    .and_then(|f| f.header().media_basename())
+            })
+            .await
+            .ok()
+            .flatten();
+            let keys = [
+                basename.as_deref().map(media_svc::match_key),
+                Some(media_svc::match_key(&s.name)),
+                s.xlights_name.as_deref().map(media_svc::match_key),
+            ];
+            if keys
+                .iter()
+                .flatten()
+                .any(|k| !k.is_empty() && (*k == key_orig || *k == key_name))
+            {
+                link.push(s.id.clone());
+            }
+        }
+    }
+    let linked = link.clone();
+    let (media, _) = state
+        .store
+        .update(move |s| {
+            match s.media.iter_mut().find(|m| m.id == media.id) {
+                Some(m) => *m = media.clone(),
+                None => s.media.push(media.clone()),
+            }
+            for seq in s
+                .sequences
+                .iter_mut()
+                .filter(|x| link.contains(&x.id) && x.media_id.is_none())
+            {
+                seq.media_id = Some(media.id.clone());
+            }
+            Ok(media)
+        })
+        .await?;
+    crate::services::analysis::enqueue_analysis(state, &media.id);
+    Ok(ImportedMedia {
+        media,
+        replaced,
+        linked_sequence_ids: linked,
+    })
 }
 
 async fn update_sequence(
@@ -860,53 +1128,19 @@ async fn create_media(State(state): State<AppState>, req: Request) -> ApiResult<
     }
     let (tmp, fname) =
         file.ok_or_else(|| ApiError::bad_request("Choose an audio file to upload."))?;
-    let media = ingest_audio(&state, tmp, &fname, kind, name).await?;
-    // Link sequences that were waiting for this song.
-    let show = state.store.get();
-    let mut link: Vec<String> = Vec::new();
-    if kind == MediaKind::Song {
-        let key_orig = media_svc::match_key(&fname);
-        let key_name = media_svc::match_key(&media.name);
-        for s in show.sequences.iter().filter(|s| s.media_id.is_none()) {
-            let path = state.config.data_dir.join(&s.file);
-            let basename = tokio::task::spawn_blocking(move || {
-                FseqFile::open(&path)
-                    .ok()
-                    .and_then(|f| f.header().media_basename())
-            })
-            .await
-            .ok()
-            .flatten();
-            let keys = [
-                basename.as_deref().map(media_svc::match_key),
-                Some(media_svc::match_key(&s.name)),
-                s.xlights_name.as_deref().map(media_svc::match_key),
-            ];
-            if keys
-                .iter()
-                .flatten()
-                .any(|k| !k.is_empty() && (*k == key_orig || *k == key_name))
-            {
-                link.push(s.id.clone());
-            }
-        }
-    }
-    let (media, _) = state
-        .store
-        .update(move |s| {
-            s.media.push(media.clone());
-            for seq in s
-                .sequences
-                .iter_mut()
-                .filter(|x| link.contains(&x.id) && x.media_id.is_none())
-            {
-                seq.media_id = Some(media.id.clone());
-            }
-            Ok(media)
-        })
-        .await?;
+    let done = import_media_file(
+        &state,
+        tmp,
+        &fname,
+        MediaImport {
+            kind,
+            name,
+            replace_same_name: false,
+        },
+    )
+    .await?;
     Ok(Json(
-        serde_json::to_value(media).map_err(ApiError::internal)?,
+        serde_json::to_value(done.media).map_err(ApiError::internal)?,
     ))
 }
 
