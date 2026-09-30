@@ -13,7 +13,7 @@ fn now() -> DateTime<Utc> {
 fn test_ca() -> Ca {
     create_ca(
         &ca_common_name("Maple Street Lights", "ab12cd34ef"),
-        "pixelplus",
+        "pixel-pi",
         now(),
     )
     .unwrap()
@@ -42,7 +42,7 @@ fn ca_has_critical_name_constraints_and_pathlen_0() {
         "{rest:02X?}"
     );
     // The permitted DNS names are in there as IA5 strings.
-    for d in ["local", "home.arpa", "pixelplus"] {
+    for d in ["local", "home.arpa", "pixel-pi"] {
         assert!(find(&ca.cert_der, d.as_bytes()).is_some(), "{d}");
     }
     assert!(ca
@@ -85,6 +85,16 @@ fn names_are_filtered_to_what_the_ca_may_sign() {
     );
     // A dotted host name is never added to the CA's constraints.
     assert!(!ca_dns_constraints("pi.example.com").contains(&"pi.example.com".to_string()));
+    // Security audit 2: a bare host name that could be a top-level domain
+    // is never a constraint (it would let the CA sign `*.christmas`).
+    for tld_like in ["christmas", "shop", "lights", "app", "xn--p1ai", "pixelplus"] {
+        let dns = ca_dns_constraints(tld_like);
+        assert!(!dns.contains(&tld_like.to_string()), "{tld_like}");
+        assert!(!permitted(&format!("bank.{tld_like}"), &dns));
+        // The .local / .lan variants still work.
+        assert!(desired_names(tld_like, &[], &[], &dns).contains(&format!("{tld_like}.local")));
+    }
+    assert!(ca_dns_constraints("lights2").contains(&"lights2".to_string()));
     assert!(permitted("::ffff:10.1.2.3", &dns));
     assert!(!permitted("local.evil.com", &dns));
     assert!(!permitted("evillocal", &dns));
@@ -249,13 +259,13 @@ async fn handshake(ca: &Ca, leaf: &Leaf, server_name: &str) -> Result<(), String
 async fn leaf_verifies_against_the_ca_by_name_and_address() {
     let ca = test_ca();
     let names = desired_names(
-        "pixelplus",
+        "pixel-pi",
         &[IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20))],
         &[],
         &ca.meta.permitted_dns,
     );
     let leaf = issue_leaf(&ca, &names, Utc::now()).unwrap();
-    for n in ["pixelplus.local", "pixelplus", "192.168.1.20", "localhost"] {
+    for n in ["pixel-pi.local", "pixel-pi", "192.168.1.20", "localhost"] {
         handshake(&ca, &leaf, n)
             .await
             .unwrap_or_else(|e| panic!("{n}: {e}"));
@@ -269,7 +279,7 @@ async fn leaf_verifies_against_the_ca_by_name_and_address() {
 #[tokio::test]
 async fn name_constraints_block_public_names() {
     let ca = test_ca();
-    for evil in ["www.example.com", "8.8.8.8"] {
+    for evil in ["www.example.com", "8.8.8.8", "shop.christmas"] {
         let leaf = issue_leaf(&ca, &[evil.to_string()], Utc::now()).unwrap();
         let err = handshake(&ca, &leaf, evil).await.expect_err(evil);
         assert!(err.contains("NameConstraintViolation"), "{evil}: {err}");

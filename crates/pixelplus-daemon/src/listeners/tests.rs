@@ -111,20 +111,21 @@ async fn https_gate_refuses_connections_when_off() {
 fn public_head_routing() {
     let peer: IpAddr = "127.0.0.1".parse().unwrap();
     assert_eq!(
-        route_public_head(b"GET /request HTTP/1.1\r\nHost: x\r\n\r\n", peer),
+        route_public_head(b"GET /request HTTP/1.1\r\nHost: x\r\n\r\n", peer, false),
         PublicRoute::App
     );
     assert_eq!(
-        route_public_head(b"GET /play?x=1 HTTP/1.1\r\nHost: x\r\n\r\n", peer),
+        route_public_head(b"GET /play?x=1 HTTP/1.1\r\nHost: x\r\n\r\n", peer, false),
         PublicRoute::PlayRedirect("/play/?x=1".into())
     );
     assert_eq!(
-        route_public_head(b"GET /playground HTTP/1.1\r\n\r\n", peer),
+        route_public_head(b"GET /playground HTTP/1.1\r\n\r\n", peer, false),
         PublicRoute::App
     );
     let PublicRoute::Games(head) = route_public_head(
         b"GET /play/ws?room=1 HTTP/1.1\r\nHost: lights.example.com\r\nUpgrade: websocket\r\nX-Forwarded-For: 203.0.113.9\r\n\r\n",
         peer,
+        false,
     ) else {
         panic!("games")
     };
@@ -139,7 +140,7 @@ fn public_head_routing() {
         !head.contains("Connection: close"),
         "upgrades stay open: {head}"
     );
-    let PublicRoute::Games(head) = route_public_head(b"GET /play/ HTTP/1.1\r\n\r\n", peer) else {
+    let PublicRoute::Games(head) = route_public_head(b"GET /play/ HTTP/1.1\r\n\r\n", peer, false) else {
         panic!("games")
     };
     assert_eq!(
@@ -151,6 +152,7 @@ fn public_head_routing() {
     let PublicRoute::Games(head) = route_public_head(
         b"GET /play/app.js HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n",
         peer,
+        false,
     ) else {
         panic!("games")
     };
@@ -158,7 +160,83 @@ fn public_head_routing() {
         String::from_utf8(head).unwrap(),
         "GET /app.js HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n"
     );
-    assert_eq!(route_public_head(b"\xff\xfe", peer), PublicRoute::App);
+    assert_eq!(route_public_head(b"\xff\xfe", peer, false), PublicRoute::App);
+}
+
+/// Security audit 2: a visitor can't choose the address the games
+/// controller counts (per-visitor limits) with `CF-Connecting-IP` unless a
+/// PixelPlus-managed Cloudflare tunnel is the proxy; a bogus `Upgrade`
+/// header doesn't keep a page request's connection open.
+#[test]
+fn public_head_drops_untrusted_cf_connecting_ip() {
+    let peer: IpAddr = "127.0.0.1".parse().unwrap();
+    let req = b"GET /play/ HTTP/1.1\r\nHost: x\r\nCF-Connecting-IP: 198.51.100.77\r\nUpgrade: h2c\r\n\r\n";
+    let PublicRoute::Games(head) = route_public_head(req, peer, false) else {
+        panic!("games")
+    };
+    let head = String::from_utf8(head).unwrap();
+    assert!(!head.to_ascii_lowercase().contains("cf-connecting-ip"), "{head}");
+    assert!(head.contains("Connection: close\r\n"), "{head}");
+    let PublicRoute::Games(head) = route_public_head(req, peer, true) else {
+        panic!("games")
+    };
+    assert!(String::from_utf8(head)
+        .unwrap()
+        .contains("CF-Connecting-IP: 198.51.100.77\r\n"));
+}
+
+/// Security audit 2: the public listener caps concurrent connections; past
+/// the cap a visitor gets a quick 503 (slow connections through a tunnel
+/// can't exhaust the daemon's file descriptors).
+#[tokio::test]
+async fn public_listener_caps_connections() {
+    let app = TestApp::new();
+    app.state
+        .store
+        .update(|s| {
+            s.settings.remote.public_listener = true;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = tcp.local_addr().unwrap();
+    let listener = PublicListener::with_options(tcp, || 1, || false, 2).unwrap();
+    let router = public_router(app.state.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener.tap_io(|_| {}),
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    // Two slow visitors that never finish their request head.
+    let mut slow = vec![];
+    for _ in 0..2 {
+        let mut s = TcpStream::connect(addr).await.unwrap();
+        s.write_all(b"GET /api/v1/public/health HTTP/1.1\r\n").await.unwrap();
+        slow.push(s);
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    let full = roundtrip(
+        &mut s,
+        "GET /api/v1/public/health HTTP/1.1\r\nHost: x\r\n\r\n",
+    )
+    .await;
+    assert!(full.starts_with("HTTP/1.1 503"), "{full}");
+    // A slot frees up when a visitor leaves.
+    drop(slow.pop());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    let ok = roundtrip(
+        &mut s,
+        "GET /api/v1/public/health HTTP/1.1\r\nHost: x\r\n\r\n",
+    )
+    .await;
+    assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
+    server.abort();
 }
 
 /// A fake games controller: records each request head, answers `/ws` with a

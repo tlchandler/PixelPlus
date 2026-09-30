@@ -318,7 +318,12 @@ async fn login(
     let Some(hash) = show.settings.security.password_hash.as_deref() else {
         return Ok(Json(serde_json::json!({ "ok": true })).into_response());
     };
-    let ip = super::security::client_ip(peer.0, &headers, &show.settings.security.trusted_proxies);
+    let ip = super::security::client_ip(
+        peer.0,
+        &headers,
+        &show.settings.security.trusted_proxies,
+        super::security::cf_trusted(&show.settings),
+    );
     if let Err(wait) = state.sessions.throttle.lock().check(ip, Instant::now()) {
         return Err(too_many(wait));
     }
@@ -418,7 +423,12 @@ async fn set_password(
     if let Some(hash) = show.settings.security.password_hash.as_deref() {
         let authed = is_authenticated(&state, &headers, peer.0);
         let ip =
-            super::security::client_ip(peer.0, &headers, &show.settings.security.trusted_proxies);
+            super::security::client_ip(
+        peer.0,
+        &headers,
+        &show.settings.security.trusted_proxies,
+        super::security::cf_trusted(&show.settings),
+    );
         if let Err(wait) = state.sessions.throttle.lock().check(ip, Instant::now()) {
             return Err(too_many(wait));
         }

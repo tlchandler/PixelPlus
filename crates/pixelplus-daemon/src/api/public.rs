@@ -40,8 +40,13 @@ struct SubmitBody {
 /// `settings.security.trustedProxies`) the proxy's view (see
 /// `security::client_ip`), never the client-controlled left-most hop.
 fn client_ip(state: &AppState, peer: Peer, headers: &HeaderMap) -> Option<IpAddr> {
-    let trusted = state.store.get().settings.security.trusted_proxies.clone();
-    super::security::client_ip(peer.0, headers, &trusted)
+    let show = state.store.get();
+    super::security::client_ip(
+        peer.0,
+        headers,
+        &show.settings.security.trusted_proxies,
+        super::security::cf_trusted(&show.settings),
+    )
 }
 
 async fn submit(

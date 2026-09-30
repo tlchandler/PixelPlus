@@ -134,14 +134,31 @@ pub fn valid_dns_name(name: &str) -> bool {
         })
 }
 
+/// Could `label` be a top-level domain? A dNSName name constraint also
+/// permits every name *below* it (RFC 5280 4.2.1.10), so a CA constrained to
+/// the bare host name `christmas` (or `shop`, `app`, `lighting`…, all real
+/// TLDs) could sign `anything.christmas` on the internet. ICANN TLDs are
+/// letters only (or `xn--` IDNs), so a label with a digit or a hyphen, not
+/// starting `xn--`, can never be one.
+pub fn could_be_tld(label: &str) -> bool {
+    let l = label.to_ascii_lowercase();
+    l.starts_with("xn--") || !l.chars().any(|c| c.is_ascii_digit() || c == '-')
+}
+
 /// The DNS constraints for a new CA on a host called `hostname`.
 pub fn ca_dns_constraints(hostname: &str) -> Vec<String> {
     let mut v: Vec<String> = PERMITTED_DNS.iter().map(|s| s.to_string()).collect();
     let h = hostname.trim().to_ascii_lowercase();
-    // A single-label host name ("pixelplus") lets phones use the bare name on
+    // A single-label host name ("garage-pi") lets phones use the bare name on
     // networks whose DNS resolves it. Dotted names are not added: they could
-    // be a public domain.
-    if !h.is_empty() && !h.contains('.') && valid_dns_name(&h) && !v.contains(&h) {
+    // be a public domain; nor are labels that could be a top-level domain
+    // ([`could_be_tld`]): those phones use `<name>.local` / `<name>.lan`.
+    if !h.is_empty()
+        && !h.contains('.')
+        && valid_dns_name(&h)
+        && !could_be_tld(&h)
+        && !v.contains(&h)
+    {
         v.push(h);
     }
     v
@@ -463,9 +480,12 @@ fn write_atomic(path: &Path, data: &[u8], secret: bool) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
+    // A leftover temp file (crash) may have other permissions: start afresh,
+    // so a private key is never written into a readable file.
+    let _ = std::fs::remove_file(&tmp);
     {
         let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
+        opts.write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -730,6 +750,16 @@ pub async fn ensure(state: &AppState, rotate_ca: bool, rotate_leaf: bool) -> any
             changed = true;
         }
         let ca = ca.expect("set above");
+        if let Some(bad) = ca
+            .meta
+            .permitted_dns
+            .iter()
+            .find(|d| !d.contains('.') && !PERMITTED_DNS.contains(&d.as_str()) && could_be_tld(d))
+        {
+            tracing::warn!(
+                "The secure-connection certificate authority may also vouch for names under \".{bad}\" (a possible internet top-level domain); make a new one under Settings → Secure connection"
+            );
+        }
         let ca_fp = fingerprint(&ca.cert_der);
         let desired = desired_names(&hostname, &addrs, &extra, &ca.meta.permitted_dns);
         let current = if rotate_leaf || changed { None } else { load_leaf(&dir).unwrap_or(None) };

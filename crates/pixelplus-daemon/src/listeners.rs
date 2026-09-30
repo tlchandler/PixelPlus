@@ -42,6 +42,11 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_HANDSHAKES: usize = 64;
 /// Largest request head the public listener peeks at.
 const MAX_HEAD: usize = 16 * 1024;
+/// Open connections the public listener accepts at once (page requests and
+/// games bridges together). A visitor on the internet can open many slow
+/// connections through a tunnel; past this they get a quick 503 instead of
+/// using up the daemon's file descriptors.
+pub const MAX_PUBLIC_CONNS: usize = 256;
 /// Retry a failed bind this often.
 const REBIND_EVERY: Duration = Duration::from_secs(30);
 
@@ -247,11 +252,13 @@ pub async fn serve_https(state: AppState, app: Router, shutdown: watch::Receiver
 // Public-only listener (F14) and the games proxy
 // ---------------------------------------------------------------------------
 
-/// A stream that first replays bytes already read from it.
+/// A stream that first replays bytes already read from it (and holds its
+/// connection slot of the public listener until it is dropped).
 pub struct Prefixed<S> {
     prefix: Vec<u8>,
     pos: usize,
     inner: S,
+    _slot: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl<S> Prefixed<S> {
@@ -260,7 +267,13 @@ impl<S> Prefixed<S> {
             prefix,
             pos: 0,
             inner,
+            _slot: None,
         }
+    }
+
+    fn with_slot(mut self, slot: tokio::sync::OwnedSemaphorePermit) -> Self {
+        self._slot = Some(slot);
+        self
     }
 }
 
@@ -322,7 +335,13 @@ pub enum PublicRoute {
 /// Decide where a request head goes; rewrites `/play/<rest>` → `/<rest>`
 /// for the games controller and records the client in `X-Forwarded-For`
 /// (appended, so the sidecar's trusted-proxy logic sees the real client).
-pub fn route_public_head(head: &[u8], peer: IpAddr) -> PublicRoute {
+///
+/// `trust_cf`: a Cloudflare tunnel managed by PixelPlus is the only thing
+/// that may set `CF-Connecting-IP` (the games controller believes it from a
+/// loopback peer, which every bridged connection is). Otherwise, e.g. through
+/// Tailscale Funnel, which passes unknown headers on, a visitor could pick
+/// their own address and dodge the per-visitor limits, so it is dropped.
+pub fn route_public_head(head: &[u8], peer: IpAddr, trust_cf: bool) -> PublicRoute {
     let Ok(text) = std::str::from_utf8(head) else {
         return PublicRoute::App;
     };
@@ -358,11 +377,16 @@ pub fn route_public_head(head: &[u8], peer: IpAddr) -> PublicRoute {
     // carry the visitor's *next* request (e.g. `/request`) to the games
     // controller too: plain requests ask it to close after answering;
     // WebSocket upgrades keep their `Connection: Upgrade`.
-    let upgrade = lines
-        .iter()
-        .any(|l| l.to_ascii_lowercase().starts_with("upgrade:"));
+    let upgrade = lines.iter().any(|l| {
+        l.to_ascii_lowercase()
+            .strip_prefix("upgrade:")
+            .is_some_and(|v| v.trim() == "websocket")
+    });
     for line in lines {
         let lower = line.to_ascii_lowercase();
+        if !trust_cf && lower.starts_with("cf-connecting-ip:") {
+            continue;
+        }
         if !upgrade
             && ["connection:", "keep-alive:", "proxy-connection:"]
                 .iter()
@@ -448,13 +472,28 @@ pub struct PublicListener {
 
 impl PublicListener {
     /// `games_port()` gives the games controller port at connection time.
+    /// `CF-Connecting-IP` is not passed to the games controller.
     pub fn new(
         tcp: TcpListener,
         games_port: impl Fn() -> u16 + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
+        Self::with_options(tcp, games_port, || false, MAX_PUBLIC_CONNS)
+    }
+
+    /// [`PublicListener::new`]; `trust_cf()` says (at connection time) whether
+    /// `CF-Connecting-IP` may reach the games controller (see
+    /// [`route_public_head`]); at most `max_conns` connections at once.
+    pub fn with_options(
+        tcp: TcpListener,
+        games_port: impl Fn() -> u16 + Send + Sync + 'static,
+        trust_cf: impl Fn() -> bool + Send + Sync + 'static,
+        max_conns: usize,
+    ) -> std::io::Result<Self> {
         let local = tcp.local_addr()?;
         let (tx, rx) = mpsc::channel(64);
         let games_port = Arc::new(games_port);
+        let trust_cf = Arc::new(trust_cf);
+        let slots = Arc::new(tokio::sync::Semaphore::new(max_conns.max(1)));
         tokio::spawn(async move {
             loop {
                 let (mut s, peer) = match tcp.accept().await {
@@ -467,8 +506,20 @@ impl PublicListener {
                 if tx.is_closed() {
                     return;
                 }
+                let Ok(slot) = slots.clone().try_acquire_owned() else {
+                    // Full: answer at once (never wait for the request) and close.
+                    tokio::spawn(async move {
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(2),
+                            s.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: 38\r\nRetry-After: 10\r\nConnection: close\r\n\r\nToo many visitors. Please try again.\r\n"),
+                        )
+                        .await;
+                    });
+                    continue;
+                };
                 let tx = tx.clone();
                 let games_port = games_port.clone();
+                let trust_cf = trust_cf.clone();
                 tokio::spawn(async move {
                     let Ok(Ok((buf, end))) =
                         tokio::time::timeout(HANDSHAKE_TIMEOUT, read_head(&mut s)).await
@@ -476,12 +527,12 @@ impl PublicListener {
                         return;
                     };
                     let route = match end {
-                        Some(e) => route_public_head(&buf[..e], peer.ip()),
+                        Some(e) => route_public_head(&buf[..e], peer.ip(), trust_cf()),
                         None => PublicRoute::App,
                     };
                     match route {
                         PublicRoute::App => {
-                            let _ = tx.send((Prefixed::new(buf, s), peer)).await;
+                            let _ = tx.send((Prefixed::new(buf, s).with_slot(slot), peer)).await;
                         }
                         PublicRoute::PlayRedirect(to) => {
                             let resp = format!(
@@ -492,6 +543,7 @@ impl PublicListener {
                         PublicRoute::Games(head) => {
                             let e = end.unwrap_or(buf.len());
                             bridge_games(s, head, buf[e..].to_vec(), games_port()).await;
+                            drop(slot);
                         }
                     }
                 });
@@ -575,7 +627,11 @@ pub async fn serve_public(state: AppState, shutdown: watch::Receiver<bool>) {
             p => p,
         }
     };
-    let listener = match PublicListener::new(tcp, games_port) {
+    let trust_cf = {
+        let state = state.clone();
+        move || crate::api::security::cf_trusted(&state.store.get().settings)
+    };
+    let listener = match PublicListener::with_options(tcp, games_port, trust_cf, MAX_PUBLIC_CONNS) {
         Ok(l) => l,
         Err(e) => {
             tracing::warn!("Public listener failed: {e}");

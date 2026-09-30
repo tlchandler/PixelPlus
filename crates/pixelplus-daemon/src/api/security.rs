@@ -81,21 +81,39 @@ fn trusted_proxy(ip: IpAddr, trusted: &[String]) -> bool {
     ip.is_loopback() || trusted.iter().any(|t| in_net(ip, t))
 }
 
+/// May `CF-Connecting-IP` from a loopback peer be believed? Only while a
+/// Cloudflare tunnel set up through PixelPlus is the local proxy, and no
+/// Tailscale Funnel shares the public port: other local proxies (Tailscale
+/// Funnel / serve, a hand-made Caddy) pass a visitor's own `CF-Connecting-IP`
+/// on unchanged, so the visitor could pick the address that the sign-in
+/// throttle and the song-request / games limits count. cloudflared also
+/// appends the visitor to `X-Forwarded-For`, which [`client_ip`] uses then.
+pub fn cf_trusted(settings: &pixelplus_core::model::ShowSettings) -> bool {
+    let funnel = settings
+        .remote
+        .tailscale
+        .as_ref()
+        .is_some_and(|t| t.enabled && t.funnel_public);
+    settings.remote.cloudflare.is_some() && !funnel
+}
+
 /// The visitor's address. Forwarding headers are believed only from a trusted
 /// proxy (this machine, or `settings.security.trustedProxies`):
-/// `CF-Connecting-IP` from a local cloudflared, otherwise the right-most
-/// `X-Forwarded-For` entry that is not itself a trusted proxy (proxies append
-/// the address they saw; everything left of it is what the client claimed).
+/// `CF-Connecting-IP` from a local cloudflared (only when `trust_cf`, see
+/// [`cf_trusted`]), otherwise the right-most `X-Forwarded-For` entry that is
+/// not itself a trusted proxy (proxies append the address they saw;
+/// everything left of it is what the client claimed).
 pub fn client_ip(
     peer: Option<SocketAddr>,
     headers: &HeaderMap,
     trusted: &[String],
+    trust_cf: bool,
 ) -> Option<IpAddr> {
     let direct = canonical(peer?.ip());
     if !trusted_proxy(direct, trusted) {
         return Some(direct);
     }
-    if direct.is_loopback() {
+    if direct.is_loopback() && trust_cf {
         if let Some(ip) = headers
             .get("cf-connecting-ip")
             .and_then(|v| v.to_str().ok())
@@ -957,14 +975,14 @@ mod tests {
         let spoof = h(&[("x-forwarded-for", "1.2.3.4")]);
         // A LAN client can't pick its address.
         assert_eq!(
-            client_ip(Some(lan), &spoof, &[]),
+            client_ip(Some(lan), &spoof, &[], true),
             Some("192.168.1.9".parse().unwrap())
         );
         // Behind a local proxy the right-most hop (what the proxy saw) counts,
         // not the left-most value the client sent.
         let appended = h(&[("x-forwarded-for", "6.6.6.6, 203.0.113.7")]);
         assert_eq!(
-            client_ip(Some(lo), &appended, &[]),
+            client_ip(Some(lo), &appended, &[], true),
             Some("203.0.113.7".parse().unwrap())
         );
         let cf = h(&[
@@ -972,29 +990,63 @@ mod tests {
             ("x-forwarded-for", "6.6.6.6"),
         ]);
         assert_eq!(
-            client_ip(Some(lo), &cf, &[]),
+            client_ip(Some(lo), &cf, &[], true),
             Some("198.51.100.2".parse().unwrap())
         );
         // A configured LAN proxy (e.g. a NAS) is trusted too, but not for CF-Connecting-IP.
         let nas = vec!["192.168.1.0/24".to_string()];
         assert_eq!(
-            client_ip(Some(lan), &appended, &nas),
+            client_ip(Some(lan), &appended, &nas, true),
             Some("203.0.113.7".parse().unwrap())
         );
         assert_eq!(
-            client_ip(Some(lan), &cf, &nas),
+            client_ip(Some(lan), &cf, &nas, true),
             Some("6.6.6.6".parse().unwrap())
         );
         let chain = h(&[("x-forwarded-for", "203.0.113.7, 192.168.1.2")]);
         assert_eq!(
-            client_ip(Some(lo), &chain, &nas),
+            client_ip(Some(lo), &chain, &nas, true),
             Some("203.0.113.7".parse().unwrap())
         );
         assert_eq!(
-            client_ip(Some(lo), &h(&[]), &[]),
+            client_ip(Some(lo), &h(&[]), &[], true),
             Some("127.0.0.1".parse().unwrap())
         );
-        assert_eq!(client_ip(None, &spoof, &[]), None);
+        assert_eq!(client_ip(None, &spoof, &[], true), None);
+    }
+
+    /// Security audit 2: behind a proxy that isn't a PixelPlus-managed
+    /// Cloudflare tunnel (e.g. Tailscale Funnel passes unknown headers on), a
+    /// visitor's own `CF-Connecting-IP` is ignored; the proxy's
+    /// `X-Forwarded-For` entry counts.
+    #[test]
+    fn cf_connecting_ip_only_from_a_managed_cloudflare_tunnel() {
+        use pixelplus_core::model::{CloudflareState, ShowSettings, TailscaleState};
+        let lo: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let spoof = h(&[
+            ("cf-connecting-ip", "198.51.100.77"),
+            ("x-forwarded-for", "203.0.113.7"),
+        ]);
+        assert_eq!(
+            client_ip(Some(lo), &spoof, &[], false),
+            Some("203.0.113.7".parse().unwrap())
+        );
+        let mut s = ShowSettings::default();
+        assert!(!cf_trusted(&s));
+        s.remote.cloudflare = Some(CloudflareState {
+            mode: "token".into(),
+            public_host: None,
+            admin_host: None,
+            token_set: true,
+        });
+        assert!(cf_trusted(&s));
+        s.remote.tailscale = Some(TailscaleState {
+            enabled: true,
+            serve_admin: false,
+            funnel_public: true,
+            dns_name: None,
+        });
+        assert!(!cf_trusted(&s), "a Funnel shares the public port");
     }
 
     #[test]
