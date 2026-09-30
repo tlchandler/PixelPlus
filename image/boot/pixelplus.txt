@@ -1,0 +1,126 @@
+##############################################################################
+#                                                                            #
+#   PixelPlus settings  -  pixelplus.txt                                     #
+#                                                                            #
+#   Edit this file on any computer (Notepad, TextEdit, ...) BEFORE you put   #
+#   the SD card in your Raspberry Pi. PixelPlus reads it every time it       #
+#   starts and applies anything you changed.                                 #
+#                                                                            #
+#   How to edit:                                                             #
+#     * Type your value right after the "=" sign, e.g.  wifi_ssid=MyHome     #
+#     * Lines starting with "#" are notes and are ignored.                   #
+#     * Leave a value empty to keep the current setting.                     #
+#     * Everything after "=" is used exactly as typed (spaces inside are     #
+#       fine). If your value starts or ends with a space, put it in          #
+#       "double quotes".                                                     #
+#                                                                            #
+#   Passwords are removed from this file once they have been applied (they  #
+#   are stored safely on the device). To change one, just type a new one.    #
+#                                                                            #
+#   If something here is wrong, PixelPlus writes "pixelplus-errors.txt"      #
+#   next to this file explaining what to fix.                                #
+#                                                                            #
+##############################################################################
+
+
+# ---------------------------------------------------------------------------
+#  Wi-Fi
+# ---------------------------------------------------------------------------
+# The name of your Wi-Fi network (it is case sensitive: "MyHome" is not
+# "myhome"). Leave empty if you use an Ethernet cable, or if you want to pick
+# the network from your phone (see "Setup hotspot" below).
+wifi_ssid=
+
+# The Wi-Fi password. Leave empty for an open network.
+wifi_password=
+
+# Two-letter country code where the Pi is used, e.g. US, GB, CA, DE, AU, NZ.
+# Wi-Fi needs this to use the right radio channels.
+wifi_country=
+
+# Set to "yes" if your network is hidden (does not broadcast its name).
+wifi_hidden=no
+
+# Optional: a second network to try, e.g. your phone's hotspot or the
+# network at the place where the show runs.
+wifi2_ssid=
+wifi2_password=
+
+
+# ---------------------------------------------------------------------------
+#  This controller
+# ---------------------------------------------------------------------------
+# The name of this controller on your network. You will open it in a browser
+# at  http://<hostname>.local  (for example http://pixelplus.local).
+# Use letters, numbers and dashes only, e.g.  pixelplus-garage
+# Give every controller in your show a different name!
+hostname=
+
+# What this controller does in your show:
+#   leader    - the main controller. It holds the show, plays the music and
+#               tells every other controller what to do. You need exactly one.
+#   follower  - an extra controller that is set up from the leader.
+# Leave empty to choose in the browser the first time you open PixelPlus.
+role=
+
+# Your time zone, e.g. America/New_York, America/Chicago, America/Denver,
+# America/Los_Angeles, Europe/London, Australia/Sydney.
+# The schedule (and "sunset" show times) use it. Leave empty to set it later
+# in the browser.
+timezone=
+
+# Which PixelPlus board is attached. Normally "auto": PixelPlus reads the
+# board's memory chip. Only set this if auto-detection fails:
+#   auto, difftx, difftxlarge, diffsmart, bare-pi
+board=auto
+
+
+# ---------------------------------------------------------------------------
+#  Fixed IP address (optional - most people leave this empty)
+# ---------------------------------------------------------------------------
+# Leave ip_address empty to get an address automatically (DHCP).
+# Example:  ip_address=192.168.1.50/24   ip_gateway=192.168.1.1   ip_dns=192.168.1.1
+ip_address=
+ip_gateway=
+ip_dns=
+# Which connection gets the fixed address: wifi or ethernet.
+# Empty = wifi if wifi_ssid is set, otherwise ethernet.
+ip_interface=
+
+
+# ---------------------------------------------------------------------------
+#  Security
+# ---------------------------------------------------------------------------
+# Password for the PixelPlus web page. Empty = no password (fine on a home
+# network). You can also set or change it later in Settings -> Security.
+ui_password=
+
+# SSH remote login for advanced users: on or off. Empty = keep as is (a new
+# PixelPlus card has SSH off). The login user is "pi" unless you created a
+# different user with Raspberry Pi Imager.
+ssh=
+# Password for the login user (at least 8 characters).
+ssh_password=
+# Or/and a public key, e.g.  ssh_key=ssh-ed25519 AAAAC3Nz... me@laptop
+ssh_key=
+
+
+# ---------------------------------------------------------------------------
+#  Setup hotspot
+# ---------------------------------------------------------------------------
+# If PixelPlus cannot join a Wi-Fi network (and no network cable is plugged
+# in) it opens its own Wi-Fi network called "PixelPlus-XXXX" (XXXX is unique
+# to each Pi). Join it with your phone: a setup page pops up where you pick
+# your Wi-Fi network and type its password.
+#
+# on  - open the setup hotspot when there is no network (recommended)
+# off - never open it
+hotspot=on
+
+# Password of the setup hotspot (8 to 63 characters). The default is
+#   pixelplus
+# Use "none" for an open hotspot without a password.
+hotspot_password=pixelplus
+
+# Seconds to wait for Wi-Fi at power-on before opening the hotspot.
+hotspot_timeout=75
