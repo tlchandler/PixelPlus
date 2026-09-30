@@ -44,11 +44,29 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "unavailable", message)
     }
     pub fn internal(err: impl std::fmt::Display) -> Self {
+        let text = err.to_string();
+        // ENOSPC from any write (upload, show.json, snapshot): say what to do.
+        if text.contains("(os error 28)") {
+            tracing::error!("storage full: {text}");
+            return Self::storage_full();
+        }
         tracing::error!("internal error: {err}");
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             format!("Something went wrong: {err}"),
+        )
+    }
+}
+
+impl ApiError {
+    /// The SD card / data disk is full (HTTP 507).
+    pub fn storage_full() -> Self {
+        Self::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "storage_full",
+            "The controller's storage is full. Delete sequences, audio or backups you no \
+             longer need, then try again.",
         )
     }
 }
@@ -82,5 +100,22 @@ impl IntoResponse for ApiError {
             })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_disk_gets_a_helpful_answer() {
+        let io = std::io::Error::from_raw_os_error(28);
+        let e = ApiError::from(io);
+        assert_eq!(e.status, StatusCode::INSUFFICIENT_STORAGE);
+        assert_eq!(e.code, "storage_full");
+        let wrapped = anyhow::Error::from(std::io::Error::from_raw_os_error(28))
+            .context("couldn't save the snapshot");
+        assert_eq!(ApiError::from(wrapped).code, "storage_full");
+        assert_eq!(ApiError::internal("boom").code, "internal");
     }
 }

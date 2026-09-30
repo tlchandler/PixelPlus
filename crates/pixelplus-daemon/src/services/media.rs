@@ -444,21 +444,26 @@ pub const STALE_TEMP: Duration = Duration::from_secs(60 * 60);
 /// loses Wi-Fi halfway through a 300 MB sequence leaves `.upload-*` behind
 /// (the request is dropped, so its own clean-up never runs).
 pub fn purge_stale_temp(data_dir: &Path) {
-    let dirs = [
-        (data_dir.join("sequences"), ".upload-"),
-        (data_dir.join("media"), ".upload-"),
-        (data_dir.join("snapshots"), "."),
-        (data_dir.join("games").join("roms"), "."),
+    // (directory, is this file name a temporary file?)
+    let upload = |n: &str| n.starts_with(".upload-");
+    let dot_tmp = |n: &str| n.starts_with('.') && n.ends_with(".tmp");
+    let any = |_: &str| true;
+    type IsTemp<'a> = &'a dyn Fn(&str) -> bool;
+    let dirs: [(PathBuf, IsTemp); 5] = [
+        (data_dir.join("sequences"), &upload),
+        (data_dir.join("media"), &upload),
+        (data_dir.join("snapshots"), &dot_tmp),
+        (data_dir.join("games").join("roms"), &dot_tmp),
+        // xLights layouts being read for an import preview.
+        (data_dir.join(".import"), &any),
     ];
-    for (dir, prefix) in dirs {
+    for (dir, is_temp) in dirs {
         let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
         };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            let temp = name.starts_with(prefix)
-                && (prefix == ".upload-" || name.ends_with(".tmp"))
-                && e.file_type().is_ok_and(|t| t.is_file());
+            let temp = is_temp(&name) && e.file_type().is_ok_and(|t| t.is_file());
             if !temp {
                 continue;
             }
@@ -597,11 +602,14 @@ pub mod tests {
         let dead_seq = make("sequences/.upload-abc.fseq", true);
         let dead_audio = make("media/.upload-abc.mp3", true);
         let dead_snap = make("snapshots/.20261201-daily.tmp", true);
+        std::fs::create_dir_all(dir.join(".import")).unwrap();
+        let dead_import = make(".import/k3j2h1g4f5", true);
         let live = make("sequences/.upload-def.fseq", false);
         let real_seq = make("sequences/abc.fseq", true);
         let real_snap = make("snapshots/20261201-daily.tar.zst", true);
         purge_stale_temp(&dir);
         assert!(!dead_seq.exists() && !dead_audio.exists() && !dead_snap.exists());
+        assert!(!dead_import.exists());
         assert!(live.exists(), "an upload in progress stays");
         assert!(real_seq.exists() && real_snap.exists(), "data files stay");
         std::fs::remove_dir_all(dir).ok();

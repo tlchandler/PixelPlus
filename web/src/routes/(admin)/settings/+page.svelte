@@ -204,10 +204,20 @@
 		try {
 			const n = $state.snapshot(net) as NetworkConfig;
 			if (psk) n.wifi.psk = psk;
+			const oldName = netOrig ? (JSON.parse(netOrig) as NetworkConfig).hostname : '';
 			await api.saveNetwork(n);
 			netOrig = JSON.stringify(net);
 			psk = '';
-			toasts.success('Network settings applied');
+			// Opened by its old name: that name stops working (the daemon keeps it for 30 min).
+			const here = location.hostname.toLowerCase().replace(/\.$/, '');
+			const renamed = oldName && n.hostname && n.hostname !== oldName;
+			if (renamed && (here === oldName.toLowerCase() || here === `${oldName.toLowerCase()}.local`)) {
+				const url = `${location.protocol}//${n.hostname}.local${location.port ? `:${location.port}` : ''}${location.pathname}`;
+				toasts.success(`Network settings applied. From now on open ${n.hostname}.local`, {
+					label: 'Open',
+					run: () => (location.href = url)
+				});
+			} else toasts.success('Network settings applied');
 		} catch (e) {
 			toasts.error('Could not apply network settings', (e as Error).message);
 		}

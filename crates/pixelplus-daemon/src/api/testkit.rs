@@ -830,6 +830,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_show_window_starting_ends_a_forgotten_fault_finder() {
+        let mut app = TestApp::new();
+        leader(&mut app, None).await;
+        let node = app.state.store.get().leader().unwrap().id.clone();
+        let (_, prop) = app
+            .json(
+                "POST",
+                "/props",
+                Some(json!({"name": "Arch", "kind": "arch", "pixelCount": 50, "channelStart": 0,
+                    "segments": [{"nodeId": node, "output": 1, "startPixel": 0, "pixelCount": 50, "propOffset": 0}]})),
+            )
+            .await;
+        let prop_id = prop["id"].as_str().unwrap().to_string();
+        let (s, _) = app
+            .json(
+                "POST",
+                "/faultfinder/start",
+                Some(json!({"propId": prop_id})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK);
+        let off = format!("Enable {{ prop_id: \"{prop_id}\", enabled: false }}");
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        assert_eq!(app.commands_matching(&off).await, 0, "still running");
+        // Sunset: the scheduled show window begins.
+        app.status.send_modify(|st| {
+            st.schedule_entry = Some(crate::player::ScheduleRef {
+                id: "nightly".into(),
+                name: "Nightly".into(),
+                ends_at: "2026-12-01T22:00:00-06:00".into(),
+            })
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        assert_eq!(app.commands_matching(&off).await, 1);
+        assert!(app.state.services.faults.session.lock().is_none());
+    }
+
+    #[tokio::test]
     async fn player_and_fault_finder() {
         let mut app = TestApp::new();
         leader(&mut app, None).await;

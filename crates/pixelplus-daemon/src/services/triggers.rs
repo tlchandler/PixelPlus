@@ -114,6 +114,7 @@ pub fn start(state: &AppState) {
         let mut changes = state.store.subscribe();
         let mut current: Vec<u8> = Vec::new();
         let mut stop: Option<Arc<AtomicBool>> = None;
+        let mut watcher: Option<std::thread::JoinHandle<()>> = None;
         loop {
             let pins = gpio_pins(&state);
             if pins != current {
@@ -125,7 +126,16 @@ pub fn start(state: &AppState) {
                     let (board, _) = super::system::effective_board(&state);
                     let flag = Arc::new(AtomicBool::new(false));
                     stop = Some(flag.clone());
-                    spawn_gpio_thread(board, pins, tx.clone(), flag, state.events.clone());
+                    // The previous watcher still holds its GPIO lines for up to half a
+                    // second (line requests are exclusive): the new one waits for it.
+                    watcher = spawn_gpio_thread(
+                        board,
+                        pins,
+                        tx.clone(),
+                        flag,
+                        state.events.clone(),
+                        watcher.take(),
+                    );
                 }
             }
             tokio::select! {
@@ -151,11 +161,18 @@ fn spawn_gpio_thread(
     tx: tokio::sync::mpsc::UnboundedSender<u8>,
     stop: Arc<AtomicBool>,
     events: crate::events::EventBus,
-) {
+    previous: Option<std::thread::JoinHandle<()>>,
+) -> Option<std::thread::JoinHandle<()>> {
     use pixelplus_hw::gpio::{ButtonSource, GpioButtons, DEFAULT_DEBOUNCE};
     std::thread::Builder::new()
         .name("pp-gpio".into())
         .spawn(move || {
+            if let Some(h) = previous {
+                let _ = h.join();
+            }
+            if stop.load(Ordering::Relaxed) {
+                return; // replaced again meanwhile
+            }
             let mut buttons = match GpioButtons::open(board, &pins, DEFAULT_DEBOUNCE) {
                 Ok(b) => b,
                 Err(e) => {
@@ -181,7 +198,7 @@ fn spawn_gpio_thread(
                 }
             }
         })
-        .ok();
+        .ok()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -191,6 +208,8 @@ fn spawn_gpio_thread(
     _tx: tokio::sync::mpsc::UnboundedSender<u8>,
     _stop: Arc<AtomicBool>,
     _events: crate::events::EventBus,
-) {
+    _previous: Option<std::thread::JoinHandle<()>>,
+) -> Option<std::thread::JoinHandle<()>> {
     tracing::info!("GPIO trigger buttons are only available on a Raspberry Pi");
+    None
 }

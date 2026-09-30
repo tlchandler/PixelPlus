@@ -217,6 +217,32 @@ pub fn host_allowed(host: &str, hostname: &str, node_id: &str, extra: &[String])
         .any(|p| name_matches(&name, p))
 }
 
+/// How long the old host name keeps working after the controller was renamed:
+/// open pages (and the browser's mDNS cache) still use it for a while.
+const PREVIOUS_NAME_GRACE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+static PREVIOUS_HOSTNAME: parking_lot::Mutex<Option<(String, std::time::Instant)>> =
+    parking_lot::const_mutex(None);
+
+/// The controller was renamed (Settings → Network): keep answering to `old`
+/// for [`PREVIOUS_NAME_GRACE`], so the page that made the change doesn't
+/// suddenly get "unknown address" for every request.
+pub fn remember_previous_hostname(old: &str) {
+    let old = old.trim().to_ascii_lowercase();
+    if !old.is_empty() {
+        *PREVIOUS_HOSTNAME.lock() = Some((old, std::time::Instant::now()));
+    }
+}
+
+/// The previous host name while its grace period lasts.
+fn previous_hostname(now: std::time::Instant) -> Option<String> {
+    PREVIOUS_HOSTNAME
+        .lock()
+        .as_ref()
+        .filter(|(_, at)| now.duration_since(*at) < PREVIOUS_NAME_GRACE)
+        .map(|(n, _)| n.clone())
+}
+
 fn misdirected(host: &str, wants_html: bool) -> Response {
     let name = host_name(host);
     if wants_html {
@@ -285,7 +311,11 @@ pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> R
         .map(str::to_string);
     if !public {
         if let Some(h) = &host {
-            let extra = state.store.get().settings.security.allowed_hosts.clone();
+            let mut extra = state.store.get().settings.security.allowed_hosts.clone();
+            if let Some(old) = previous_hostname(std::time::Instant::now()) {
+                extra.push(format!("{old}.local"));
+                extra.push(old);
+            }
             let hostname = crate::cluster::net::hostname();
             if !host_allowed(h, &hostname, &state.identity().id, &extra) {
                 let wants_html = headers
@@ -640,6 +670,17 @@ mod tests {
         assert!(ok("a.b.tunnel.dev", &["*.tunnel.dev"]));
         assert!(!ok("tunnel.dev", &["*.tunnel.dev"]));
         assert!(ok("anything.example", &["*"]));
+    }
+
+    #[test]
+    fn a_renamed_controller_answers_to_its_old_name_for_a_while() {
+        let t0 = std::time::Instant::now();
+        remember_previous_hostname("PixelPlus-Old");
+        assert_eq!(previous_hostname(t0).as_deref(), Some("pixelplus-old"));
+        assert_eq!(
+            previous_hostname(t0 + PREVIOUS_NAME_GRACE + std::time::Duration::from_secs(1)),
+            None
+        );
     }
 
     #[test]

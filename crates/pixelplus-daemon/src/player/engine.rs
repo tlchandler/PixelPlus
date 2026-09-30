@@ -2047,6 +2047,21 @@ impl Core {
                 };
                 tracing::info!("schedule: starting “{}” ({})", w.name, pl.name);
                 self.look = None;
+                // A test pattern or live look left running (a phone put away after
+                // testing in the afternoon) would cover the show all evening.
+                if let Some(t) = self.test.take() {
+                    self.warn(
+                        format!(
+                            "The show started, so the {} that was still running was turned off",
+                            if t.is_look() {
+                                "live look"
+                            } else {
+                                "test pattern"
+                            }
+                        ),
+                        true,
+                    );
+                }
                 self.start_program(
                     Program {
                         origin: Origin::Schedule(w.key.clone()),
@@ -3007,8 +3022,15 @@ impl Core {
             (None, true) => Some(CALIBRATION_ID.to_string()),
             (None, false) => None,
         };
-        if key != f.item_key {
-            f.item_key = key;
+        // Same song, but its slice wasn't here when it started (adopted mid-show,
+        // or a re-uploaded sequence still downloading): look again, so the lights
+        // come on as soon as the download lands instead of at the next song.
+        let retry = key == f.item_key && seq_item.is_some() && f.reader.is_none();
+        if key != f.item_key || retry {
+            if key != f.item_key {
+                f.item_key = key;
+                f.clock = None;
+            }
             f.reader = None;
             f.meta = None;
             f.have_frame = false;
@@ -3028,7 +3050,6 @@ impl Core {
                     }
                 }
             }
-            f.clock = None;
         }
         if f.meta.is_none() {
             if let Some(r) = &f.reader {

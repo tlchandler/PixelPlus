@@ -508,6 +508,128 @@ async fn brightness_volume_and_lights_off_survive_a_restart() {
     again.shutdown();
 }
 
+/// A follower adopted (or given a re-uploaded sequence) while the leader plays:
+/// its slice arrives in the middle of the song. It must light up then, not
+/// stay dark until the leader moves to another item.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn follower_picks_up_a_slice_that_arrives_mid_song() {
+    let slice = std::sync::Arc::new(parking_lot::Mutex::new(None::<PathBuf>));
+    let keep = slice.clone();
+    let e = env(LocalRole::Follower, false, move |dir, show| {
+        let seq = sequence(dir, "s1", 400, 25, |f| (f / 4) as u8);
+        let map = NodeMap::build(show, "n1").unwrap();
+        // Built aside: "not downloaded yet".
+        let aside = dir.join("s1.ppseq.download");
+        pixelplus_core::ppseq::write_slice_from_path(dir.join("sequences/s1.fseq"), &map, &aside)
+            .unwrap();
+        std::fs::remove_file(dir.join("sequences/s1.fseq")).unwrap();
+        *keep.lock() = Some(aside);
+        show.sequences = vec![Sequence {
+            file: "sequences/s1.ppseq".into(),
+            ..seq
+        }];
+    })
+    .await;
+    let h = &e.engine.handle;
+    let now_ms = || e.state.started.elapsed().as_millis() as u64;
+    let packet = |pos: u64| SyncPacket {
+        leader: "leader".into(),
+        show_version: 1,
+        state: PlayerState::Playing,
+        item: Some(ItemRef {
+            kind: "sequence".into(),
+            id: "s1".into(),
+            name: "Song".into(),
+        }),
+        pos_ms: pos,
+        sent_at_ms: now_ms(),
+        anchor: None,
+        effect: None,
+        test: None,
+        brightness: 100,
+        blackout: false,
+    };
+    h.send(PlayerCmd::Sync(packet(2000))).await.unwrap();
+    assert!(
+        wait_for(1000, || e
+            .status()
+            .error
+            .is_some_and(|m| m.contains("not downloaded")))
+        .await
+    );
+    // The download finishes (renamed into place like `download_slice` does).
+    let aside = slice.lock().clone().unwrap();
+    std::fs::rename(&aside, e.dir.join("sequences/s1.ppseq")).unwrap();
+    // Sync packets keep coming for the same song.
+    let t0 = Instant::now();
+    let mut lit = false;
+    while t0.elapsed() < Duration::from_millis(3000) && !lit {
+        let pos = 4000 + t0.elapsed().as_millis() as u64;
+        h.send(PlayerCmd::Sync(packet(pos))).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        lit = uniform(&e.out(0)).is_some_and(|v| v >= 40);
+    }
+    assert!(lit, "the follower lights up once its slice is there");
+    assert!(e.status().error.is_none(), "{:?}", e.status().error);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scheduled_show_ends_a_forgotten_test_pattern() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 400, 25, |_| 10)];
+        show.playlists = vec![playlist("p1", &["s1"], 0)];
+        show.schedule.location.timezone = "UTC".into();
+        show.schedule.entries.push(ScheduleEntry {
+            id: "e".into(),
+            name: "All day".into(),
+            enabled: true,
+            playlist_id: "p1".into(),
+            days: vec![
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri,
+                Weekday::Sat,
+                Weekday::Sun,
+            ],
+            date_range: None,
+            start: TimeSpec::Clock {
+                time: "00:00".into(),
+            },
+            end: TimeSpec::Clock {
+                time: "00:00".into(),
+            },
+            priority: 0,
+            end_behavior: EndBehavior::FinishSong,
+        });
+        // Turned on later, after the afternoon test.
+        show.schedule.enabled = false;
+    })
+    .await;
+    let mut white = solid_req();
+    white.target.props.all = true;
+    white.color = Some("#ffffff".into());
+    e.engine.handle.test_start(white).await.unwrap();
+    assert!(wait_for(1000, || e.status().state == PlayerState::Testing).await);
+    assert!(wait_for(1000, || uniform(&e.out(0)) == Some(255)).await);
+    e.state
+        .store
+        .update(|s| {
+            s.schedule.enabled = true;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(
+        wait_for(3000, || e.status().state == PlayerState::Playing).await,
+        "{:?}",
+        e.status().state
+    );
+    // The sequence shows, not the solid test colour.
+    assert!(wait_for(1000, || uniform(&e.out(0)) == Some(10)).await);
+}
+
 fn empty_req() -> PlayRequest {
     PlayRequest {
         playlist_id: None,

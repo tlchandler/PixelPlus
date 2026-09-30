@@ -154,7 +154,7 @@ hostnamed; timedated `set-timezone` — not `set-time`, NTP keeps the clock):
 | Start/stop/restart `pixelplus-{tts,games,netwatch}`; restart `pixelplusd` | systemd `manage-units` |
 | Board boot config, updates, SSH on/off, re-apply `pixelplus.txt`, Wi-Fi country, `/etc/hosts` | `systemctl start --no-block pixelplus-helper@<verb>.service` (root oneshot, whitelisted verbs) |
 | Board EEPROM read/write | `/dev/i2c-1` (group `i2c`, `I2C_RDWR` works even while at24 is bound); the at24 sysfs file only if it is accessible. `new_device` (root) is never used |
-| Update check | `apt-cache policy pixelplus` (lists refreshed daily by apt and by the `update` verb) |
+| Update check | `apt-cache policy pixelplus`; the package lists are refreshed by the helper's `refresh-index` verb when an update check runs (at most every 6 h; the image turns apt's own daily timers off) |
 
 **Sidecars run as their own users, without polkit rights.**
 
@@ -198,6 +198,7 @@ Helper verbs (`packaging/bin/pixelplus-helper`), arguments `:`-separated in the 
   `pixelplus config-txt --board <board> [--pixels N]`. **No reboot**; the daemon asks the user
   and then reboots via logind.
 * `update` – `apt-get update` + upgrade `pixelplus` (postinst restarts the daemon).
+* `refresh-index` – `apt-get update` only (fresh package lists for the update check).
 * `ssh-on`, `ssh-off`, `reapply`.
 * `wifi-country:<CC>` – `raspi-config nonint do_wifi_country` (or `iw reg set`).
 * `hosts` – point `/etc/hosts`' `127.0.1.1` line at the current hostname (after the daemon

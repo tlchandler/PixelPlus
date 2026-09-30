@@ -79,11 +79,10 @@ impl Drop for PreviewGuard {
 /// The current show version and the latest `status`/`nodes`/`sensors`
 /// messages (sent on connect, and again after the client lagged behind).
 fn resync_messages(state: &AppState) -> Vec<String> {
-    let mut out =
-        vec![
-            serde_json::json!({ "type": "show", "data": { "version": state.store.version() } })
-                .to_string(),
-        ];
+    let mut out = vec![
+        serde_json::json!({ "type": "show", "data": { "version": state.store.version() } })
+            .to_string(),
+    ];
     for (kind, data) in state.services.snapshot_for_new_client() {
         out.push(serde_json::json!({ "type": kind, "data": data }).to_string());
     }

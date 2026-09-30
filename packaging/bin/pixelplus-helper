@@ -10,6 +10,8 @@
 #                               `pixelplus config-txt --board <board> [--pixels N]`.
 #                               Does NOT reboot: pixelplusd asks the user, then reboots via logind.
 #   update                      apt-get update + upgrade the pixelplus package, restart
+#   refresh-index               apt-get update only (the update check reads the package
+#                               lists; PixelPlus images disable apt's own daily timers)
 #   ssh-on | ssh-off            enable / disable the SSH server
 #   reapply                     re-apply /boot/firmware/pixelplus.txt now
 #   wifi-country:<CC>           set the Wi-Fi regulatory country (two letters)
@@ -26,6 +28,7 @@ readonly STATUS_DIR="${PIXELPLUS_HELPER_STATUS_DIR:-/run/pixelplus}"
 readonly PRIVATE_DIR="${PIXELPLUS_HELPER_PRIVATE_DIR:-/run/pixelplus-helper}"
 readonly FIRSTBOOT="${PIXELPLUS_FIRSTBOOT:-/usr/lib/pixelplus/firstboot/firstboot.py}"
 readonly HOSTS_FILE="${PIXELPLUS_HOSTS_FILE:-/etc/hosts}"
+readonly APT_GET="${PIXELPLUS_APT_GET:-apt-get}"
 
 instance="${1:-}"
 IFS=':' read -r verb arg1 arg2 extra <<<"${instance}"
@@ -84,6 +87,13 @@ update)
         pixelplus || fail "Installing the update failed"
     status ok "Up to date: $(dpkg-query -W -f='${Version}' pixelplus 2>/dev/null || echo unknown)"
     # postinst restarts pixelplusd
+    ;;
+refresh-index)
+    [[ -z "${arg1:-}" ]] || fail "refresh-index takes no arguments"
+    status running "Checking for updates"
+    export DEBIAN_FRONTEND=noninteractive
+    "${APT_GET}" update -q || fail "Couldn't check for updates (no internet?)"
+    status ok "Package lists refreshed"
     ;;
 ssh-on | ssh-off)
     [[ -z "${arg1:-}" ]] || fail "${verb} takes no arguments"

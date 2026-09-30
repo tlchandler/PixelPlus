@@ -79,11 +79,16 @@ pub async fn check(state: &AppState) -> UpdateInfo {
         info.message = Some("Updates are installed with the PixelPlus Imager or your package manager on this computer.".into());
         return info;
     }
-    if is_root() && !platform::helper_installed() {
+    if platform::helper_installed() {
+        // PixelPlus images turn apt's daily timers off, so nothing else refreshes
+        // the package lists `apt-cache policy` reads: without this an update would
+        // never show up. At most every few hours, through the root helper, waiting
+        // a little for it (offline: the check just uses the lists it has).
+        refresh_index_via_helper(state).await;
+    } else if is_root() {
         // Development machine running as root: refresh the index in the background
         // (at most every few hours; ignore failures: offline) so opening Settings
-        // never waits for `apt-get update`. As the service user the lists are
-        // refreshed daily by apt, and by the helper.
+        // never waits for `apt-get update`.
         refresh_index_in_background();
     }
     match run(
@@ -125,6 +130,31 @@ const INDEX_REFRESH: Duration = Duration::from_secs(6 * 3600);
 /// Whether the index refresh is due (`last` = previous refresh of this process).
 fn index_refresh_due(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
     last.map_or(true, |t| now.duration_since(t) >= INDEX_REFRESH)
+}
+
+/// Last package-list refresh started through the helper (this daemon run).
+static HELPER_REFRESH: parking_lot::Mutex<Option<std::time::Instant>> =
+    parking_lot::Mutex::new(None);
+
+async fn refresh_index_via_helper(state: &AppState) {
+    let now = std::time::Instant::now();
+    {
+        let mut last = HELPER_REFRESH.lock();
+        if !index_refresh_due(*last, now) {
+            return;
+        }
+        *last = Some(now);
+    }
+    let quiet = HelperOpts { quiet: true };
+    match platform::run_helper(state, HelperVerb::RefreshIndex, quiet).await {
+        Ok(job) => {
+            let done = job.wait(Duration::from_secs(45)).await;
+            if done.state != platform::HelperState::Ok {
+                tracing::info!("update check: {}", done.message);
+            }
+        }
+        Err(e) => tracing::info!("update check: {}", e.message),
+    }
 }
 
 fn refresh_index_in_background() {

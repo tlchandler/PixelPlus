@@ -524,6 +524,8 @@ pub async fn apply(new: NetworkConfig, state: AppState) -> ApiResult<NetworkConf
         tokio::time::sleep(Duration::from_millis(700)).await;
         let mut problems: Vec<String> = Vec::new();
         if new.hostname != current.hostname {
+            // Pages open at <old>.local keep working for a while (Host allow-list).
+            crate::api::security::remember_previous_hostname(&current.hostname);
             if let Err(e) = platform::set_hostname(&state, &new.hostname).await {
                 problems.push(format!("the name couldn't be changed ({e})"));
             }

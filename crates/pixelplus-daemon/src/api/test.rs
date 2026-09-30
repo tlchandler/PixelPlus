@@ -98,7 +98,7 @@ pub struct FaultSession {
 /// One running fault-finder session (per daemon).
 #[derive(Default)]
 pub struct FaultState {
-    session: Mutex<Option<FaultSession>>,
+    pub(crate) session: Mutex<Option<FaultSession>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -153,7 +153,18 @@ fn step_of(session: &str, prop_id: &str, ff: &FaultFinder) -> FaultStep {
 }
 
 pub async fn stop_fault_session(state: &AppState) {
-    let old = state.services.faults.session.lock().take();
+    stop_fault_session_if(state, None).await
+}
+
+/// Stop the running session (only session `id`, when given).
+async fn stop_fault_session_if(state: &AppState, id: Option<&str>) {
+    let old = {
+        let mut session = state.services.faults.session.lock();
+        match (session.as_ref(), id) {
+            (Some(s), Some(id)) if s.id != id => None,
+            _ => session.take(),
+        }
+    };
     if let Some(s) = old {
         s.task.abort();
         if let Some(p) = state.services.player.get() {
@@ -224,12 +235,36 @@ async fn fault_start(
         let finder = finder.clone();
         let prop_id = prop.id.clone();
         let n = prop.pixel_count as usize * 3;
+        let state = state.clone();
+        let session_id = id.clone();
         tokio::spawn(async move {
             let started = std::time::Instant::now();
             let mut tick = tokio::time::interval(Duration::from_millis(50));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // A session left open (phone put away) must not cover the show: it
+            // ends when a show window begins after it started.
+            let window = |p: &crate::player::PlayerHandle| {
+                p.status()
+                    .schedule_entry
+                    .map(|w| format!("{}@{}", w.id, w.ends_at))
+            };
+            let window_at_start = window(&p);
+            let mut ticks: u32 = 0;
             loop {
                 tick.tick().await;
+                ticks = ticks.wrapping_add(1);
+                if ticks % 20 == 0 {
+                    let now = window(&p);
+                    if now.is_some() && now != window_at_start {
+                        tracing::info!("the show started: ending the fault finder");
+                        // Not from this task: stopping aborts it.
+                        let st = state.clone();
+                        tokio::spawn(
+                            async move { stop_fault_session_if(&st, Some(&session_id)).await },
+                        );
+                        break;
+                    }
+                }
                 let mut rgb = vec![0u8; n];
                 finder
                     .lock()

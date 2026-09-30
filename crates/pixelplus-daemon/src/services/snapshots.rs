@@ -188,11 +188,25 @@ pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> Ap
     })
     .await
     .map_err(ApiError::internal)?
-    .map_err(|e| ApiError::internal(format!("couldn't save the snapshot: {e:#}")))?;
+    .map_err(|e| ApiError::internal(format!("couldn't save the snapshot: {e:#}")));
+    // The compressor's working memory (tens of MB) is freed, but glibc keeps it
+    // in the blocking thread's arena: without this the daemon grows ~10 MB per
+    // snapshot (up to the arena limit) on a 512 MB Pi Zero 2.
+    release_free_memory();
+    let snap = snap?;
     if auto {
         prune(state).await;
     }
     Ok(snap)
+}
+
+/// Hand memory freed by large, short-lived work back to the OS.
+pub fn release_free_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: malloc_trim only releases free heap memory; no pointers are involved.
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
 
 fn append_bytes<W: std::io::Write>(
@@ -392,7 +406,9 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
     })
     .await
     .map_err(ApiError::internal)?
-    .map_err(ApiError::bad_request)?;
+    .map_err(ApiError::bad_request);
+    release_free_memory();
+    let show = show?;
     // Keep this device's security settings and its own leader node identity.
     // File paths come from the archive: rebuild them from ids (services::paths;
     // the store does it too).

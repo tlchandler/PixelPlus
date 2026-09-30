@@ -213,8 +213,11 @@ impl SliceCache {
                     return Err(SliceError::MissingFile(job.fseq.display().to_string()));
                 }
                 let started = std::time::Instant::now();
-                pixelplus_core::ppseq::write_slice_from_path(&job.fseq, &job.map, &path)
-                    .map_err(|e| SliceError::Generate(e.to_string()))?;
+                let written =
+                    pixelplus_core::ppseq::write_slice_from_path(&job.fseq, &job.map, &path);
+                // zstd working memory: give it back (see snapshots::release_free_memory).
+                crate::services::snapshots::release_free_memory();
+                written.map_err(|e| SliceError::Generate(e.to_string()))?;
                 tracing::debug!(
                     "built slice {} for node {} in {:?}",
                     job.seq_id,

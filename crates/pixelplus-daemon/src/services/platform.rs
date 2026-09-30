@@ -115,6 +115,9 @@ pub enum HelperVerb {
     },
     /// apt-get update + upgrade the pixelplus package.
     Update,
+    /// apt-get update only: refresh the package lists the update check reads
+    /// (PixelPlus images turn apt's daily timers off).
+    RefreshIndex,
     SshOn,
     SshOff,
     /// Re-apply `/boot/firmware/pixelplus.txt` now.
@@ -138,6 +141,7 @@ impl HelperVerb {
         match self {
             HelperVerb::ConfigTxt { .. } => "config-txt",
             HelperVerb::Update => "update",
+            HelperVerb::RefreshIndex => "refresh-index",
             HelperVerb::SshOn => "ssh-on",
             HelperVerb::SshOff => "ssh-off",
             HelperVerb::Reapply => "reapply",
@@ -194,6 +198,7 @@ impl HelperVerb {
             }
             HelperVerb::ConfigTxt { board, .. } => format!("Writing the boot settings for {board}"),
             HelperVerb::Update => "Installing the update".into(),
+            HelperVerb::RefreshIndex => "Checking for updates".into(),
             HelperVerb::SshOn => "Turning SSH on".into(),
             HelperVerb::SshOff => "Turning SSH off".into(),
             HelperVerb::Reapply => "Applying pixelplus.txt".into(),
@@ -473,6 +478,7 @@ pub async fn run_helper(
     Err(not_possible_here(match verb {
         HelperVerb::ConfigTxt { .. } => "change the boot settings",
         HelperVerb::Update => "install updates",
+        HelperVerb::RefreshIndex => "check for updates",
         HelperVerb::SshOn | HelperVerb::SshOff => "change SSH",
         HelperVerb::Reapply => "apply pixelplus.txt",
         HelperVerb::WifiCountry(_) => "set the Wi-Fi country",
@@ -566,6 +572,7 @@ fn direct_precheck(verb: &HelperVerb) -> ApiResult<()> {
                 "Boot settings can only be changed on a PixelPlus Pi image (the PixelPlus boot tools aren't installed).",
             ))
         }
+        HelperVerb::RefreshIndex if !have("apt-get") => Err(not_possible_here("check for updates")),
         HelperVerb::Update if !(have("apt-get") && has_systemd() && have("systemd-run")) => {
             Err(ApiError::forbidden(
                 "This PixelPlus can't update itself. Run: sudo apt install --only-upgrade pixelplus",
@@ -625,6 +632,16 @@ async fn direct(verb: &HelperVerb) -> Result<String, String> {
             )
             .await?;
             Ok("pixelplus.txt applied".into())
+        }
+        HelperVerb::RefreshIndex => {
+            ok_or(
+                "apt-get",
+                &["update", "-q"],
+                Duration::from_secs(120),
+                "Checking for updates",
+            )
+            .await?;
+            Ok("Package lists refreshed".into())
         }
         HelperVerb::Update => {
             ok_or(
@@ -906,6 +923,11 @@ mod tests {
         .instance()
         .is_err());
         assert_eq!(HelperVerb::Update.instance().unwrap(), "update");
+        // The helper script's verb (packaging/bin/pixelplus-helper).
+        assert_eq!(
+            HelperVerb::RefreshIndex.unit().unwrap(),
+            "pixelplus-helper@refresh-index.service"
+        );
         assert_eq!(
             HelperVerb::SshOff.unit().unwrap(),
             "pixelplus-helper@ssh-off.service"
@@ -922,6 +944,7 @@ mod tests {
                 pixels: Some(800),
             },
             HelperVerb::Update,
+            HelperVerb::RefreshIndex,
             HelperVerb::SshOn,
             HelperVerb::Reapply,
             HelperVerb::Hosts,

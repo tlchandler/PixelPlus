@@ -1,0 +1,1196 @@
+{
+ "version": 26,
+ "name": "E2E Show",
+ "nodes": [
+  {
+   "id": "f480imdjjw",
+   "name": "Main",
+   "hostname": "vm",
+   "role": "leader",
+   "board": "difftxlarge",
+   "outputs": [
+    {
+     "index": 1,
+     "label": "J1-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 2,
+     "label": "J1-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 3,
+     "label": "J1-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 4,
+     "label": "J1-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 5,
+     "label": "J2-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 6,
+     "label": "J2-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 7,
+     "label": "J2-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 8,
+     "label": "J2-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 9,
+     "label": "J3-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 10,
+     "label": "J3-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 11,
+     "label": "J3-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 12,
+     "label": "J3-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 13,
+     "label": "J4-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 14,
+     "label": "J4-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 15,
+     "label": "J4-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 16,
+     "label": "J4-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 17,
+     "label": "J5-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 18,
+     "label": "J5-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 19,
+     "label": "J5-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 20,
+     "label": "J5-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 21,
+     "label": "J6-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 22,
+     "label": "J6-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 23,
+     "label": "J6-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 24,
+     "label": "J6-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 25,
+     "label": "J7-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 26,
+     "label": "J7-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 27,
+     "label": "J7-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 28,
+     "label": "J7-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 29,
+     "label": "J8-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 30,
+     "label": "J8-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 31,
+     "label": "J8-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 32,
+     "label": "J8-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 33,
+     "label": "J9-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 34,
+     "label": "J9-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 35,
+     "label": "J9-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 36,
+     "label": "J9-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 37,
+     "label": "J10-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 38,
+     "label": "J10-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 39,
+     "label": "J10-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 40,
+     "label": "J10-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 41,
+     "label": "J11-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 42,
+     "label": "J11-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 43,
+     "label": "J11-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 44,
+     "label": "J11-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 45,
+     "label": "J12-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 46,
+     "label": "J12-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 47,
+     "label": "J12-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 48,
+     "label": "J12-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 49,
+     "label": "J13-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 50,
+     "label": "J13-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 51,
+     "label": "J13-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 52,
+     "label": "J13-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 53,
+     "label": "J14-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 54,
+     "label": "J14-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 55,
+     "label": "J14-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 56,
+     "label": "J14-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 57,
+     "label": "J15-1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 58,
+     "label": "J15-2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 59,
+     "label": "J15-3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 60,
+     "label": "J15-4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    }
+   ],
+   "adopted": true
+  },
+  {
+   "id": "4ta5q255hl",
+   "name": "Porch",
+   "hostname": "vm",
+   "role": "follower",
+   "board": "difftx",
+   "outputs": [
+    {
+     "index": 1,
+     "label": "Port 1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 2,
+     "label": "Port 2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 3,
+     "label": "Port 3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 4,
+     "label": "Port 4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    }
+   ],
+   "adopted": true
+  },
+  {
+   "id": "2rf41ucw33",
+   "name": "Garage",
+   "hostname": "vm",
+   "role": "follower",
+   "board": "difftx",
+   "outputs": [
+    {
+     "index": 1,
+     "label": "Port 1",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 2,
+     "label": "Port 2",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 3,
+     "label": "Port 3",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    },
+    {
+     "index": 4,
+     "label": "Port 4",
+     "pixelType": "ws2811",
+     "colorOrder": "RGB",
+     "brightness": 100,
+     "gamma": 1.0,
+     "enabled": true
+    }
+   ],
+   "adopted": true
+  }
+ ],
+ "receivers": [
+  {
+   "id": "rx1",
+   "name": "Garage receiver",
+   "kind": "diffrx",
+   "nodeId": "f480imdjjw",
+   "jack": 2,
+   "fuseAmps": 6
+  }
+ ],
+ "props": [
+  {
+   "id": "o5i0zqyefx",
+   "name": "Big Arch",
+   "kind": "arch",
+   "pixelCount": 100,
+   "xlightsModel": "Big Arch",
+   "channelStart": 0,
+   "channelsPerPixel": 3,
+   "segments": [
+    {
+     "nodeId": "4ta5q255hl",
+     "output": 1,
+     "startPixel": 0,
+     "pixelCount": 100,
+     "propOffset": 0,
+     "reverse": false,
+     "nullPixels": 0
+    }
+   ],
+   "groupIds": [
+    "3c7o4rv71i",
+    "0spldb52g0"
+   ],
+   "layout": {
+    "x": 375.11566,
+    "y": 342.87146,
+    "w": 299.76868,
+    "h": 145.17506,
+    "rotation": 0.0,
+    "points": [
+     [
+      0.0,
+      0.99187416
+     ],
+     [
+      0.003082618,
+      0.91099495
+     ],
+     [
+      0.009228918,
+      0.8308645
+     ],
+     [
+      0.018401029,
+      0.7519771
+     ]
+    ]
+   },
+   "color": "#FF8000"
+  },
+  {
+   "id": "59urvt6q05",
+   "name": "Canes",
+   "kind": "candycane",
+   "pixelCount": 100,
+   "xlightsModel": "Canes",
+   "channelStart": 300,
+   "channelsPerPixel": 3,
+   "segments": [
+    {
+     "nodeId": "4ta5q255hl",
+     "output": 2,
+     "startPixel": 0,
+     "pixelCount": 100,
+     "propOffset": 0,
+     "reverse": false,
+     "nullPixels": 0
+    }
+   ],
+   "groupIds": [
+    "3c7o4rv71i",
+    "0spldb52g0"
+   ],
+   "layout": {
+    "x": 385.83334,
+    "y": 562.87585,
+    "w": 238.04672,
+    "h": 126.35193,
+    "rotation": 0.0,
+    "points": [
+     [
+      1.0,
+      0.14272982
+     ],
+     [
+      0.9905583,
+      0.0900541
+     ],
+     [
+      0.97266775,
+      0.045838226
+     ],
+     [
+      0.94820887,
+      0.014730092
+     ]
+    ]
+   }
+  },
+  {
+   "id": "9atd91t4em",
+   "name": "Snowflake 3D",
+   "kind": "custom",
+   "pixelCount": 6,
+   "xlightsModel": "Snowflake 3D",
+   "channelStart": 600,
+   "channelsPerPixel": 3,
+   "segments": [
+    {
+     "nodeId": "4ta5q255hl",
+     "output": 3,
+     "startPixel": 0,
+     "pixelCount": 6,
+     "propOffset": 0,
+     "reverse": false,
+     "nullPixels": 0
+    }
+   ],
+   "groupIds": [],
+   "layout": {
+    "x": 860.0,
+    "y": 277.75583,
+    "w": 30.0,
+    "h": 30.0,
+    "rotation": 0.0,
+    "points": [
+     [
+      0.5,
+      0.0
+     ],
+     [
+      0.0,
+      0.5
+     ],
+     [
+      1.0,
+      0.5
+     ],
+     [
+      0.5,
+      1.0
+     ]
+    ]
+   },
+   "matrix": {
+    "width": 6,
+    "height": 3,
+    "pixelMap": [
+     -1,
+     0,
+     -1,
+     -1
+    ]
+   }
+  }
+ ],
+ "propGroups": [
+  {
+   "id": "3c7o4rv71i",
+   "name": "Front Yard",
+   "propIds": [
+    "o5i0zqyefx",
+    "59urvt6q05",
+    "vxe3dq7stz",
+    "v7t2nizxth"
+   ]
+  },
+  {
+   "id": "0spldb52g0",
+   "name": "Everything",
+   "propIds": [
+    "o5i0zqyefx",
+    "59urvt6q05",
+    "vxe3dq7stz",
+    "v7t2nizxth",
+    "j9kfpmo20s",
+    "zv2x2ic1m1",
+    "0kee1a2g51"
+   ]
+  }
+ ],
+ "sequences": [
+  {
+   "id": "hhhikru5q4",
+   "name": "E2E Song",
+   "file": "sequences/hhhikru5q4.fseq",
+   "durationMs": 20000,
+   "frameMs": 50,
+   "channelCount": 16922,
+   "mediaId": "y8oxh61pmk",
+   "xlightsName": "E2E Song.fseq",
+   "thumbnail": "thumbnails/hhhikru5q4.png",
+   "hash": "f376ca5871bf9c7ae3a713d90020d5b9d07ce6880e1f546bb8be96caaf7717a9"
+  },
+  {
+   "id": "pab181bt63",
+   "name": "Short One",
+   "file": "sequences/pab181bt63.fseq",
+   "durationMs": 5000,
+   "frameMs": 25,
+   "channelCount": 16922,
+   "mediaId": "3by2crcnf0",
+   "xlightsName": "Short One.fseq",
+   "thumbnail": "thumbnails/pab181bt63.png",
+   "hash": "6f09530d82010cd784f077848e09571805ab5625a84093036d936daa5ade2857"
+  }
+ ],
+ "media": [
+  {
+   "id": "y8oxh61pmk",
+   "name": "E2E Song",
+   "kind": "song",
+   "file": "media/y8oxh61pmk.wav",
+   "durationMs": 20000,
+   "loudnessLufs": -17.6,
+   "gainDb": 1.6
+  },
+  {
+   "id": "3by2crcnf0",
+   "name": "Short One",
+   "kind": "song",
+   "file": "media/3by2crcnf0.wav",
+   "durationMs": 5000,
+   "loudnessLufs": -17.7,
+   "gainDb": 1.7
+  },
+  {
+   "id": "3y3so4pbew",
+   "name": "DJ: Welcome",
+   "kind": "dj",
+   "file": "media/3y3so4pbew.wav",
+   "durationMs": 2000,
+   "loudnessLufs": -17.5,
+   "gainDb": 1.5
+  }
+ ],
+ "djClips": [
+  {
+   "id": "w31sm3w2y2",
+   "name": "Welcome",
+   "lines": [
+    {
+     "voice": "nick",
+     "text": "Welcome to the E2E show!",
+     "pauseMs": 0
+    }
+   ],
+   "dynamic": false,
+   "mediaId": "3y3so4pbew",
+   "speed": 1.0
+  }
+ ],
+ "djVoices": [
+  {
+   "id": "nick",
+   "name": "Nick",
+   "description": "Male DJ - warm, upbeat, classic radio baritone",
+   "blend": {
+    "am_echo": 0.3,
+    "am_fenrir": 0.3,
+    "am_puck": 0.4
+   },
+   "speed": 1.05,
+   "lang": "en-us",
+   "eq": "equalizer=f=150:t=q:w=1.0:g=2.5,equalizer=f=3200:t=q:w=1.2:g=2",
+   "defaultEnergy": 0.4,
+   "energy": {
+    "boost": 3.0,
+    "ceiling": 3.0,
+    "lift": 3.0,
+    "maxLift": 9.0,
+    "pitch": 1.5,
+    "range": 1.5,
+    "speed": 1.0,
+    "stretch": 1.0
+   }
+  },
+  {
+   "id": "holly",
+   "name": "Holly",
+   "description": "Female DJ - bright, friendly, energetic",
+   "blend": {
+    "af_heart": 0.5,
+    "af_kore": 0.5
+   },
+   "speed": 1.05,
+   "lang": "en-us",
+   "eq": "equalizer=f=220:t=q:w=1.0:g=1.5,equalizer=f=4000:t=q:w=1.2:g=2",
+   "defaultEnergy": 0.4,
+   "energy": {
+    "boost": 3.0,
+    "ceiling": 3.0,
+    "lift": 2.5,
+    "maxLift": 8.0,
+    "pitch": 2.0,
+    "range": 1.5,
+    "speed": 1.1,
+    "stretch": 1.05
+   }
+  }
+ ],
+ "pronunciations": [
+  {
+   "word": "Noel",
+   "say": "/no\u028a\u02c8\u025bl/"
+  },
+  {
+   "word": "The First Noel",
+   "say": "/\u00f0\u0259 f\u02c8\u025c\u02d0st no\u028a\u02c8\u025bl/"
+  },
+  {
+   "word": "Joyeux Noel",
+   "say": "/\u0292w\u0251j\u02c8\u028c no\u028a\u02c8\u025bl/"
+  }
+ ],
+ "effects": [
+  {
+   "id": "builtin-warm-white-twinkle",
+   "name": "Warm White Twinkle",
+   "effect": "twinkle",
+   "params": {
+    "colors": [
+     "#ffb46b"
+    ],
+    "density": 0.5,
+    "glow": 0.25,
+    "speed": 0.6
+   },
+   "target": {
+    "all": true,
+    "propIds": [],
+    "groupIds": []
+   }
+  },
+  {
+   "id": "builtin-candy-cane-chase",
+   "name": "Candy Cane Chase",
+   "effect": "candycane",
+   "params": {
+    "brightness": 80.0,
+    "colors": [
+     "#ff0000",
+     "#ffffff"
+    ],
+    "speed": 4.0,
+    "stripeWidth": 4.0
+   },
+   "target": {
+    "all": true,
+    "propIds": [],
+    "groupIds": []
+   }
+  },
+  {
+   "id": "builtin-classic-christmas",
+   "name": "Classic Christmas Colors",
+   "effect": "chase",
+   "params": {
+    "colors": [
+     "#ff0000",
+     "#00b000",
+     "#0030ff",
+     "#ff6a00",
+     "#ff00a0"
+    ],
+    "fade": false,
+    "gap": 0.0,
+    "size": 1.0,
+    "speed": 0.0
+   },
+   "target": {
+    "all": true,
+    "propIds": [],
+    "groupIds": []
+   }
+  }
+ ],
+ "playlists": [
+  {
+   "id": "hd1rhb6z1p",
+   "name": "Main Show",
+   "items": [
+    {
+     "type": "sequence",
+     "id": "it1",
+     "sequenceId": "hhhikru5q4"
+    },
+    {
+     "type": "dj",
+     "id": "it2",
+     "djClipId": "w31sm3w2y2"
+    },
+    {
+     "type": "pause",
+     "id": "it3",
+     "durationMs": 1500
+    },
+    {
+     "type": "effect",
+     "id": "it4",
+     "effectId": "builtin-candy-cane-chase",
+     "durationMs": 3000
+    }
+   ],
+   "intro": [],
+   "outro": [],
+   "shuffle": false,
+   "repeat": true,
+   "crossfadeMs": 0
+  }
+ ],
+ "schedule": {
+  "enabled": true,
+  "location": {
+   "lat": 40.7128,
+   "lon": -74.006,
+   "timezone": "America/New_York",
+   "label": "New York"
+  },
+  "entries": [
+   {
+    "id": "e2e-now",
+    "name": "E2E tonight",
+    "enabled": true,
+    "playlistId": "hd1rhb6z1p",
+    "days": [
+     "mon",
+     "tue",
+     "wed",
+     "thu",
+     "fri",
+     "sat",
+     "sun"
+    ],
+    "start": {
+     "kind": "clock",
+     "time": "10:11"
+    },
+    "end": {
+     "kind": "clock",
+     "time": "11:43"
+    },
+    "priority": 1,
+    "endBehavior": "stopNow"
+   }
+  ]
+ },
+ "settings": {
+  "audio": {
+   "device": "default",
+   "volume": 80,
+   "normalize": true,
+   "targetLufs": -16.0,
+   "outputDelayMs": 0
+  },
+  "alerts": {
+   "rules": {
+    "tempC": 60.0,
+    "voltageMin": 11.0,
+    "followerOffline": true,
+    "showFailure": true
+   },
+   "ntfy": {
+    "server": "",
+    "topic": "xmas-lights"
+   }
+  },
+  "mqtt": {
+   "enabled": false,
+   "host": "ha.local",
+   "port": 1883,
+   "baseTopic": "pixelplus",
+   "homeAssistantDiscovery": true,
+   "username": "pp",
+   "password": "secret"
+  },
+  "requests": {
+   "enabled": true,
+   "maxQueue": 5,
+   "title": "Pick a song",
+   "message": "Tune to 88.1",
+   "radioFrequency": "88.3 FM"
+  },
+  "tts": {
+   "mode": "auto"
+  },
+  "oled": {
+   "enabled": false
+  },
+  "security": {},
+  "triggers": [
+   {
+    "id": "t1",
+    "name": "Big red button",
+    "kind": "gpio",
+    "gpio": 17,
+    "action": {
+     "type": "playPlaylist",
+     "ref": "hd1rhb6z1p"
+    }
+   }
+  ],
+  "games": {
+   "enabled": false,
+   "port": 8088,
+   "gameSeconds": 60,
+   "cooldownMinutes": 5,
+   "levels": "",
+   "playWindow": "duringShow",
+   "pauseShow": true,
+   "santaHat": true,
+   "arcadeMode": false,
+   "arcadeMinutes": 0,
+   "arcadeIdleSeconds": 600,
+   "publicUrl": "",
+   "inviteEveryMinutes": 5,
+   "inviteStyle": "text",
+   "inviteFlashes": 3,
+   "inviteColor": "#ff0000",
+   "scaleMode": "fit",
+   "outputFps": 40,
+   "brightness": 100,
+   "volume": 80,
+   "crop": [
+    8,
+    32,
+    256,
+    224
+   ]
+  },
+  "output": {
+   "latchAlign": false
+  },
+  "units": {
+   "temperature": "f"
+  }
+ }
+}

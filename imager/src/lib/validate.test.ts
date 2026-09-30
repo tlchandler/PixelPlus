@@ -12,6 +12,12 @@ describe('validate', () => {
 		expect(validate(s).map((e) => e.field)).toEqual(['wifiPassword', 'wifiCountry', 'hostname', 'sshPassword']);
 	});
 
+	it('needs the 6-character web password the Pi requires', () => {
+		const s = emptySettings({ country: 'US', timezone: 'America/Chicago' });
+		expect(validate({ ...s, uiPassword: '12345' }).map((e) => e.field)).toEqual(['uiPassword']);
+		expect(validate({ ...s, uiPassword: '123456' })).toEqual([]);
+	});
+
 	it('accepts hex PSKs and unicode SSIDs', () => {
 		const s = { ...emptySettings({ country: 'GB' }), wifiSsid: 'Café ✨', wifiPassword: 'ab'.repeat(32) };
 		expect(validate(s)).toEqual([]);

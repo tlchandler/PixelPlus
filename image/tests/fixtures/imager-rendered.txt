@@ -120,7 +120,11 @@ hotspot=on
 
 # Password of the setup hotspot (8 to 63 characters). The default is
 #   pixelplus
-# Use "none" for an open hotspot without a password.
+# but only until this Pi has been online once: after that the hotspot uses
+# the Pi's own password, written to PIXELPLUS-HOTSPOT.txt on this card (and
+# shown in PixelPlus under Settings > Network), unless you set one here.
+# Use "none" for an open hotspot during the first setup (it never stays open
+# once the Pi has been online).
 hotspot_password=pixelplus
 
 # Seconds to wait for Wi-Fi at power-on before opening the hotspot.

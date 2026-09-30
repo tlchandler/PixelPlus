@@ -57,6 +57,24 @@ class HelperTests(unittest.TestCase):
         with open(self.calls) as f:
             self.assertIn("board-config --board difftxlarge --pixels 1600", f.read())
 
+    def test_refresh_index_runs_apt_get_update_only(self):
+        # PixelPlus images disable apt's daily timers: the update check needs this.
+        apt = os.path.join(self.tmp, "apt-get")
+        with open(apt, "w") as f:
+            f.write(f"#!/bin/sh\necho \"$@\" >> {self.calls}\nexit ${{APT_FAIL:-0}}\n")
+        os.chmod(apt, 0o755)
+        self.env["PIXELPLUS_APT_GET"] = apt
+        r = self.run_helper("refresh-index")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.status_of("refresh-index")["state"], "ok")
+        with open(self.calls) as f:
+            self.assertEqual(f.read().split(), ["update", "-q"])
+        self.env["APT_FAIL"] = "100"
+        r = self.run_helper("refresh-index")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.status_of("refresh-index")["state"], "failed")
+        self.assertNotEqual(self.run_helper("refresh-index:x").returncode, 0)
+
     def test_config_txt_failure_is_reported(self):
         r = self.run_helper("config-txt:broken")
         self.assertNotEqual(r.returncode, 0)

@@ -57,6 +57,11 @@ impl ShowStore {
                                 backup.display(),
                                 bak.display()
                             );
+                            // Put it back in place now: the next save copies
+                            // show.json to .bak, which must not be the broken file.
+                            if let Err(e) = std::fs::copy(&bak, path) {
+                                tracing::warn!("could not restore {}: {e}", path.display());
+                            }
                             show
                         }
                         None => {
@@ -221,6 +226,18 @@ mod tests {
         std::fs::write(&path, b"{\"version\": 3, \"na").unwrap();
         let reloaded = ShowStore::load(&path, EventBus::new()).unwrap();
         assert_eq!(reloaded.get().name, "First", "the previous save is used");
+        // Saving after the recovery keeps a good .bak (not the broken file) ...
+        reloaded
+            .update(|s| {
+                s.name = "Recovered".into();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        // ... so a second torn write still loses nothing but the last change.
+        std::fs::write(&path, b"").unwrap();
+        let again = ShowStore::load(&path, EventBus::new()).unwrap();
+        assert_eq!(again.get().name, "First");
         // The broken file is kept aside.
         let kept = std::fs::read_dir(&dir)
             .unwrap()
@@ -228,6 +245,7 @@ mod tests {
             .any(|e| e.file_name().to_string_lossy().contains("corrupt-"));
         assert!(kept);
         // Neither readable: start fresh (still no panic).
+        std::fs::write(&path, b"garbage").unwrap();
         std::fs::write(path.with_extension("json.bak"), b"garbage").unwrap();
         let fresh = ShowStore::load(&path, EventBus::new()).unwrap();
         assert_eq!(fresh.get().name, Show::default().name);

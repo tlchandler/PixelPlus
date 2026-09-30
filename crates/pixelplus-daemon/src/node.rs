@@ -45,8 +45,8 @@ impl NodeIdentity {
                 Ok(me) => return Ok(me),
                 Err(e) => {
                     // A torn write (power cut) must not keep the daemon from
-                    // starting: use the previous version, else start over (the
-                    // controller then has to be set up / adopted again).
+                    // starting: use the copy (`.bak` holds the same content), else
+                    // start over (the controller then has to be set up / adopted again).
                     let aside = path.with_extension(format!(
                         "corrupt-{}.json",
                         chrono::Utc::now().format("%Y%m%d%H%M%S")
@@ -58,7 +58,7 @@ impl NodeIdentity {
                         .and_then(|t| serde_json::from_str::<NodeIdentity>(&t).ok())
                     {
                         tracing::error!(
-                            "{e:#}; kept a copy in {} and used the previous version",
+                            "{e:#}; kept a copy in {} and used the backup copy",
                             aside.display()
                         );
                         me.save(path)?;
@@ -86,21 +86,27 @@ impl NodeIdentity {
         Ok(me)
     }
 
-    /// Write atomically (temp file + fsync + rename), keeping one `.bak`.
+    /// Write atomically (temp file + fsync + rename) twice: `.bak` first, then
+    /// `node.json`, so a power cut while writing either leaves the other one
+    /// complete *and current* (an older identity would lose the role, the
+    /// leader or the cluster key of the last change).
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
-        use std::io::Write;
-        let tmp: PathBuf = path.with_extension("json.tmp");
-        {
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(&serde_json::to_vec_pretty(self)?)?;
-            f.sync_all()?;
-        }
-        if path.exists() {
-            std::fs::copy(path, path.with_extension("json.bak")).ok();
-        }
-        std::fs::rename(tmp, path)?;
-        Ok(())
+        let json = serde_json::to_vec_pretty(self)?;
+        write_synced(&path.with_extension("json.bak"), &json)?;
+        write_synced(path, &json)
     }
+}
+
+fn write_synced(path: &Path, data: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    let tmp: PathBuf = path.with_extension("tmp");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(tmp, path)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -109,8 +115,7 @@ mod tests {
 
     #[test]
     fn corrupt_identity_uses_the_backup_or_starts_over() {
-        let dir =
-            std::env::temp_dir().join(format!("pp-node-{}", pixelplus_core::model::new_id()));
+        let dir = std::env::temp_dir().join(format!("pp-node-{}", pixelplus_core::model::new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("node.json");
         let mut me = NodeIdentity::load_or_create(&path).unwrap();
@@ -121,8 +126,13 @@ mod tests {
         me.save(&path).unwrap();
         std::fs::write(&path, b"").unwrap(); // torn write
         let back = NodeIdentity::load_or_create(&path).unwrap();
-        assert_eq!(back.id, me.id);
-        assert_eq!(back.leader_id.as_deref(), Some("lead"));
+        assert_eq!(
+            back, me,
+            "the latest identity, not the one before the last change"
+        );
+        // And again (the recovery must not have spoilt the copy).
+        std::fs::write(&path, b"{\"id\":").unwrap();
+        assert_eq!(NodeIdentity::load_or_create(&path).unwrap(), me);
         // Both unreadable: a new identity instead of a daemon that never starts.
         std::fs::write(&path, b"{").unwrap();
         std::fs::write(path.with_extension("json.bak"), b"{").unwrap();

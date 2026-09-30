@@ -390,7 +390,9 @@ mod tests {
         let s = show_with_songs();
         let ip: Option<IpAddr> = Some("10.0.0.5".parse().unwrap());
         let t = Instant::now();
-        let (r, pos) = q.submit(&s, "s1", Some("  Tom\u{7} "), ip, t, true).unwrap();
+        let (r, pos) = q
+            .submit(&s, "s1", Some("  Tom\u{7} "), ip, t, true)
+            .unwrap();
         assert_eq!(pos, 1);
         assert_eq!(r.requested_by.as_deref(), Some("Tom"));
         assert_eq!(
@@ -410,7 +412,9 @@ mod tests {
         let mut closed = s.clone();
         closed.settings.requests.enabled = false;
         assert_eq!(
-            q.submit(&closed, "s4", None, None, t, true).unwrap_err().code,
+            q.submit(&closed, "s4", None, None, t, true)
+                .unwrap_err()
+                .code,
             "requests_closed"
         );
     }
