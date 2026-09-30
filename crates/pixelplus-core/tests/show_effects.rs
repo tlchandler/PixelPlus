@@ -10,6 +10,7 @@ use std::time::Instant;
 
 fn prop(id: &str, kind: PropKind, n: u32, x: f32, y: f32, w: f32, h: f32) -> Prop {
     Prop {
+        suspect_pixels: Default::default(),
         id: id.into(),
         name: id.into(),
         kind,
@@ -21,6 +22,7 @@ fn prop(id: &str, kind: PropKind, n: u32, x: f32, y: f32, w: f32, h: f32) -> Pro
         segments: vec![],
         group_ids: vec![],
         layout: Some(PropLayout {
+            source: Default::default(),
             x,
             y,
             w,

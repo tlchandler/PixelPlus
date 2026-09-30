@@ -468,7 +468,8 @@ export const EFFECT_META: Record<EffectKind, { label: string; blurb: string }> =
 	wave: { label: 'Wave', blurb: 'Smooth waves of color rolling across the display.' },
 	meteor: { label: 'Meteor', blurb: 'Shooting stars with fading tails.' },
 	strobe: { label: 'Strobe', blurb: 'Fast flashes.' },
-	breathe: { label: 'Breathe', blurb: 'Slowly brightens and dims, like breathing.' }
+	breathe: { label: 'Breathe', blurb: 'Slowly brightens and dims, like breathing.' },
+	countdown: { label: 'Countdown', blurb: 'Show-start countdown (a playlist item).' }
 };
 
 export function defaultParams(schema: ParamSpec[]): EffectParams {

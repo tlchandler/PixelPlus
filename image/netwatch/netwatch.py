@@ -31,6 +31,16 @@ Runtime fallback only after the network has been gone for
 connected in the last 30 minutes (a deauthentication attack has to last that
 long; a real outage just waits a little longer).
 
+**Established controllers** (it has been online before, or it is an adopted
+follower of a show): a router reboot or a Wi-Fi hiccup must not turn a
+controller in the yard into a hotspot mid-show. Such a controller opens the
+setup hotspot only after being offline for ``establishedHotspotAfter`` s
+(30 min) *continuously*, at boot as well as later, and meanwhile asks
+NetworkManager to rejoin its known networks every ``establishedRetryFast`` s
+(20 s) for the first ``establishedFastPeriod`` s (10 min) after boot, then every
+``establishedRetrySlow`` s (60 s). Controllers that were never online keep the
+quick first-setup behaviour above.
+
 NetworkManager "shared" mode (its dnsmasq NetworkManager "shared" mode (its dnsmasq
 does DHCP; ``/etc/NetworkManager/dnsmasq-shared.d/pixelplus-portal.conf`` answers every
 DNS name with 10.42.0.1 and advertises the portal URL via DHCP option 114).
@@ -70,6 +80,8 @@ CONFIG_PATH = os.environ.get("PIXELPLUS_NETWATCH_CONFIG", "/etc/pixelplus/netwat
 STATUS_PATH = os.environ.get("PIXELPLUS_NETWATCH_STATUS", "/run/pixelplus/netwatch.json")
 PORTAL_PORT = int(os.environ.get("PIXELPLUS_PORTAL_PORT", "8099"))
 NFT_TABLE = "pixelplus_portal"
+# pixelplusd's identity (role, leader): an adopted follower counts as established.
+NODE_JSON = os.environ.get("PIXELPLUS_NODE_JSON", "/var/lib/pixelplus/node.json")
 # Persistent netwatch state (root only): everOnline, devicePassword.
 STATE_PATH = os.environ.get("PIXELPLUS_NETWATCH_STATE", "/var/lib/pixelplus-system/netwatch-state.json")
 # Where PIXELPLUS-HOTSPOT.txt goes ("" = /boot/firmware or /boot, whichever exists).
@@ -87,6 +99,11 @@ DEFAULTS = {
     "hotspotNoProfileTimeout": 25,  # boot: when no Wi-Fi is configured at all (Ethernet DHCP grace)
     "hotspotAfterDisconnect": 300,  # runtime: offline this long -> hotspot
     "hotspotRetryInterval": 300,  # in hotspot: try known networks again (only if no phone joined)
+    # Established controllers (online before / adopted follower):
+    "establishedHotspotAfter": 1800,  # offline this long, continuously, -> hotspot
+    "establishedRetryFast": 20,  # rejoin known networks this often ...
+    "establishedFastPeriod": 600,  # ... for this long after boot,
+    "establishedRetrySlow": 60,  # then this often
     "channel": 6,
 }
 
@@ -157,6 +174,20 @@ def load_state() -> Dict:
         return {}
 
 
+def adopted_follower(path: Optional[str] = None) -> bool:
+    """pixelplusd's node.json says this controller follows a show leader."""
+    try:
+        with open(path or NODE_JSON, encoding="utf-8") as f:
+            node = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(node, dict)
+        and node.get("role") == "follower"
+        and bool(node.get("leaderId") or node.get("leaderUrl"))
+    )
+
+
 def new_device_password(n: int = 10) -> str:
     import secrets
 
@@ -220,11 +251,39 @@ class Netwatch:
         self.hostname = socket.gethostname()
         self.last_online: Optional[float] = None
         self.power_save_checked: Optional[float] = None
+        self.started = clock()
+        self.last_rejoin: Optional[float] = None
         self.persist = load_state()
         if not self.persist.get("devicePassword"):
             self.persist["devicePassword"] = new_device_password()
             self.save_state()
         write_boot_note(self.hotspot_ssid, self.persist["devicePassword"])
+
+    def established(self) -> bool:
+        """Online before, or an adopted follower: slow, patient hotspot fallback."""
+        return bool(self.persist.get("everOnline")) or adopted_follower()
+
+    def rejoin_interval(self, now: float) -> float:
+        fast = now - self.started < self.cfg["establishedFastPeriod"]
+        return self.cfg["establishedRetryFast"] if fast else self.cfg["establishedRetrySlow"]
+
+    def rejoin_known(self, now: float) -> None:
+        """Ask NetworkManager to bring up a known network that is in range (it
+        gives up on its own after a few failed autoconnect attempts)."""
+        if self.last_rejoin is not None and now - self.last_rejoin < self.rejoin_interval(now):
+            return
+        self.last_rejoin = now
+        profiles = self.nm.known_wifi()
+        if not profiles:
+            return
+        visible = {str(n["ssid"]) for n in self.refresh_scan(rescan=True)}
+        for con in profiles:
+            ssid = self.nm.ssid_of(con) if hasattr(self.nm, "ssid_of") else None
+            if ssid is not None and visible and ssid not in visible:
+                continue
+            LOG.info("offline: trying known network %s", con)
+            if self.nm.up(con, wait=15):
+                return
 
     def save_state(self) -> None:
         write_json_atomic(STATE_PATH, self.persist, mode=0o600)
@@ -467,9 +526,17 @@ class Netwatch:
             if self.offline_since is None:
                 self.offline_since = now
                 LOG.info("network lost")
+            established = self.established()
+            if established:
+                self.rejoin_known(now)
+                if self.nm.online():
+                    return  # picked up as online on the next tick
             if not self.cfg.get("hotspot", True):
                 return
-            if self.boot:
+            if established:
+                # Never a hotspot for a passing outage: 30 min offline, continuously.
+                limit = self.cfg["establishedHotspotAfter"]
+            elif self.boot:
                 has_profiles = bool(self.nm.known_wifi())
                 limit = self.cfg["hotspotTimeout"] if has_profiles else min(
                     self.cfg["hotspotNoProfileTimeout"], self.cfg["hotspotTimeout"]

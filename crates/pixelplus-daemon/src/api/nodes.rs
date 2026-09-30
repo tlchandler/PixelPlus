@@ -162,6 +162,8 @@ async fn create(
     require_leader(&state)?;
     leader::validate_node_name(&body.name)?;
     let node = Node {
+        hardware_history: Default::default(),
+        serial: Default::default(),
         id: new_id(),
         name: body.name.trim().to_string(),
         hostname: String::new(),
@@ -450,6 +452,8 @@ mod tests {
     #[test]
     fn output_validation() {
         let mut n = Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: "n".into(),
             name: "N".into(),
             hostname: String::new(),

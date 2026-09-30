@@ -19,7 +19,10 @@
 #   PP_BIN           pixelplusd binary        (default: target/debug/pixelplusd)
 #   PP_WEB_DIR       built web UI             (default: web/build)
 #   PP_HTTP_BASE     leader HTTP port; f1 = +1, f2 = +2   (default: 18080)
-#   PP_CLUSTER_BASE  leader UDP port; f1 = +10, f2 = +20 (overlay = port + 1) (default: 32420)
+#   PP_CLUSTER_BASE  leader UDP port; f1 = +10, f2 = +20 (overlay = port + 1,
+#                    sensor nodes = port + 2) (default: 33420, clear of a real
+#                    daemon's 32420-32422 on the same machine)
+#   PP_HTTPS_BASE    leader HTTPS port; f1 = +1, f2 = +2  (default: 18443)
 #   PP_AUDIO         PIXELPLUS_AUDIO for the leader (default: none)
 #   PP_LOG           PIXELPLUS_LOG filter     (default: info,tower_http=warn)
 #   PP_SIM_REFRESH   simulated pixel refresh (Hz) per node, e.g. "40,40,80": the
@@ -31,7 +34,8 @@ DIR="${PP_CLUSTER_DIR:-$ROOT/.dev-cluster}"
 BIN="${PP_BIN:-$ROOT/target/debug/pixelplusd}"
 WEB="${PP_WEB_DIR:-$ROOT/web/build}"
 HTTP_BASE="${PP_HTTP_BASE:-18080}"
-UDP_BASE="${PP_CLUSTER_BASE:-32420}"
+UDP_BASE="${PP_CLUSTER_BASE:-33420}"
+HTTPS_BASE="${PP_HTTPS_BASE:-18443}"
 NODES=(leader f1 f2)
 
 idx() {
@@ -77,6 +81,9 @@ PIXELPLUS_HTTP_PORT=$(http_port "$n")
 PIXELPLUS_HTTP_BIND=127.0.0.1
 PIXELPLUS_CLUSTER_PORT=$(udp_port "$n")
 PIXELPLUS_CLUSTER_OVERLAY_PORT=$(($(udp_port "$n") + 1))
+PIXELPLUS_SENSOR_PORT=$(($(udp_port "$n") + 2))
+PIXELPLUS_HTTPS_PORT=$((HTTPS_BASE + $(idx "$n")))
+PIXELPLUS_PUBLIC_PORT=0
 PIXELPLUS_CLUSTER_PEERS=$(peers "$n")
 PIXELPLUS_CLUSTER_BROADCAST=0
 PIXELPLUS_MDNS=0

@@ -8,11 +8,18 @@
 //!
 //! Rules:
 //! * At a window's start, if nothing is playing, the entry's playlist starts.
-//! * **Manual playback overrides the schedule until it stops.** Starting
-//!   something by hand during a window replaces the scheduled playlist; when
-//!   the manual playback finishes on its own, the window's playlist starts
-//!   again from the top. If the user presses *Stop* during a window, the
-//!   window stays quiet (idle look) until the next window.
+//! * **Manual playback started during a window ends with that window.**
+//!   Starting something by hand during a window replaces the scheduled
+//!   playlist; at the window's end (or when a higher-priority window takes
+//!   over) it ends with the entry's end behaviour, exactly like the scheduled
+//!   playlist would. When it finishes on its own inside the window, the
+//!   window's playlist starts again from the top. If the user presses *Stop*
+//!   during a window, the window stays quiet (idle look) until the next window.
+//! * **Manual playback outside windows plays once** (a playlist's `repeat` is
+//!   ignored) and is never touched by the scheduler; a window that starts
+//!   meanwhile waits until it finishes.
+//! * **"Loop until I stop"** (`PlayRequest.loopUntilStopped`): the playlist
+//!   repeats and keeps playing past window ends until the user stops it.
 //! * A scheduled playlist that finishes (non-repeating) inside its window is
 //!   not restarted; the idle look shows for the rest of the window.
 //! * At a window's end: `finishSong` finishes the current item and plays the
@@ -93,11 +100,35 @@ pub fn facts_at(s: &Schedule, now: DateTime<Utc>) -> ScheduleFacts {
 }
 
 /// Who started what is playing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Origin {
-    Manual,
+    /// Started by hand (UI, trigger, MQTT, request, calibration).
+    Manual {
+        /// The window active when it started: the playback ends with it.
+        window: Option<ActiveWindow>,
+        /// "Loop until I stop": never ended by the schedule.
+        looping: bool,
+    },
     /// Started by the scheduler for the window with this key.
     Schedule(String),
+}
+
+impl Origin {
+    /// Manual playback started now: tied to the active window unless `looping`.
+    pub fn manual(facts: &ScheduleFacts, looping: bool) -> Origin {
+        Origin::Manual {
+            window: if looping {
+                None
+            } else {
+                facts.active.clone().filter(|_| facts.enabled)
+            },
+            looping,
+        }
+    }
+
+    pub fn is_manual(&self) -> bool {
+        matches!(self, Origin::Manual { .. })
+    }
 }
 
 /// What the engine should do.
@@ -149,7 +180,24 @@ impl Scheduler {
                 };
                 Some(SchedAction::End(behavior))
             }
-            Some(Origin::Manual) => None,
+            Some(Origin::Manual {
+                window: Some(w),
+                looping: false,
+            }) => {
+                if active.is_some_and(|a| a.key == w.key) || self.ended.contains(&w.key) {
+                    return None;
+                }
+                self.ended.insert(w.key.clone());
+                // Another window took over: switch now; else end like the
+                // window's own playlist would.
+                let behavior = if active.is_some() || w.preempted {
+                    EndBehavior::StopNow
+                } else {
+                    w.end_behavior
+                };
+                Some(SchedAction::End(behavior))
+            }
+            Some(Origin::Manual { .. }) => None,
             None => match active {
                 Some(w) if !self.suppressed.contains(&w.key) => {
                     self.started = Some(w.clone());
@@ -257,17 +305,77 @@ mod tests {
     }
 
     #[test]
-    fn manual_overrides_then_schedule_resumes() {
+    fn manual_in_window_ends_with_the_window() {
         let mut s = Scheduler::new();
         let w = window("e1@1", EndBehavior::FadeOut, false);
         let f = facts(Some(w.clone()));
         assert!(matches!(s.decide(&f, None), Some(SchedAction::Start(_))));
-        // User plays something by hand: the scheduler leaves it alone.
-        assert_eq!(s.decide(&f, Some(&Origin::Manual)), None);
+        // User plays something by hand: the scheduler leaves it alone while the window lasts.
+        let manual = Origin::manual(&f, false);
+        assert_eq!(
+            manual,
+            Origin::Manual {
+                window: Some(w.clone()),
+                looping: false
+            }
+        );
+        assert_eq!(s.decide(&f, Some(&manual)), None);
         // Manual playback finished on its own: the window's playlist starts again.
         assert!(matches!(s.decide(&f, None), Some(SchedAction::Start(_))));
-        // Even at window end, manual playback is not touched.
-        assert_eq!(s.decide(&facts(None), Some(&Origin::Manual)), None);
+        // At the window's end the manual playback ends with the entry's behaviour, once.
+        assert_eq!(
+            s.decide(&facts(None), Some(&manual)),
+            Some(SchedAction::End(EndBehavior::FadeOut))
+        );
+        assert_eq!(s.decide(&facts(None), Some(&manual)), None);
+    }
+
+    #[test]
+    fn manual_in_window_stops_when_another_window_takes_over() {
+        let mut s = Scheduler::new();
+        let low = window("low@1", EndBehavior::FinishSong, false);
+        let manual = Origin::manual(&facts(Some(low)), false);
+        let high = window("high@1", EndBehavior::FinishSong, false);
+        assert_eq!(
+            s.decide(&facts(Some(high)), Some(&manual)),
+            Some(SchedAction::End(EndBehavior::StopNow))
+        );
+    }
+
+    #[test]
+    fn manual_outside_windows_and_looping_are_left_alone() {
+        let mut s = Scheduler::new();
+        // Outside any window: not tied to one; a window starting later waits.
+        let outside = Origin::manual(&facts(None), false);
+        assert_eq!(
+            outside,
+            Origin::Manual {
+                window: None,
+                looping: false
+            }
+        );
+        let w = window("e1@1", EndBehavior::StopNow, false);
+        assert_eq!(s.decide(&facts(Some(w.clone())), Some(&outside)), None);
+        // "Loop until I stop" started in a window survives its end.
+        let looping = Origin::manual(&facts(Some(w)), true);
+        assert_eq!(
+            looping,
+            Origin::Manual {
+                window: None,
+                looping: true
+            }
+        );
+        assert_eq!(s.decide(&facts(None), Some(&looping)), None);
+        // A disabled schedule never ties manual playback to a window.
+        let mut f = facts(Some(window("e2@1", EndBehavior::StopNow, false)));
+        f.enabled = false;
+        assert_eq!(
+            Origin::manual(&f, false),
+            Origin::Manual {
+                window: None,
+                looping: false
+            }
+        );
     }
 
     #[test]
@@ -342,6 +450,7 @@ mod tests {
         let mut sch = Schedule {
             enabled: true,
             entries: vec![ScheduleEntry {
+                start_exact: Default::default(),
                 id: "e1".into(),
                 name: "Nightly".into(),
                 enabled: true,

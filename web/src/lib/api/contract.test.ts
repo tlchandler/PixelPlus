@@ -70,7 +70,39 @@ const OPTIONAL = new Set([
 	'matrixPropId',
 	'units',
 	'radioFrequency',
-	'publicUrl'
+	'publicUrl',
+	// Feature wave (model.rs: omitted while empty / unset).
+	'measuredPixels',
+	'serial',
+	'hardwareHistory',
+	'mainFuseAmps',
+	'suspectPixels',
+	'source',
+	'generated',
+	'tags',
+	'analysis',
+	'originalName',
+	'originalSize',
+	'smart',
+	'startExact',
+	'lastCalibration',
+	'extraNames',
+	'globalAmps',
+	'globalWatts',
+	'tailscale',
+	'cloudflare',
+	'watchFolder',
+	'profiles',
+	'activeProfileId',
+	'profileAutoSwitch',
+	'powerSupplies',
+	'tagDefs',
+	'sensorNodes',
+	'cooldownS',
+	'when',
+	'activeWindow',
+	'maxPerHour',
+	'power'
 ]);
 
 type Problem = { path: string; kind: 'missing' | 'type'; detail: string };
@@ -81,9 +113,9 @@ function kind(v: unknown): string {
 	return typeof v;
 }
 
-/** `type` or `kind` when every element is an object carrying it as a string. */
+/** `type`, `kind` or `ev` (journal) when every element is an object carrying it as a string. */
 function discriminator(items: unknown[]): string | null {
-	for (const tag of ['type', 'kind']) {
+	for (const tag of ['type', 'kind', 'ev']) {
 		if (items.every((x) => kind(x) === 'object' && typeof (x as Record<string, unknown>)[tag] === 'string'))
 			return tag;
 	}
@@ -132,7 +164,7 @@ export function compareShape(mock: unknown, real: unknown, path: string, out: Pr
 	if (km !== 'object') return;
 	const m = mock as Record<string, unknown>;
 	const r = real as Record<string, unknown>;
-	for (const tag of ['type', 'kind']) {
+	for (const tag of ['type', 'kind', 'ev']) {
 		// Different variants of a tagged union (e.g. a clock vs. a sunset TimeSpec).
 		if (typeof m[tag] === 'string' && typeof r[tag] === 'string' && m[tag] !== r[tag]) return;
 	}
@@ -195,7 +227,8 @@ const ENDPOINTS = [
 	'/public/requests',
 	'/requests',
 	'/games/status',
-	'/games/roms'
+	'/games/roms',
+	'/journal'
 ];
 
 describe.skipIf(!BASE)('daemon JSON matches the UI contract', () => {

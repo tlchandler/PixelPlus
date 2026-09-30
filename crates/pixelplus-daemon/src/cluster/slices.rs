@@ -311,6 +311,8 @@ mod tests {
         std::fs::create_dir_all(dir.join("sequences")).unwrap();
         write_test_fseq(&dir.join("sequences/s1.fseq"), 120, 50);
         show.sequences.push(Sequence {
+            generated: Default::default(),
+            tags: Default::default(),
             id: "s1".into(),
             name: "Song".into(),
             file: "sequences/s1.fseq".into(),

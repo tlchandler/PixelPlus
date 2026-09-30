@@ -21,3 +21,6 @@ zstd = "0.13"
 flate2 = "1"
 sha2 = "0.10"
 roxmltree = "0.20"
+# --- feature wave (added by WS0 so workstreams need not edit this file)
+# F2 audio analysis (STFT); already in the tree via rubato
+rustfft = "6"

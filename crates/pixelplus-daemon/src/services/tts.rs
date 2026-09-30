@@ -422,6 +422,10 @@ pub async fn save_clip_audio(
     let _ = super::media::write_meta(&media_dir, &id, &meta);
     let target = show.settings.audio.target_lufs;
     let media = Media {
+        tags: Default::default(),
+        analysis: Default::default(),
+        original_name: Default::default(),
+        original_size: Default::default(),
         id: id.clone(),
         name: format!("DJ: {}", clip.name),
         kind: MediaKind::Dj,

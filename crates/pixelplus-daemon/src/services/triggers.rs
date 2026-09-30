@@ -19,14 +19,7 @@ pub async fn run_action(state: &AppState, action: &TriggerAction) -> ApiResult<S
     let show = state.store.get();
     let r = action.r#ref.as_deref().unwrap_or("");
     let p = player(state)?;
-    let empty = PlayRequest {
-        playlist_id: None,
-        sequence_id: None,
-        dj_clip_id: None,
-        effect_id: None,
-        media_id: None,
-        start_index: None,
-    };
+    let empty = PlayRequest::default();
     match action.kind {
         TriggerActionType::Stop => {
             p.send(PlayerCmd::Stop { fade: true }).await?;
@@ -74,6 +67,10 @@ pub async fn run_action(state: &AppState, action: &TriggerAction) -> ApiResult<S
             .await?;
             Ok(format!("Showing {}", e.name))
         }
+        // F20 surprise layer: WS3 implements it (services/triggers.rs).
+        TriggerActionType::Surprise => Err(ApiError::bad_request(
+            "Surprises are not available in this version yet.",
+        )),
     }
 }
 

@@ -10,7 +10,8 @@
 
 	$effect(() => {
 		theme.init();
-		if (!page.url.pathname.startsWith('/request')) app.boot();
+		// Public pages (visitors, phones installing the certificate) need no admin session.
+		if (!['/request', '/trust'].some((p) => page.url.pathname.startsWith(p))) app.boot();
 	});
 </script>
 

@@ -43,7 +43,9 @@ use roxmltree::{Document, Node};
 use serde::{Deserialize, Serialize};
 
 use crate::layout;
-use crate::model::{new_id, ChannelRun, Prop, PropGroup, PropLayout, PropSegment, Show};
+use crate::model::{
+    new_id, ChannelRun, LayoutSource, Prop, PropGroup, PropLayout, PropSegment, Show,
+};
 use geometry::{shape, strtol, Attrs, Placement, Shape, StringChannels};
 pub use networks::{NetController, NetOutput, Networks};
 
@@ -790,6 +792,7 @@ pub fn import_preview(
             color,
             max_milliamps_per_pixel: None,
             notes: a.str("Description").map(str::to_string),
+            suspect_pixels: Vec::new(),
         });
     }
     if !any_position && !props.is_empty() {
@@ -1002,6 +1005,7 @@ fn make_layout(s: &Shape, a: Attrs) -> Option<PropLayout> {
         h: size[1],
         rotation: 0.0,
         points: Some(points),
+        source: Some(LayoutSource::Xlights),
     })
 }
 

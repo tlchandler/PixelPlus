@@ -66,7 +66,7 @@ pub const JOIN_WINDOW: Duration = Duration::from_secs(15 * 60);
 ///
 /// | env | default | meaning |
 /// |---|---|---|
-/// | `PIXELPLUS_CLUSTER_PORT` | 32320 | UDP beacons / sync / clock (via `Config`) |
+/// | `PIXELPLUS_CLUSTER_PORT` | 32420 | UDP beacons / sync / clock (via `Config`) |
 /// | `PIXELPLUS_CLUSTER_OVERLAY_PORT` | port + 1 | UDP overlay frames |
 /// | `PIXELPLUS_CLUSTER_BIND` | 0.0.0.0 | local address for both UDP sockets |
 /// | `PIXELPLUS_CLUSTER_PEERS` | – | static peers `host[:port],…` (unicast beacons/sync; for networks without broadcast) |
@@ -234,6 +234,7 @@ pub struct DiscoveredNode {
 }
 
 /// Commands the leader sends to followers (`POST /cluster/command`).
+#[allow(clippy::large_enum_variant)] // TestRequest grew (map plans, F6); one per command
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClusterCommand {
@@ -795,6 +796,10 @@ pub(crate) async fn identify_local(
         .cloned()
         .ok_or_else(|| crate::api::ApiError::unavailable("The player is not running."))?;
     let test = TestRequest {
+        map_run_id: Default::default(),
+        cal: Default::default(),
+        identify: Default::default(),
+        map: Default::default(),
         mode: "chase".into(),
         color: Some("#ffffff".into()),
         speed: None,

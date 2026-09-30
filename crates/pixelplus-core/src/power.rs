@@ -530,6 +530,8 @@ mod tests {
     fn show() -> Show {
         let mut s = Show::default();
         s.nodes.push(Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: "n1".into(),
             name: "Leader".into(),
             hostname: "pp".into(),
@@ -543,6 +545,7 @@ mod tests {
             notes: None,
         });
         let mk = |id: &str, px: u32, start: u32, out: u32| Prop {
+            suspect_pixels: Default::default(),
             id: id.into(),
             name: id.to_uppercase(),
             kind: PropKind::Line,
@@ -570,6 +573,7 @@ mod tests {
         s.props.push(mk("a", 100, 0, 1)); // 6 A at full white
         s.props.push(mk("b", 50, 300, 2)); // 3 A at full white
         s.receivers.push(Receiver {
+            main_fuse_amps: Default::default(),
             id: "r1".into(),
             name: "Garage".into(),
             kind: ReceiverKind::Diffrx,

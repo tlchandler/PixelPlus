@@ -676,6 +676,8 @@ mod tests {
 
     pub(crate) fn node(id: &str, board: BoardKind) -> Node {
         Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: id.into(),
             name: id.into(),
             hostname: id.into(),
@@ -692,6 +694,7 @@ mod tests {
 
     pub(crate) fn prop(id: &str, pixels: u32, channel_start: u32, segs: Vec<PropSegment>) -> Prop {
         Prop {
+            suspect_pixels: Default::default(),
             id: id.into(),
             name: id.into(),
             kind: PropKind::Line,

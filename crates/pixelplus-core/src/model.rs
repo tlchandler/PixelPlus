@@ -53,6 +53,39 @@ pub struct Show {
     pub schedule: Schedule,
     #[serde(default)]
     pub settings: ShowSettings,
+    /// Show file format (F15). Bumped only by a migration older versions
+    /// cannot read; an update rollback restores the pre-update snapshot then.
+    #[serde(default = "default_format_version")]
+    pub format_version: u32,
+    /// Season profiles (F8): named copies of the season-specific settings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<ShowProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_profile_id: Option<String>,
+    /// Switch profiles by their date ranges (daily at 12:00 and at boot).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub profile_auto_switch: bool,
+    /// Power supplies feeding receivers / direct outputs (F12).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub power_supplies: Vec<PowerSupply>,
+    /// Tag colours / descriptions for the library (F18). Tags themselves live
+    /// on sequences and media.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tag_defs: Vec<TagDef>,
+    /// ESP32 sensor nodes (F20).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensor_nodes: Vec<SensorNode>,
+}
+
+/// Current [`Show::format_version`].
+pub const SHOW_FORMAT_VERSION: u32 = 1;
+
+fn default_format_version() -> u32 {
+    SHOW_FORMAT_VERSION
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for Show {
@@ -73,6 +106,13 @@ impl Default for Show {
             playlists: vec![],
             schedule: Schedule::default(),
             settings: ShowSettings::default(),
+            format_version: SHOW_FORMAT_VERSION,
+            profiles: vec![],
+            active_profile_id: None,
+            profile_auto_switch: false,
+            power_supplies: vec![],
+            tag_defs: vec![],
+            sensor_nodes: vec![],
         }
     }
 }
@@ -204,6 +244,27 @@ pub struct Node {
     pub last_seen: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// EEPROM serial of the current hardware (F10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial: Option<String>,
+    /// Earlier hardware of this controller (replacements, F10).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hardware_history: Vec<HardwareRecord>,
+}
+
+/// One piece of hardware a controller ran on (F10 "Replace with…").
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareRecord {
+    /// RFC 3339.
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serial: Option<String>,
+    pub board: BoardKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi_model: Option<String>,
+    /// e.g. "replaced", "adopted".
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -253,6 +314,23 @@ pub struct OutputConfig {
     pub brightness: u8,
     pub gamma: f32,
     pub enabled: bool,
+    /// Pixels found on this output by a pixel-count check (F7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measured_pixels: Option<MeasuredCount>,
+}
+
+/// Result of a pixel-count check (F7).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MeasuredCount {
+    pub count: u32,
+    /// "camera" | "manual" | "current"
+    pub method: String,
+    /// RFC 3339.
+    pub at: String,
+    /// Output pixel indices that did not respond.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dead: Vec<u32>,
 }
 
 impl Default for OutputConfig {
@@ -265,6 +343,7 @@ impl Default for OutputConfig {
             brightness: 100,
             gamma: 1.0,
             enabled: true,
+            measured_pixels: None,
         }
     }
 }
@@ -318,6 +397,9 @@ pub struct Receiver {
     pub fuse_amps: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Main fuse / bus rating (A), e.g. 30 on a diffrx rev C (F12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_fuse_amps: Option<f32>,
 }
 
 impl Receiver {
@@ -383,6 +465,9 @@ pub struct Prop {
     pub max_milliamps_per_pixel: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Prop pixel indices flagged as dead / suspect (F6, F7, fault finder).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suspect_pixels: Vec<u32>,
 }
 
 fn default_cpp() -> u8 {
@@ -536,6 +621,18 @@ pub struct PropLayout {
     /// Normalized (0..1) per-pixel positions inside the w×h box.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub points: Option<Vec<[f32; 2]>>,
+    /// Where the layout came from (absent = unknown / older show).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<LayoutSource>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum LayoutSource {
+    Xlights,
+    Manual,
+    /// Camera mapping (F6).
+    Camera,
 }
 
 /// Grid geometry of a matrix prop, used by overlays (games, text, QR codes).
@@ -581,6 +678,35 @@ pub struct Sequence {
     /// sha256 of the fseq file (hex).
     #[serde(default)]
     pub hash: String,
+    /// Made by PixelPlus (auto light show, "speak with lights"), F2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<GeneratedInfo>,
+    /// Library tags (F18), e.g. "kids", "season:halloween".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+}
+
+/// How a generated sequence was made (F2); regenerated when `props_hash` changes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedInfo {
+    pub kind: GeneratedKind,
+    pub media_id: String,
+    /// Style id (`GET /autoshow/styles`).
+    pub style: String,
+    /// Props used; empty = all.
+    #[serde(default)]
+    pub prop_ids: Vec<String>,
+    pub seed: u32,
+    pub analysis_version: u32,
+    pub props_hash: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum GeneratedKind {
+    AutoShow,
+    Voice,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -603,6 +729,35 @@ pub struct Media {
     pub loudness_lufs: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gain_db: Option<f32>,
+    /// Beat / tempo / energy summary (F2); the full analysis is
+    /// `media/<id>.analysis.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<AudioAnalysisSummary>,
+    /// Library tags (F18).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// File name as uploaded (xLights FPP Connect compares it, F16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_name: Option<String>,
+    /// Size in bytes of the original upload (F16 `…/meta`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_size: Option<u64>,
+}
+
+/// Summary of a song's audio analysis (F2).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioAnalysisSummary {
+    pub version: u32,
+    pub bpm: f32,
+    pub bpm_confidence: f32,
+    pub beat_count: u32,
+    pub first_beat_ms: u32,
+    /// 0..1 mean normalized energy.
+    pub energy: f32,
+    /// Number of detected sections.
+    #[serde(default)]
+    pub sections: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -708,6 +863,9 @@ pub enum EffectKind {
     Meteor,
     Strobe,
     Breathe,
+    /// Show-start countdown (F4): params `durationMs, text, color, others,
+    /// finale, matrixPropId`.
+    Countdown,
 }
 
 pub type EffectParams = BTreeMap<String, serde_json::Value>;
@@ -778,6 +936,55 @@ pub enum PlaylistItem {
         #[serde(default)]
         args: serde_json::Value,
     },
+    /// Show-start countdown (F4), usually the last intro item.
+    #[serde(rename_all = "camelCase")]
+    Countdown {
+        id: String,
+        duration_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        matrix_prop_id: Option<String>,
+        /// `{s}` seconds left, `{mm}`/`{ss}`, or custom text around them.
+        #[serde(default = "default_countdown_text")]
+        text: String,
+        /// "#rrggbb"
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default)]
+        others: CountdownOthers,
+        #[serde(default)]
+        finale: CountdownFinale,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dj_clip_id: Option<String>,
+        /// 0 = the clip ends at zero; positive = later.
+        #[serde(default)]
+        dj_offset_ms: i32,
+        /// Tick sound each second (when there is no DJ clip).
+        #[serde(default)]
+        tick: bool,
+    },
+}
+
+fn default_countdown_text() -> String {
+    "{s}".into()
+}
+
+/// What props other than the countdown matrix do (F4).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum CountdownOthers {
+    #[default]
+    Fill,
+    Pulse,
+    Dark,
+}
+
+/// What happens at zero (F4).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum CountdownFinale {
+    #[default]
+    Flash,
+    None,
 }
 
 impl PlaylistItem {
@@ -788,7 +995,8 @@ impl PlaylistItem {
             | PlaylistItem::Effect { id, .. }
             | PlaylistItem::Media { id, .. }
             | PlaylistItem::Pause { id, .. }
-            | PlaylistItem::Command { id, .. } => id,
+            | PlaylistItem::Command { id, .. }
+            | PlaylistItem::Countdown { id, .. } => id,
         }
     }
 }
@@ -810,6 +1018,76 @@ pub struct Playlist {
     pub repeat: bool,
     #[serde(default)]
     pub crossfade_ms: u32,
+    /// Smart playlist rules (F18): `items` is then generated at play time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smart: Option<SmartRules>,
+}
+
+/// Rules of a smart playlist (F18, `core::smartlist::expand`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartRules {
+    #[serde(default)]
+    pub include_tags: Vec<String>,
+    #[serde(default)]
+    pub include_mode: TagMatch,
+    #[serde(default)]
+    pub exclude_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_item_ms: Option<u64>,
+    #[serde(default)]
+    pub no_repeat_nights: u32,
+    #[serde(default)]
+    pub time_rules: Vec<SmartTimeRule>,
+    #[serde(default)]
+    pub order: SmartOrder,
+    #[serde(default)]
+    pub pinned_first: Vec<PlaylistItem>,
+    #[serde(default)]
+    pub pinned_last: Vec<PlaylistItem>,
+    /// Inserted every `interleave_every` songs (e.g. a DJ clip).
+    #[serde(default)]
+    pub interleave: Vec<PlaylistItem>,
+    #[serde(default)]
+    pub interleave_every: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TagMatch {
+    #[default]
+    Any,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum SmartOrder {
+    #[default]
+    LeastRecent,
+    Shuffle,
+    Rotation,
+    Fixed,
+}
+
+/// Before `before`, only songs carrying all of `require_tags` are placed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartTimeRule {
+    pub before: TimeSpec,
+    #[serde(default)]
+    pub require_tags: Vec<String>,
+}
+
+/// Colour / description of a library tag (F18).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDef {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -893,6 +1171,18 @@ pub struct ScheduleEntry {
     pub priority: i32,
     #[serde(default)]
     pub end_behavior: EndBehavior,
+    /// Start the playlist's intro early so its first song begins exactly at
+    /// `start` (F4 countdown).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub start_exact: bool,
+}
+
+/// A daily time window `from`..`to` (wraps midnight when `to` < `from`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeWindow {
+    pub from: TimeSpec,
+    pub to: TimeSpec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -949,6 +1239,478 @@ pub struct ShowSettings {
     pub units: Option<UnitSettings>,
     #[serde(default)]
     pub output: OutputSettings,
+    /// HTTPS listener preferences (F1); key material stays in `tls/`.
+    #[serde(default)]
+    pub https: HttpsSettings,
+    /// Nightly health report (F11).
+    #[serde(default)]
+    pub reports: ReportSettings,
+    /// Power limiter and late-night dimming (F12).
+    #[serde(default)]
+    pub power: PowerSettings,
+    /// Remote access: public listener, Tailscale, Cloudflare (F14).
+    #[serde(default)]
+    pub remote: RemoteSettings,
+    /// Software update channel and automation (F15).
+    #[serde(default)]
+    pub updates: UpdateSettings,
+    /// xLights FPP Connect upload (F16).
+    #[serde(default)]
+    pub xlights: XlightsSettings,
+}
+
+// --- F1 HTTPS -------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpsSettings {
+    /// Listen on :443 (`PIXELPLUS_HTTPS_PORT`) with the local CA's certificate.
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Extra host names for the certificate (besides hostname variants and IPs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_names: Vec<String>,
+}
+
+impl Default for HttpsSettings {
+    fn default() -> Self {
+        HttpsSettings {
+            enabled: true,
+            extra_names: vec![],
+        }
+    }
+}
+
+/// Last "Measure with my phone" result (F1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioCalibration {
+    /// RFC 3339.
+    pub measured_at: String,
+    pub method: CalibrationMethod,
+    pub residual_ms: f32,
+    pub spread_ms: f32,
+    pub matches: u32,
+    pub applied_delay_ms: i32,
+    /// Phone model (user agent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CalibrationMethod {
+    Phone,
+    Manual,
+}
+
+// --- F11 reports ----------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSettings {
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// "HH:MM" local time the report for the past show night is made.
+    #[serde(default = "default_report_time")]
+    pub time: String,
+    /// Send by email (uses `alerts.email`).
+    #[serde(default = "yes")]
+    pub email: bool,
+    /// Send by push (uses `alerts.ntfy`).
+    #[serde(default = "yes")]
+    pub push: bool,
+    #[serde(default)]
+    pub only_when_problems: bool,
+    #[serde(default = "default_report_keep")]
+    pub keep_days: u32,
+}
+
+fn default_report_time() -> String {
+    "07:00".into()
+}
+
+fn default_report_keep() -> u32 {
+    90
+}
+
+impl Default for ReportSettings {
+    fn default() -> Self {
+        ReportSettings {
+            enabled: true,
+            time: default_report_time(),
+            email: true,
+            push: true,
+            only_when_problems: false,
+            keep_days: default_report_keep(),
+        }
+    }
+}
+
+// --- F12 power ------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LimiterMode {
+    Off,
+    /// Compute and report, never scale.
+    #[default]
+    Warn,
+    Limit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerSettings {
+    #[serde(default)]
+    pub mode: LimiterMode,
+    /// Fraction of each budget actually used (0..1).
+    #[serde(default = "default_safety")]
+    pub safety: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_amps: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_watts: Option<f32>,
+    /// Late-night dimming: master-brightness ceilings by time of day.
+    #[serde(default)]
+    pub dim: Vec<DimWindow>,
+    /// Master-brightness ceiling, percent.
+    #[serde(default = "hundred")]
+    pub max_brightness: u8,
+}
+
+fn default_safety() -> f32 {
+    0.9
+}
+
+fn hundred() -> u8 {
+    100
+}
+
+impl Default for PowerSettings {
+    fn default() -> Self {
+        PowerSettings {
+            mode: LimiterMode::Warn,
+            safety: default_safety(),
+            global_amps: None,
+            global_watts: None,
+            dim: vec![],
+            max_brightness: 100,
+        }
+    }
+}
+
+/// Brightness ceiling (percent) between `from` and `to`; `days` empty = every day.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DimWindow {
+    pub from: TimeSpec,
+    pub to: TimeSpec,
+    pub brightness: u8,
+    #[serde(default)]
+    pub days: Vec<Weekday>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerSupply {
+    pub id: String,
+    pub name: String,
+    pub volts: f32,
+    pub amps: f32,
+    #[serde(default)]
+    pub receiver_ids: Vec<String>,
+    /// Outputs fed without a receiver (diffsmart terminals).
+    #[serde(default)]
+    pub direct_outputs: Vec<NodeOutputRef>,
+    /// Measured current from a sensor node input (F20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensor: Option<SensorRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeOutputRef {
+    pub node_id: String,
+    /// 1-based.
+    pub output: u32,
+}
+
+/// The per-node limiter budget the leader sends in the manifest (F12,
+/// computed by `power::node_budget`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NodePowerBudget {
+    pub mode: LimiterMode,
+    pub safety: f32,
+    #[serde(default)]
+    pub groups: Vec<PowerGroup>,
+    /// Estimated mA per pixel at full white, per output (1-based index → mA).
+    #[serde(default, rename = "mApp")]
+    pub ma_pp: BTreeMap<u32, f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerGroup {
+    pub id: String,
+    pub kind: PowerGroupKind,
+    #[serde(rename = "budgetA")]
+    pub budget_a: f32,
+    /// Averaging time constant (0 = instantaneous).
+    pub tau_ms: u32,
+    /// Outputs (1-based) in the group.
+    pub members: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PowerGroupKind {
+    Port,
+    Bus,
+    Supply,
+    Global,
+}
+
+// --- F8 season profiles ---------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowProfile {
+    pub id: String,
+    pub name: String,
+    /// Emoji or lucide icon id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Auto-switch window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_range: Option<DateRange>,
+    /// Tie-break when date ranges overlap (higher wins).
+    #[serde(default)]
+    pub priority: i32,
+    #[serde(default)]
+    pub schedule: Schedule,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_playlist_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_dj_voice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub games_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power: Option<PowerProfilePart>,
+    /// Props kept dark (and out of health checks) in this season.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_prop_ids: Vec<String>,
+    /// Library filter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+}
+
+/// The season-specific part of [`PowerSettings`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PowerProfilePart {
+    #[serde(default)]
+    pub dim: Vec<DimWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_brightness: Option<u8>,
+}
+
+// --- F14 remote access ----------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSettings {
+    /// Serve the public-only listener on 127.0.0.1:8081 (for tunnels).
+    #[serde(default)]
+    pub public_listener: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tailscale: Option<TailscaleState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloudflare: Option<CloudflareState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TailscaleState {
+    pub enabled: bool,
+    #[serde(default)]
+    pub serve_admin: bool,
+    #[serde(default)]
+    pub funnel_public: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudflareState {
+    /// "quick" | "token"
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_host: Option<String>,
+    /// A tunnel token is stored (the token itself is never in show.json).
+    #[serde(default)]
+    pub token_set: bool,
+}
+
+// --- F15 updates ----------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoUpdate {
+    Off,
+    #[default]
+    Notify,
+    Install,
+}
+
+/// Daily window for automatic installs ("HH:MM"; `days` empty = every day).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWindow {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub days: Vec<Weekday>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSettings {
+    #[serde(default)]
+    pub channel: UpdateChannel,
+    #[serde(default)]
+    pub auto: AutoUpdate,
+    #[serde(default = "default_update_window")]
+    pub window: UpdateWindow,
+    /// Never install within this many hours before a show window.
+    #[serde(default = "default_quiet_hours")]
+    pub avoid_show_hours: u32,
+}
+
+fn default_update_window() -> UpdateWindow {
+    UpdateWindow {
+        from: "10:00".into(),
+        to: "14:00".into(),
+        days: vec![],
+    }
+}
+
+fn default_quiet_hours() -> u32 {
+    2
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        UpdateSettings {
+            channel: UpdateChannel::Stable,
+            auto: AutoUpdate::Notify,
+            window: default_update_window(),
+            avoid_show_hours: default_quiet_hours(),
+        }
+    }
+}
+
+// --- F16 xLights ----------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct XlightsSettings {
+    /// Answer xLights "FPP Connect" uploads (root-mounted `/api/...` subset).
+    #[serde(default)]
+    pub fpp_connect: bool,
+    /// Argon2 hash of the upload password. Write-only: the API returns `""`
+    /// when one is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
+    /// Add uploaded sequences to the playlist xLights names.
+    #[serde(default = "yes")]
+    pub add_to_playlists: bool,
+    /// Phase 2: SMB drop folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch_folder: Option<String>,
+}
+
+impl Default for XlightsSettings {
+    fn default() -> Self {
+        XlightsSettings {
+            fpp_connect: false,
+            password_hash: None,
+            add_to_playlists: true,
+            watch_folder: None,
+        }
+    }
+}
+
+// --- F20 sensor nodes -----------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SensorNode {
+    pub id: String,
+    pub name: String,
+    /// e.g. "esp32c3".
+    #[serde(default)]
+    pub hw: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub inputs: Vec<SensorInput>,
+    #[serde(default)]
+    pub adopted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SensorInput {
+    /// e.g. "pir1".
+    pub id: String,
+    pub name: String,
+    pub pin: u8,
+    pub kind: SensorInputKind,
+    #[serde(default)]
+    pub active_low: bool,
+    #[serde(default = "default_debounce")]
+    pub debounce_ms: u32,
+    #[serde(default)]
+    pub hold_ms: u32,
+}
+
+fn default_debounce() -> u32 {
+    30
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum SensorInputKind {
+    Motion,
+    Button,
+    Beam,
+    Contact,
+    Current,
+}
+
+/// One input of a sensor node.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct SensorRef {
+    pub sensor_node_id: String,
+    pub input: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1070,6 +1832,9 @@ pub struct AudioSettings {
     /// sound". Range [`OUTPUT_DELAY_RANGE_MS`].
     #[serde(default)]
     pub output_delay_ms: i32,
+    /// Last automatic / manual calibration (F1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_calibration: Option<AudioCalibration>,
 }
 
 /// Allowed range of [`AudioSettings::output_delay_ms`].
@@ -1083,6 +1848,7 @@ impl Default for AudioSettings {
             normalize: true,
             target_lufs: -16.0,
             output_delay_ms: 0,
+            last_calibration: None,
         }
     }
 }
@@ -1252,6 +2018,22 @@ pub struct SecuritySettings {
 pub enum TriggerKind {
     Gpio,
     Http,
+    /// An input of an ESP32 sensor node (F20), see [`Trigger::sensor`].
+    Sensor,
+}
+
+/// When a trigger may fire (F20).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TriggerWhen {
+    #[default]
+    Always,
+    /// Only while a show window plays.
+    ShowOnly,
+    /// Only while the idle look runs.
+    IdleOnly,
+    /// Only outside show and idle times.
+    OffOnly,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1261,6 +2043,8 @@ pub enum TriggerActionType {
     PlaySequence,
     Stop,
     Effect,
+    /// Layer a short sequence / effect over whatever plays (F20).
+    Surprise,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1270,6 +2054,15 @@ pub struct TriggerAction {
     pub kind: TriggerActionType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#ref: Option<String>,
+    /// Surprise: props to draw on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<Target>,
+    /// Surprise: how long (ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Surprise: "sequence" | "effect" (what `ref` names).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1281,6 +2074,27 @@ pub struct Trigger {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpio: Option<u8>,
     pub action: TriggerAction,
+    /// `kind: sensor`: which sensor input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sensor: Option<SensorRef>,
+    /// Minimum seconds between firings (0 = none).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub cooldown_s: u32,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub when: TriggerWhen,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_window: Option<TimeWindow>,
+    /// 0 = unlimited.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub max_per_hour: u32,
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
 }
 
 #[cfg(test)]
@@ -1291,6 +2105,7 @@ mod tests {
     fn show_roundtrips_camel_case() {
         let mut show = Show::default();
         show.playlists.push(Playlist {
+            smart: Default::default(),
             id: "p1".into(),
             name: "Main".into(),
             items: vec![PlaylistItem::Effect {
@@ -1343,6 +2158,180 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["units"]["temperature"], "f");
         assert_eq!(v["requests"]["publicUrl"], "lights.example.com/request");
+    }
+
+    /// Every optional field added by the feature wave (F1–F20) stays out of
+    /// `show.json` while empty, so shows only grow when a feature is used.
+    #[test]
+    fn feature_wave_fields_are_omitted_when_empty() {
+        let v: serde_json::Value = serde_json::json!({
+            "version": 1, "name": "S",
+            "nodes": [{"id": "n", "name": "N", "hostname": "h", "role": "leader", "board": "difftx",
+                       "outputs": [{"index": 1, "label": "Port 1", "brightness": 100, "gamma": 1.0, "enabled": true}]}],
+            "receivers": [{"id": "r", "name": "R", "kind": "diffrx", "nodeId": "n", "jack": 1}],
+            "props": [{"id": "p", "name": "P", "kind": "arch", "pixelCount": 10, "channelStart": 0,
+                       "layout": {"x": 0, "y": 0, "w": 1, "h": 1}}],
+            "sequences": [{"id": "s", "name": "S", "file": "s.fseq", "durationMs": 1, "frameMs": 50, "channelCount": 3}],
+            "media": [{"id": "m", "name": "M", "kind": "song", "file": "m.mp3", "durationMs": 1}],
+            "playlists": [{"id": "pl", "name": "PL", "items": [{"type": "pause", "id": "i", "durationMs": 5}]}],
+            "schedule": {"entries": [{"id": "e", "name": "E", "enabled": true, "playlistId": "pl", "days": [],
+                          "start": {"kind": "clock", "time": "17:00"}, "end": {"kind": "clock", "time": "22:00"}}]},
+            "settings": {"triggers": [{"id": "t", "name": "T", "kind": "gpio", "gpio": 17,
+                                       "action": {"type": "stop"}}]}
+        });
+        let show: Show = serde_json::from_value(v).unwrap();
+        let json = serde_json::to_string(&show).unwrap();
+        for key in [
+            "profiles",
+            "activeProfileId",
+            "profileAutoSwitch",
+            "powerSupplies",
+            "tagDefs",
+            "sensorNodes",
+            "serial",
+            "hardwareHistory",
+            "measuredPixels",
+            "mainFuseAmps",
+            "suspectPixels",
+            "source",
+            "generated",
+            "tags",
+            "analysis",
+            "originalName",
+            "originalSize",
+            "smart",
+            "startExact",
+            "lastCalibration",
+            "sensor",
+            "cooldownS",
+            "\"when\"",
+            "activeWindow",
+            "maxPerHour",
+            "target",
+            "extraNames",
+            "passwordHash",
+            "watchFolder",
+            "tailscale",
+            "cloudflare",
+            "globalAmps",
+        ] {
+            let key = if key.starts_with('"') {
+                key.to_string()
+            } else {
+                format!("\"{key}\"")
+            };
+            assert!(!json.contains(&key), "{key} should be omitted: {json}");
+        }
+        // Always-present settings carry their documented defaults.
+        let v = serde_json::to_value(&show).unwrap();
+        assert_eq!(v["formatVersion"], SHOW_FORMAT_VERSION);
+        assert_eq!(v["settings"]["https"]["enabled"], true);
+        assert_eq!(v["settings"]["reports"]["time"], "07:00");
+        assert_eq!(v["settings"]["reports"]["keepDays"], 90);
+        assert_eq!(v["settings"]["power"]["mode"], "warn");
+        assert_eq!(v["settings"]["power"]["maxBrightness"], 100);
+        assert_eq!(v["settings"]["updates"]["channel"], "stable");
+        assert_eq!(v["settings"]["updates"]["auto"], "notify");
+        assert_eq!(v["settings"]["updates"]["window"]["from"], "10:00");
+        assert_eq!(v["settings"]["xlights"]["fppConnect"], false);
+        assert_eq!(v["settings"]["xlights"]["addToPlaylists"], true);
+        assert_eq!(v["settings"]["remote"]["publicListener"], false);
+    }
+
+    /// A show using every new feature round-trips with the documented JSON names.
+    #[test]
+    fn feature_wave_show_roundtrips() {
+        let v: serde_json::Value = serde_json::from_str(r##"{
+            "version": 3, "name": "Full", "formatVersion": 1,
+            "nodes": [{"id": "n", "name": "N", "hostname": "h", "role": "follower", "board": "difftx",
+                "serial": "PPX-1", "hardwareHistory": [{"at": "2026-01-01T00:00:00Z", "board": "difftx", "reason": "replaced"}],
+                "outputs": [{"index": 1, "label": "Port 1", "brightness": 100, "gamma": 1.0, "enabled": true,
+                    "measuredPixels": {"count": 48, "method": "camera", "at": "2026-01-01T00:00:00Z", "dead": [48, 49]}}]}],
+            "receivers": [{"id": "r", "name": "R", "kind": "diffrx", "nodeId": "n", "jack": 1, "mainFuseAmps": 30.0}],
+            "props": [{"id": "p", "name": "P", "kind": "arch", "pixelCount": 10, "channelStart": 0, "suspectPixels": [3],
+                "layout": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "source": "camera"}}],
+            "sequences": [{"id": "s", "name": "S", "file": "s.fseq", "durationMs": 1, "frameMs": 25, "channelCount": 3,
+                "tags": ["kids"], "generated": {"kind": "autoShow", "mediaId": "m", "style": "classic", "seed": 7,
+                "analysisVersion": 1, "propsHash": "abc"}}],
+            "media": [{"id": "m", "name": "M", "kind": "song", "file": "m.mp3", "durationMs": 1, "tags": ["kids"],
+                "originalName": "Song.mp3", "originalSize": 1234,
+                "analysis": {"version": 1, "bpm": 120.0, "bpmConfidence": 0.8, "beatCount": 400, "firstBeatMs": 250, "energy": 0.5, "sections": 6}}],
+            "playlists": [{"id": "pl", "name": "PL",
+                "intro": [{"type": "countdown", "id": "c", "durationMs": 10000, "matrixPropId": "p", "color": "#ffffff",
+                    "others": "pulse", "finale": "none", "djClipId": "d", "djOffsetMs": -200, "tick": true}],
+                "smart": {"includeTags": ["kids"], "includeMode": "all", "excludeTags": ["halloween"],
+                    "targetDurationMs": 2700000, "noRepeatNights": 1, "order": "rotation",
+                    "timeRules": [{"before": {"kind": "clock", "time": "19:00"}, "requireTags": ["kids"]}],
+                    "pinnedLast": [{"type": "sequence", "id": "i2", "sequenceId": "s"}], "interleaveEvery": 3}}],
+            "schedule": {"entries": [{"id": "e", "name": "E", "enabled": true, "playlistId": "pl", "days": [],
+                "start": {"kind": "clock", "time": "17:30"}, "end": {"kind": "clock", "time": "22:00"}, "startExact": true}]},
+            "profiles": [{"id": "x", "name": "Christmas", "icon": "🎄", "dateRange": {"start": "11-01", "end": "01-06"},
+                "priority": 1, "schedule": {}, "disabledPropIds": ["p"], "tags": ["season:christmas"],
+                "power": {"dim": [], "maxBrightness": 80}}],
+            "activeProfileId": "x", "profileAutoSwitch": true,
+            "powerSupplies": [{"id": "ps", "name": "Garage PSU", "volts": 12.0, "amps": 29.0, "receiverIds": ["r"],
+                "directOutputs": [{"nodeId": "n", "output": 2}], "sensor": {"sensorNodeId": "sn", "input": "ch1"}}],
+            "tagDefs": [{"name": "kids", "color": "#00ff00"}],
+            "sensorNodes": [{"id": "sn", "name": "Sidewalk", "hw": "esp32c3", "adopted": true,
+                "inputs": [{"id": "pir1", "name": "PIR", "pin": 4, "kind": "motion"}]}],
+            "settings": {
+                "audio": {"device": "default", "volume": 80, "normalize": true, "targetLufs": -16.0, "outputDelayMs": 212,
+                    "lastCalibration": {"measuredAt": "2026-01-01T00:00:00Z", "method": "phone", "residualMs": 3.5,
+                        "spreadMs": 4.0, "matches": 30, "appliedDelayMs": 212, "device": "Pixel 8"}},
+                "https": {"enabled": false, "extraNames": ["lights.lan"]},
+                "reports": {"enabled": true, "time": "06:30", "email": false, "push": true, "onlyWhenProblems": true, "keepDays": 30},
+                "power": {"mode": "limit", "safety": 0.8, "globalAmps": 15.0,
+                    "dim": [{"from": {"kind": "clock", "time": "22:00"}, "to": {"kind": "clock", "time": "23:00"}, "brightness": 40, "days": ["fri"]}],
+                    "maxBrightness": 90},
+                "remote": {"publicListener": true, "tailscale": {"enabled": true, "serveAdmin": true, "funnelPublic": false, "dnsName": "pp.ts.net"},
+                    "cloudflare": {"mode": "token", "publicHost": "lights.example.com", "tokenSet": true}},
+                "updates": {"channel": "beta", "auto": "install", "window": {"from": "09:00", "to": "12:00", "days": ["sat"]}, "avoidShowHours": 3},
+                "xlights": {"fppConnect": true, "passwordHash": "$argon2id$x", "addToPlaylists": false},
+                "triggers": [{"id": "t", "name": "Doorbell", "kind": "sensor", "sensor": {"sensorNodeId": "sn", "input": "pir1"},
+                    "cooldownS": 60, "when": "showOnly", "maxPerHour": 10,
+                    "activeWindow": {"from": {"kind": "clock", "time": "17:00"}, "to": {"kind": "clock", "time": "21:00"}},
+                    "action": {"type": "surprise", "ref": "e1", "source": "effect", "durationMs": 5000, "target": {"propIds": ["p"]}}}]
+            }
+        }"##).unwrap();
+        let show: Show = serde_json::from_value(v.clone()).unwrap();
+        assert!(matches!(
+            show.playlists[0].intro[0],
+            PlaylistItem::Countdown {
+                others: CountdownOthers::Pulse,
+                finale: CountdownFinale::None,
+                ..
+            }
+        ));
+        assert_eq!(show.settings.triggers[0].kind, TriggerKind::Sensor);
+        assert_eq!(
+            show.settings.triggers[0].action.kind,
+            TriggerActionType::Surprise
+        );
+        assert_eq!(show.settings.power.mode, LimiterMode::Limit);
+        let back: Show = serde_json::from_str(&serde_json::to_string(&show).unwrap()).unwrap();
+        assert_eq!(back, show);
+        let out = serde_json::to_value(&show).unwrap();
+        assert_eq!(out["playlists"][0]["intro"][0]["type"], "countdown");
+        assert_eq!(out["playlists"][0]["intro"][0]["djOffsetMs"], -200);
+        assert_eq!(out["sequences"][0]["generated"]["kind"], "autoShow");
+        assert_eq!(out["settings"]["triggers"][0]["when"], "showOnly");
+        // A minimal countdown gets its defaults.
+        let c: PlaylistItem =
+            serde_json::from_str(r#"{"type":"countdown","id":"c","durationMs":10000}"#).unwrap();
+        let PlaylistItem::Countdown {
+            text,
+            others,
+            finale,
+            tick,
+            ..
+        } = c
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (text.as_str(), others, finale, tick),
+            ("{s}", CountdownOthers::Fill, CountdownFinale::Flash, false)
+        );
     }
 
     #[test]

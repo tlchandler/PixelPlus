@@ -103,6 +103,7 @@ pub fn seed_defaults(show: &mut Show) {
     }
     if show.playlists.is_empty() {
         show.playlists.push(Playlist {
+            smart: Default::default(),
             id: pixelplus_core::model::new_id(),
             name: "Main Show".into(),
             items: vec![],

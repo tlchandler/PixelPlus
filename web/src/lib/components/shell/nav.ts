@@ -1,5 +1,9 @@
 import {
+	AudioWaveform,
 	CalendarClock,
+	CalendarRange,
+	Camera,
+	ClipboardList,
 	Cpu,
 	Gamepad2,
 	LayoutDashboard,
@@ -9,6 +13,7 @@ import {
 	Music,
 	Settings,
 	Shapes,
+	ShieldCheck,
 	WandSparkles
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
@@ -32,6 +37,12 @@ export const NAV: NavItem[] = [
 	{ href: '/dj', label: 'DJ Studio', icon: Mic, key: 'j', group: 'content' },
 	{ href: '/effects', label: 'Effects', icon: WandSparkles, key: 'e', group: 'content' },
 	{ href: '/games', label: 'Games', icon: Gamepad2, key: 'g', group: 'extras' },
+	// Feature wave (ARCHITECTURE §12); pages owned by their workstreams.
+	{ href: '/reports', label: 'Reports', icon: ClipboardList, group: 'show' },
+	{ href: '/map', label: 'Map my yard', icon: Camera, group: 'build' },
+	{ href: '/settings/seasons', label: 'Seasons', icon: CalendarRange, group: 'content' },
+	{ href: '/calibrate', label: 'Sync to sound', icon: AudioWaveform, group: 'extras' },
+	{ href: '/trust', label: 'Trust this phone', icon: ShieldCheck, group: 'extras' },
 	{ href: '/settings', label: 'Settings', icon: Settings, key: ',', group: 'system' }
 ];
 
@@ -47,5 +58,8 @@ export const TABS = ['/', '/props', '/playlists', '/schedule'];
 
 export function isActive(href: string, path: string): boolean {
 	if (href === '/') return path === '/';
-	return path === href || path.startsWith(href + '/');
+	const within = (h: string) => path === h || path.startsWith(h + '/');
+	// A more specific entry (e.g. /settings/seasons under /settings) wins.
+	if (NAV.some((n) => n.href.startsWith(href + '/') && within(n.href))) return false;
+	return within(href);
 }

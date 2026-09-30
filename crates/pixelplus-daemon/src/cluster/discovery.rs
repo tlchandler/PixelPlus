@@ -269,6 +269,8 @@ pub(crate) fn build_beacon(state: &AppState, sh: &Shared, ips: Vec<std::net::IpA
         LocalRole::Unconfigured => (None, 0, None),
     };
     Beacon {
+        proto_max: Default::default(),
+        proto_min: Default::default(),
         id: identity.id.clone(),
         name,
         hostname,

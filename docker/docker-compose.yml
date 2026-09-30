@@ -5,7 +5,7 @@
 #   docker compose -f docker/docker-compose.yml --profile games up -d    # + games sidecar
 #
 # Open http://<this-machine>:80 (or the port you set below).
-# Host networking is required: followers are found by UDP broadcast (32320) and mDNS.
+# Host networking is required: followers are found by UDP broadcast (32420) and mDNS.
 # (Docker Desktop on macOS/Windows cannot do host networking for the LAN; run PixelPlus
 #  on a Linux host or NAS instead.)
 

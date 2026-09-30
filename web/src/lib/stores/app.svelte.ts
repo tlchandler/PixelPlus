@@ -8,7 +8,8 @@ import type {
 	PlayerStatus,
 	Sensor,
 	Show,
-	SystemInfo
+	SystemInfo,
+	WsPayloads
 } from '$lib/api/types';
 import { toasts } from './toasts.svelte';
 
@@ -207,6 +208,24 @@ class AppState {
 				this.loadSystem().catch(() => {});
 				break;
 		}
+		// Feature pages listen for their own messages (`job`, `power`, `mapping`, `sensorInput`).
+		for (const cb of this.#msgSubs.get(msg.type) ?? []) {
+			try {
+				cb(msg.data);
+			} catch (e) {
+				console.warn(`"${msg.type}" listener failed`, e);
+			}
+		}
+	}
+
+	#msgSubs = new Map<string, Set<(data: any) => void>>();
+
+	/** Listen for WebSocket messages of one type; returns the unsubscribe function. */
+	onMessage<K extends keyof WsPayloads>(type: K, cb: (data: WsPayloads[K]) => void): () => void {
+		let set = this.#msgSubs.get(type);
+		if (!set) this.#msgSubs.set(type, (set = new Set()));
+		set.add(cb);
+		return () => set.delete(cb);
 	}
 
 	/** Receive live preview frames (RGB for every prop in show.props order). */

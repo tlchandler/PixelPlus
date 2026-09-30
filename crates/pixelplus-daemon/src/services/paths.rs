@@ -147,6 +147,10 @@ mod tests {
     fn hostile_show_paths_are_rebuilt_from_ids() {
         let mut show = Show::default();
         show.media.push(Media {
+            tags: Default::default(),
+            analysis: Default::default(),
+            original_name: Default::default(),
+            original_size: Default::default(),
             id: "m1".into(),
             name: "Song".into(),
             kind: MediaKind::Song,
@@ -156,6 +160,10 @@ mod tests {
             gain_db: None,
         });
         show.media.push(Media {
+            tags: Default::default(),
+            analysis: Default::default(),
+            original_name: Default::default(),
+            original_size: Default::default(),
             id: "m2".into(),
             name: "Page".into(),
             kind: MediaKind::Song,
@@ -165,6 +173,10 @@ mod tests {
             gain_db: None,
         });
         show.media.push(Media {
+            tags: Default::default(),
+            analysis: Default::default(),
+            original_name: Default::default(),
+            original_size: Default::default(),
             id: "../evil".into(),
             name: "Bad id".into(),
             kind: MediaKind::Song,
@@ -174,6 +186,8 @@ mod tests {
             gain_db: None,
         });
         show.sequences.push(Sequence {
+            generated: Default::default(),
+            tags: Default::default(),
             id: "s1".into(),
             name: "S".into(),
             file: "../../node.json".into(),

@@ -212,6 +212,8 @@ async fn leader_adopts_followers_and_drives_them() {
         .store
         .update(|s| {
             s.sequences.push(Sequence {
+                generated: Default::default(),
+                tags: Default::default(),
                 id: "s1".into(),
                 name: "Wizards".into(),
                 file: "sequences/s1.fseq".into(),
@@ -978,6 +980,7 @@ async fn adoption_rules_skew_and_replay() {
     .await;
     let sync = |brightness: u8| {
         proto::Msg::Sync(crate::player::SyncPacket {
+            surprise: Default::default(),
             leader: leader_id.clone(),
             show_version: leader.state.store.version(),
             state: PlayerState::Idle,

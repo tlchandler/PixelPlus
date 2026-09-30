@@ -67,7 +67,10 @@
 		ChevronLeft,
 		Printer,
 		Globe,
-		Info
+		Info,
+		CalendarRange,
+		ClipboardList,
+		Radar
 	} from '@lucide/svelte';
 
 	type Sec =
@@ -108,6 +111,43 @@
 		{ id: 'updates', label: 'Updates', icon: Download, desc: 'New versions of PixelPlus', device: true },
 		{ id: 'hardware', label: 'Hardware & about', icon: Cpu, desc: 'Board, restart, shut down', device: true },
 		{ id: 'logs', label: 'Logs', icon: ScrollText, desc: 'What happened, for troubleshooting', device: true }
+	];
+
+	/** Settings with a page of their own (feature wave). */
+	const MORE_PAGES: { href: string; label: string; icon: typeof Wifi; desc: string }[] = [
+		{
+			href: '/settings/seasons',
+			label: 'Seasons',
+			icon: CalendarRange,
+			desc: 'Halloween, Christmas… switch it all'
+		},
+		{
+			href: '/settings/power',
+			label: 'Power',
+			icon: Zap,
+			desc: 'Supplies, brightness limit, late-night dimming'
+		},
+		{
+			href: '/settings/sensors',
+			label: 'Sensors',
+			icon: Radar,
+			desc: 'Motion sensors and buttons in the yard'
+		},
+		{
+			href: '/settings/reports',
+			label: 'Nightly report',
+			icon: ClipboardList,
+			desc: 'How last night went, every morning'
+		},
+		{ href: '/settings/xlights', label: 'xLights', icon: Upload, desc: 'Upload straight from xLights' },
+		{ href: '/settings/https', label: 'Secure connection', icon: Lock, desc: 'HTTPS for phone camera pages' },
+		{ href: '/settings/remote', label: 'Remote access', icon: Globe, desc: 'Reach the show from anywhere' },
+		{
+			href: '/settings/updates',
+			label: 'Update everything',
+			icon: RefreshCw,
+			desc: 'Channels, auto-update, rollback'
+		}
 	];
 
 	let sec = $state<Sec>('general');
@@ -536,6 +576,17 @@
 					>
 					<ChevronRight size={16} class="si-chev" />
 				</button>
+			{/each}
+			<!-- Feature-wave settings pages (ARCHITECTURE §12), each owned by its workstream. -->
+			<span class="si-group">More</span>
+			{#each MORE_PAGES as x (x.href)}
+				<a class="si" href={x.href}>
+					<span class="si-ic"><x.icon size={16} /></span>
+					<span class="si-txt"
+						><span class="si-label">{x.label}</span><span class="si-desc">{x.desc}</span></span
+					>
+					<ChevronRight size={16} class="si-chev" />
+				</a>
 			{/each}
 		</nav>
 
@@ -1903,6 +1954,17 @@
 		display: grid;
 		place-items: center;
 		flex: 0 0 auto;
+	}
+	a.si {
+		text-decoration: none;
+	}
+	.si-group {
+		margin: 14px 12px 4px;
+		font-size: 11px;
+		font-weight: 650;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--text-3);
 	}
 	.si-txt {
 		display: flex;

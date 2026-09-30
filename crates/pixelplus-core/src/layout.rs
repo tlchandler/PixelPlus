@@ -116,6 +116,7 @@ pub fn default_layout(kind: PropKind, pixel_count: u32, x: f32, y: f32) -> PropL
         h,
         rotation: 0.0,
         points: Some(default_points(kind, pixel_count)),
+        source: None,
     }
 }
 
@@ -214,6 +215,7 @@ pub fn auto_arrange(props: &mut [Prop]) -> usize {
                     .unwrap_or_else(|| default_points(prop.kind, prop.pixel_count)),
                 None => default_points(prop.kind, prop.pixel_count),
             }),
+            source: None,
         });
         x += w + ARRANGE_GAP;
         row_h = row_h.max(h);
@@ -529,6 +531,7 @@ mod tests {
     fn auto_arrange_places_below_existing() {
         use crate::model::Prop;
         let mk = |kind, px, layout| Prop {
+            suspect_pixels: Default::default(),
             id: "x".into(),
             name: "x".into(),
             kind,
@@ -546,6 +549,7 @@ mod tests {
             notes: None,
         };
         let existing = PropLayout {
+            source: Default::default(),
             x: 100.0,
             y: 50.0,
             w: 200.0,
@@ -576,6 +580,7 @@ mod tests {
     #[test]
     fn world_points_apply_box_and_rotation() {
         let mut p = crate::model::Prop {
+            suspect_pixels: Default::default(),
             id: "a".into(),
             name: "a".into(),
             kind: PropKind::Line,
@@ -587,6 +592,7 @@ mod tests {
             segments: vec![],
             group_ids: vec![],
             layout: Some(PropLayout {
+                source: Default::default(),
                 x: 10.0,
                 y: 10.0,
                 w: 10.0,

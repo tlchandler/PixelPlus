@@ -64,6 +64,7 @@ async fn play(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Valu
         }
     }
     let mut req = PlayRequest {
+        loop_until_stopped: Default::default(),
         playlist_id: b.playlist_id,
         sequence_id: b.sequence_id,
         dj_clip_id: b.dj_clip_id,
@@ -259,6 +260,10 @@ pub(crate) async fn apply_effect(state: &AppState, effect: Option<EffectPreset>)
                 props: e.target.clone(),
             };
             p.test_start(TestRequest {
+                map_run_id: Default::default(),
+                cal: Default::default(),
+                identify: Default::default(),
+                map: Default::default(),
                 mode: "effect".into(),
                 color: None,
                 speed: None,

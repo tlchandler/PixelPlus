@@ -256,6 +256,7 @@ mod tests {
 
     fn pl(items: &[&str], intro: &[&str], outro: &[&str], shuffle: bool, repeat: bool) -> Playlist {
         Playlist {
+            smart: Default::default(),
             id: "p".into(),
             name: "P".into(),
             items: items.iter().map(|s| seq(s)).collect(),

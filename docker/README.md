@@ -2,7 +2,7 @@
 
 The Pis with PixelPlus boards become followers; the leader (show, music, schedule, web UI)
 runs here. Linux host or NAS required - **host networking** is needed for follower
-discovery (UDP broadcast 32320 + mDNS), which Docker Desktop on macOS/Windows cannot do.
+discovery (UDP broadcast 32420 + mDNS), which Docker Desktop on macOS/Windows cannot do.
 
 ```sh
 docker compose -f docker/docker-compose.yml up -d                  # daemon + web UI on port 80
@@ -13,6 +13,7 @@ docker compose -f docker/docker-compose.yml --profile games up -d  # + games sid
 | Setting | Default | |
 |---|---|---|
 | `PIXELPLUS_HTTP_PORT` | `80` | use e.g. `8080` if port 80 is taken (Synology DSM) |
+| `PIXELPLUS_HTTPS_PORT` | `8443` | HTTPS for phone camera/mic pages (local CA); `0` = off |
 | `TZ` | `Etc/UTC` | your time zone (schedules, sunset) |
 | `PIXELPLUS_OUTPUT` | `none` | a PC has no pixel outputs |
 | `PIXELPLUS_BOARD` | `virtual` | board override (any of `difftx`, `difftxlarge`, `diffsmart`, `bare-pi`, `virtual`, `auto`) |

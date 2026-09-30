@@ -40,6 +40,9 @@ pub struct ManifestSettings {
     /// Pixel output options (latch alignment).
     #[serde(default)]
     pub output: OutputSettings,
+    /// Props kept dark by the active season profile (F8).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_prop_ids: Vec<String>,
 }
 
 /// What the leader tells one follower (`GET /cluster/manifest/:nodeId`).
@@ -67,6 +70,10 @@ pub struct NodeManifest {
     /// Hash of this node's pixel routing; slices are keyed by it.
     #[serde(default)]
     pub mapping_hash: String,
+    /// Power limiter budget for this node (F12; populated by WS5 from
+    /// `power::node_budget`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power: Option<NodePowerBudget>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -165,8 +172,12 @@ pub fn build(
             location: show.schedule.location.clone(),
             oled: show.settings.oled.clone(),
             output: show.settings.output.clone(),
+            // Populated from the active season profile by WS5/WS6 (F8).
+            disabled_prop_ids: Vec::new(),
         },
         mapping_hash,
+        // Populated from `power::node_budget` by WS5/WS3 (F12).
+        power: None,
     })
 }
 
@@ -193,6 +204,8 @@ pub fn follower_show(
         .iter()
         .filter(|s| available.get(&s.id).copied().unwrap_or(false))
         .map(|s| Sequence {
+            generated: Default::default(),
+            tags: Default::default(),
             id: s.id.clone(),
             name: s.name.clone(),
             file: follower_slice_file(&s.id),
@@ -255,6 +268,8 @@ pub(crate) mod tests {
 
     pub fn node(id: &str, role: NodeRole, board: BoardKind) -> Node {
         Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: id.into(),
             name: format!("Node {id}"),
             hostname: format!("pp-{id}"),
@@ -283,6 +298,7 @@ pub(crate) mod tests {
 
     pub fn prop(id: &str, pixels: u32, channel_start: u32, segments: Vec<PropSegment>) -> Prop {
         Prop {
+            suspect_pixels: Default::default(),
             id: id.into(),
             name: format!("Prop {id}"),
             kind: PropKind::Line,
@@ -294,6 +310,7 @@ pub(crate) mod tests {
             segments,
             group_ids: vec![],
             layout: Some(PropLayout {
+                source: Default::default(),
                 x: channel_start as f32,
                 y: 0.0,
                 w: 100.0,
@@ -333,6 +350,7 @@ pub(crate) mod tests {
             color: None,
         }];
         s.receivers = vec![Receiver {
+            main_fuse_amps: Default::default(),
             id: "r1".into(),
             name: "Garage".into(),
             kind: ReceiverKind::Diffrx,

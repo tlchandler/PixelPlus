@@ -282,6 +282,7 @@ async fn execute(state: &AppState, cmd: Command) {
     };
     let show = state.store.get();
     let play = |playlist_id: String| PlayRequest {
+        loop_until_stopped: Default::default(),
         playlist_id: Some(playlist_id),
         sequence_id: None,
         dj_clip_id: None,
@@ -543,6 +544,7 @@ mod tests {
     fn discovery() {
         let mut show = Show::default();
         show.playlists.push(pixelplus_core::model::Playlist {
+            smart: Default::default(),
             id: "p".into(),
             name: "Main Show".into(),
             items: vec![],

@@ -544,6 +544,8 @@ mod tests {
 
     fn node(id: &str) -> Node {
         Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: id.into(),
             name: id.into(),
             hostname: id.into(),
@@ -560,6 +562,7 @@ mod tests {
 
     fn prop(id: &str, pixels: u32, start: u32, segs: Vec<PropSegment>) -> Prop {
         Prop {
+            suspect_pixels: Default::default(),
             id: id.into(),
             name: id.into(),
             kind: PropKind::Line,

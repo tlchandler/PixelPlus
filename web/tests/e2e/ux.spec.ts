@@ -15,7 +15,12 @@ const ADMIN = [
 	'/effects',
 	'/games',
 	'/settings',
-	'/yard-sign'
+	'/yard-sign',
+	'/reports',
+	'/map',
+	'/calibrate',
+	'/settings/seasons',
+	'/settings/power'
 ];
 
 async function open(page: Page, path: string, mock = '1', theme?: 'light' | 'dark') {

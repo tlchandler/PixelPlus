@@ -21,6 +21,10 @@ pub fn redact_settings(s: &mut ShowSettings) {
     if s.security.password_hash.is_some() {
         s.security.password_hash = Some(String::new());
     }
+    // xLights upload password (F16): write-only like the UI password.
+    if s.xlights.password_hash.is_some() {
+        s.xlights.password_hash = Some(String::new());
+    }
     if let Some(e) = s.alerts.email.as_mut() {
         if !e.password.is_empty() {
             e.password = SECRET_PLACEHOLDER.into();
@@ -142,6 +146,10 @@ async fn put_settings(
             // other security settings (allowed hosts, trusted proxies) here.
             if let Some(sec) = patch.get_mut("security").and_then(Value::as_object_mut) {
                 sec.remove("passwordHash");
+            }
+            // Likewise the xLights upload password (its own endpoint, F16).
+            if let Some(x) = patch.get_mut("xlights").and_then(Value::as_object_mut) {
+                x.remove("passwordHash");
             }
             restore_secrets(&mut patch, &s.settings);
             merge_patch(&mut value, &patch);

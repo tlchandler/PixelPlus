@@ -1377,6 +1377,15 @@ impl Core {
             let pl = show
                 .playlist(id)
                 .ok_or_else(|| ApiError::not_found("That playlist"))?;
+            // Manual play (scheduler.rs rules): "Loop until I stop" repeats; outside
+            // the show windows a playlist plays once; inside one it follows its
+            // own `repeat` until the window ends.
+            let mut pl = pl.clone();
+            if req.loop_until_stopped {
+                pl.repeat = true;
+            } else if !(self.facts.enabled && self.facts.active.is_some()) {
+                pl.repeat = false;
+            }
             let mut cursor = PlaylistCursor::new(pl.clone());
             if let Some(i) = req.start_index {
                 cursor.start_at(i as usize);
@@ -1446,7 +1455,7 @@ impl Core {
         };
         self.start_program(
             Program {
-                origin: Origin::Manual,
+                origin: Origin::manual(&self.facts, req.loop_until_stopped),
                 source,
                 playlist,
                 crossfade_ms: crossfade,
@@ -1455,7 +1464,7 @@ impl Core {
             now_ms,
         );
         match &self.program {
-            Some(p) if p.origin == Origin::Manual => Ok(()),
+            Some(p) if p.origin.is_manual() => Ok(()),
             _ => Err(ApiError::bad_request(
                 self.item_error
                     .as_ref()
@@ -1478,7 +1487,11 @@ impl Core {
             self.test = None;
             self.start_program(
                 Program {
-                    origin: Origin::Manual,
+                    // A tool with its own length: the schedule never ends it.
+                    origin: Origin::Manual {
+                        window: None,
+                        looping: true,
+                    },
                     source: Source::Single,
                     playlist: None,
                     crossfade_ms: 0,
@@ -1637,7 +1650,7 @@ impl Core {
             }
             self.start_program(
                 Program {
-                    origin: Origin::Manual,
+                    origin: Origin::manual(&self.facts, false),
                     source: Source::Single,
                     playlist: None,
                     crossfade_ms: 0,
@@ -1820,6 +1833,7 @@ impl Core {
                 ),
                 PlaylistItem::Pause { id, .. } => item_ref("pause", id, "Pause"),
                 PlaylistItem::Command { id, command, .. } => item_ref("command", id, command),
+                PlaylistItem::Countdown { id, .. } => item_ref("countdown", id, "Countdown"),
             },
         }
     }
@@ -1967,6 +1981,14 @@ impl Core {
                 self.run_command(command, args);
                 Ok(None)
             }
+            // F4 placeholder until WS3 renders countdowns: keep the timing
+            // (dark for its duration) so intros still end on time.
+            PlaylistItem::Countdown { duration_ms, .. } => {
+                tracing::warn!("countdowns are not rendered yet; the lights stay dark for it");
+                let mut a = Active::new(iref, ActiveKind::Pause, now_ms);
+                a.duration_ms = Some(*duration_ms);
+                Ok(Some(a))
+            }
         }
     }
 
@@ -2084,6 +2106,11 @@ impl Core {
                             self.program.as_mut().map(|p| &mut p.source)
                         {
                             c.finish_after_current();
+                        } else if self.current.as_ref().is_some_and(|a| {
+                            matches!(a.kind, ActiveKind::Effect(_)) && a.duration_ms.is_none()
+                        }) {
+                            // A look started by hand has no end to finish at: fade it.
+                            self.stop(true, false, now_ms);
                         }
                     }
                     EndBehavior::StopNow => self.stop(false, false, now_ms),
@@ -3415,6 +3442,8 @@ pub fn click_wav(len_ms: u64) -> Vec<u8> {
 
 fn dummy_node() -> pixelplus_core::model::Node {
     pixelplus_core::model::Node {
+        hardware_history: Default::default(),
+        serial: Default::default(),
         id: String::new(),
         name: String::new(),
         hostname: String::new(),

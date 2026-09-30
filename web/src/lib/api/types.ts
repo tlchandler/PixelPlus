@@ -17,6 +17,18 @@ export interface OutputConfig {
 	brightness: number;
 	gamma: number;
 	enabled: boolean;
+	/** Pixels found by a pixel-count check (F7). */
+	measuredPixels?: MeasuredCount;
+}
+
+/** Result of a pixel-count check (F7). */
+export interface MeasuredCount {
+	count: number;
+	method: 'camera' | 'manual' | 'current';
+	/** ISO time. */
+	at: string;
+	/** Output pixel indices that did not respond. */
+	dead?: number[];
 }
 
 export interface Node {
@@ -31,6 +43,18 @@ export interface Node {
 	adopted: boolean;
 	lastSeen?: string;
 	notes?: string;
+	/** EEPROM serial of the current hardware (F10). */
+	serial?: string;
+	/** Earlier hardware of this controller (F10 "Replace with…"). */
+	hardwareHistory?: HardwareRecord[];
+}
+
+export interface HardwareRecord {
+	at: string;
+	serial?: string;
+	board: BoardKind;
+	piModel?: string;
+	reason: string;
 }
 
 export type ReceiverKind = 'diffrx' | 'diffsmart-rx' | 'generic-4' | 'direct';
@@ -44,6 +68,8 @@ export interface Receiver {
 	location?: string;
 	fuseAmps?: number;
 	notes?: string;
+	/** Main fuse / bus rating in A (diffrx rev C: 30), F12. */
+	mainFuseAmps?: number;
 }
 
 // ---------------------------------------------------------------- props
@@ -93,7 +119,10 @@ export interface PropLayout {
 	h: number;
 	rotation: number;
 	points?: [number, number][];
+	/** Where the layout came from (absent = unknown). */
+	source?: LayoutSource;
 }
+export type LayoutSource = 'xlights' | 'manual' | 'camera';
 
 export interface MatrixInfo {
 	width: number;
@@ -125,6 +154,8 @@ export interface Prop {
 	color?: string;
 	maxMilliampsPerPixel?: number;
 	notes?: string;
+	/** Prop pixel indices flagged dead / suspect (F6, F7, fault finder). */
+	suspectPixels?: number[];
 }
 
 export interface PropGroup {
@@ -146,6 +177,22 @@ export interface Sequence {
 	xlightsName?: string;
 	thumbnail?: string;
 	hash: string;
+	/** Made by PixelPlus: auto light show / speak with lights (F2). */
+	generated?: GeneratedInfo;
+	/** Library tags (F18), e.g. "kids", "season:halloween". */
+	tags?: string[];
+}
+
+export type GeneratedKind = 'autoShow' | 'voice';
+export interface GeneratedInfo {
+	kind: GeneratedKind;
+	mediaId: Id;
+	style: string;
+	/** Empty = all props. */
+	propIds: Id[];
+	seed: number;
+	analysisVersion: number;
+	propsHash: string;
 }
 
 export type MediaKind = 'song' | 'dj' | 'sfx';
@@ -158,6 +205,39 @@ export interface Media {
 	durationMs: number;
 	loudnessLufs?: number;
 	gainDb?: number;
+	/** Beat / tempo / energy summary (F2). */
+	analysis?: AudioAnalysisSummary;
+	/** Library tags (F18). */
+	tags?: string[];
+	/** File name / size as uploaded (xLights FPP Connect, F16). */
+	originalName?: string;
+	originalSize?: number;
+}
+
+export interface AudioAnalysisSummary {
+	version: number;
+	bpm: number;
+	bpmConfidence: number;
+	beatCount: number;
+	firstBeatMs: number;
+	/** 0..1 mean normalized energy. */
+	energy: number;
+	sections: number;
+}
+
+/** GET /media/:id/analysis (F2), versioned. */
+export interface AudioAnalysis {
+	v: number;
+	sr: number;
+	hopMs: number;
+	bpm: number;
+	bpmConfidence: number;
+	tempoCurve: number[];
+	beats: number[];
+	downbeats: number[];
+	onsets: { ms: number; strength: number; band: number }[];
+	energy10Hz: { rms: number[]; low: number[]; mid: number[]; high: number[] };
+	sections: { startMs: number; endMs: number; level: 'low' | 'mid' | 'high' }[];
 }
 
 export interface DjLine {
@@ -220,7 +300,9 @@ export type EffectKind =
 	| 'wave'
 	| 'meteor'
 	| 'strobe'
-	| 'breathe';
+	| 'breathe'
+	/** Show-start countdown (F4); rendered from its playlist item, not in the catalogue. */
+	| 'countdown';
 
 export const EFFECT_KINDS: EffectKind[] = [
 	'solid',
@@ -278,7 +360,25 @@ export type PlaylistItem =
 	| { id: Id; type: 'effect'; effectId: Id; durationMs: number }
 	| { id: Id; type: 'media'; mediaId: Id }
 	| { id: Id; type: 'pause'; durationMs: number }
-	| { id: Id; type: 'command'; command: string; args?: unknown };
+	| { id: Id; type: 'command'; command: string; args?: unknown }
+	| CountdownItem;
+
+/** Show-start countdown (F4), usually the last intro item. */
+export interface CountdownItem {
+	id: Id;
+	type: 'countdown';
+	durationMs: number;
+	matrixPropId?: Id;
+	/** `{s}`, `{mm}:{ss}` or custom text around them; default "{s}". */
+	text?: string;
+	color?: string;
+	others?: 'fill' | 'pulse' | 'dark';
+	finale?: 'flash' | 'none';
+	djClipId?: Id;
+	/** 0 = the clip ends at zero. */
+	djOffsetMs?: number;
+	tick?: boolean;
+}
 
 export type PlaylistItemType = PlaylistItem['type'];
 
@@ -291,6 +391,41 @@ export interface Playlist {
 	shuffle: boolean;
 	repeat: boolean;
 	crossfadeMs: number;
+	/** Smart playlist rules (F18): items are generated at play time. */
+	smart?: SmartRules;
+}
+
+export type TagMatch = 'any' | 'all';
+export type SmartOrder = 'leastRecent' | 'shuffle' | 'rotation' | 'fixed';
+export interface SmartTimeRule {
+	before: TimeSpec;
+	requireTags: string[];
+}
+export interface SmartRules {
+	includeTags: string[];
+	includeMode: TagMatch;
+	excludeTags: string[];
+	targetDurationMs?: number;
+	maxItemMs?: number;
+	noRepeatNights: number;
+	timeRules: SmartTimeRule[];
+	order: SmartOrder;
+	pinnedFirst: PlaylistItem[];
+	pinnedLast: PlaylistItem[];
+	interleave: PlaylistItem[];
+	interleaveEvery: number;
+}
+
+export interface TagDef {
+	name: string;
+	color?: string;
+}
+
+/** GET /playlists/:id/preview (F18). */
+export interface SmartPreview {
+	items: PlaylistItem[];
+	totalMs: number;
+	notes: string[];
 }
 
 // ---------------------------------------------------------------- schedule
@@ -327,6 +462,14 @@ export interface ScheduleEntry {
 	end: TimeSpec;
 	priority: number;
 	endBehavior: EndBehavior;
+	/** Start the intro early so the first song begins exactly at `start` (F4). */
+	startExact?: boolean;
+}
+
+/** A daily window (wraps midnight when `to` is before `from`). */
+export interface TimeWindow {
+	from: TimeSpec;
+	to: TimeSpec;
 }
 
 export interface VolumeCurfew {
@@ -362,6 +505,17 @@ export interface AudioSettings {
 	 * Bluetooth, distance ≈ 3 ms per metre); every controller's lights are delayed by this
 	 * much. Negative = lights earlier. Range −500…2000 ms. Set with "Sync lights to sound". */
 	outputDelayMs?: number;
+	/** Last automatic / manual calibration (F1). */
+	lastCalibration?: AudioCalibration;
+}
+export interface AudioCalibration {
+	measuredAt: string;
+	method: 'phone' | 'manual';
+	residualMs: number;
+	spreadMs: number;
+	matches: number;
+	appliedDelayMs: number;
+	device?: string;
 }
 export interface EmailSettings {
 	smtpHost: string;
@@ -409,15 +563,31 @@ export interface RequestSettings {
 }
 export type TtsMode = 'auto' | 'device' | 'browser';
 export interface TriggerAction {
-	type: 'playPlaylist' | 'playSequence' | 'stop' | 'effect';
+	type: 'playPlaylist' | 'playSequence' | 'stop' | 'effect' | 'surprise';
 	ref?: string;
+	/** Surprise (F20): props to draw on. */
+	target?: Target;
+	/** Surprise: length in ms. */
+	durationMs?: number;
+	/** Surprise: what `ref` names. */
+	source?: 'sequence' | 'effect';
 }
+export type TriggerWhen = 'always' | 'showOnly' | 'idleOnly' | 'offOnly';
 export interface Trigger {
 	id: Id;
 	name: string;
-	kind: 'gpio' | 'http';
+	kind: 'gpio' | 'http' | 'sensor';
 	gpio?: number;
 	action: TriggerAction;
+	/** `kind: 'sensor'`: which sensor input (F20). */
+	sensor?: SensorRef;
+	/** Absent = 0 (no cooldown). */
+	cooldownS?: number;
+	/** Absent = 'always'. */
+	when?: TriggerWhen;
+	activeWindow?: TimeWindow;
+	/** Absent / 0 = unlimited. */
+	maxPerHour?: number;
 }
 export type GamePlayWindow = 'duringShow' | 'anytime';
 export type InviteStyle = 'text' | 'qr' | 'alternate';
@@ -470,6 +640,122 @@ export interface ShowSettings {
 		/** Experimental: all strings on a controller latch together ("bottom-aligned"). */
 		latchAlign: boolean;
 	};
+	// Feature wave (always present from the daemon; optional so older payloads type-check).
+	https?: HttpsSettings;
+	reports?: ReportSettings;
+	power?: PowerSettings;
+	remote?: RemoteSettings;
+	updates?: UpdateSettings;
+	xlights?: XlightsSettings;
+}
+
+// ---------------------------------------------------------------- feature wave settings
+/** F1: HTTPS listener (certificates live on disk, not here). */
+export interface HttpsSettings {
+	enabled: boolean;
+	extraNames?: string[];
+}
+/** F11: nightly report. */
+export interface ReportSettings {
+	enabled: boolean;
+	/** "HH:MM" local. */
+	time: string;
+	email: boolean;
+	push: boolean;
+	onlyWhenProblems: boolean;
+	keepDays: number;
+}
+/** F12: power limiter and late-night dimming. */
+export type LimiterMode = 'off' | 'warn' | 'limit';
+export interface DimWindow {
+	from: TimeSpec;
+	to: TimeSpec;
+	/** Percent. */
+	brightness: number;
+	days: Weekday[];
+}
+export interface PowerSettings {
+	mode: LimiterMode;
+	safety: number;
+	globalAmps?: number;
+	globalWatts?: number;
+	dim: DimWindow[];
+	maxBrightness: number;
+}
+export interface NodeOutputRef {
+	nodeId: Id;
+	output: number;
+}
+export interface PowerSupply {
+	id: Id;
+	name: string;
+	volts: number;
+	amps: number;
+	receiverIds: Id[];
+	directOutputs: NodeOutputRef[];
+	sensor?: SensorRef;
+}
+/** F14: remote access. */
+export interface RemoteSettings {
+	publicListener: boolean;
+	tailscale?: { enabled: boolean; serveAdmin: boolean; funnelPublic: boolean; dnsName?: string };
+	cloudflare?: { mode: 'quick' | 'token'; publicHost?: string; adminHost?: string; tokenSet: boolean };
+}
+/** F15: updates. */
+export type UpdateChannel = 'stable' | 'beta';
+export type AutoUpdate = 'off' | 'notify' | 'install';
+export interface UpdateSettings {
+	channel: UpdateChannel;
+	auto: AutoUpdate;
+	window: { from: string; to: string; days: Weekday[] };
+	avoidShowHours: number;
+}
+/** F16: xLights FPP Connect uploads. `passwordHash` is "" when set (write-only). */
+export interface XlightsSettings {
+	fppConnect: boolean;
+	passwordHash?: string;
+	addToPlaylists: boolean;
+	watchFolder?: string;
+}
+/** F8: a season profile. */
+export interface ShowProfile {
+	id: Id;
+	name: string;
+	icon?: string;
+	color?: string;
+	dateRange?: DateRange;
+	priority: number;
+	schedule: Schedule;
+	requestsPlaylistId?: Id;
+	requestsMessage?: string;
+	defaultDjVoice?: string;
+	gamesEnabled?: boolean;
+	power?: { dim: DimWindow[]; maxBrightness?: number };
+	disabledPropIds?: Id[];
+	tags?: string[];
+}
+/** F20: ESP32 sensor nodes. */
+export type SensorInputKind = 'motion' | 'button' | 'beam' | 'contact' | 'current';
+export interface SensorInput {
+	id: string;
+	name: string;
+	pin: number;
+	kind: SensorInputKind;
+	activeLow: boolean;
+	debounceMs: number;
+	holdMs: number;
+}
+export interface SensorNode {
+	id: Id;
+	name: string;
+	hw: string;
+	location?: string;
+	inputs: SensorInput[];
+	adopted: boolean;
+}
+export interface SensorRef {
+	sensorNodeId: Id;
+	input: string;
 }
 export type TemperatureUnit = 'c' | 'f';
 export interface UnitSettings {
@@ -492,6 +778,14 @@ export interface Show {
 	playlists: Playlist[];
 	schedule: Schedule;
 	settings: ShowSettings;
+	/** Show file format (F15); absent in old payloads = 1. */
+	formatVersion?: number;
+	profiles?: ShowProfile[];
+	activeProfileId?: Id;
+	profileAutoSwitch?: boolean;
+	powerSupplies?: PowerSupply[];
+	tagDefs?: TagDef[];
+	sensorNodes?: SensorNode[];
 }
 
 // ---------------------------------------------------------------- runtime / API
@@ -680,6 +974,22 @@ export interface PlayerStatus {
 	fps: number;
 	/** Assumed extension: true while blackout is engaged. */
 	blackout?: boolean;
+	/** Power limiter (F12), while it is not off. */
+	power?: { limiting: boolean; minScale: number };
+}
+
+/** Body of POST /player/play. Manual play outside a show window plays a playlist once
+ *  (its repeat is ignored) unless `loopUntilStopped`; started inside a window it ends with
+ *  the window (the entry's end behaviour), unless `loopUntilStopped`. */
+export interface PlayRequest {
+	playlistId?: Id;
+	sequenceId?: Id;
+	djClipId?: Id;
+	effectId?: Id;
+	mediaId?: Id;
+	startIndex?: number;
+	/** "Loop until I stop". */
+	loopUntilStopped?: boolean;
 }
 
 /** How well a follower keeps time with its leader (all times in ms). */
@@ -735,12 +1045,202 @@ export interface ToastMsg {
 	message: string;
 }
 
-export type TestMode = 'solid' | 'chase' | 'rgbCycle' | 'countPixels' | 'walk' | 'effect';
+export type TestMode =
+	'solid' | 'chase' | 'rgbCycle' | 'countPixels' | 'walk' | 'effect' | 'mapCode' | 'identify' | 'calibration';
 export interface TestRequest {
 	mode: TestMode;
 	color?: string;
 	target: { nodeId?: Id; output?: number; propIds?: Id[]; groupIds?: Id[]; all?: boolean };
 	effect?: EffectPreset;
+	/** mapCode (F6/F7). */
+	map?: MapPlan;
+	mapRunId?: string;
+	/** identify (F9). */
+	identify?: IdentifyLight[];
+	/** calibration v2 (F1). */
+	cal?: { seed: number; v: number };
+}
+
+// ---------------------------------------------------------------- feature wave runtime
+/** F6/F7 camera mapping plan (pixelplus-core::mapcode). */
+export interface MapTarget {
+	nodeId: Id;
+	output: number;
+	maxPixels: number;
+}
+export interface MapPlan {
+	seed: number;
+	bitMs: number;
+	level: number;
+	passes: number;
+	/** bit 0 = phase A, bit 1 = phase B. */
+	phases: number;
+	targets: MapTarget[];
+	pixelBits: number;
+	startPosMs: number;
+}
+/** POST /mapping/runs → */
+export interface MappingRunStart {
+	runId: string;
+	plan: MapPlan;
+	schedule: { preambleMs: number; phaseAms: number; phaseBms: number; totalMs: number };
+	codebook: number[][];
+}
+export interface MappingProposal {
+	id: string;
+	kind: 'swap' | 'reverse' | 'pixelCount' | 'notSeen' | 'layout';
+	propId?: Id;
+	message: string;
+	/** Kind-specific details. */
+	data?: Record<string, unknown>;
+}
+export interface MappingRun {
+	id: string;
+	startedAt: string;
+	scope: { all?: boolean; nodeId?: Id; propIds?: Id[] };
+	plan: MapPlan;
+	targets: { k: number; nodeId: Id; output: number; label: string }[];
+	results?: {
+		detected: { k: number; pixels: [number, number, number, number][] }[];
+		proposals: MappingProposal[];
+	};
+	appliedSnapshotId?: string;
+}
+/** F9 receiver wizard. */
+export interface IdentifyLight {
+	nodeId: Id;
+	output: number;
+	color: string;
+	blinks: number;
+}
+export interface JackCandidate {
+	jack: number;
+	color: string;
+	blinks: number;
+}
+/** F7 manual pixel-count search step. */
+export interface PixelCountStep {
+	session: string;
+	step?: { litUntil: number; ask: string };
+	count?: number;
+}
+/** F1 TLS / secure context. */
+export interface TlsStatus {
+	enabled: boolean;
+	port: number;
+	caFingerprint: string;
+	caSubject: string;
+	leafNames: string[];
+	leafNotAfter: string;
+	urls: { lan: string[]; tailscale?: string; tunnel?: string };
+	secureNow: boolean;
+}
+/** POST /player/calibration {on, pattern: 'v2'} → */
+export interface CalibrationPattern {
+	seed: number;
+	eventsMs: number[];
+	flashMs: number;
+	startsInMs: number;
+}
+export interface CalibrationResultBody {
+	residualMs: number;
+	spreadMs: number;
+	matches: number;
+	device?: string;
+	apply: boolean;
+}
+/** F2 auto light show. */
+export interface AutoshowStyle {
+	id: string;
+	name: string;
+	description: string;
+}
+/** WS `job` (F2/F3). */
+export interface JobStatus {
+	id: string;
+	kind: 'analysis' | 'autoshow' | 'preview';
+	pct: number;
+	state: 'queued' | 'running' | 'done' | 'failed';
+	result?: { sequenceId?: Id; message?: string };
+}
+/** F3 preview header (GET /sequences/:id/preview). */
+export interface PreviewHeader {
+	v: number;
+	seqId: Id;
+	frameMs: number;
+	frameCount: number;
+	props: { id: Id; n: number }[];
+	blockFrames: number;
+	blocks: { offset: number; len: number }[];
+}
+/** F11 reports. */
+export type ReportStatus = 'ok' | 'warn' | 'fail';
+export interface ReportSummary {
+	date: string;
+	status: ReportStatus;
+	headline: string;
+}
+export interface NightReport {
+	date: string;
+	status: ReportStatus;
+	headline: string;
+	shows: { entryId: Id; name: string; startedAt: string; runtimeMin: number }[];
+	itemsPlayed: number;
+	requests: number;
+	topRequests: { sequenceId: Id; name: string; count: number }[];
+	problems: { level: 'warn' | 'error'; code: string; message: string; count: number }[];
+	nodes: {
+		nodeId: Id;
+		name: string;
+		tempMinC?: number;
+		tempMaxC?: number;
+		voltsMin?: number;
+		offlineMin: number;
+		syncP50Ms?: number;
+		syncP95Ms?: number;
+	}[];
+	limiter: { nodeId: Id; port: number; seconds: number }[];
+	suspectPixels: { propId: Id; pixels: number[] }[];
+	diskFreePct?: number;
+	updates: string[];
+	backupAgeDays?: number;
+}
+/** F11 show journal (GET /journal). */
+export interface JournalRecord {
+	ts: string;
+	ev: string;
+	[field: string]: unknown;
+}
+/** F12 live power (GET /power/live, WS `power`). */
+export interface PowerLive {
+	nodes: { nodeId: Id; groups: { id: string; amps: number; budget: number; scale: number }[] }[];
+}
+/** F14 remote access status. */
+export interface RemoteStatus {
+	tailscale: { installed: boolean; state: string; dnsName?: string; httpsOk: boolean; funnel: boolean };
+	cloudflare: { installed: boolean; running: boolean; mode?: 'quick' | 'token'; urls: string[] };
+	publicListener: boolean;
+}
+/** F20 sensor nodes. */
+export interface DiscoveredSensorNode {
+	id: string;
+	name: string;
+	hw: string;
+	ver: string;
+	ip?: string;
+	adoptedBy?: string | null;
+	inputs: string[];
+}
+/** WS `sensorInput`. */
+export interface SensorInputEvent {
+	sensorNodeId: Id;
+	input: string;
+	state: number;
+	at: string;
+}
+/** F8 profile switch preview. */
+export interface ProfileSwitchDiff {
+	lines: string[];
 }
 
 export interface FaultStep {
@@ -825,6 +1325,26 @@ export interface GamesStatus {
 	roms?: { name: string; sizeBytes: number }[];
 }
 
+/** WebSocket messages `{type, data}` by type (ARCHITECTURE §8.1); `app.onMessage(type, cb)`. */
+export interface WsPayloads {
+	status: PlayerStatus;
+	show: { version: number };
+	nodes: NodeStatus[];
+	sensors: Sensor[];
+	log: LogLine;
+	toast: ToastMsg;
+	helper: HelperStatus;
+	system: unknown;
+	/** F2/F3 background jobs. */
+	job: JobStatus;
+	/** F12 live power, every second while playing. */
+	power: PowerLive;
+	/** F6 mapping run progress. */
+	mapping: { runId: string; state: 'running' | 'done' | 'stopped'; pct: number };
+	/** F20 a sensor input changed. */
+	sensorInput: SensorInputEvent;
+}
+
 export interface UpdateInfo {
 	current: string;
 	latest: string;
@@ -837,6 +1357,16 @@ export interface UpdateInfo {
 	message?: string;
 	/** The latest install run, if any. */
 	job?: HelperStatus | null;
+	// F15 (cluster updates, WS5):
+	nodes?: { id: Id; name?: string; version: string; proto?: number; canApply: boolean }[];
+	history?: {
+		at: string;
+		from: string;
+		to: string;
+		ok: boolean;
+		scope: 'cluster' | 'this';
+		message?: string;
+	}[];
 }
 
 export interface ImportPreview {

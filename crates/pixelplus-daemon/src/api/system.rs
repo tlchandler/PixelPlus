@@ -318,6 +318,10 @@ async fn identify_self(State(state): State<AppState>, body: Bytes) -> ApiResult<
     let secs = v["seconds"].as_u64().unwrap_or(5).clamp(1, 30);
     let p = player(&state)?.clone();
     let req = crate::player::TestRequest {
+        map_run_id: Default::default(),
+        cal: Default::default(),
+        identify: Default::default(),
+        map: Default::default(),
         mode: "rgbCycle".into(),
         color: None,
         speed: None,

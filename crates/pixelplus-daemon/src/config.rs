@@ -21,7 +21,17 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub web_dir: PathBuf,
     pub http_addr: SocketAddr,
+    /// UDP cluster port (beacons, sync, clock); overlay frames use +1.
     pub cluster_port: u16,
+    /// UDP port for ESP32 sensor nodes (F20).
+    #[allow(dead_code)] // contract: services/sensornodes.rs (WS6)
+    pub sensor_port: u16,
+    /// HTTPS listener port (F1); 0 = no HTTPS listener.
+    #[allow(dead_code)] // contract: main.rs HTTPS listener (WS1)
+    pub https_port: u16,
+    /// Public-only listener on 127.0.0.1 for tunnels (F14); 0 = off.
+    #[allow(dead_code)] // contract: main.rs public listener (WS1/WS5)
+    pub public_port: u16,
     pub output: OutputMode,
     pub tts_url: String,
     pub games_socket: PathBuf,
@@ -30,7 +40,13 @@ pub struct Config {
 }
 
 impl Config {
-    pub const DEFAULT_CLUSTER_PORT: u16 = 32320;
+    /// Default UDP cluster port. Not 32320: that is FPP's multisync port,
+    /// which xLights FPP Connect pings (ARCHITECTURE §7.4.1).
+    pub const DEFAULT_CLUSTER_PORT: u16 = 32420;
+    /// Default UDP port for ESP32 sensor nodes (cluster + 2).
+    pub const DEFAULT_SENSOR_PORT: u16 = 32422;
+    pub const DEFAULT_HTTPS_PORT: u16 = 443;
+    pub const DEFAULT_PUBLIC_PORT: u16 = 8081;
 
     pub fn from_env() -> Config {
         let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
@@ -49,6 +65,9 @@ impl Config {
         let cluster_port = env("PIXELPLUS_CLUSTER_PORT")
             .and_then(|p| p.parse().ok())
             .unwrap_or(Self::DEFAULT_CLUSTER_PORT);
+        let port_env = |k: &str, default: u16| -> u16 {
+            env(k).and_then(|p| p.parse().ok()).unwrap_or(default)
+        };
         let output = match env("PIXELPLUS_OUTPUT").as_deref() {
             Some("dpi") => OutputMode::Dpi,
             Some("sim") => OutputMode::Sim,
@@ -60,6 +79,9 @@ impl Config {
             web_dir,
             http_addr: SocketAddr::new(bind, port),
             cluster_port,
+            sensor_port: port_env("PIXELPLUS_SENSOR_PORT", Self::DEFAULT_SENSOR_PORT),
+            https_port: port_env("PIXELPLUS_HTTPS_PORT", Self::DEFAULT_HTTPS_PORT),
+            public_port: port_env("PIXELPLUS_PUBLIC_PORT", Self::DEFAULT_PUBLIC_PORT),
             output,
             tts_url: env("PIXELPLUS_TTS_URL").unwrap_or_else(|| "http://127.0.0.1:7081".into()),
             games_socket: env("PIXELPLUS_GAMES_SOCKET")

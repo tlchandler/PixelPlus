@@ -156,6 +156,7 @@ pub(crate) fn report(state: &AppState, sh: &Shared) -> FollowerReport {
     let clock = sh.clock.lock();
     let now = sh.now_ms();
     FollowerReport {
+        limiter: Default::default(),
         state: sync_state,
         sync_offset_ms: clock.uncertainty_ms().map(round2),
         clock_offset_ms: clock.offset_at(now).map(round2),
@@ -884,6 +885,8 @@ fn own_node(state: &AppState) -> Node {
     let (board, board_rev) = net::local_board(state);
     let existing = state.store.get().node(&identity.id).cloned();
     Node {
+        hardware_history: Default::default(),
+        serial: Default::default(),
         id: identity.id.clone(),
         name: identity
             .name
@@ -934,6 +937,7 @@ pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
     state.store.replace(dark).await.map_err(ApiError::from)?;
     // Stop whatever the leader had us doing.
     let blank = SyncPacket {
+        surprise: Default::default(),
         leader: String::new(),
         show_version: 0,
         state: PlayerState::Idle,
@@ -975,6 +979,10 @@ pub async fn handle_command(state: &AppState, sh: &Shared, cmd: ClusterCommand) 
         ClusterCommand::Effect { effect } => {
             player
                 .test_start(TestRequest {
+                    map_run_id: Default::default(),
+                    cal: Default::default(),
+                    identify: Default::default(),
+                    map: Default::default(),
                     mode: "effect".into(),
                     color: None,
                     speed: None,
@@ -1441,6 +1449,7 @@ mod tests {
 
     fn pkt(state: PlayerState, pos: u64, sent: u64) -> SyncPacket {
         SyncPacket {
+            surprise: Default::default(),
             leader: "l".into(),
             show_version: 1,
             state,

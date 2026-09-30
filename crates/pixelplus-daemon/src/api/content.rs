@@ -145,6 +145,10 @@ pub(crate) async fn ingest_audio(
     let _ = media_svc::write_meta(&state.config.media_dir(), &id, &meta);
     let target = state.store.get().settings.audio.target_lufs;
     Ok(Media {
+        tags: Default::default(),
+        analysis: Default::default(),
+        original_name: Default::default(),
+        original_size: Default::default(),
         id,
         name: name
             .filter(|n| !n.trim().is_empty())
@@ -623,6 +627,8 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
         };
     let warnings = channel_warnings(&show.props, info.channel_count);
     let seq = Sequence {
+        generated: Default::default(),
+        tags: Default::default(),
         id: id.clone(),
         name,
         file: rel,
@@ -1303,6 +1309,8 @@ mod tests {
     #[test]
     fn undo_can_only_restore_its_own_files() {
         let seq = |id: &str, file: &str, thumb: Option<&str>| Sequence {
+            generated: Default::default(),
+            tags: Default::default(),
             id: id.into(),
             name: "S".into(),
             file: file.into(),
@@ -1332,6 +1340,10 @@ mod tests {
     #[test]
     fn edits_cannot_repoint_files() {
         let old = Media {
+            tags: Default::default(),
+            analysis: Default::default(),
+            original_name: Default::default(),
+            original_size: Default::default(),
             id: "abc".into(),
             name: "Song".into(),
             kind: MediaKind::Song,
@@ -1358,6 +1370,10 @@ mod tests {
     #[test]
     fn undo_can_only_restore_its_own_media_file() {
         let m = |id: &str, file: &str| Media {
+            tags: Default::default(),
+            analysis: Default::default(),
+            original_name: Default::default(),
+            original_size: Default::default(),
             id: id.into(),
             name: "Song".into(),
             kind: MediaKind::Song,
@@ -1379,6 +1395,7 @@ mod tests {
     #[test]
     fn channel_warning_text() {
         let prop = |name: &str, start: u32, px: u32| Prop {
+            suspect_pixels: Default::default(),
             id: name.into(),
             name: name.into(),
             kind: Default::default(),

@@ -16,6 +16,8 @@ const NET: &str = include_str!("../testdata/data_xlights_networks.xml");
 
 fn node(id: &str, name: &str, board: BoardKind) -> Node {
     Node {
+        hardware_history: Default::default(),
+        serial: Default::default(),
         id: id.into(),
         name: name.into(),
         hostname: id.into(),

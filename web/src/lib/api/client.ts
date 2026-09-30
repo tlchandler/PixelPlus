@@ -253,8 +253,7 @@ export const api = {
 
 	// ---- player
 	player: () => get<T.PlayerStatus>('/player'),
-	play: (what: { playlistId?: string; sequenceId?: string; djClipId?: string } = {}) =>
-		post('/player/play', what),
+	play: (what: T.PlayRequest = {}) => post('/player/play', what),
 	stop: (fade = false) => post('/player/stop', { fade }),
 	pause: () => post('/player/pause'),
 	resume: () => post('/player/resume'),

@@ -24,6 +24,22 @@ pub mod test;
 #[cfg(test)]
 pub mod testkit;
 pub mod tools;
+// Feature wave (ARCHITECTURE §12). Stubs created by WS0; one owner per file.
+pub mod autoshow; // WS2 (F2)
+pub mod calibration; // WS1 (F1)
+pub mod fppcompat; // WS6 (F16), root-mounted
+pub mod journal; // WS0 (F11)
+pub mod library; // WS2 (F18)
+pub mod mapping; // WS4 (F6)
+pub mod pixelcount; // WS4 (F7)
+pub mod power; // WS3 (F12)
+pub mod preview; // WS2 (F3)
+pub mod profiles; // WS6 (F8)
+pub mod remote; // WS5 (F14)
+pub mod reports; // WS6 (F11)
+pub mod sensornodes; // WS6 (F20)
+pub mod tls; // WS1 (F1)
+pub mod wizard; // WS4 (F9)
 
 pub use error::{ApiError, ApiResult};
 
@@ -72,6 +88,21 @@ pub fn router(state: AppState) -> Router {
         .merge(games::routes())
         .merge(public::routes())
         .merge(debug::routes())
+        // Feature wave (ARCHITECTURE §12).
+        .merge(tls::routes())
+        .merge(calibration::routes())
+        .merge(library::routes())
+        .merge(autoshow::routes())
+        .merge(preview::routes())
+        .merge(mapping::routes())
+        .merge(wizard::routes())
+        .merge(pixelcount::routes())
+        .merge(profiles::routes())
+        .merge(reports::routes())
+        .merge(remote::routes())
+        .merge(power::routes())
+        .merge(sensornodes::routes())
+        .merge(journal::routes())
         .route("/ws", get(ws::handler))
         .fallback(|| async { ApiError::not_found("That API endpoint") })
         .layer(axum::middleware::from_fn_with_state(
@@ -97,6 +128,8 @@ pub fn router(state: AppState) -> Router {
     let csp = std::sync::Arc::new(security::CspCache::new(web));
     Router::new()
         .nest("/api/v1", api)
+        // xLights FPP Connect paths live at the root (F16; checks its own auth).
+        .merge(fppcompat::routes())
         .fallback_service(spa)
         .layer(axum::middleware::from_fn_with_state(csp, security::headers))
         .layer(tower_http::compression::CompressionLayer::new())

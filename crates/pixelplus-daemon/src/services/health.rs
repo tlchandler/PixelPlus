@@ -835,6 +835,8 @@ mod tests {
         std::fs::write(dir.join("sequences/a.fseq"), b"x").unwrap();
         let mut s = Show::default();
         let seq = |id: &str| Sequence {
+            generated: Default::default(),
+            tags: Default::default(),
             id: id.into(),
             name: id.to_uppercase(),
             file: format!("sequences/{id}.fseq"),
@@ -848,6 +850,7 @@ mod tests {
         };
         s.sequences = vec![seq("a"), seq("b")];
         s.playlists.push(Playlist {
+            smart: Default::default(),
             id: "p".into(),
             name: "Main".into(),
             items: vec![
@@ -881,6 +884,7 @@ mod tests {
         let mut s = Show::default();
         s.schedule.enabled = true;
         s.schedule.entries.push(ScheduleEntry {
+            start_exact: Default::default(),
             id: "e".into(),
             name: "Nightly".into(),
             enabled: true,
@@ -932,6 +936,8 @@ mod host_tests {
         use pixelplus_core::model::{BoardKind, Node, NodeRole, Prop, PropSegment};
         let mut show = Show::default();
         show.nodes.push(Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: "n1".into(),
             name: "Porch".into(),
             hostname: "porch".into(),

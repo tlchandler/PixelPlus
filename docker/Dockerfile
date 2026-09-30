@@ -7,7 +7,7 @@
 #   docker build -f docker/Dockerfile --build-arg VARIANT=slim -t pixelplus:slim .
 #
 # Run: see docker/docker-compose.yml (host networking is required for UDP broadcast
-# discovery on 32320 and mDNS).
+# discovery on 32420 and mDNS).
 
 ARG DEBIAN=bookworm
 ARG VARIANT=full
@@ -63,6 +63,7 @@ RUN setcap cap_net_bind_service=+ep /usr/bin/pixelplusd
 ENV PIXELPLUS_DATA_DIR=/var/lib/pixelplus \
     PIXELPLUS_WEB_DIR=/usr/share/pixelplus/web \
     PIXELPLUS_HTTP_PORT=80 \
+    PIXELPLUS_HTTPS_PORT=8443 \
     PIXELPLUS_OUTPUT=none \
     PIXELPLUS_BOARD=virtual \
     PIXELPLUS_AUDIO=none \
@@ -70,7 +71,7 @@ ENV PIXELPLUS_DATA_DIR=/var/lib/pixelplus \
     PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock \
     TZ=Etc/UTC
 VOLUME ["/var/lib/pixelplus"]
-EXPOSE 80/tcp 32320/udp 32321/udp 7081/tcp 8088/tcp
+EXPOSE 80/tcp 8443/tcp 32420/udp 32421/udp 32422/udp 7081/tcp 8088/tcp
 # Unauthenticated and cheap: {"ok": true, "version": "...", "role": "..."}
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -fsS -o /dev/null "http://127.0.0.1:${PIXELPLUS_HTTP_PORT}/api/v1/public/health" || exit 1

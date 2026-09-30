@@ -11,8 +11,43 @@ const pages: [string, string | RegExp][] = [
 	['/dj', 'DJ Studio'],
 	['/effects', 'Effects'],
 	['/games', 'Games'],
+	// Feature wave (placeholders until their workstreams land).
+	['/reports', 'Reports'],
+	['/map', 'Map my yard'],
+	['/settings/seasons', 'Seasons'],
+	['/calibrate', 'Sync lights to sound'],
 	['/settings', 'Settings']
 ];
+
+const SETTINGS_PAGES: [string, string][] = [
+	['/settings/https', 'Secure connection'],
+	['/settings/remote', 'Remote access'],
+	['/settings/power', 'Power'],
+	['/settings/updates', 'Update everything'],
+	['/settings/xlights', 'xLights'],
+	['/settings/seasons', 'Seasons'],
+	['/settings/sensors', 'Sensors'],
+	['/settings/reports', 'Nightly report']
+];
+
+test('settings "More" links open their pages', async ({ page, isMobile }) => {
+	test.skip(!!isMobile, 'desktop settings list');
+	const errors = watchErrors(page);
+	await page.goto('/settings?mock=1');
+	for (const [path, heading] of SETTINGS_PAGES) {
+		await page.locator(`nav[aria-label="Settings sections"] a[href="${path}"]`).click();
+		await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
+		await page.goBack();
+	}
+	expect(errors).toEqual([]);
+});
+
+test('the trust page opens without signing in', async ({ page }) => {
+	const errors = watchErrors(page);
+	await page.goto('/trust?mock=1');
+	await expect(page.getByRole('heading', { level: 1, name: 'Make this phone trusted' })).toBeVisible();
+	expect(errors).toEqual([]);
+});
 
 function watchErrors(page: Page) {
 	const errors: string[] = [];

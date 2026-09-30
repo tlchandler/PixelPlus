@@ -1,9 +1,9 @@
 //! Cluster wire formats (ARCHITECTURE §7, §10).
 //!
-//! **UDP cluster port** (default 32320): one JSON object per datagram, tagged by
+//! **UDP cluster port** (default 32420; not FPP's 32320): one JSON object per datagram, tagged by
 //! `"t"`: `beacon`, `sync`, `ping`, `pong`.
 //!
-//! **UDP overlay port** (cluster port + 1, default 32321): binary overlay frames
+//! **UDP overlay port** (cluster port + 1, default 32421): binary overlay frames
 //! `u8 'O' | u8 idLen | propId | u32 frameNo (LE) | RGB… | 32-byte MAC`.
 //!
 //! ## Authentication
@@ -85,6 +85,23 @@ pub struct FollowerReport {
     /// when unknown or not on Wi-Fi.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wifi_power_save: Option<bool>,
+    /// Power limiter activity (F12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limiter: Option<LimiterReport>,
+}
+
+/// What a follower's power limiter did (F12), in its beacon report.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LimiterReport {
+    /// Budget groups currently scaling (ids from the manifest's `power`).
+    #[serde(default)]
+    pub active_groups: Vec<String>,
+    /// Lowest scale applied in the last report period (1 = none).
+    pub min_scale: f32,
+    /// Seconds spent limiting since the daemon started.
+    #[serde(default)]
+    pub seconds_limited: f32,
 }
 
 /// How well a follower follows its leader (Controllers page badge, health
@@ -179,6 +196,12 @@ pub struct Beacon {
     /// Cluster protocol version ([`PROTOCOL_VERSION`]; absent = 1).
     #[serde(default = "proto_v1")]
     pub proto: u32,
+    /// Oldest / newest protocol this node can speak (F15 version tolerance;
+    /// absent = exactly `proto`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proto_min: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proto_max: Option<u32>,
 }
 
 /// Follower → leader clock probe.
@@ -617,6 +640,7 @@ mod tests {
 
     fn sample_sync() -> Msg {
         Msg::Sync(SyncPacket {
+            surprise: Default::default(),
             leader: "leader0001".into(),
             show_version: 7,
             state: PlayerState::Playing,
@@ -687,6 +711,8 @@ mod tests {
     #[test]
     fn beacon_wire_format_matches_architecture() {
         let b = Msg::Beacon(Beacon {
+            proto_max: Default::default(),
+            proto_min: Default::default(),
             id: "abc".into(),
             name: "Garage".into(),
             hostname: "pixelplus-garage".into(),
@@ -696,7 +722,7 @@ mod tests {
             pi: Some("Raspberry Pi 4".into()),
             ver: "0.1.0".into(),
             http: 80,
-            overlay: 32321,
+            overlay: 32421,
             adopted_by: None,
             ips: vec!["10.0.0.5".parse().unwrap()],
             boot: "b".into(),

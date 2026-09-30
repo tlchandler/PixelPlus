@@ -157,9 +157,9 @@ address on the Pi's console.
 
 ### No Wi-Fi? Use the setup hotspot
 
-If the Pi can't join a Wi-Fi network within about a minute (wrong password, network not
-set, router out of range) **and no network cable is plugged in**, it opens its own Wi-Fi
-network:
+If a **new** Pi (one that has never been online) can't join a Wi-Fi network within about
+a minute (wrong password, network not set, router out of range) **and no network cable is
+plugged in**, it opens its own Wi-Fi network:
 
 * **Network name:** `PixelPlus-XXXX` (the four characters are unique to each Pi)
 * **Password:** `pixelplus` while you set it up for the first time. Once the Pi has been
@@ -181,9 +181,12 @@ what happened – just try again. Other details:
 * **Leave it alone and it fixes itself:** if a known network comes back (e.g. the router
   was still starting after a power cut), the Pi checks every 5 minutes while no phone is
   connected to the hotspot, and rejoins it.
-* **If the Wi-Fi goes away later** for more than 10 minutes (and no cable is connected),
-  the hotspot opens again so you can reach the Pi, with its own password (see above). The
-  wait is deliberately long: someone jamming your Wi-Fi for a moment can't make it switch.
+* **Once a Pi has been online** (or it is a controller adopted into your show), a router
+  reboot or a Wi-Fi hiccup never turns it into a hotspot mid-show. It keeps trying its
+  known networks (every 20 seconds for the first 10 minutes after power-on, then every
+  minute) and opens the hotspot only after it has been offline for **30 minutes in a row**
+  (and no cable is connected), with its own password (see above). The long wait also means
+  someone jamming your Wi-Fi for a while can't make it switch.
 * **Use PixelPlus without Wi-Fi:** on the setup page tap *Use PixelPlus without Wi-Fi*,
   stay connected to the hotspot and open `http://10.42.0.1` – handy at a show site with
   no internet. PixelPlus itself never needs the internet.
@@ -192,6 +195,15 @@ what happened – just try again. Other details:
 Why a password on the hotspot? An open setup network would let anyone nearby point your
 controller at *their* network. The default password is public, so it only keeps out
 passers-by; set your own `hotspot_password` if that matters to you.
+
+### Network ports
+
+On your network PixelPlus uses TCP **80** (web page and API), TCP **443** (HTTPS for phone
+camera/microphone pages; 8443 in Docker), UDP **32420** (controllers finding and syncing
+each other), UDP **32421** (live overlay pictures sent to other controllers) and UDP
+**32422** (ESP32 sensor nodes). If you run a firewall between controllers, allow these.
+The cluster used UDP 32320 before; that port belongs to FPP / xLights *FPP Connect*, so
+all controllers of a show must run the same PixelPlus version (update them together).
 
 ## First-run wizard
 

@@ -287,6 +287,8 @@ mod tests {
         use pixelplus_core::model::{BoardKind, Node, NodeRole, Prop, PropSegment};
         let mut show = Show::default();
         show.nodes.push(Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: "n1".into(),
             name: "Porch".into(),
             hostname: "porch".into(),

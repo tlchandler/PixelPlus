@@ -63,6 +63,9 @@ impl TestApp {
     pub fn new() -> TestApp {
         let dir = std::env::temp_dir().join(format!("pp-api-{}", pixelplus_core::model::new_id()));
         let config = Config {
+            https_port: Default::default(),
+            public_port: Default::default(),
+            sensor_port: Default::default(),
             data_dir: dir.clone(),
             web_dir: dir.join("web"),
             http_addr: "127.0.0.1:0".parse().unwrap(),

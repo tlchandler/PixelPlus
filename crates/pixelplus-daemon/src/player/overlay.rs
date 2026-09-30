@@ -475,6 +475,7 @@ mod tests {
 
     fn matrix_prop() -> Prop {
         Prop {
+            suspect_pixels: Default::default(),
             id: "mx".into(),
             name: "Matrix".into(),
             kind: PropKind::Matrix,

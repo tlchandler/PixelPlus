@@ -37,7 +37,8 @@ PIXELPLUS_DATA_DIR=./data-dev PIXELPLUS_HTTP_PORT=8080 PIXELPLUS_OUTPUT=sim carg
 
 Environment variables read by `pixelplusd`: `PIXELPLUS_DATA_DIR` (/var/lib/pixelplus),
 `PIXELPLUS_WEB_DIR` (/usr/share/pixelplus/web), `PIXELPLUS_HTTP_PORT` (80),
-`PIXELPLUS_HTTP_BIND`, `PIXELPLUS_CLUSTER_PORT` (32320), `PIXELPLUS_OUTPUT`
+`PIXELPLUS_HTTP_BIND`, `PIXELPLUS_CLUSTER_PORT` (32420; overlay +1), `PIXELPLUS_SENSOR_PORT` (32422),
+`PIXELPLUS_HTTPS_PORT` (443, 0 = off), `PIXELPLUS_PUBLIC_PORT` (8081 on 127.0.0.1, 0 = off), `PIXELPLUS_OUTPUT`
 (dpi|sim|none|auto), `PIXELPLUS_BOARD` (board override: difftx|difftxlarge|diffsmart|bare-pi|virtual|auto),
 `PIXELPLUS_AUDIO` (`none` disables audio output), `PIXELPLUS_SHM_DIR` (/dev/shm),
 `PIXELPLUS_TTS_URL`, `PIXELPLUS_GAMES_SOCKET`, `PIXELPLUS_MDNS` (0 = no mDNS), `PIXELPLUS_DEV`;

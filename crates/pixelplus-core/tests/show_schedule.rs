@@ -26,6 +26,7 @@ fn clock(s: &str) -> TimeSpec {
 
 fn entry(id: &str, start: TimeSpec, end: TimeSpec) -> ScheduleEntry {
     ScheduleEntry {
+        start_exact: Default::default(),
         id: id.into(),
         name: format!("Show {id}"),
         enabled: true,

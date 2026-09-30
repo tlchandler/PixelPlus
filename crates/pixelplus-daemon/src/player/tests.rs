@@ -54,6 +54,7 @@ impl Env {
 
 fn prop(id: &str, n: u32, chan: u32, output: u32) -> Prop {
     Prop {
+        suspect_pixels: Default::default(),
         id: id.into(),
         name: id.to_uppercase(),
         kind: PropKind::Line,
@@ -103,6 +104,8 @@ fn sequence(
         value,
     );
     Sequence {
+        generated: Default::default(),
+        tags: Default::default(),
         id: id.into(),
         name: format!("Song {id}"),
         file: format!("sequences/{id}.fseq"),
@@ -119,6 +122,8 @@ fn sequence(
 fn base_show() -> Show {
     let mut show = Show::default();
     show.nodes.push(Node {
+        hardware_history: Default::default(),
+        serial: Default::default(),
         id: "n1".into(),
         name: "Leader".into(),
         hostname: "leader".into(),
@@ -137,6 +142,7 @@ fn base_show() -> Show {
 
 fn playlist(id: &str, items: &[&str], crossfade_ms: u32) -> Playlist {
     Playlist {
+        smart: Default::default(),
         id: id.into(),
         name: "Tonight".into(),
         items: items
@@ -166,6 +172,9 @@ async fn env_with(
 ) -> Env {
     let dir = std::env::temp_dir().join(format!("pp-engine-{}", new_id()));
     let config = Config {
+        https_port: Default::default(),
+        public_port: Default::default(),
+        sensor_port: Default::default(),
         data_dir: dir.clone(),
         web_dir: dir.join("web"),
         http_addr: "127.0.0.1:0".parse().unwrap(),
@@ -236,6 +245,10 @@ async fn playlist_run(audio: bool) {
         // A linked song (exercises the audio path, or its fallback).
         crate::player::audio::write_test_wav(&dir.join("media/m1.wav"), 44_100, 1.0, 440.0, 0.3);
         show.media.push(Media {
+            tags: Default::default(),
+            analysis: Default::default(),
+            original_name: Default::default(),
+            original_size: Default::default(),
             id: "m1".into(),
             name: "Song".into(),
             kind: MediaKind::Song,
@@ -257,6 +270,7 @@ async fn playlist_run(audio: bool) {
     e.engine
         .handle
         .play(PlayRequest {
+            loop_until_stopped: Default::default(),
             playlist_id: Some("p1".into()),
             sequence_id: None,
             dj_clip_id: None,
@@ -422,6 +436,7 @@ async fn requests_never_start_the_music_outside_show_windows() {
         // A schedule whose only window is not now.
         show.schedule.enabled = true;
         show.schedule.entries.push(ScheduleEntry {
+            start_exact: Default::default(),
             id: "e".into(),
             name: "Christmas Eve".into(),
             enabled: true,
@@ -533,6 +548,7 @@ async fn follower_picks_up_a_slice_that_arrives_mid_song() {
     let h = &e.engine.handle;
     let now_ms = || e.state.started.elapsed().as_millis() as u64;
     let packet = |pos: u64| SyncPacket {
+        surprise: Default::default(),
         leader: "leader".into(),
         show_version: 1,
         state: PlayerState::Playing,
@@ -580,6 +596,7 @@ async fn a_scheduled_show_ends_a_forgotten_test_pattern() {
         show.playlists = vec![playlist("p1", &["s1"], 0)];
         show.schedule.location.timezone = "UTC".into();
         show.schedule.entries.push(ScheduleEntry {
+            start_exact: Default::default(),
             id: "e".into(),
             name: "All day".into(),
             enabled: true,
@@ -631,14 +648,42 @@ async fn a_scheduled_show_ends_a_forgotten_test_pattern() {
 }
 
 fn empty_req() -> PlayRequest {
-    PlayRequest {
-        playlist_id: None,
-        sequence_id: None,
-        dj_clip_id: None,
-        effect_id: None,
-        media_id: None,
-        start_index: None,
-    }
+    PlayRequest::default()
+}
+
+/// Manual play outside show windows plays a playlist once (its `repeat` is
+/// ignored); "Loop until I stop" repeats it (scheduler.rs rules).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_playlist_plays_once_unless_loop_until_stopped() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 8, 25, |_| 40)];
+        let mut pl = playlist("p1", &["s1"], 0);
+        pl.repeat = true;
+        show.playlists = vec![pl];
+    })
+    .await;
+    let play = |looping: bool| PlayRequest {
+        playlist_id: Some("p1".into()),
+        loop_until_stopped: looping,
+        ..PlayRequest::default()
+    };
+    e.engine.handle.play(play(false)).await.unwrap();
+    assert!(wait_for(1000, || e.status().state == PlayerState::Playing).await);
+    assert!(
+        wait_for(3000, || e.status().state == PlayerState::Idle).await,
+        "a repeating playlist played by hand outside a window plays once"
+    );
+    e.engine.handle.play(play(true)).await.unwrap();
+    assert!(wait_for(1000, || e.status().state == PlayerState::Playing).await);
+    // Eight times the 200 ms song: still going.
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    assert_eq!(e.status().state, PlayerState::Playing);
+    e.engine
+        .handle
+        .send(PlayerCmd::Stop { fade: false })
+        .await
+        .unwrap();
+    assert!(wait_for(2000, || e.status().state == PlayerState::Idle).await);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -713,6 +758,10 @@ async fn brightness_blackout_fade_tests_and_overlays() {
 
     // Test pattern on prop B only (solid red); A keeps the sequence.
     h.test_start(TestRequest {
+        map_run_id: Default::default(),
+        cal: Default::default(),
+        identify: Default::default(),
+        map: Default::default(),
         mode: "solid".into(),
         color: Some("#ff0000".into()),
         speed: None,
@@ -801,6 +850,10 @@ async fn brightness_blackout_fade_tests_and_overlays() {
 
 fn solid_req() -> TestRequest {
     TestRequest {
+        map_run_id: Default::default(),
+        cal: Default::default(),
+        identify: Default::default(),
+        map: Default::default(),
         mode: "solid".into(),
         color: None,
         speed: None,
@@ -946,6 +999,7 @@ async fn follower_plays_slices_from_sync() {
     let h = &e.engine.handle;
     let now_ms = || e.state.started.elapsed().as_millis() as u64;
     let packet = |pos: u64| SyncPacket {
+        surprise: Default::default(),
         leader: "leader".into(),
         show_version: 1,
         state: PlayerState::Playing,
@@ -1057,6 +1111,10 @@ async fn play_ends_a_live_look() {
         },
     };
     h.test_start(TestRequest {
+        map_run_id: Default::default(),
+        cal: Default::default(),
+        identify: Default::default(),
+        map: Default::default(),
         mode: "effect".into(),
         color: None,
         speed: None,
@@ -1131,6 +1189,10 @@ async fn follower_leader_test_replaces_local_identify() {
     let h = &e.engine.handle;
     // "Identify" runs as a local white chase on every output of this node.
     h.test_start(TestRequest {
+        map_run_id: Default::default(),
+        cal: Default::default(),
+        identify: Default::default(),
+        map: Default::default(),
         mode: "solid".into(),
         color: Some("#ffffff".into()),
         speed: None,
@@ -1146,6 +1208,10 @@ async fn follower_leader_test_replaces_local_identify() {
     assert!(wait_for(1000, || uniform(&e.out(0)) == Some(255)).await);
     // The leader starts a red test on all props (e.g. the fault finder or a test pattern).
     let red = TestRequest {
+        map_run_id: Default::default(),
+        cal: Default::default(),
+        identify: Default::default(),
+        map: Default::default(),
         mode: "solid".into(),
         color: Some("#ff0000".into()),
         speed: None,
@@ -1161,6 +1227,7 @@ async fn follower_leader_test_replaces_local_identify() {
     };
     let now_ms = e.state.started.elapsed().as_millis() as u64;
     h.send(PlayerCmd::Sync(SyncPacket {
+        surprise: Default::default(),
         leader: "leader".into(),
         show_version: 1,
         state: PlayerState::Testing,
@@ -1283,6 +1350,7 @@ async fn follower_follows_the_anchor_without_a_deadband() {
     let h = &e.engine.handle;
     let now_ms = || e.state.started.elapsed().as_secs_f64() * 1000.0;
     let packet = |a: Anchor| SyncPacket {
+        surprise: Default::default(),
         leader: "leader".into(),
         show_version: 1,
         state: PlayerState::Playing,

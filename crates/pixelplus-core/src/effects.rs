@@ -11,7 +11,7 @@
 //!     xlights_model: None, channel_start: 0, channels_per_pixel: 3, channel_runs: None,
 //!     segments: vec![],
 //!     group_ids: vec![], layout: None, matrix: None, color: None,
-//!     max_milliamps_per_pixel: None, notes: None,
+//!     max_milliamps_per_pixel: None, notes: None, suspect_pixels: vec![],
 //! };
 //! let preset = &builtin_presets()[0];
 //! let renderer = EffectRenderer::new(preset, &[&prop]);
@@ -113,6 +113,7 @@ pub fn effect_label(kind: EffectKind) -> &'static str {
         EffectKind::Meteor => "Meteor",
         EffectKind::Strobe => "Strobe",
         EffectKind::Breathe => "Breathe",
+        EffectKind::Countdown => "Countdown",
     }
 }
 
@@ -131,6 +132,7 @@ fn effect_description(kind: EffectKind) -> &'static str {
         EffectKind::Meteor => "Shooting stars with fading tails.",
         EffectKind::Strobe => "Fast flashes.",
         EffectKind::Breathe => "Slowly brightens and dims, like breathing.",
+        EffectKind::Countdown => "Show-start countdown (playlist item; not in the catalogue).",
     }
 }
 
@@ -333,6 +335,8 @@ impl Kernel {
         let f = |k: &str| f64::from(p.num(k));
         match kind {
             EffectKind::Solid => Kernel::Solid(p.color("color")),
+            // Placeholder until WS3 implements the countdown renderer (F4): dark.
+            EffectKind::Countdown => Kernel::Solid(Rgb::new(0, 0, 0)),
             EffectKind::Chase => Kernel::Chase {
                 colors: p.colors("colors"),
                 background: p.color("background"),
@@ -897,6 +901,7 @@ mod tests {
 
     fn prop(id: &str, kind: PropKind, n: u32) -> Prop {
         Prop {
+            suspect_pixels: Default::default(),
             id: id.into(),
             name: id.into(),
             kind,
@@ -996,6 +1001,7 @@ mod tests {
     fn deterministic_across_renderers_and_subsets() {
         let mut a = prop("a", PropKind::Arch, 60);
         a.layout = Some(PropLayout {
+            source: Default::default(),
             x: 0.0,
             y: 0.0,
             w: 100.0,
@@ -1005,6 +1011,7 @@ mod tests {
         });
         let mut b = prop("b", PropKind::Tree, 90);
         b.layout = Some(PropLayout {
+            source: Default::default(),
             x: 300.0,
             y: -40.0,
             w: 60.0,
@@ -1039,6 +1046,7 @@ mod tests {
     fn effects_animate_and_light_something() {
         let mut m = prop("m", PropKind::Matrix, 256);
         m.layout = Some(PropLayout {
+            source: Default::default(),
             x: 0.0,
             y: 0.0,
             w: 32.0,
@@ -1115,6 +1123,7 @@ mod tests {
     fn world_param_round_trips() {
         let mut a = prop("a", PropKind::Line, 3);
         a.layout = Some(PropLayout {
+            source: Default::default(),
             x: 10.0,
             y: 20.0,
             w: 30.0,

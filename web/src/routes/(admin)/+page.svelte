@@ -14,6 +14,7 @@
 	import { nextShow } from '$lib/util/schedule';
 	import LayoutCanvas from '$lib/components/viz/LayoutCanvas.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import Switch from '$lib/components/ui/Switch.svelte';
 	import {
 		Play,
 		Pause,
@@ -98,9 +99,11 @@
 		}
 	}
 
+	/** "Loop until I stop" for Play show now (otherwise it plays once / ends with the show). */
+	let loopShow = $state(false);
 	function playShow() {
 		const id = upcoming?.playlistId ?? show?.playlists[0]?.id;
-		playerAct(() => api.play({ playlistId: id }));
+		playerAct(() => api.play({ playlistId: id, loopUntilStopped: loopShow }));
 	}
 
 	async function testAll() {
@@ -245,6 +248,11 @@
 				{:else}
 					<button class="btn primary lg" onclick={playShow}
 						><Play size={18} fill="currentColor" /> Play show now</button
+					>
+					<label
+						class="loop"
+						title="Off: outside show times the playlist plays once; during a show it ends with the show. On: it repeats until you press Stop."
+						><Switch bind:checked={loopShow} label="Loop until I stop" size="sm" /> Loop</label
 					>
 				{/if}
 				<button class="btn lg" disabled={!st || st.state === 'idle'} onclick={stopShow}
@@ -625,6 +633,14 @@
 	.quick {
 		display: flex;
 		gap: 8px;
+	}
+	.loop {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 13px;
+		color: var(--text-2);
+		cursor: pointer;
 	}
 	.qa {
 		flex: 1;

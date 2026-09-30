@@ -30,6 +30,8 @@ import { newId } from '$lib/util/id';
 import { KOKORO_VOICES } from '$lib/util/voices';
 import { buildDemoShow, buildEmptyShow, GARAGE, MAIN } from './demo';
 import type { SocketLike } from '$lib/api/socket';
+import { HttpError } from './http';
+import { applyFeatureDemo, registerFeatureRoutes } from './feat';
 
 type Json = any;
 type Handler = (ctx: {
@@ -39,15 +41,7 @@ type Handler = (ctx: {
 	form?: FormData;
 }) => Json | Promise<Json>;
 
-class HttpError extends Error {
-	constructor(
-		public status: number,
-		public code: string,
-		message: string
-	) {
-		super(message);
-	}
-}
+export { HttpError };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const clone = <T>(v: T): T => structuredClone(v);
@@ -61,6 +55,8 @@ interface PlayState {
 	pausedAt?: number;
 	/** single-item play (sequence / dj clip) */
 	single?: PlaylistItem;
+	/** Loop the playlist's items (its `repeat`, or "Loop until I stop"). */
+	repeat?: boolean;
 	effect?: EffectPreset;
 	test?: TestRequest;
 	testStarted?: number;
@@ -128,6 +124,7 @@ export class MockServer {
 
 	constructor(opts: { needsSetup?: boolean; autoplay?: boolean; empty?: boolean } = {}) {
 		this.show = opts.empty ? buildEmptyShow() : buildDemoShow();
+		applyFeatureDemo(this.show, { empty: !!opts.empty });
 		this.system = {
 			version: '0.9.0-demo',
 			nodeId: MAIN,
@@ -370,6 +367,15 @@ export class MockServer {
 	// ------------------------------------------------------------------ routes
 	#defineRoutes() {
 		const r = this.#route.bind(this);
+		// Feature-wave endpoints (mock/feat/*, one file per workstream). Registered first, so a
+		// feature may also take over one of the routes below.
+		registerFeatureRoutes({
+			server: this,
+			route: r,
+			broadcast: (type, data) => this.#broadcast({ type, data }),
+			bump: () => this.#bump(),
+			log: (level, message) => this.#log(level, message)
+		});
 		// system
 		r('GET', '/system', () => ({
 			...this.system,
@@ -795,12 +801,16 @@ export class MockServer {
 		r('GET', '/player', () => this.status());
 		r('POST', '/player/play', ({ body }) => {
 			this.blackout = false;
-			if (body.playlistId) this.#startPlaylist(body.playlistId);
+			// Manual play: once outside a show window (repeat ignored) unless "Loop until I stop".
+			const inWindow = !!this.status().scheduleEntry;
+			const pl = this.show.playlists.find((p) => p.id === body.playlistId);
+			if (body.playlistId)
+				this.#startPlaylist(body.playlistId, 0, 0, !!body.loopUntilStopped || (inWindow && !!pl?.repeat));
 			else if (body.sequenceId)
 				this.#startSingle({ id: 'single', type: 'sequence', sequenceId: body.sequenceId });
 			else if (body.djClipId) this.#startSingle({ id: 'single', type: 'dj', djClipId: body.djClipId });
 			else if (this.play.state === 'paused') this.#resume();
-			else this.#startPlaylist(this.show.playlists[0]?.id);
+			else this.#startPlaylist(this.show.playlists[0]?.id, 0, 0, !!body.loopUntilStopped);
 			this.#pushStatus();
 		});
 		r('POST', '/player/stop', () => {
@@ -858,6 +868,19 @@ export class MockServer {
 			else if (this.play.queue[this.play.index]?.type === ('calibration' as string))
 				this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
 			this.#pushStatus();
+			if (on && body?.pattern === 'v2') {
+				// Calibration pattern v2 (F1): 32 pseudo-random events 450–870 ms apart.
+				const seed = body.seed ?? Math.floor(Math.random() * 65535) + 1;
+				let lfsr = seed & 0xffff || 1;
+				let t = 2000;
+				const eventsMs: number[] = [];
+				for (let i = 0; i < 32; i++) {
+					eventsMs.push(t);
+					lfsr = (lfsr >> 1) ^ (-(lfsr & 1) & 0xb400);
+					t += 450 + (lfsr % 8) * 60;
+				}
+				return { ok: true, on, seed, eventsMs, flashMs: 80, startsInMs: 500 };
+			}
 			return { ok: true, on };
 		});
 		r('POST', '/player/effect', ({ body }) => {
@@ -1377,6 +1400,8 @@ export class MockServer {
 				return it.durationMs;
 			case 'command':
 				return 3000;
+			case 'countdown':
+				return it.durationMs;
 		}
 	}
 
@@ -1396,10 +1421,12 @@ export class MockServer {
 				return `Pause ${Math.round(it.durationMs / 1000)} s`;
 			case 'command':
 				return it.command === 'games.invite' ? 'Show game invite' : it.command;
+			case 'countdown':
+				return 'Countdown';
 		}
 	}
 
-	#startPlaylist(id?: string, index = 0, posMs = 0) {
+	#startPlaylist(id?: string, index = 0, posMs = 0, repeat?: boolean) {
 		const pl = this.show.playlists.find((p) => p.id === id);
 		if (!pl) throw new HttpError(404, 'not_found', 'Playlist not found');
 		const queue = [...pl.intro, ...(pl.shuffle ? shuffle(pl.items) : pl.items), ...pl.outro];
@@ -1409,7 +1436,8 @@ export class MockServer {
 			playlistId: pl.id,
 			queue,
 			index: Math.min(index, queue.length - 1),
-			startedAt: Date.now() - posMs
+			startedAt: Date.now() - posMs,
+			repeat: repeat ?? pl.repeat
 		};
 	}
 	#startSingle(it: PlaylistItem) {
@@ -1433,7 +1461,7 @@ export class MockServer {
 		let i = p.index + dir;
 		const pl = this.show.playlists.find((x) => x.id === p.playlistId);
 		if (i >= p.queue.length) {
-			if (pl?.repeat)
+			if (pl && (p.repeat ?? pl.repeat))
 				i = pl.intro.length; // loop items (skip intro)
 			else {
 				this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
@@ -1455,7 +1483,7 @@ export class MockServer {
 		const p = this.play;
 		const pl = this.show.playlists.find((x) => x.id === p.playlistId);
 		const it = p.queue[p.index];
-		const nx = p.queue[p.index + 1] ?? (pl?.repeat ? p.queue[pl.intro.length] : undefined);
+		const nx = p.queue[p.index + 1] ?? (pl && (p.repeat ?? pl.repeat) ? p.queue[pl.intro.length] : undefined);
 		const ns = nextShow(this.show.schedule, new Date());
 		const active = ns && new Date(ns.start) <= new Date();
 		const base: PlayerStatus = {

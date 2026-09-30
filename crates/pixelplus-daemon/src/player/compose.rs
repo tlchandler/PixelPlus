@@ -278,6 +278,7 @@ mod tests {
 
     pub(crate) fn prop(id: &str, n: u32, chan: u32, out: u32, start: u32) -> Prop {
         Prop {
+            suspect_pixels: Default::default(),
             id: id.into(),
             name: id.into(),
             kind: PropKind::Line,
@@ -307,6 +308,8 @@ mod tests {
     fn show() -> Show {
         let mut s = Show::default();
         s.nodes.push(Node {
+            hardware_history: Default::default(),
+            serial: Default::default(),
             id: "n1".into(),
             name: "n1".into(),
             hostname: "n1".into(),
@@ -367,6 +370,10 @@ mod tests {
     fn test_layers() {
         let s = show();
         let req = TestRequest {
+            map_run_id: Default::default(),
+            cal: Default::default(),
+            identify: Default::default(),
+            map: Default::default(),
             mode: "solid".into(),
             color: Some("#ff0000".into()),
             speed: None,

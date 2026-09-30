@@ -369,6 +369,8 @@ mod tests {
             ("s4", "Noel"),
         ] {
             s.sequences.push(Sequence {
+                generated: Default::default(),
+                tags: Default::default(),
                 id: id.into(),
                 name: name.into(),
                 file: format!("sequences/{id}.fseq"),
@@ -427,6 +429,7 @@ mod tests {
         s.schedule.enabled = true;
         s.schedule.location.timezone = "America/Chicago".into();
         s.schedule.entries.push(ScheduleEntry {
+            start_exact: Default::default(),
             id: "e".into(),
             name: "Nightly".into(),
             enabled: true,
@@ -511,6 +514,7 @@ mod tests {
     fn requestable_from_playlist() {
         let mut s = show_with_songs();
         s.playlists.push(Playlist {
+            smart: Default::default(),
             id: "p".into(),
             name: "Req".into(),
             items: vec![PlaylistItem::Sequence {

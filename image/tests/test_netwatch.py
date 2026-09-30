@@ -180,8 +180,9 @@ class StateMachineTests(unittest.TestCase):
         nmconn.NM_DIR = self.tmp
         self.nm = FakeNM()
         self.clock = Clock()
-        self.saved_paths = (netwatch.STATE_PATH, netwatch.BOOT_DIR, netwatch.STATUS_PATH)
+        self.saved_paths = (netwatch.STATE_PATH, netwatch.BOOT_DIR, netwatch.STATUS_PATH, netwatch.NODE_JSON)
         netwatch.STATE_PATH = os.path.join(self.tmp, "state.json")
+        netwatch.NODE_JSON = os.path.join(self.tmp, "node.json")
         netwatch.BOOT_DIR = self.tmp
         netwatch.STATUS_PATH = os.path.join(self.tmp, "netwatch.json")
         self.nw = netwatch.Netwatch(self.nm, dict(netwatch.DEFAULTS), clock=self.clock, sleep=self.clock.sleep)
@@ -193,7 +194,7 @@ class StateMachineTests(unittest.TestCase):
 
     def tearDown(self):
         nmconn.NM_DIR = self.saved_dir
-        netwatch.STATE_PATH, netwatch.BOOT_DIR, netwatch.STATUS_PATH = self.saved_paths
+        netwatch.STATE_PATH, netwatch.BOOT_DIR, netwatch.STATUS_PATH, netwatch.NODE_JSON = self.saved_paths
 
     def hotspot_psk(self):
         kf = open(os.path.join(self.tmp, "pixelplus-hotspot.nmconnection")).read()
@@ -314,12 +315,13 @@ class StateMachineTests(unittest.TestCase):
         self.nw.tick()
         self.nm.profiles = ["pixelplus-wifi"]
         self.nm.online_dev = None
-        self.advance(200)
-        self.assertEqual(self.nw.state, "ONLINE")  # still waiting (after_disconnect = 300 s)
-        self.advance(150)
-        # Deauth resistance: online a moment ago, so it waits 10 minutes in all.
+        self.nm.up_ok = False  # the router stays away
+        self.advance(620)
+        # It has been online: a passing outage never opens the hotspot (30 min).
         self.assertEqual(self.nw.state, "ONLINE")
-        self.advance(260)
+        self.advance(1170)
+        self.assertEqual(self.nw.state, "ONLINE")
+        self.advance(30)
         self.assertEqual(self.nw.state, "HOTSPOT")
         # A configured controller never opens the published default password.
         pw = self.nw.persist["devicePassword"]
@@ -331,6 +333,65 @@ class StateMachineTests(unittest.TestCase):
         # Remembered across restarts.
         again = netwatch.Netwatch(self.nm, dict(netwatch.DEFAULTS), clock=self.clock, sleep=self.clock.sleep)
         self.assertEqual(again.hotspot_password(), pw)
+
+    def ups(self):
+        return [c for c in self.nm.calls if c == "up pixelplus-wifi"]
+
+    def test_established_controller_waits_30_minutes_and_keeps_rejoining(self):
+        self.nw.persist["everOnline"] = True  # online before this boot
+        self.nm.profiles = ["pixelplus-wifi"]
+        self.nm.up_ok = False
+        self.advance(600)
+        # Boot: a known network is retried every 20 s for the first 10 minutes ...
+        self.assertEqual(self.nw.state, "WAITING")
+        self.assertTrue(28 <= len(self.ups()) <= 31, len(self.ups()))
+        self.nm.calls.clear()
+        self.advance(600)
+        # ... then every 60 s.
+        self.assertTrue(9 <= len(self.ups()) <= 11, len(self.ups()))
+        self.advance(590)
+        self.assertEqual(self.nw.state, "WAITING")
+        self.advance(15)
+        self.assertEqual(self.nw.state, "HOTSPOT")
+
+    def test_established_controller_rejoins_when_the_router_is_back(self):
+        self.nw.persist["everOnline"] = True
+        self.nm.profiles = ["pixelplus-wifi"]
+        self.nm.up_ok = False
+        self.advance(300)
+        self.nm.up_ok = True  # router finished rebooting
+        self.advance(30)
+        self.assertEqual(self.nw.state, "ONLINE")
+        self.assertEqual(self.nm.online_dev["connection"], "pixelplus-wifi")
+
+    def test_offline_timer_restarts_after_a_brief_reconnect(self):
+        self.nw.persist["everOnline"] = True
+        self.nm.up_ok = False
+        self.advance(1500)
+        self.nm.online_dev = {"device": "wlan0", "connection": "pixelplus-wifi"}
+        self.nw.tick()
+        self.nm.online_dev = None
+        self.advance(1500)
+        self.assertEqual(self.nw.state, "ONLINE")  # 25 + 25 min, never 30 in a row
+        self.advance(330)
+        self.assertEqual(self.nw.state, "HOTSPOT")
+
+    def test_adopted_follower_counts_as_established(self):
+        with open(netwatch.NODE_JSON, "w") as f:
+            json.dump({"id": "n1", "role": "follower", "leaderId": "L", "leaderUrl": "http://10.0.0.2"}, f)
+        self.assertTrue(self.nw.established())
+        self.advance(900)
+        self.assertEqual(self.nw.state, "WAITING")
+        with open(netwatch.NODE_JSON, "w") as f:
+            json.dump({"id": "n1", "role": "unconfigured"}, f)
+        self.assertFalse(self.nw.established())
+        self.assertFalse(netwatch.adopted_follower(os.path.join(self.tmp, "missing.json")))
+
+    def test_never_online_controller_keeps_the_quick_setup_hotspot(self):
+        self.assertFalse(self.nw.established())
+        self.nm.profiles = ["pixelplus-wifi"]
+        self.advance(90)
+        self.assertEqual(self.nw.state, "HOTSPOT")
 
     def test_owner_chosen_or_open_password_after_being_online(self):
         self.nw.persist["everOnline"] = True

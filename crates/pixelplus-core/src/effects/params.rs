@@ -182,6 +182,8 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
     use ParamSpec as P;
     let mut v = match kind {
         EffectKind::Solid => vec![P::color("color", "Color", "#ffb46b")],
+        // Rendered from its playlist item (F4, WS3); no user parameters yet.
+        EffectKind::Countdown => vec![],
         EffectKind::Chase => vec![
             P::colors("colors", "Colors", &["#ff0000", "#00c000"])
                 .help("Each band of lit pixels takes the next color."),

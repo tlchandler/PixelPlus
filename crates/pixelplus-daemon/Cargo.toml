@@ -54,6 +54,15 @@ mdns-sd = "0.21"
 # --- playback engine workstream
 cpal = { version = "0.15", optional = true }
 rubato = "0.16"
+# --- feature wave (added by WS0 so workstreams need not edit this file)
+# F1 local CA + leaf certificates (ring backend, no aws-lc / cmake)
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
+# F1 HTTPS listener (implement axum::serve::Listener over TlsAcceptor)
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+# F15 minisign (Ed25519) signatures on .deb files
+minisign-verify = "0.2"
+# F10 encrypted controller transfer file (AES-256-GCM; key via argon2)
+aes-gcm = "0.10"
 
 [features]
 default = ["audio"]

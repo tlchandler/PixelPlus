@@ -112,6 +112,8 @@ pub async fn ensure_self_node(state: &AppState) -> anyhow::Result<()> {
                     s.nodes.insert(
                         0,
                         Node {
+                            hardware_history: Default::default(),
+                            serial: Default::default(),
                             id: my_id.clone(),
                             name: default_name.clone(),
                             hostname: hostname.clone(),
@@ -693,6 +695,8 @@ pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResul
                 rename_node(s, ph, &reply.id);
             }
             let fresh = Node {
+                hardware_history: Default::default(),
+                serial: Default::default(),
                 id: reply.id.clone(),
                 name: name.clone(),
                 hostname: reply.hostname.clone(),
@@ -1361,6 +1365,7 @@ pub(crate) fn build_sync(
         })
         .rounded();
     SyncPacket {
+        surprise: Default::default(),
         leader: identity.id,
         show_version: show.version,
         state: status.state,

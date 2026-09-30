@@ -541,6 +541,7 @@ mod tests {
 
     fn entry(id: &str, start: TimeSpec, end: TimeSpec, priority: i32) -> ScheduleEntry {
         ScheduleEntry {
+            start_exact: Default::default(),
             id: id.into(),
             name: format!("Entry {id}"),
             enabled: true,

@@ -138,6 +138,9 @@
 					icon: it.command.startsWith('games') ? Gamepad2 : Terminal,
 					tone: ''
 				};
+			// F4 (WS3 editor, WS2 page): a minimal row until the countdown editor lands.
+			case 'countdown':
+				return { name: 'Countdown', sub: 'Show start', ms: it.durationMs, icon: Clock, tone: '' };
 		}
 	}
 	function commandKind(c: string) {

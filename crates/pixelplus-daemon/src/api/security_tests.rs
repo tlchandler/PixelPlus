@@ -270,6 +270,10 @@ async fn hostile_media_paths_are_never_served() {
     .unwrap();
     std::fs::write(app.dir.join("media/good.mp3"), b"ID3").unwrap();
     let mk = |id: &str, file: &str| pixelplus_core::model::Media {
+        tags: Default::default(),
+        analysis: Default::default(),
+        original_name: Default::default(),
+        original_size: Default::default(),
         id: id.into(),
         name: id.into(),
         kind: pixelplus_core::model::MediaKind::Song,
@@ -300,4 +304,37 @@ async fn hostile_media_paths_are_never_served() {
         .unwrap()
         .starts_with("attachment"));
     assert_eq!(h["x-content-type-options"], "nosniff");
+}
+
+/// The xLights upload password hash (F16) is write-only like the UI password:
+/// shown as "" when set, never settable through `PUT /show/settings`. (WS0)
+#[tokio::test]
+async fn xlights_upload_password_is_write_only() {
+    let app = TestApp::new();
+    app.state
+        .store
+        .update(|s| {
+            s.settings.xlights.password_hash = Some("$argon2id$secret".into());
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (_, show) = app.json("GET", "/show", None).await;
+    assert!(!show.to_string().contains("argon2id"));
+    assert_eq!(show["settings"]["xlights"]["passwordHash"], "");
+    let (s, back) = app
+        .json(
+            "PUT",
+            "/show/settings",
+            Some(json!({"xlights": {"passwordHash": "attacker", "fppConnect": true}})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(back["xlights"]["passwordHash"], "");
+    let stored = app.state.store.get();
+    assert_eq!(
+        stored.settings.xlights.password_hash.as_deref(),
+        Some("$argon2id$secret")
+    );
+    assert!(stored.settings.xlights.fpp_connect);
 }

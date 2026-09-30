@@ -103,6 +103,9 @@ pub struct SyncPacket {
     pub brightness: u8,
     #[serde(default)]
     pub blackout: bool,
+    /// Active surprise layer (F20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surprise: Option<SurpriseAnchor>,
 }
 
 /// Command sent to the engine task.

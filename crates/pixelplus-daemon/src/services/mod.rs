@@ -25,6 +25,18 @@ pub mod system;
 pub mod triggers;
 pub mod tts;
 pub mod updates;
+// Feature wave (ARCHITECTURE §12). Stubs created by WS0; one owner per file.
+pub mod analysis; // WS2 (F2/F3)
+#[cfg(test)]
+mod deps_smoke;
+pub mod journal; // WS0 (F11), complete
+pub mod mapping; // WS4 (F6/F7)
+pub mod profiles; // WS6 (F8)
+pub mod remote; // WS5 (F14)
+pub mod reports; // WS6 (F11)
+pub mod sensornodes; // WS6 (F20)
+pub mod tls; // WS1 (F1)
+pub mod updates_orch; // WS5 (F15)
 
 use crate::state::AppState;
 use serde_json::Value;
@@ -32,6 +44,7 @@ use std::sync::OnceLock;
 
 /// Registry of service handles. Every field is set exactly once during startup.
 #[derive(Default)]
+#[allow(dead_code)] // feature-wave fields are read once their workstreams land
 pub struct Services {
     /// Latest JSON payload per WebSocket message type (`status`, `nodes`,
     /// `sensors`), replayed to newly connected clients.
@@ -52,6 +65,17 @@ pub struct Services {
     pub helpers: platform::HelperJobs,
     /// Output tap for `GET /debug/output` (only with `PIXELPLUS_DEV` or the sim output).
     pub debug_output: OnceLock<std::sync::Arc<crate::player::debugtap::OutputTap>>,
+    // Feature wave (ARCHITECTURE §12): each owner fills in its own state type.
+    /// Show journal (F11): `journal.record(Event)`.
+    pub journal: journal::Journal,
+    pub tls: tls::TlsState,
+    pub analysis: analysis::AnalysisState,
+    pub mapping: mapping::MappingState,
+    pub reports: reports::ReportsState,
+    pub profiles: profiles::ProfilesState,
+    pub remote: remote::RemoteState,
+    pub sensornodes: sensornodes::SensorNodesState,
+    pub updates_orch: updates_orch::UpdatesOrchState,
 }
 
 impl Services {
@@ -80,9 +104,20 @@ impl Services {
 
 /// Start every background service.
 pub async fn start_all(_state: &AppState) -> anyhow::Result<()> {
-    // The playback engine first: the cluster and other services talk to it.
+    // The journal first, so every other service can record from the start.
+    journal::start(_state);
+    // The playback engine next: the cluster and other services talk to it.
     crate::player::engine::start(_state).await?;
     crate::cluster::start(_state).await?;
     crate::services::system::start(_state).await;
+    // Feature wave services (stubs until their workstreams land).
+    tls::start(_state);
+    analysis::start(_state);
+    mapping::start(_state);
+    reports::start(_state);
+    profiles::start(_state);
+    remote::start(_state);
+    sensornodes::start(_state);
+    updates_orch::start(_state);
     Ok(())
 }
