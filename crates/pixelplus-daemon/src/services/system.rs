@@ -32,6 +32,24 @@ pub async fn start(state: &AppState) {
     crate::services::provision::start(state).await;
     crate::services::platform::publish_board(state);
     crate::services::media::purge_trash(&state.config.data_dir);
+    crate::services::media::purge_stale_temp(&state.config.data_dir);
+    {
+        // Undo trash and interrupted uploads, hourly (the daemon runs for weeks).
+        let data_dir = state.config.data_dir.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(3600));
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let d = data_dir.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::services::media::purge_trash(&d);
+                    crate::services::media::purge_stale_temp(&d);
+                })
+                .await;
+            }
+        });
+    }
     crate::services::sensors::start(state);
     crate::services::alerts::start(state);
     crate::services::requests::start(state);

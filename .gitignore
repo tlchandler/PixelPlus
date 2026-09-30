@@ -11,3 +11,4 @@ __pycache__/
 /data-dev/
 .DS_Store
 /.dev-cluster/
+.pytest_cache/

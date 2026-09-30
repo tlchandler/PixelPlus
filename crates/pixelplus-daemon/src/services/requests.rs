@@ -94,7 +94,17 @@ impl RequestQueue {
         true
     }
 
-    /// Validate and add a request. Returns its 1-based position.
+    /// Drop every waiting request (the show is over for tonight).
+    pub fn clear(&self) -> bool {
+        let mut items = self.items.lock();
+        let had = !items.is_empty();
+        items.clear();
+        *self.head.lock() = None;
+        had
+    }
+
+    /// Validate and add a request. Returns its 1-based position. `show_on`:
+    /// see [`show_on`] (requests are only taken while the show is on).
     pub fn submit(
         &self,
         show: &Show,
@@ -102,9 +112,10 @@ impl RequestQueue {
         name: Option<&str>,
         ip: Option<IpAddr>,
         now: Instant,
+        show_on: bool,
     ) -> ApiResult<(SongRequest, usize)> {
         let rs = &show.settings.requests;
-        if !rs.enabled {
+        if !rs.enabled || !show_on {
             return Err(ApiError::new(
                 axum::http::StatusCode::FORBIDDEN,
                 "requests_closed",
@@ -208,6 +219,37 @@ fn clean_name(n: &str) -> String {
         .collect()
 }
 
+/// Is the show on, so visitors' requests are taken? While something plays
+/// (`playing`), or inside a scheduled show window. With the schedule turned
+/// off the owner runs the show by hand: always. (Otherwise a request made at
+/// 3 am, or one left waiting when the show ended, would start the music.)
+pub fn show_on(show: &Show, now: chrono::DateTime<chrono::Utc>, playing: bool) -> bool {
+    let s = &show.schedule;
+    if playing || !s.enabled {
+        return true;
+    }
+    let tz = pixelplus_core::schedule::schedule_timezone(s).unwrap_or(chrono_tz::UTC);
+    pixelplus_core::schedule::active_at(s, now.with_timezone(&tz)).is_some()
+}
+
+/// A show (not a test pattern or an idle look) is playing or paused.
+pub fn is_playing(status: &PlayerStatus) -> bool {
+    matches!(
+        status.state,
+        crate::player::PlayerState::Playing | crate::player::PlayerState::Paused
+    )
+}
+
+/// [`show_on`] right now.
+pub fn show_on_now(state: &AppState, show: &Show) -> bool {
+    let playing = state
+        .services
+        .player
+        .get()
+        .is_some_and(|p| is_playing(&p.status()));
+    show_on(show, chrono::Utc::now(), playing)
+}
+
 /// Sequences visitors may pick: those in the requests playlist, else all.
 pub fn requestable(show: &Show) -> Vec<&Sequence> {
     let rs = &show.settings.requests;
@@ -252,7 +294,8 @@ pub fn public_view(state: &AppState) -> serde_json::Value {
     serde_json::json!({
         "title": rs.title,
         "message": rs.message,
-        "enabled": rs.enabled,
+        // Closed outside show time too ("Come back during the show").
+        "enabled": rs.enabled && show_on_now(state, &show),
         "showName": show.name,
         "maxQueue": rs.max_queue,
         "songs": songs,
@@ -281,6 +324,18 @@ pub fn start(state: &AppState) {
                 _ = tick.tick() => {},
             }
             let status = rx.borrow().clone();
+            let show = state.store.get();
+            if !show_on(&show, chrono::Utc::now(), is_playing(&status)) {
+                // The show is over: requests still waiting would start the music
+                // on their own later (and the line-up starts empty tomorrow).
+                if state.services.requests.clear() {
+                    tracing::info!("The show is over; cleared the song request line-up");
+                    state
+                        .events
+                        .publish("requests", &state.services.requests.list());
+                }
+                continue;
+            }
             if let Some(req) = state.services.requests.on_status(&status, Instant::now()) {
                 let cmd = PlayerCmd::Enqueue {
                     sequence_id: req.sequence_id.clone(),
@@ -335,29 +390,82 @@ mod tests {
         let s = show_with_songs();
         let ip: Option<IpAddr> = Some("10.0.0.5".parse().unwrap());
         let t = Instant::now();
-        let (r, pos) = q.submit(&s, "s1", Some("  Tom\u{7} "), ip, t).unwrap();
+        let (r, pos) = q.submit(&s, "s1", Some("  Tom\u{7} "), ip, t, true).unwrap();
         assert_eq!(pos, 1);
         assert_eq!(r.requested_by.as_deref(), Some("Tom"));
         assert_eq!(
-            q.submit(&s, "s1", None, None, t).unwrap_err().code,
+            q.submit(&s, "s1", None, None, t, true).unwrap_err().code,
             "already_queued"
         );
         assert_eq!(
-            q.submit(&s, "nope", None, None, t).unwrap_err().code,
+            q.submit(&s, "nope", None, None, t, true).unwrap_err().code,
             "not_found"
         );
-        q.submit(&s, "s2", None, ip, t).unwrap();
-        q.submit(&s, "s3", None, ip, t).unwrap();
+        q.submit(&s, "s2", None, ip, t, true).unwrap();
+        q.submit(&s, "s3", None, ip, t, true).unwrap();
         assert_eq!(
-            q.submit(&s, "s4", None, None, t).unwrap_err().code,
+            q.submit(&s, "s4", None, None, t, true).unwrap_err().code,
             "queue_full"
         );
         let mut closed = s.clone();
         closed.settings.requests.enabled = false;
         assert_eq!(
-            q.submit(&closed, "s4", None, None, t).unwrap_err().code,
+            q.submit(&closed, "s4", None, None, t, true).unwrap_err().code,
             "requests_closed"
         );
+    }
+
+    #[test]
+    fn requests_only_while_the_show_is_on() {
+        use chrono::TimeZone;
+        let q = RequestQueue::default();
+        let mut s = show_with_songs();
+        s.schedule.enabled = true;
+        s.schedule.location.timezone = "America/Chicago".into();
+        s.schedule.entries.push(ScheduleEntry {
+            id: "e".into(),
+            name: "Nightly".into(),
+            enabled: true,
+            playlist_id: "p".into(),
+            days: vec![
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri,
+                Weekday::Sat,
+                Weekday::Sun,
+            ],
+            date_range: None,
+            start: TimeSpec::Clock {
+                time: "18:00".into(),
+            },
+            end: TimeSpec::Clock {
+                time: "22:00".into(),
+            },
+            priority: 0,
+            end_behavior: EndBehavior::FinishSong,
+        });
+        // 19:00 and 03:00 in Chicago (UTC-6 in December).
+        let during = chrono::Utc.with_ymd_and_hms(2026, 12, 5, 1, 0, 0).unwrap();
+        let night = chrono::Utc.with_ymd_and_hms(2026, 12, 5, 9, 0, 0).unwrap();
+        assert!(show_on(&s, during, false));
+        assert!(!show_on(&s, night, false));
+        assert!(show_on(&s, night, true), "a show started by hand");
+        let t = Instant::now();
+        let on = show_on(&s, night, false);
+        assert_eq!(
+            q.submit(&s, "s1", None, None, t, on).unwrap_err().code,
+            "requests_closed"
+        );
+        // Schedule off: the owner runs the show by hand.
+        s.schedule.enabled = false;
+        assert!(show_on(&s, night, false));
+        // What is still waiting when the show ends is dropped.
+        q.submit(&s, "s1", None, None, t, true).unwrap();
+        assert!(q.clear());
+        assert!(q.list().is_empty());
+        assert!(q.on_status(&PlayerStatus::default(), t).is_none());
     }
 
     #[test]
@@ -422,8 +530,8 @@ mod tests {
         let q = RequestQueue::default();
         let s = show_with_songs();
         let t = Instant::now();
-        q.submit(&s, "s1", None, None, t).unwrap();
-        q.submit(&s, "s2", None, None, t).unwrap();
+        q.submit(&s, "s1", None, None, t, true).unwrap();
+        q.submit(&s, "s2", None, None, t, true).unwrap();
         let idle = PlayerStatus::default();
         assert_eq!(q.on_status(&idle, t).unwrap().sequence_id, "s1");
         assert!(q.on_status(&idle, t).is_none());

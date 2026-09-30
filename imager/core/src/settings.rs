@@ -123,8 +123,8 @@ impl ImagerSettings {
         {
             errs.push(fe("timezone", "Not a valid time zone."));
         }
-        if !s.ui_password.is_empty() && s.ui_password.chars().count() < 4 {
-            errs.push(fe("uiPassword", "Use at least 4 characters."));
+        if !s.ui_password.is_empty() && s.ui_password.chars().count() < 6 {
+            errs.push(fe("uiPassword", "Use at least 6 characters."));
         }
         if !s.ssh_password.is_empty() && (s.ssh_password.len() < 8 || s.ssh_password.contains(':'))
         {
@@ -371,6 +371,20 @@ mod tests {
         );
         assert!(valid_hostname("pixelplus-1"));
         assert!(!valid_hostname("Pixel"));
+        // The Pi (pixelplus.txt and pixelplusd) needs 6+ characters; a shorter one
+        // would be refused on first boot and the card would have no password.
+        let short_ui = ImagerSettings {
+            ui_password: "12345".into(),
+            ..golden_settings()
+        };
+        assert_eq!(
+            short_ui
+                .validate()
+                .iter()
+                .map(|e| e.field)
+                .collect::<Vec<_>>(),
+            vec!["uiPassword"]
+        );
     }
 
     #[test]

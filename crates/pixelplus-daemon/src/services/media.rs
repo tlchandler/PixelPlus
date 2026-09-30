@@ -436,6 +436,46 @@ pub fn untrash(data_dir: &Path, rel: &str) -> bool {
     std::fs::rename(&src, data_dir.join(rel)).is_ok()
 }
 
+/// Temporary files older than this are leftovers (an upload still in
+/// progress keeps writing to its file).
+pub const STALE_TEMP: Duration = Duration::from_secs(60 * 60);
+
+/// Remove leftovers of interrupted uploads and snapshot writes: a phone that
+/// loses Wi-Fi halfway through a 300 MB sequence leaves `.upload-*` behind
+/// (the request is dropped, so its own clean-up never runs).
+pub fn purge_stale_temp(data_dir: &Path) {
+    let dirs = [
+        (data_dir.join("sequences"), ".upload-"),
+        (data_dir.join("media"), ".upload-"),
+        (data_dir.join("snapshots"), "."),
+        (data_dir.join("games").join("roms"), "."),
+    ];
+    for (dir, prefix) in dirs {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let temp = name.starts_with(prefix)
+                && (prefix == ".upload-" || name.ends_with(".tmp"))
+                && e.file_type().is_ok_and(|t| t.is_file());
+            if !temp {
+                continue;
+            }
+            let old = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > STALE_TEMP);
+            if old {
+                tracing::info!("removing the leftover of an interrupted upload: {name}");
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
 pub fn purge_trash(data_dir: &Path) {
     let Ok(rd) = std::fs::read_dir(trash_dir(data_dir)) else {
         return;
@@ -531,6 +571,40 @@ pub mod tests {
         let p = resample_peaks(&[0.1, 0.5, 0.2, 1.0], 2);
         assert_eq!(p, vec![0.5, 1.0]);
         assert_eq!(resample_peaks(&[0.5], 3), vec![1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn stale_temp_files_are_removed() {
+        let dir =
+            std::env::temp_dir().join(format!("pp-stale-{}", pixelplus_core::model::new_id()));
+        for d in ["sequences", "media", "snapshots"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let old = std::time::SystemTime::now() - STALE_TEMP - Duration::from_secs(60);
+        let make = |rel: &str, aged: bool| {
+            let p = dir.join(rel);
+            std::fs::write(&p, b"partial").unwrap();
+            if aged {
+                std::fs::File::options()
+                    .append(true)
+                    .open(&p)
+                    .unwrap()
+                    .set_modified(old)
+                    .unwrap();
+            }
+            p
+        };
+        let dead_seq = make("sequences/.upload-abc.fseq", true);
+        let dead_audio = make("media/.upload-abc.mp3", true);
+        let dead_snap = make("snapshots/.20261201-daily.tmp", true);
+        let live = make("sequences/.upload-def.fseq", false);
+        let real_seq = make("sequences/abc.fseq", true);
+        let real_snap = make("snapshots/20261201-daily.tar.zst", true);
+        purge_stale_temp(&dir);
+        assert!(!dead_seq.exists() && !dead_audio.exists() && !dead_snap.exists());
+        assert!(live.exists(), "an upload in progress stays");
+        assert!(real_seq.exists() && real_snap.exists(), "data files stay");
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

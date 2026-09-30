@@ -82,7 +82,12 @@ class AppState {
 		if (this.#reloading) return this.#reloading;
 		this.#reloading = (async () => {
 			try {
-				this.show = await api.show();
+				// A change announced while this fetch was in flight may not be in its
+				// answer: fetch again (bounded) until we have at least that version.
+				for (let i = 0; i < 3; i++) {
+					this.show = await api.show();
+					if (this.show.version >= this.#pendingVersion) break;
+				}
 			} catch (e) {
 				if (!(e instanceof ApiError && e.status === 401)) throw e;
 			} finally {

@@ -295,7 +295,35 @@ pub fn content_checks(show: &Show, data_dir: &std::path::Path) -> Vec<Check> {
             next.unwrap_or_else(|| "No upcoming shows".into()),
         )
     });
+    if let Some(c) = location_check(show) {
+        out.push(c);
+    }
     out
+}
+
+/// Sunset/sunrise times computed for the built-in default location (the
+/// middle of the USA) are wrong almost everywhere: controllers set up from
+/// pixelplus.txt or the imager never saw the wizard's location step.
+pub fn location_check(show: &Show) -> Option<Check> {
+    use pixelplus_core::model::{Location, TimeSpec};
+    let s = &show.schedule;
+    let sun = |t: &TimeSpec| !matches!(t, TimeSpec::Clock { .. });
+    let uses_sun = s
+        .entries
+        .iter()
+        .any(|e| e.enabled && (sun(&e.start) || sun(&e.end)))
+        || s.volume_curfew.as_ref().is_some_and(|c| sun(&c.time));
+    let d = Location::default();
+    let unset = s.location.lat == d.lat && s.location.lon == d.lon;
+    (s.enabled && uses_sun && unset).then(|| {
+        check(
+            "location",
+            "Show location",
+            Status::Warn,
+            "Sunset and sunrise times are worked out for the middle of the USA. Set your \
+             show's location under Schedule so shows start at your sunset.",
+        )
+    })
 }
 
 async fn host_checks(state: &AppState) -> Vec<Check> {
@@ -846,6 +874,36 @@ mod tests {
         let sched = checks.iter().find(|c| c.id == "schedule").unwrap();
         assert_eq!(sched.status, Status::Warn);
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn sunset_schedule_needs_a_location() {
+        let mut s = Show::default();
+        s.schedule.enabled = true;
+        s.schedule.entries.push(ScheduleEntry {
+            id: "e".into(),
+            name: "Nightly".into(),
+            enabled: true,
+            playlist_id: "p".into(),
+            days: vec![Weekday::Fri],
+            date_range: None,
+            start: TimeSpec::Sunset { offset_min: 0 },
+            end: TimeSpec::Clock {
+                time: "22:00".into(),
+            },
+            priority: 0,
+            end_behavior: EndBehavior::FinishSong,
+        });
+        assert_eq!(location_check(&s).map(|c| c.status), Some(Status::Warn));
+        s.schedule.location.lat = 52.52;
+        s.schedule.location.lon = 13.40;
+        assert!(location_check(&s).is_none());
+        // Clock times don't care where the show is.
+        s.schedule.location = Location::default();
+        s.schedule.entries[0].start = TimeSpec::Clock {
+            time: "17:00".into(),
+        };
+        assert!(location_check(&s).is_none());
     }
 }
 

@@ -57,6 +57,7 @@ async fn submit(
         b.name.as_deref(),
         client_ip(&state, peer, &headers),
         Instant::now(),
+        crate::services::requests::show_on_now(&state, &show),
     )?;
     let who = req
         .requested_by

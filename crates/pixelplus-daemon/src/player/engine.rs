@@ -230,6 +230,48 @@ enum CoreEvent {
         clip_id: String,
         ctx: DynamicContext,
     },
+    /// Master brightness, volume or lights-off changed (saved for restarts).
+    Levels(SavedLevels),
+}
+
+/// Master brightness, volume and lights-off of the leader, kept in
+/// `<data>/player.json` so a restart (power cut, update) doesn't bring the
+/// lights back at full brightness or the sound back at the old volume.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedLevels {
+    pub brightness: u8,
+    pub volume: u8,
+    #[serde(default)]
+    pub blackout: bool,
+}
+
+impl SavedLevels {
+    fn path(data_dir: &Path) -> PathBuf {
+        data_dir.join("player.json")
+    }
+
+    pub fn load(data_dir: &Path) -> Option<SavedLevels> {
+        let text = std::fs::read_to_string(Self::path(data_dir)).ok()?;
+        let l: SavedLevels = serde_json::from_str(&text).ok()?;
+        Some(SavedLevels {
+            brightness: l.brightness.min(100),
+            volume: l.volume.min(100),
+            blackout: l.blackout,
+        })
+    }
+
+    fn save(&self, data_dir: &Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let path = Self::path(data_dir);
+        let tmp = path.with_extension("json.tmp");
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(&serde_json::to_vec(self).unwrap_or_default())?;
+            f.sync_all()?;
+        }
+        std::fs::rename(tmp, path)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +288,7 @@ async fn control_task(
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_identity = None;
+    let levels_writer = Arc::new(LevelsWriter::default());
     loop {
         tokio::select! {
             cmd = rx.recv() => match cmd {
@@ -275,13 +318,25 @@ async fn control_task(
                     break;
                 }
             }
-            Some(ev) = ev_rx.recv() => handle_event(&state, &core, ev),
+            Some(ev) = ev_rx.recv() => handle_event(&state, &core, &levels_writer, ev),
         }
     }
     let _ = core.send(CoreCmd::Shutdown);
 }
 
-fn handle_event(state: &AppState, core: &Sender<CoreCmd>, ev: CoreEvent) {
+/// Serializes the `player.json` writes of [`CoreEvent::Levels`].
+#[derive(Default)]
+struct LevelsWriter {
+    latest: parking_lot::Mutex<Option<SavedLevels>>,
+    writing: tokio::sync::Mutex<()>,
+}
+
+fn handle_event(
+    state: &AppState,
+    core: &Sender<CoreCmd>,
+    levels_writer: &Arc<LevelsWriter>,
+    ev: CoreEvent,
+) {
     match ev {
         CoreEvent::Log {
             level,
@@ -311,6 +366,22 @@ fn handle_event(state: &AppState, core: &Sender<CoreCmd>, ev: CoreEvent) {
                         "log",
                         &serde_json::json!({ "level": "warning", "message": format!("Games: {e}"), "time": chrono::Utc::now().to_rfc3339() }),
                     );
+                }
+            });
+        }
+        CoreEvent::Levels(levels) => {
+            // One writer at a time, always the newest levels (a slider sends many).
+            *levels_writer.latest.lock() = Some(levels);
+            let dir = state.config.data_dir.clone();
+            let w = levels_writer.clone();
+            tokio::spawn(async move {
+                let _one = w.writing.lock().await;
+                let Some(levels) = w.latest.lock().take() else {
+                    return; // an earlier writer already saved it
+                };
+                let saved = tokio::task::spawn_blocking(move || levels.save(&dir)).await;
+                if let Ok(Err(e)) = saved {
+                    tracing::warn!("could not save the brightness and volume: {e}");
                 }
             });
         }
@@ -810,7 +881,13 @@ impl Core {
         } else {
             "audio is disabled on this controller"
         });
-        let volume = show.settings.audio.volume.min(100);
+        let settings_volume = show.settings.audio.volume.min(100);
+        // The leader's own levels survive a restart; followers get theirs
+        // from the leader.
+        let saved = (identity.role != LocalRole::Follower)
+            .then(|| SavedLevels::load(&app.config.data_dir))
+            .flatten();
+        let volume = saved.map_or(settings_volume, |l| l.volume);
         let t0 = app.started;
         let shm_dir = opts.shm_dir.clone();
         let mut core = Core {
@@ -856,11 +933,11 @@ impl Core {
             follow: FollowState::default(),
             overlays: OverlayManager::new(shm_dir),
             test: None,
-            brightness: 100,
+            brightness: saved.map_or(100, |l| l.brightness),
             volume,
             applied_volume: None,
-            settings_volume: volume,
-            blackout: false,
+            settings_volume,
+            blackout: saved.is_some_and(|l| l.blackout),
             frames_out: 0,
             fps: 0.0,
             fps_window: (Instant::now(), 0),
@@ -1106,6 +1183,7 @@ impl Core {
         if sv != self.settings_volume {
             self.settings_volume = sv;
             self.volume = sv;
+            self.save_levels();
         }
         // Looks: pick up edited presets.
         if let Some(look) = &self.look {
@@ -1180,9 +1258,18 @@ impl Core {
             PlayerCmd::Next => self.next(now_ms),
             PlayerCmd::Previous => self.previous(now_ms),
             PlayerCmd::Seek(pos) => self.seek(pos as f64, now_ms),
-            PlayerCmd::SetVolume(v) => self.volume = v.min(100),
-            PlayerCmd::SetBrightness(b) => self.brightness = b.min(100),
-            PlayerCmd::Blackout(on) => self.blackout = on,
+            PlayerCmd::SetVolume(v) => {
+                self.volume = v.min(100);
+                self.save_levels();
+            }
+            PlayerCmd::SetBrightness(b) => {
+                self.brightness = b.min(100);
+                self.save_levels();
+            }
+            PlayerCmd::Blackout(on) => {
+                self.blackout = on;
+                self.save_levels();
+            }
             PlayerCmd::TestStart(req, reply) => {
                 let r = match TestLayer::new(&self.show, &self.node_id, &req, now_ms) {
                     Ok(t) => {
@@ -1207,6 +1294,18 @@ impl Core {
                 self.reload(show);
             }
         }
+    }
+
+    /// Remember the leader's levels for the next start (written off this thread).
+    fn save_levels(&self) {
+        if self.is_follower() {
+            return;
+        }
+        let _ = self.events.send(CoreEvent::Levels(SavedLevels {
+            brightness: self.brightness,
+            volume: self.volume,
+            blackout: self.blackout,
+        }));
     }
 
     fn overlay_cmd(&mut self, cmd: OverlayCmd) {
@@ -1531,6 +1630,11 @@ impl Core {
             return;
         }
         if self.program.is_none() || self.stop_fade.is_some() {
+            if self.facts.enabled && self.facts.active.is_none() {
+                // Outside the show windows a request never starts the music.
+                tracing::info!("song request ignored: the show is not on");
+                return;
+            }
             self.start_program(
                 Program {
                     origin: Origin::Manual,
@@ -1957,9 +2061,10 @@ impl Core {
             SchedAction::End(behavior) => {
                 use pixelplus_core::model::EndBehavior;
                 tracing::info!("schedule: window ended ({behavior:?})");
+                // Requests still waiting belong to tonight's show.
+                self.requests.clear();
                 match behavior {
                     EndBehavior::FinishSong => {
-                        self.requests.clear();
                         if let Some(Source::Playlist(c)) =
                             self.program.as_mut().map(|p| &mut p.source)
                         {

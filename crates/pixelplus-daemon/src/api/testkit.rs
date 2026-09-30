@@ -426,6 +426,33 @@ mod tests {
         assert_eq!(again["replaced"], true);
         assert_eq!(app.state.store.get().sequences.len(), 1);
 
+        // Re-upload with audio that can't be read: refused, and the sequence on
+        // disk still matches its hash (followers cache slices by it).
+        let before = app.state.store.get().sequences[0].clone();
+        let longer = app.dir.join("longer.fseq");
+        make_fseq(&longer, 100, 90, None);
+        let (s, _) = app
+            .upload(
+                "/sequences",
+                &[
+                    Part {
+                        name: "fseq",
+                        filename: Some("Jingle_Bell_Rock.fseq"),
+                        data: std::fs::read(&longer).unwrap(),
+                    },
+                    Part {
+                        name: "audio",
+                        filename: Some("Jingle_Bell_Rock.mp3"),
+                        data: b"not audio at all".to_vec(),
+                    },
+                ],
+            )
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert_eq!(app.state.store.get().sequences[0], before);
+        let on_disk = pixelplus_core::fseq::sha256_file(app.dir.join(&before.file)).unwrap();
+        assert_eq!(on_disk, before.hash, "the old file is untouched");
+
         // Garbage is rejected with a friendly message.
         let (s, err) = app
             .upload(

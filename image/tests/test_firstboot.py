@@ -123,6 +123,20 @@ class FirstbootTests(unittest.TestCase):
         nw = json.load(open(os.path.join(self.tmp, "etc", "netwatch.json")))
         self.assertEqual(nw, {"hotspot": True, "hotspotPassword": "pixelplus", "hotspotTimeout": 75})
 
+    def test_timezone_reaches_the_daemon_for_the_schedule(self):
+        # The show's schedule runs in the show's time zone (pixelplusd), not only
+        # the system's: a leader set up from pixelplus.txt must get it too.
+        self.write_txt({"role": "leader", "timezone": "Europe/Berlin"})
+        firstboot.apply(RecordingSys(), allow_reboot=False)
+        ppath = os.path.join(self.tmp, "data", "provision.json")
+        prov = json.load(open(ppath))
+        self.assertEqual(prov["timezone"], "Europe/Berlin")
+        self.assertEqual(prov["role"], "leader")
+        # Unchanged on the next boot: not handed over again.
+        os.remove(ppath)
+        firstboot.apply(RecordingSys(), allow_reboot=False)
+        self.assertFalse(os.path.exists(ppath))
+
     def test_full_apply_then_idempotent(self):
         self.write_txt({
             "wifi_ssid": "Home", "wifi_password": "hunter22!", "wifi_country": "US", "hostname": "pp-garage",

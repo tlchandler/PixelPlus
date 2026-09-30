@@ -289,6 +289,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn time_zone_goes_to_the_schedule() {
+        let app = TestApp::new();
+        std::fs::write(
+            path(&app.state),
+            r#"{"role":"leader","timezone":"Europe/Berlin"}"#,
+        )
+        .unwrap();
+        assert!(matches!(check_once(&app.state).await, Checked::Applied(_)));
+        assert_eq!(
+            app.state.store.get().schedule.location.timezone,
+            "Europe/Berlin"
+        );
+        // Later edit of pixelplus.txt on the running leader.
+        std::fs::write(path(&app.state), r#"{"timezone":"Asia/Tokyo"}"#).unwrap();
+        assert!(matches!(check_once(&app.state).await, Checked::Applied(_)));
+        assert_eq!(
+            app.state.store.get().schedule.location.timezone,
+            "Asia/Tokyo"
+        );
+    }
+
+    #[tokio::test]
     async fn password_only_keeps_the_wizard() {
         let app = TestApp::new();
         std::fs::write(path(&app.state), r#"{"uiPassword":"secret1"}"#).unwrap();

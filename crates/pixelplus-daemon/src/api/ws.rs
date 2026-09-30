@@ -76,6 +76,30 @@ impl Drop for PreviewGuard {
     }
 }
 
+/// The current show version and the latest `status`/`nodes`/`sensors`
+/// messages (sent on connect, and again after the client lagged behind).
+fn resync_messages(state: &AppState) -> Vec<String> {
+    let mut out =
+        vec![
+            serde_json::json!({ "type": "show", "data": { "version": state.store.version() } })
+                .to_string(),
+        ];
+    for (kind, data) in state.services.snapshot_for_new_client() {
+        out.push(serde_json::json!({ "type": kind, "data": data }).to_string());
+    }
+    out
+}
+
+async fn resync<S>(state: &AppState, tx: &mut S) -> Result<(), S::Error>
+where
+    S: futures::Sink<Message> + Unpin,
+{
+    for m in resync_messages(state) {
+        tx.send(Message::Text(m.into())).await?;
+    }
+    Ok(())
+}
+
 async fn client(state: AppState, socket: WebSocket) {
     let (mut tx, mut rx) = socket.split();
     let mut events = state.events.subscribe();
@@ -84,23 +108,8 @@ async fn client(state: AppState, socket: WebSocket) {
     let mut last_preview = std::time::Instant::now() - std::time::Duration::from_secs(1);
 
     // Greet with the current show version so the client can sync immediately.
-    let hello = serde_json::json!({ "type": "show", "data": { "version": state.store.version() } });
-    if tx
-        .send(Message::Text(hello.to_string().into()))
-        .await
-        .is_err()
-    {
+    if resync(&state, &mut tx).await.is_err() {
         return;
-    }
-    for (kind, data) in state.services.snapshot_for_new_client() {
-        let msg = serde_json::json!({ "type": kind, "data": data });
-        if tx
-            .send(Message::Text(msg.to_string().into()))
-            .await
-            .is_err()
-        {
-            return;
-        }
     }
 
     loop {
@@ -117,7 +126,12 @@ async fn client(state: AppState, socket: WebSocket) {
                         if tx.send(Message::Binary(frame)).await.is_err() { break; }
                     }
                 }
-                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Lagged(_)) => {
+                    // A slow client (phone on weak Wi-Fi) missed events, maybe a
+                    // `show` change: resend what a new client gets, so it refetches
+                    // the show and has current status/nodes/sensors.
+                    if resync(&state, &mut tx).await.is_err() { break; }
+                }
                 Err(RecvError::Closed) => break,
             },
             msg = rx.next() => match msg {
@@ -140,5 +154,35 @@ async fn client(state: AppState, socket: WebSocket) {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn resync_carries_the_show_version_and_latest_status() {
+        let app = crate::api::testkit::TestApp::new();
+        app.state
+            .services
+            .remember("status", serde_json::json!({ "state": "playing" }));
+        app.state
+            .store
+            .update(|s| {
+                s.name = "x".into();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let msgs: Vec<serde_json::Value> = resync_messages(&app.state)
+            .iter()
+            .map(|m| serde_json::from_str(m).unwrap())
+            .collect();
+        assert_eq!(msgs[0]["type"], "show");
+        assert_eq!(msgs[0]["data"]["version"], app.state.store.version());
+        assert!(msgs
+            .iter()
+            .any(|m| m["type"] == "status" && m["data"]["state"] == "playing"));
     }
 }

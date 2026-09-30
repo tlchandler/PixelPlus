@@ -45,7 +45,7 @@ export function validate(s: ImagerSettings): FieldError[] {
 	if (country && !/^[A-Z]{2}$/.test(country)) add('wifiCountry', 'Choose a country.');
 	if (s.wifiSsid && !country) add('wifiCountry', 'Wi-Fi needs the country it is used in.');
 	if (host && !validHostname(host)) add('hostname', 'Use letters, numbers and dashes (not at the start or end).');
-	if (s.uiPassword && [...s.uiPassword].length < 4) add('uiPassword', 'Use at least 4 characters.');
+	if (s.uiPassword && [...s.uiPassword].length < 6) add('uiPassword', 'Use at least 6 characters.');
 	if (s.sshPassword && (s.sshPassword.length < 8 || s.sshPassword.includes(':')))
 		add('sshPassword', "Use at least 8 characters (no ':').");
 	if (s.ssh && !s.sshPassword && !s.sshKey.trim()) add('sshPassword', 'Set a password or a key, or turn SSH off.');

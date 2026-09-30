@@ -97,10 +97,12 @@ pub fn validate(state: &AppState, req: &SetupRequest) -> ApiResult<Option<String
         }
     }
     if let Some(p) = req.password.as_deref().filter(|p| !p.is_empty()) {
-        if p.chars().count() < 4 {
-            return Err(ApiError::bad_request(
-                "Use at least 4 characters for the password.",
-            ));
+        // Same rule as `auth::hash_password`, the wizard and pixelplus.txt.
+        if p.chars().count() < crate::api::auth::MIN_PASSWORD {
+            return Err(ApiError::bad_request(format!(
+                "Use at least {} characters for the password.",
+                crate::api::auth::MIN_PASSWORD
+            )));
         }
     }
     Ok(tz)
@@ -172,7 +174,14 @@ pub async fn apply(state: &AppState, req: SetupRequest) -> ApiResult<SetupOutcom
     if role == LocalRole::Leader && req.role == Some(LocalRole::Leader) {
         let show_name = req.show_name.clone().map(|n| n.trim().to_string());
         let location = req.location.clone();
-        let tz2 = tz.clone();
+        // Provisioned leaders (pixelplus.txt / the imager) don't go through the
+        // wizard's location step: take the controller's own time zone rather than
+        // leaving the schedule on the built-in default (America/Chicago).
+        let tz2 = tz.clone().or_else(|| {
+            let untouched = state.store.get().schedule.location == Location::default();
+            sys::system_timezone()
+                .filter(|t| untouched && location.is_none() && t.parse::<chrono_tz::Tz>().is_ok())
+        });
         let hash = password_hash.clone();
         state
             .store
@@ -198,11 +207,19 @@ pub async fn apply(state: &AppState, req: SetupRequest) -> ApiResult<SetupOutcom
         if let Err(e) = crate::cluster::ensure_self_node(state).await {
             tracing::warn!("Couldn't add this controller to the show: {e:#}");
         }
-    } else if let Some(hash) = password_hash {
+    } else if password_hash.is_some() || (role == LocalRole::Leader && tz.is_some()) {
+        // An already set-up leader: a new time zone (e.g. edited in pixelplus.txt)
+        // is the one its schedule runs in, like the wizard's.
+        let tz2 = tz.clone().filter(|_| role == LocalRole::Leader);
         state
             .store
             .update(move |s| {
-                s.settings.security.password_hash = Some(hash);
+                if let Some(hash) = password_hash {
+                    s.settings.security.password_hash = Some(hash);
+                }
+                if let Some(tz) = tz2 {
+                    s.schedule.location.timezone = tz;
+                }
                 Ok(())
             })
             .await?;

@@ -414,6 +414,100 @@ async fn requests_play_next_then_playlist_resumes() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requests_never_start_the_music_outside_show_windows() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s3", 24, 25, |_| 30)];
+        show.playlists = vec![playlist("p1", &["s3"], 0)];
+        // A schedule whose only window is not now.
+        show.schedule.enabled = true;
+        show.schedule.entries.push(ScheduleEntry {
+            id: "e".into(),
+            name: "Christmas Eve".into(),
+            enabled: true,
+            playlist_id: "p1".into(),
+            days: vec![Weekday::Mon],
+            date_range: Some(DateRange {
+                start: "12-24".into(),
+                end: "12-24".into(),
+            }),
+            start: TimeSpec::Clock {
+                time: "18:00".into(),
+            },
+            end: TimeSpec::Clock {
+                time: "18:01".into(),
+            },
+            priority: 0,
+            end_behavior: EndBehavior::FinishSong,
+        });
+    })
+    .await;
+    // Let the schedule facts reach the engine (every second).
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let enqueue = || PlayerCmd::Enqueue {
+        sequence_id: "s3".into(),
+        name: None,
+    };
+    e.engine.handle.send(enqueue()).await.unwrap();
+    assert!(
+        !wait_for(800, || e.status().state == PlayerState::Playing).await,
+        "a request outside the show must not start playback"
+    );
+    // Schedule off (the owner runs the show by hand): requests play.
+    e.state
+        .store
+        .update(|s| {
+            s.schedule.enabled = false;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    e.engine.handle.send(enqueue()).await.unwrap();
+    assert!(wait_for(2000, || e.status().state == PlayerState::Playing).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn brightness_volume_and_lights_off_survive_a_restart() {
+    let e = env(LocalRole::Leader, false, |_, _| {}).await;
+    for cmd in [
+        PlayerCmd::SetBrightness(40),
+        PlayerCmd::SetVolume(33),
+        PlayerCmd::Blackout(true),
+    ] {
+        e.engine.handle.send(cmd).await.unwrap();
+    }
+    let dir = e.dir.clone();
+    let want = engine::SavedLevels {
+        brightness: 40,
+        volume: 33,
+        blackout: true,
+    };
+    assert!(wait_for(3000, || engine::SavedLevels::load(&dir) == Some(want)).await);
+    // The daemon restarts (power cut, update): same levels, not 100 %.
+    let again = start_with(
+        &e.state,
+        EngineOptions {
+            audio: false,
+            output: Some(BackendKind::Sim),
+            shm_dir: dir.join("shm2"),
+            realtime: false,
+            sim_refresh_hz: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        wait_for(2000, || {
+            let st = again.handle.status();
+            st.brightness == 40 && st.volume == 33 && st.blackout
+        })
+        .await,
+        "{:?}",
+        again.handle.status()
+    );
+    again.shutdown();
+}
+
 fn empty_req() -> PlayRequest {
     PlayRequest {
         playlist_id: None,

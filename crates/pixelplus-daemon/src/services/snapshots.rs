@@ -144,6 +144,17 @@ pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> Ap
         std::fs::create_dir_all(&dir)?;
         let files = referenced_files(&show, &data_dir, full);
         let tmp = dir.join(format!(".{id}.tmp"));
+        // A failed write (full SD card) must not leave a partial archive behind:
+        // the daily snapshot would add another one every day.
+        struct RemoveOnDrop(Option<PathBuf>);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                if let Some(p) = self.0.take() {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
+        let mut guard = RemoveOnDrop(Some(tmp.clone()));
         {
             let f = std::fs::File::create(&tmp)?;
             let level = if full { 1 } else { 9 };
@@ -166,6 +177,7 @@ pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> Ap
         }
         let path = archive_path(&dir, &id);
         std::fs::rename(&tmp, &path)?;
+        guard.0 = None;
         let mut meta = meta;
         meta.size_bytes = std::fs::metadata(&path)?.len();
         std::fs::write(
@@ -262,8 +274,25 @@ fn list_blocking(dir: &Path) -> Vec<Snapshot> {
         meta.size_bytes = size;
         out.push(meta);
     }
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
+    sort_newest_first(&mut out);
     out
+}
+
+/// By creation instant: the RFC 3339 strings carry the local UTC offset, so
+/// comparing them as text misorders snapshots across a DST change or a time
+/// zone change (which decides what "newest" and pruning keep).
+fn sort_newest_first(list: &mut [Snapshot]) {
+    let at = |s: &Snapshot| {
+        chrono::DateTime::parse_from_rfc3339(&s.created_at)
+            .map(|t| t.timestamp())
+            .ok()
+    };
+    list.sort_by(|a, b| {
+        at(b)
+            .cmp(&at(a))
+            .then_with(|| b.created_at.cmp(&a.created_at))
+            .then(b.id.cmp(&a.id))
+    });
 }
 
 fn read_archive_meta(path: &Path) -> anyhow::Result<Snapshot> {
@@ -490,5 +519,28 @@ mod tests {
         assert!(!safe_rel("media/../../etc/passwd"));
         assert!(!safe_rel("show.json"));
         assert!(!safe_rel("/etc/passwd"));
+    }
+
+    #[test]
+    fn newest_first_across_a_dst_change() {
+        let snap = |id: &str, at: &str| Snapshot {
+            id: id.into(),
+            label: id.into(),
+            created_at: at.into(),
+            size_bytes: 0,
+            show_version: None,
+            auto: true,
+            full: false,
+            show_name: None,
+        };
+        // Clocks fall back at 02:00 CDT: 01:10 CST is 40 minutes after 01:30 CDT.
+        let mut list = vec![
+            snap("before", "2026-11-01T01:30:00-05:00"),
+            snap("after", "2026-11-01T01:10:00-06:00"),
+            snap("older", "2026-10-31T23:00:00-05:00"),
+        ];
+        sort_newest_first(&mut list);
+        let ids: Vec<_> = list.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["after", "before", "older"]);
     }
 }

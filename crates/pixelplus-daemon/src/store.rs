@@ -34,10 +34,7 @@ impl ShowStore {
             let text = std::fs::read_to_string(path)
                 .with_context(|| format!("reading {}", path.display()))?;
             match serde_json::from_str::<Show>(&text) {
-                Ok(mut show) => {
-                    crate::services::paths::sanitize_show(&mut show);
-                    show
-                }
+                Ok(show) => show,
                 Err(e) => {
                     // Never lose a user's show: keep the unreadable file aside.
                     let backup = path.with_extension(format!(
@@ -45,16 +42,38 @@ impl ShowStore {
                         chrono::Utc::now().format("%Y%m%d%H%M%S")
                     ));
                     std::fs::copy(path, &backup).ok();
-                    tracing::error!(
-                        "show.json could not be parsed ({e}); saved a copy to {} and started fresh",
-                        backup.display()
-                    );
-                    Show::default()
+                    // The previous version (`show.json.bak`, kept by every save) is
+                    // usually intact: use it instead of starting from nothing. (The
+                    // next save would otherwise overwrite it with the broken file.)
+                    let bak = path.with_extension("json.bak");
+                    match std::fs::read_to_string(&bak)
+                        .ok()
+                        .and_then(|t| serde_json::from_str::<Show>(&t).ok())
+                    {
+                        Some(show) => {
+                            tracing::error!(
+                                "show.json could not be parsed ({e}); saved a copy to {} and \
+                                 loaded the previous version from {}",
+                                backup.display(),
+                                bak.display()
+                            );
+                            show
+                        }
+                        None => {
+                            tracing::error!(
+                                "show.json could not be parsed ({e}); saved a copy to {} and started fresh",
+                                backup.display()
+                            );
+                            Show::default()
+                        }
+                    }
                 }
             }
         } else {
             Show::default()
         };
+        let mut show = show;
+        crate::services::paths::sanitize_show(&mut show);
         let (changed, _) = watch::channel(show.version);
         Ok(ShowStore {
             inner: Arc::new(Inner {
@@ -181,6 +200,37 @@ mod tests {
         assert!(r.is_err());
         assert_eq!(store.version(), v0);
         assert_ne!(store.get().name, "nope");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[tokio::test]
+    async fn corrupt_show_falls_back_to_the_backup() {
+        let dir = tempdir();
+        let path = dir.join("show.json");
+        let store = ShowStore::load(&path, EventBus::new()).unwrap();
+        for name in ["First", "Chandler Lights"] {
+            store
+                .update(|s| {
+                    s.name = name.into();
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+        // A torn write / SD card corruption.
+        std::fs::write(&path, b"{\"version\": 3, \"na").unwrap();
+        let reloaded = ShowStore::load(&path, EventBus::new()).unwrap();
+        assert_eq!(reloaded.get().name, "First", "the previous save is used");
+        // The broken file is kept aside.
+        let kept = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains("corrupt-"));
+        assert!(kept);
+        // Neither readable: start fresh (still no panic).
+        std::fs::write(path.with_extension("json.bak"), b"garbage").unwrap();
+        let fresh = ShowStore::load(&path, EventBus::new()).unwrap();
+        assert_eq!(fresh.get().name, Show::default().name);
         std::fs::remove_dir_all(dir).ok();
     }
 

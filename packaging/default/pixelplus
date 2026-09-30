@@ -6,4 +6,6 @@
 # PIXELPLUS_HTTP_BIND=0.0.0.0
 # PIXELPLUS_OUTPUT=auto        # dpi | sim | none | auto
 # PIXELPLUS_DATA_DIR=/var/lib/pixelplus
-# RUST_LOG=info
+# PIXELPLUS_AUDIO=auto        # none = no sound output (lights only)
+# PIXELPLUS_BOARD=auto        # difftx | difftxlarge | diffsmart | bare-pi | virtual | auto
+# PIXELPLUS_LOG=info,tower_http=warn   # log filter (tracing EnvFilter syntax)

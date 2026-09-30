@@ -573,13 +573,20 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
         .as_ref()
         .map(|s| s.id.clone())
         .unwrap_or_else(new_id);
-    let rel = format!("sequences/{id}.fseq");
-    tokio::fs::rename(&seq_tmp, state.config.data_dir.join(&rel)).await?;
-
+    // Audio first: if it is refused, the sequence (maybe one being replaced,
+    // whose hash, duration and follower slices describe the old file) is untouched.
     let mut new_media: Option<Media> = None;
     if let Some((tmp, fname)) = audio {
-        new_media = Some(ingest_audio(&state, tmp, &fname, MediaKind::Song, None).await?);
+        match ingest_audio(&state, tmp, &fname, MediaKind::Song, None).await {
+            Ok(m) => new_media = Some(m),
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&seq_tmp).await;
+                return Err(e);
+            }
+        }
     }
+    let rel = format!("sequences/{id}.fseq");
+    tokio::fs::rename(&seq_tmp, state.config.data_dir.join(&rel)).await?;
     let name = display
         .or_else(|| existing.as_ref().map(|s| s.name.clone()))
         .unwrap_or_else(|| media_svc::display_name(&fseq_name));

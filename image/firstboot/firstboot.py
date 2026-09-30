@@ -646,7 +646,8 @@ def apply_settings(sysops: Sys, boot_dir: str, path: str, text: str, state: Dict
     if s.hostname and changed("hostname", s.hostname):
         apply_hostname(sysops, s.hostname)
         applied["hostname"] = s.hostname
-    if s.timezone and changed("timezone", s.timezone):
+    timezone_changed = bool(s.timezone and changed("timezone", s.timezone))
+    if timezone_changed:
         apply_timezone(sysops, s.timezone)
         applied["timezone"] = s.timezone
 
@@ -705,6 +706,10 @@ def apply_settings(sysops: Sys, boot_dir: str, path: str, text: str, state: Dict
     if s.board != "auto" and changed("board", s.board):
         provision["board"] = s.board
         applied["board"] = s.board
+    if timezone_changed:
+        # The show's schedule (sunset times, show windows) runs in the show's own
+        # time zone, which only pixelplusd can change.
+        provision["timezone"] = s.timezone
     if provision:
         provision["source"] = "pixelplus.txt"
         provision["createdAt"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
