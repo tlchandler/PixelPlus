@@ -1,8 +1,15 @@
 //! Software updates from the PixelPlus apt repository (`pixelplus` package).
 //! In Docker the image is updated instead.
+//!
+//! Checking (`apt-cache policy`) works as the unprivileged service user, using
+//! the package lists apt refreshes daily. Installing goes through the root
+//! helper (`pixelplus-helper@update.service`: apt-get update + upgrade), whose
+//! progress is reported as `helper` WebSocket messages and toasts.
 
+use super::platform::{self, HelperOpts, HelperStatus, HelperVerb};
 use super::system::{have, in_docker, is_root, run};
 use crate::api::{ApiError, ApiResult};
+use crate::state::AppState;
 use serde::Serialize;
 use std::time::Duration;
 
@@ -20,6 +27,9 @@ pub struct UpdateInfo {
     pub channel: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// The latest install run (progress of `POST /system/update`), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<HelperStatus>,
 }
 
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
@@ -43,7 +53,12 @@ pub fn parse_policy(text: &str) -> (Option<String>, Option<String>, Option<Strin
     (field("Installed:"), field("Candidate:"), channel)
 }
 
-pub async fn check() -> UpdateInfo {
+/// Whether this machine can install the update itself.
+fn can_install() -> bool {
+    platform::helper_installed() || (is_root() && have("systemd-run") && have("apt-get"))
+}
+
+pub async fn check(state: &AppState) -> UpdateInfo {
     let mut info = UpdateInfo {
         current: CURRENT.into(),
         latest: CURRENT.into(),
@@ -52,6 +67,7 @@ pub async fn check() -> UpdateInfo {
         notes: None,
         channel: None,
         message: None,
+        job: state.services.helpers.get("update"),
     };
     if in_docker() {
         info.message = Some(
@@ -63,8 +79,9 @@ pub async fn check() -> UpdateInfo {
         info.message = Some("Updates are installed with the PixelPlus Imager or your package manager on this computer.".into());
         return info;
     }
-    if is_root() {
-        // Refresh only our repository's index when possible; ignore failures (offline).
+    if is_root() && !platform::helper_installed() {
+        // Development machine running as root: refresh the index (ignore failures: offline).
+        // As the service user the lists are refreshed daily by apt, and by the helper.
         let _ = run("apt-get", &["update", "-qq"], Duration::from_secs(90)).await;
     }
     match run(
@@ -87,7 +104,7 @@ pub async fn check() -> UpdateInfo {
                 info.message =
                     Some("The PixelPlus package repository isn't set up on this computer.".into());
             }
-            info.can_apply = info.available && is_root() && have("systemd-run");
+            info.can_apply = info.available && can_install();
             if info.available && !info.can_apply {
                 info.message = Some("An update is available. Install it with: sudo apt install --only-upgrade pixelplus".into());
             }
@@ -100,47 +117,20 @@ pub async fn check() -> UpdateInfo {
     info
 }
 
-/// Start the upgrade in its own systemd unit (it restarts pixelplusd).
-pub async fn apply() -> ApiResult<String> {
+/// Start the upgrade through the root helper (it restarts pixelplusd when done).
+pub async fn apply(state: &AppState) -> ApiResult<String> {
     if in_docker() {
         return Err(ApiError::forbidden(
             "PixelPlus runs in Docker here. Update by pulling the new container image.",
         ));
     }
-    if !is_root() || !have("systemd-run") {
+    if !can_install() {
         return Err(ApiError::forbidden(
             "This PixelPlus can't update itself. Run: sudo apt install --only-upgrade pixelplus",
         ));
     }
-    let out = run(
-        "systemd-run",
-        &[
-            "--unit=pixelplus-update",
-            "--collect",
-            "--setenv=DEBIAN_FRONTEND=noninteractive",
-            "apt-get",
-            "install",
-            "-y",
-            "-q",
-            "-o",
-            "Dpkg::Options::=--force-confold",
-            "--only-upgrade",
-            "pixelplus",
-        ],
-        Duration::from_secs(20),
-    )
-    .await
-    .map_err(ApiError::unavailable)?;
-    if !out.success {
-        let err = out.stderr.trim();
-        if err.contains("already") {
-            return Err(ApiError::conflict("An update is already being installed."));
-        }
-        return Err(ApiError::unavailable(format!(
-            "The update couldn't start: {err}"
-        )));
-    }
-    Ok("Installing the update. PixelPlus will restart by itself in a minute or two.".into())
+    platform::run_helper(state, HelperVerb::Update, HelperOpts::default()).await?;
+    Ok("Installing the update. PixelPlus will restart by itself when it's done (a minute or two).".into())
 }
 
 #[cfg(test)]

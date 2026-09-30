@@ -5,7 +5,7 @@ use super::content::player;
 use super::playerapi::body_or_default;
 use super::{ApiError, ApiResult, Peer};
 use crate::node::LocalRole;
-use crate::services::{network, system as sys};
+use crate::services::{geometry, network, platform, setup, system as sys};
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
@@ -46,160 +46,37 @@ struct SetupBody {
     write_eeprom: bool,
 }
 
-fn valid_rev(rev: &str) -> bool {
-    !rev.is_empty() && rev.len() <= 8 && rev.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
-}
-
 async fn setup(
     State(state): State<AppState>,
-    peer: Peer,
-    headers: HeaderMap,
     Json(b): Json<SetupBody>,
 ) -> ApiResult<Response> {
-    let role =
-        match b.role.as_str() {
-            "leader" => LocalRole::Leader,
-            "follower" => LocalRole::Follower,
-            _ => return Err(ApiError::bad_request(
-                "Choose whether this controller runs the show (leader) or joins one (follower).",
-            )),
-        };
-    let current = state.identity();
-    if current.role == LocalRole::Follower
-        && current.leader_id.is_some()
-        && role == LocalRole::Leader
-    {
-        return Err(ApiError::conflict(
-            "This controller belongs to another show's leader. Release it from that leader first.",
+    let Some(role) = setup::parse_role(&b.role) else {
+        return Err(ApiError::bad_request(
+            "Choose whether this controller runs the show (leader) or joins one (follower).",
         ));
-    }
-    if let Some(name) = b.show_name.as_deref() {
-        if name.trim().is_empty() || name.chars().count() > 120 {
-            return Err(ApiError::bad_request(
-                "Give your show a name (up to 120 characters).",
-            ));
-        }
-    }
-    let tz = b
-        .timezone
-        .clone()
-        .or_else(|| b.location.as_ref().map(|l| l.timezone.clone()))
-        .filter(|t| !t.trim().is_empty());
-    if let Some(tz) = &tz {
-        if tz.parse::<chrono_tz::Tz>().is_err() {
-            return Err(ApiError::bad_request(format!(
-                "\"{tz}\" isn't a time zone PixelPlus knows. Pick your city again."
-            )));
-        }
-    }
-    if let Some(l) = &b.location {
-        if !(-90.0..=90.0).contains(&l.lat) || !(-180.0..=180.0).contains(&l.lon) {
-            return Err(ApiError::bad_request(
-                "That location doesn't look right. Pick your city again.",
-            ));
-        }
-    }
-    if let Some(rev) = &b.board_rev {
-        if !valid_rev(rev) {
-            return Err(ApiError::bad_request(
-                "The board revision is a letter printed on the board, like E.",
-            ));
-        }
-    }
-    let password_hash = match b.password.as_deref().filter(|p| !p.is_empty()) {
-        Some(p) => Some(super::auth::hash_password(p)?),
-        None => None,
     };
-    let mut notes: Vec<String> = Vec::new();
-
-    // Board: keep the wizard's choice when it differs from (or replaces) detection.
-    let (det, _) = tokio::task::spawn_blocking(sys::detection)
-        .await
-        .map_err(ApiError::internal)?;
-    if let Some(board) = b.board {
-        if b.write_eeprom
-            && det.board.is_none()
-            && matches!(
-                board,
-                BoardKind::Difftx | BoardKind::Difftxlarge | BoardKind::Diffsmart
-            )
-        {
-            let rev = b.board_rev.clone().unwrap_or_else(|| "A".into());
-            match write_eeprom_blocking(board, rev).await {
-                Ok(()) => {}
-                Err(e) => notes.push(format!(
-                    "The board EEPROM couldn't be written ({e}); your choice is saved anyway."
-                )),
-            }
-        }
-    }
-    let name = b
-        .name
-        .clone()
-        .map(|n| n.trim().to_string())
-        .filter(|n| !n.is_empty());
-    state
-        .set_identity(|id| {
-            id.role = role;
-            if let Some(board) = b.board {
-                let detected_same =
-                    det.board == Some(board) && b.board_rev.as_ref().matches_rev(det.rev.as_ref());
-                id.board = if detected_same { None } else { Some(board) };
-                id.board_rev = if detected_same {
-                    None
-                } else {
-                    b.board_rev.clone()
-                };
-            }
-            if name.is_some() {
-                id.name = name.clone();
-            }
-        })
-        .map_err(ApiError::internal)?;
-
-    if role == LocalRole::Leader {
-        let show_name = b.show_name.clone().map(|n| n.trim().to_string());
-        let location = b.location.clone();
-        let tz2 = tz.clone();
-        let hash = password_hash.clone();
-        state
-            .store
-            .update(move |s| {
-                if let Some(n) = show_name {
-                    s.name = n;
-                }
-                if let Some(mut l) = location {
-                    if let Some(tz) = &tz2 {
-                        l.timezone = tz.clone();
-                    }
-                    s.schedule.location = l;
-                } else if let Some(tz) = tz2 {
-                    s.schedule.location.timezone = tz;
-                }
-                if hash.is_some() {
-                    s.settings.security.password_hash = hash;
-                }
-                crate::services::seed::seed_defaults(s);
-                Ok(())
-            })
-            .await?;
-        if let Err(e) = crate::cluster::ensure_self_node(&state).await {
-            tracing::warn!("Couldn't add this controller to the show: {e:#}");
-        }
-    }
-    if let Some(tz) = tz.clone() {
-        tokio::spawn(async move { sys::set_system_timezone(&tz).await });
-    }
-    for n in &notes {
+    let req = setup::SetupRequest {
+        role: Some(role),
+        show_name: b.show_name,
+        name: b.name,
+        board: b.board,
+        board_rev: b.board_rev,
+        location: b.location,
+        timezone: b.timezone,
+        password: b.password,
+        write_eeprom: b.write_eeprom,
+    };
+    let out = setup::apply(&state, req).await?;
+    for n in &out.notes {
         state
             .events
             .toast(crate::events::ToastKind::Warning, n.clone());
     }
     let mut body = sys::system_info(&state, true).await;
-    body["notes"] = json!(notes);
+    body["notes"] = json!(out.notes);
     let mut resp = Json(body).into_response();
     // Keep the person who just chose the password signed in.
-    if password_hash.is_some() {
+    if out.password_set {
         let token = state.sessions.create();
         let cookie = format!(
             "pp_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
@@ -209,24 +86,11 @@ async fn setup(
             resp.headers_mut().insert(header::SET_COOKIE, v);
         }
     }
-    let _ = (peer, headers);
     Ok(resp)
 }
 
-trait OptEq {
-    fn matches_rev(self, other: Option<&String>) -> bool;
-}
-impl OptEq for Option<&String> {
-    fn matches_rev(self, other: Option<&String>) -> bool {
-        match self {
-            None => true,
-            Some(a) => other.is_some_and(|b| a.eq_ignore_ascii_case(b)),
-        }
-    }
-}
-
 async fn power(state: AppState, action: sys::PowerAction) -> ApiResult<Json<Value>> {
-    let msg = sys::power_action(action)?;
+    let msg = platform::power_action(&state, action)?;
     if action != sys::PowerAction::RestartService {
         // Lights off before the computer goes away.
         if let Ok(p) = player(&state) {
@@ -266,7 +130,7 @@ async fn put_network(
     State(state): State<AppState>,
     Json(cfg): Json<network::NetworkConfig>,
 ) -> ApiResult<Json<network::NetworkConfig>> {
-    network::apply(cfg, state.events.clone()).await.map(Json)
+    network::apply(cfg, state).await.map(Json)
 }
 
 async fn scan() -> ApiResult<Json<Vec<network::WifiNetwork>>> {
@@ -290,28 +154,6 @@ async fn sensor_history(
     Json(json!({ "series": state.services.sensors.history(q.minutes.unwrap_or(60)) }))
 }
 
-async fn write_eeprom_blocking(board: BoardKind, rev: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        #[cfg(target_os = "linux")]
-        {
-            let mut store =
-                pixelplus_hw::eeprom::SysfsEeprom::open(1, pixelplus_hw::eeprom::EEPROM_ADDR)
-                    .map_err(|e| e.to_string())?;
-            let record = pixelplus_hw::Ppx1Record::new(board, &rev);
-            pixelplus_hw::eeprom::write_record(&mut store, &record).map_err(|e| e.to_string())?;
-            sys::redetect_board();
-            Ok(())
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = (board, rev);
-            Err("only possible on a Raspberry Pi".into())
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 #[derive(Deserialize)]
 struct EepromBody {
     board: BoardKind,
@@ -331,7 +173,7 @@ async fn eeprom(
         ));
     }
     let rev = b.rev.trim().to_ascii_uppercase();
-    if !valid_rev(&rev) {
+    if !setup::valid_rev(&rev) {
         return Err(ApiError::bad_request(
             "The board revision is a letter printed on the board, like E.",
         ));
@@ -342,7 +184,7 @@ async fn eeprom(
             "The board EEPROM can only be written on a Raspberry Pi with the board fitted.",
         ));
     }
-    write_eeprom_blocking(b.board, rev.clone()).await.map_err(|e| {
+    setup::write_eeprom(b.board, rev.clone()).await.map_err(|e| {
         ApiError::bad_request(format!(
             "Couldn't write the board EEPROM: {e}. Check the board is seated and its write-protect jumper is closed."
         ))
@@ -364,16 +206,84 @@ async fn eeprom(
     Ok(Json(json!({ "ok": true, "message": msg })))
 }
 
-async fn update_check() -> Json<crate::services::updates::UpdateInfo> {
-    Json(crate::services::updates::check().await)
+async fn update_check(State(state): State<AppState>) -> Json<crate::services::updates::UpdateInfo> {
+    Json(crate::services::updates::check(&state).await)
 }
 
 async fn update_apply(State(state): State<AppState>, _body: Bytes) -> ApiResult<Json<Value>> {
-    let msg = crate::services::updates::apply().await?;
+    let msg = crate::services::updates::apply(&state).await?;
     state
         .events
         .toast(crate::events::ToastKind::Info, msg.clone());
-    Ok(Json(json!({ "ok": true, "message": msg })))
+    let job = state.services.helpers.get("update");
+    Ok(Json(json!({ "ok": true, "message": msg, "job": job })))
+}
+
+/// Progress of the root helper jobs started since the daemon started.
+async fn helpers(State(state): State<AppState>) -> Json<Vec<platform::HelperStatus>> {
+    Json(state.services.helpers.all())
+}
+
+async fn get_ssh(State(state): State<AppState>) -> Json<Value> {
+    Json(ssh_state(&state).await)
+}
+
+async fn ssh_state(state: &AppState) -> Value {
+    let enabled = if sys::has_systemd() && sys::have("systemctl") && !sys::in_docker() {
+        match sys::run("systemctl", &["is-enabled", "ssh.service"], Duration::from_secs(5)).await {
+            Ok(o) => match o.stdout.trim() {
+                "enabled" | "enabled-runtime" | "alias" => Some(true),
+                "disabled" | "masked" | "static" | "indirect" => Some(false),
+                _ => None,
+            },
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    let can_change = enabled.is_some() && (platform::helper_installed() || sys::is_root());
+    json!({
+        "enabled": enabled,
+        "canChange": can_change,
+        "job": state.services.helpers.get("ssh-on").into_iter()
+            .chain(state.services.helpers.get("ssh-off"))
+            .max_by_key(|s| s.updated_at),
+    })
+}
+
+#[derive(Deserialize)]
+struct SshBody {
+    enabled: bool,
+}
+
+async fn put_ssh(State(state): State<AppState>, Json(b): Json<SshBody>) -> ApiResult<Json<Value>> {
+    let verb = if b.enabled { platform::HelperVerb::SshOn } else { platform::HelperVerb::SshOff };
+    let job = platform::run_helper(&state, verb, platform::HelperOpts::default()).await?;
+    Ok(Json(json!({ "ok": true, "job": job.status })))
+}
+
+async fn get_geometry(State(state): State<AppState>) -> Json<geometry::OutputGeometry> {
+    Json(geometry::status(&state))
+}
+
+#[derive(Deserialize, Default)]
+struct GeometryApplyBody {
+    #[serde(default = "yes")]
+    reboot: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+async fn apply_geometry(State(state): State<AppState>, body: Bytes) -> ApiResult<Json<Value>> {
+    let b: GeometryApplyBody = if body.is_empty() {
+        GeometryApplyBody { reboot: true }
+    } else {
+        serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(format!("Invalid request: {e}")))?
+    };
+    let job = geometry::apply(&state, b.reboot).await?;
+    Ok(Json(json!({ "ok": true, "job": job, "geometry": geometry::status(&state) })))
 }
 
 async fn audio_devices() -> Json<Vec<Value>> {
@@ -421,5 +331,9 @@ pub fn routes() -> Router<AppState> {
         .route("/system/eeprom", post(eeprom))
         .route("/system/update", get(update_check).post(update_apply))
         .route("/system/audio/devices", get(audio_devices))
+        .route("/system/helpers", get(helpers))
+        .route("/system/ssh", get(get_ssh).put(put_ssh))
+        .route("/system/output-geometry", get(get_geometry))
+        .route("/system/output-geometry/apply", post(apply_geometry))
         .route("/system/identify", post(identify_self))
 }
