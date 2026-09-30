@@ -38,14 +38,14 @@ export const ENERGY_LEVELS = [
 ];
 
 export const ENERGY_KEYS: { key: string; label: string; min: number; max: number; step: number; def: number; hint: string }[] = [
-	{ key: 'pitch', label: 'Pitch rise', min: 0, max: 4, step: 0.1, def: 1.5, hint: 'Semitones the voice rises at full energy' },
-	{ key: 'range', label: 'Pitch range', min: 0.5, max: 2, step: 0.05, def: 1.25, hint: 'How much the intonation swings' },
-	{ key: 'speed', label: 'Pace', min: 0, max: 0.4, step: 0.01, def: 0.12, hint: 'Extra speed added when hyped' },
-	{ key: 'stretch', label: 'Word stretch', min: 0, max: 0.5, step: 0.01, def: 0.15, hint: 'Elongates stressed words' },
+	{ key: 'pitch', label: 'Pitch lift', min: 0, max: 4, step: 0.1, def: 1.5, hint: 'Semitones the voice rises when hyped' },
+	{ key: 'range', label: 'Intonation range', min: 0.5, max: 3, step: 0.05, def: 1.5, hint: 'How much the melody of the voice swings' },
+	{ key: 'speed', label: 'Pace', min: 0.5, max: 1.5, step: 0.01, def: 1, hint: 'Speed multiplier at full energy' },
+	{ key: 'stretch', label: 'Word stretch', min: 0.5, max: 1.5, step: 0.01, def: 1, hint: 'Drawn-out stressed words' },
 	{ key: 'boost', label: 'Loudness boost', min: 0, max: 8, step: 0.5, def: 3, hint: 'dB added at full energy' },
-	{ key: 'lift', label: 'Brightness lift', min: 0, max: 1, step: 0.05, def: 0.4, hint: 'Presence EQ as energy rises' },
-	{ key: 'ceiling', label: 'Limiter ceiling', min: -6, max: 0, step: 0.5, def: -1, hint: 'dBFS peak ceiling' },
-	{ key: 'maxLift', label: 'Max lift', min: 0, max: 6, step: 0.5, def: 3, hint: 'Upper bound on brightness lift (dB)' }
+	{ key: 'lift', label: 'Presence lift', min: 0, max: 6, step: 0.25, def: 2.5, hint: 'Brighter, more forward tone (dB)' },
+	{ key: 'ceiling', label: 'Headroom', min: 0, max: 6, step: 0.25, def: 3, hint: 'Peak ceiling below full scale (dB)' },
+	{ key: 'maxLift', label: 'Max lift', min: 0, max: 16, step: 0.5, def: 8, hint: 'Upper bound on presence lift (dB)' }
 ];
 
 export function energyLabel(e: number | undefined): string {

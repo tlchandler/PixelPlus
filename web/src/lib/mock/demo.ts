@@ -69,7 +69,7 @@ function voice(id: string, name: string, description: string, blend: Record<stri
 		speed: 1,
 		lang: 'en-us',
 		defaultEnergy,
-		energy: { pitch: 1.5, range: 1.25, speed: 0.12, stretch: 0.15, boost: 3, lift: 0.4, ceiling: -1, maxLift: 3 }
+		energy: { pitch: 1.5, range: 1.5, speed: 1, stretch: 1, boost: 3, lift: 3, ceiling: 3, maxLift: 9 }
 	};
 }
 
@@ -294,8 +294,8 @@ export function buildDemoShow(): Show {
 	);
 
 	const djVoices = [
-		voice('nick', 'Nick', 'Warm, upbeat radio host with a bit of swagger.', { am_michael: 0.5, am_puck: 0.3, am_echo: 0.2 }, 0.5),
-		voice('holly', 'Holly', 'Bright, friendly co-host. Great for kids’ shows.', { af_heart: 0.6, af_bella: 0.4 }, 0.4),
+		voice('nick', 'Nick', 'Warm, upbeat, classic radio baritone.', { am_echo: 0.3, am_fenrir: 0.3, am_puck: 0.4 }, 0.4),
+		voice('holly', 'Holly', 'Bright, friendly and energetic co-host.', { af_heart: 0.5, af_kore: 0.5 }, 0.4),
 		voice('santa', 'Santa', 'Deep and jolly. Ho ho ho.', { am_santa: 0.7, am_onyx: 0.3 }, 0.3)
 	];
 

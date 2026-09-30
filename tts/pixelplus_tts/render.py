@@ -274,15 +274,25 @@ def render_job(engine: Engine, job: Job, progress=None) -> tuple[np.ndarray, lis
     return joined, job.warnings
 
 
+def lookup(cache: Cache | None, job: Job, variant: str) -> RenderResult | None:
+    """A cached result for this job, if any (cheap; no model needed)."""
+    if not cache:
+        return None
+    t = time.time()
+    hit = cache.get(job.cache_key(variant), job.fmt)
+    if not hit:
+        return None
+    data, meta = hit
+    return RenderResult(data, FORMATS[job.fmt], meta.get("durationMs", 0), meta.get("loudnessLufs"),
+                        int((time.time() - t) * 1000), True, job.warnings)
+
+
 def render(engine: Engine, job: Job, cache: Cache | None = None, use_cache: bool = True) -> RenderResult:
     t = time.time()
     key = job.cache_key(engine.variant)
-    if cache and use_cache:
-        hit = cache.get(key, job.fmt)
-        if hit:
-            data, meta = hit
-            return RenderResult(data, FORMATS[job.fmt], meta.get("durationMs", 0), meta.get("loudnessLufs"),
-                                int((time.time() - t) * 1000), True, job.warnings)
+    hit = lookup(cache, job, engine.variant) if use_cache else None
+    if hit:
+        return hit
     mix, warnings = render_job(engine, job)
     tail = 0.1 if job.bed else au.TAIL_S
     filters = f"apad=pad_dur={tail}" if job.bed else f"{au.LEAD_IN},apad=pad_dur={tail}"

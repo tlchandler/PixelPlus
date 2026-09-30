@@ -12,7 +12,7 @@ from . import __version__
 from .config import Config
 from .engine import Engine, ModelMissing
 from .pronounce import builtin_pronunciations
-from .render import BadRequest, Cache, audition_request, build_job, render
+from .render import BadRequest, Cache, audition_request, build_job, lookup, render
 from .script import ScriptError, parse_script
 from .voices import list_base_voices, presets_as_dj_voices, resolve_voice
 
@@ -27,7 +27,10 @@ class App:
         self.cache = Cache(cfg.cache_dir, cfg.cache_mb)
         self.started = time.time()
         self._renders = 0
-        self._busy = threading.Semaphore(4)  # queue bound: 1 renders, up to 3 wait
+        self._render_lock = threading.Lock()  # one render at a time (CPU; don't starve the lights)
+        self._queue_lock = threading.Lock()
+        self._waiting = 0
+        self.max_queue = 4
 
     def known_base(self) -> set[str] | None:
         ids = self.engine.base_voice_ids()
@@ -38,7 +41,7 @@ class App:
         return {"ok": True, "version": __version__, "modelLoaded": self.engine.loaded,
                 "modelAvailable": self.engine.available, "device": "cpu",
                 "modelVariant": self.engine.variant, "threads": self.engine.threads,
-                "idleUnloadMinutes": self.cfg.idle_minutes, "renders": self._renders,
+                "idleUnloadMinutes": self.cfg.idle_minutes, "renders": self._renders, "queued": self._waiting,
                 "uptimeS": int(time.time() - self.started)}
 
     def voices(self) -> dict[str, Any]:
@@ -64,12 +67,20 @@ class App:
             body = audition_request(body)
         job = build_job(body, known_base=self.known_base(), data_dir=self.cfg.data_dir,
                         allow_any_path=self.cfg.allow_any_path)
-        if not self._busy.acquire(timeout=1):
-            raise BadRequest("renderer is busy, try again shortly", "busy")
+        use_cache = audition or body.get("cache", True) is not False
+        hit = lookup(self.cache, job, self.engine.variant) if use_cache else None
+        if hit:  # served without waiting for a running render
+            return hit
+        with self._queue_lock:
+            if self._waiting >= self.max_queue:
+                raise BadRequest("renderer is busy, try again shortly", "busy")
+            self._waiting += 1
         try:
-            res = render(self.engine, job, self.cache, use_cache=audition or body.get("cache", True) is not False)
+            with self._render_lock:
+                res = render(self.engine, job, self.cache, use_cache=use_cache)
         finally:
-            self._busy.release()
+            with self._queue_lock:
+                self._waiting -= 1
         self._renders += 1
         return res
 
