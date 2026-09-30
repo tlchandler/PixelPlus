@@ -104,7 +104,7 @@ export function register(ctx: FeatureContext) {
 			if (!(id in all)) throw new HttpError(404, 'not_found', 'That controller was not found.');
 			return shape(all[id]);
 		}
-		return Object.fromEntries(Object.entries(all).map(([k, v]) => [k, shape(v)]));
+		return Object.entries(all).map(([nodeId, v]) => ({ nodeId, ...shape(v) }));
 	});
 	ctx.route('POST', '/player/surprise', ({ body }) => {
 		if (!body?.ref) throw new HttpError(400, 'bad_request', 'Pick the sequence or look this surprise shows.');

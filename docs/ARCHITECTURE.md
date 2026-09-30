@@ -1453,7 +1453,7 @@ layer exposes it. `GET /power/live` → `{nodes:[{nodeId, mode, limiting, minSca
 groups:[{id, amps, budget, scale}]}]}` (followers: budget groups with `amps: null` and the reported scale);
 the WS `power` message carries the same every second while the display is lit. Limiting episodes of ≥ 1 s
 are journaled when they end (`limiter {nodeId, port, sec}`, port = the output of a port group, else 0).
-`GET /power/budget[?nodeId]` shows the computed budgets. CRUD `/power-supplies` (validated: plausible
+`GET /power/budget` lists the computed budgets (`[{nodeId, mode, safety, groups, mApp}]`; `?nodeId=` for one). CRUD `/power-supplies` (validated: plausible
 volts/amps, existing receivers/outputs, one supply per output).
 
 **Planning.** `GET /power/estimate` (tools) now also returns `perSupply [{supplyId, name, volts, ratedAmps,

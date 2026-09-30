@@ -428,7 +428,10 @@ fn handle_event(
             if let Some(cluster) = state.services.cluster.get().cloned() {
                 tokio::spawn(async move {
                     let results = cluster
-                        .send_command(None, crate::cluster::ClusterCommand::TestStart { test: *test })
+                        .send_command(
+                            None,
+                            crate::cluster::ClusterCommand::TestStart { test: *test },
+                        )
                         .await;
                     for r in results.iter().filter(|r| !r.ok) {
                         tracing::warn!(

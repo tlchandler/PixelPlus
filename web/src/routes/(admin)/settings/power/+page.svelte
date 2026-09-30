@@ -332,9 +332,9 @@
 					<Activity size={18} />
 					<h2 class="grow">Right now</h2>
 					{#if app.status?.power?.limiting}
-						<span class="badge warn">Limiting · {pct(app.status.power.minScale)}</span>
+						<span class="badge accent">Limiting · {pct(app.status.power.minScale)}</span>
 					{:else}
-						<span class="badge good"><Check size={12} /> Within budget</span>
+						<span class="badge green"><Check size={12} /> Within budget</span>
 					{/if}
 				</div>
 				<div class="card-body">
@@ -633,22 +633,6 @@
 	.v {
 		font-size: 12px;
 	}
-	.badge {
-		font-size: 12px;
-		padding: 2px 8px;
-		border-radius: 999px;
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-	}
-	.badge.warn {
-		background: rgba(245, 165, 36, 0.15);
-		color: var(--accent);
-	}
-	.badge.good {
-		background: rgba(40, 200, 120, 0.12);
-		color: var(--good, #3ccf8e);
-	}
 	.groups {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -669,7 +653,7 @@
 		font-size: 10px;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
-		color: var(--text-3, #888);
+		color: var(--text-3);
 		margin-right: 4px;
 	}
 	.bar {
@@ -680,14 +664,14 @@
 	}
 	.fill {
 		height: 100%;
-		background: var(--good, #3ccf8e);
+		background: var(--green);
 		transition: width 400ms ease;
 	}
 	.fill.hot {
 		background: var(--accent);
 	}
 	.warn-t {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.sup {
 		gap: 10px;
@@ -732,13 +716,13 @@
 		border-bottom: 1px solid var(--border);
 	}
 	.tbl tr.over td {
-		color: var(--danger, #f05252);
+		color: var(--red);
 	}
 	.tbl tr.warn td {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.good {
-		color: var(--good, #3ccf8e);
+		color: var(--green);
 		gap: 6px;
 	}
 	@media (max-width: 640px) {

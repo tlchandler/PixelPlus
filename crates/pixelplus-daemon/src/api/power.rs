@@ -103,7 +103,8 @@ struct BudgetQuery {
 }
 
 /// `GET /power/budget[?nodeId=]`: the limiter budgets computed from the show
-/// (what each node's manifest carries).
+/// (what each node's manifest carries): `[{nodeId, mode, safety, groups, mApp}]`,
+/// or one node's budget with `?nodeId=` (`null` while the limiter is off).
 async fn budget(
     State(state): State<AppState>,
     Query(q): Query<BudgetQuery>,
@@ -116,7 +117,16 @@ async fn budget(
                 .ok_or_else(|| ApiError::not_found("That controller"))?;
             serde_json::to_value(all.get(&id)).map_err(ApiError::internal)?
         }
-        None => serde_json::to_value(&all).map_err(ApiError::internal)?,
+        None => Value::Array(
+            all.into_iter()
+                .filter_map(|(node_id, b)| {
+                    let mut v = serde_json::to_value(b).ok()?;
+                    v.as_object_mut()?
+                        .insert("nodeId".into(), Value::String(node_id));
+                    Some(v)
+                })
+                .collect(),
+        ),
     };
     Ok(Json(v))
 }
