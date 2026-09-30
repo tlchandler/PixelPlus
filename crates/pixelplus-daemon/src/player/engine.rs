@@ -520,61 +520,14 @@ fn compute_context(state: &AppState) -> EngineContext {
     }
 }
 
-/// Tonight's items of every smart playlist (F18), from the journal's play
-/// history (`core::smartlist`; the seed is the show night and playlist, so
-/// the "Tonight" preview equals what plays).
+/// Tonight's items of every smart playlist (F18): WS2's expansion
+/// (`api::library::smart_items`: the journal's play history, seeded by show
+/// night and playlist), the same the "Tonight" preview shows.
 fn smart_expansions(state: &AppState, show: &Show) -> HashMap<String, Vec<PlaylistItem>> {
-    use pixelplus_core::smartlist;
-    let smart: Vec<&Playlist> = show
-        .playlists
+    show.playlists
         .iter()
         .filter(|p| p.smart.is_some())
-        .collect();
-    if smart.is_empty() {
-        return HashMap::new();
-    }
-    let now = state.services.journal.now();
-    let nights = smart
-        .iter()
-        .filter_map(|p| p.smart.as_ref())
-        .map(|r| r.no_repeat_nights)
-        .max()
-        .unwrap_or(0)
-        .clamp(1, 30);
-    let from = now - chrono::Duration::days(i64::from(nights) + 1);
-    let types = ["itemStart".to_string()];
-    let dir = crate::services::journal::dir(&state.config.data_dir);
-    let history = smartlist::PlayHistory {
-        plays: crate::services::journal::read_range(&dir, from, now, Some(&types))
-            .into_iter()
-            .filter_map(|r| {
-                let at = r.time()?;
-                match r.event {
-                    JournalEvent::ItemStart {
-                        item,
-                        id,
-                        playlist_id,
-                        ..
-                    } if item == "sequence" || item == "request" || item == "media" => {
-                        Some(smartlist::Play {
-                            id,
-                            at,
-                            playlist_id,
-                        })
-                    }
-                    _ => None,
-                }
-            })
-            .collect(),
-    };
-    let night = smartlist::night_of(now.naive_local());
-    smart
-        .into_iter()
-        .filter_map(|p| {
-            let seed = smartlist::night_seed(night, &p.id);
-            smartlist::expand_playlist(show, &p.id, &history, now, seed)
-                .map(|e| (p.id.clone(), e.items))
-        })
+        .filter_map(|p| Some((p.id.clone(), crate::api::library::smart_items(state, &p.id)?)))
         .collect()
 }
 

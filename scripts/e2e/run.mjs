@@ -1244,6 +1244,50 @@ async function phaseEngine() {
 	});
 }
 
+// Fleet operations (WS5): update status of every controller, update settings, remote access
+// status, and the encrypted controller transfer file (F10 / F14 / F15).
+async function phaseFleet() {
+	await step('updates: every controller listed, settings validated', async () => {
+		const u = await L.get('/system/update');
+		check(typeof u.current === 'string' && Array.isArray(u.history), 'update info shape');
+		eq(u.nodes.length, 3, 'three controllers in the update list');
+		check(
+			u.nodes.every((n) => typeof n.version === 'string' && typeof n.canApply === 'boolean'),
+			'versions of every node'
+		);
+		const settings = { channel: 'stable', auto: 'notify', window: { from: '09:30', to: '11:00', days: ['sat'] }, avoidShowHours: 3 };
+		eq(await L.put('/system/update/settings', settings), settings, 'saved update settings');
+		await L.put('/system/update/settings', { ...settings, window: { from: 'soon', to: '11:00', days: [] } }, { expect: 400 });
+		eq((await L.get('/show')).settings.updates.window.from, '09:30', 'kept in the show');
+		// A follower is updated by its leader.
+		await F1.post('/system/update/rollback', {}, { expect: 409 });
+	});
+
+	await step('remote access status (no helper in dev: explains itself)', async () => {
+		const r = await L.get('/remote/status');
+		check(typeof r.tailscale.state === 'string' && Array.isArray(r.cloudflare.urls), 'remote status shape');
+		eq(r.canManage, false, 'not manageable without the packaged helper');
+		await L.post('/remote/tailscale/install', {}, { expect: 403 });
+		await L.post('/remote/test', { url: 'https://example.com/' }, { expect: 400 });
+	});
+
+	await step('controller transfer file: one-time link, encrypted stream', async () => {
+		await L.post('/system/transfer/export', { passphrase: 'short' }, { expect: 400 });
+		const { url } = await L.post('/system/transfer/export', { passphrase: 'e2e-transfer-passphrase' });
+		const origin = L.base.replace(/\/api\/v1$/, '');
+		const headers = { 'X-PixelPlus-Request': '1', ...(L.cookie ? { cookie: L.cookie } : {}) };
+		const r = await fetch(origin + url, { headers });
+		eq(r.status, 200, 'download');
+		check(/\.ppxfer"$/.test(r.headers.get('content-disposition') ?? ''), 'file name');
+		const body = Buffer.from(await r.arrayBuffer());
+		eq(body.subarray(0, 6).toString(), 'PPXFER', 'magic');
+		check(body.length > 1000, `holds the show and its files (${body.length} bytes)`);
+		eq((await fetch(origin + url, { headers })).status, 404, 'the link works once');
+		// Followers have nothing to transfer.
+		await F2.post('/system/transfer/export', { passphrase: 'e2e-transfer-passphrase' }, { expect: 409 });
+	});
+}
+
 // ---------------------------------------------------------------------------
 
 const PHASES = [
@@ -1253,6 +1297,7 @@ const PHASES = [
 	['show', phaseShow],
 	['tools', phaseTools],
 	['engine', phaseEngine],
+	['fleet', phaseFleet],
 	['resilience', phaseResilience]
 ];
 
