@@ -44,6 +44,9 @@ struct SetupBody {
     password: Option<String>,
     #[serde(default)]
     write_eeprom: bool,
+    /// "What will you use?" (Settings → Features preset).
+    #[serde(default)]
+    features: Option<pixelplus_core::model::FeatureSettings>,
 }
 
 /// `POST /system/setup`: JSON [`SetupBody`] (the wizard), or multipart
@@ -83,6 +86,7 @@ async fn setup(State(state): State<AppState>, req: axum::extract::Request) -> Ap
         timezone: b.timezone,
         password: b.password,
         write_eeprom: b.write_eeprom,
+        features: b.features,
     };
     let out = setup::apply(&state, req).await?;
     for n in &out.notes {

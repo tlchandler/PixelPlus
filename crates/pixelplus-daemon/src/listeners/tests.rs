@@ -209,7 +209,8 @@ async fn public_listener_caps_connections() {
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp.local_addr().unwrap();
     let listener =
-        PublicListener::with_options(tcp, || 1, || false, 2, Duration::from_millis(1500)).unwrap();
+        PublicListener::with_options(tcp, || Some(1), || false, 2, Duration::from_millis(1500))
+            .unwrap();
     let router = public_router(app.state.clone());
     let server = tokio::spawn(async move {
         axum::serve(
@@ -315,7 +316,7 @@ async fn public_listener_serves_public_pages_and_proxies_games() {
     let (games_port, seen) = fake_games().await;
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp.local_addr().unwrap();
-    let listener = PublicListener::new(tcp, move || games_port).unwrap();
+    let listener = PublicListener::new(tcp, move || Some(games_port)).unwrap();
     let router = public_router(app.state.clone());
     let server = tokio::spawn(async move {
         axum::serve(
@@ -402,7 +403,7 @@ async fn games_down_gives_a_friendly_502() {
         .port();
     let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp.local_addr().unwrap();
-    let listener = PublicListener::new(tcp, move || dead).unwrap();
+    let listener = PublicListener::new(tcp, move || Some(dead)).unwrap();
     let router = public_router(app.state.clone());
     let server = tokio::spawn(async move {
         axum::serve(
@@ -416,5 +417,92 @@ async fn games_down_gives_a_friendly_502() {
     let r = roundtrip(&mut s, "GET /play/ HTTP/1.1\r\nHost: x\r\n\r\n").await;
     assert!(r.starts_with("HTTP/1.1 502"), "{r}");
     assert!(r.contains("Games aren't running"));
+    server.abort();
+}
+
+/// Settings → Features: games off → `/play/` is 404; song requests off →
+/// the public request API is 404; remote access off → nothing is served.
+#[tokio::test]
+async fn public_pages_follow_feature_toggles() {
+    use pixelplus_core::model::FeatureId;
+    let app = TestApp::new();
+    let (games_port, _seen) = fake_games().await;
+    app.state
+        .store
+        .update(|s| {
+            s.settings.remote.public_listener = true;
+            s.settings.requests.enabled = true;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = tcp.local_addr().unwrap();
+    let st = app.state.clone();
+    let listener = PublicListener::new(tcp, move || {
+        st.store
+            .get()
+            .feature(FeatureId::Games)
+            .then_some(games_port)
+    })
+    .unwrap();
+    let router = public_router(app.state.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener.tap_io(|_| {}),
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let get = |path: &'static str| async move {
+        let mut s = TcpStream::connect(addr).await.unwrap();
+        roundtrip(
+            &mut s,
+            &format!("GET {path} HTTP/1.1\r\nHost: lights.example.com\r\n\r\n"),
+        )
+        .await
+    };
+    let set = |id: FeatureId, on: bool| {
+        let state = app.state.clone();
+        async move {
+            state
+                .store
+                .update(move |s| {
+                    s.settings.features.set(id, on);
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+    };
+    assert!(get("/play/").await.ends_with("games"));
+    assert!(get("/api/v1/public/requests")
+        .await
+        .starts_with("HTTP/1.1 200"));
+
+    set(FeatureId::Games, false).await;
+    set(FeatureId::Requests, false).await;
+    let play = get("/play/").await;
+    assert!(play.starts_with("HTTP/1.1 404"), "{play}");
+    let req = get("/api/v1/public/requests").await;
+    assert!(req.starts_with("HTTP/1.1 404"), "{req}");
+    assert!(req.contains("feature_disabled"), "{req}");
+    assert!(get("/api/v1/public/health")
+        .await
+        .starts_with("HTTP/1.1 200"));
+
+    set(FeatureId::Remote, false).await;
+    assert!(get("/api/v1/public/health")
+        .await
+        .starts_with("HTTP/1.1 503"));
+
+    set(FeatureId::Remote, true).await;
+    set(FeatureId::Games, true).await;
+    set(FeatureId::Requests, true).await;
+    assert!(get("/play/").await.ends_with("games"));
+    assert!(get("/api/v1/public/requests")
+        .await
+        .starts_with("HTTP/1.1 200"));
     server.abort();
 }

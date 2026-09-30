@@ -51,6 +51,7 @@ use pixelplus_core::calpattern::{self, CalSchedule};
 use pixelplus_core::effects::countdown;
 use pixelplus_core::mapcode::MapPlan;
 use pixelplus_core::mapping::{NodeMap, OutputFrame, PropMap};
+use pixelplus_core::model::FeatureId;
 use pixelplus_core::model::{
     BoardKind, EffectPreset, NodePowerBudget, OutputConfig, Playlist, PlaylistItem, Show,
 };
@@ -2148,7 +2149,34 @@ impl Core {
                 self.playback_finished();
                 return;
             };
-            match self.begin(&p, now_ms) {
+            // Items of a feature turned off in Settings → Features are skipped
+            // (the item and its content stay; they play again once it's on).
+            let off = match &p {
+                Pending::Item(i) => pixelplus_core::features::playlist_item_feature(i)
+                    .filter(|f| !self.show.feature(*f)),
+                _ => None,
+            };
+            let begun = match off {
+                Some(f) => Err(format!("{} is turned off (Settings → Features)", f.name())),
+                None => self.begin(&p, now_ms),
+            };
+            if let (Some(_), Err(e)) = (off, &begun) {
+                let name = self.pending_ref(&p).name;
+                let msg = format!("Skipped “{name}”: {e}");
+                tracing::info!("{msg}");
+                self.journal(JournalEvent::Warn {
+                    code: "featureOff".into(),
+                    msg,
+                });
+                attempts += 1;
+                if attempts >= 64 {
+                    self.playback_finished();
+                    return;
+                }
+                item = self.take_next();
+                continue;
+            }
+            match begun {
                 Ok(Some(mut active)) => {
                     self.epoch += 1;
                     active.fade_in_ms = fade_in_ms;
@@ -2214,7 +2242,8 @@ impl Core {
         let Some(clip) = self.show.dj_clip(&dj_clip_id) else {
             return;
         };
-        if !clip.dynamic {
+        // DJ Studio off: the clip is skipped, so nothing is rendered for it.
+        if !clip.dynamic || !self.show.feature(FeatureId::Dj) {
             return;
         }
         // The song after the DJ clip.
@@ -2657,7 +2686,15 @@ impl Core {
     /// A smart playlist (F18) with tonight's items; other playlists as they are.
     fn smart_playlist(&self, pl: &Playlist) -> Playlist {
         let mut pl = pl.clone();
-        if pl.smart.is_some() {
+        if pl.smart.is_some() && !self.show.feature(FeatureId::SmartPlaylists) {
+            // Smart playlists off in Settings → Features: its rules don't run,
+            // so it has no songs (its intro and outro still play).
+            tracing::info!(
+                "Smart playlist “{}” has no songs while smart playlists are off (Settings → Features)",
+                pl.name
+            );
+            pl.items = vec![];
+        } else if pl.smart.is_some() {
             pl.items = match self.smart.get(&pl.id) {
                 Some(items) => items.clone(),
                 // Not expanded yet (just created): expand without history.

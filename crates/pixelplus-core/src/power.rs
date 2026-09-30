@@ -856,6 +856,11 @@ fn split_group(
 /// is each output's mean mA per pixel at full white.
 pub fn node_budget(show: &Show, node_id: &str) -> Option<NodePowerBudget> {
     show.node(node_id)?;
+    // The power limiter is off in Settings → Features: no budget, no limiting
+    // (followers get none in their manifest either).
+    if !show.feature(crate::model::FeatureId::Power) {
+        return None;
+    }
     show_budgets(show).remove(node_id)
 }
 

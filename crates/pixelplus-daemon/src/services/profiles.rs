@@ -90,6 +90,10 @@ pub fn active(show: &Show) -> Option<&ShowProfile> {
 /// WS3's engine renders these black (compose mask) and the health checks skip
 /// them; WS5 copies the list into `ManifestSettings.disabledPropIds`.
 pub fn disabled_prop_ids(show: &Show) -> Vec<String> {
+    // Seasons are off in Settings → Features: every prop lights.
+    if !show.feature(pixelplus_core::model::FeatureId::Seasons) {
+        return vec![];
+    }
     let Some(p) = active(show) else {
         return vec![];
     };
@@ -713,7 +717,10 @@ pub fn start(state: &AppState) {
         loop {
             tick.tick().await;
             let show = state.store.get();
-            if !show.profile_auto_switch || show.profiles.is_empty() {
+            if !show.profile_auto_switch
+                || show.profiles.is_empty()
+                || !show.feature(pixelplus_core::model::FeatureId::Seasons)
+            {
                 continue;
             }
             let now = chrono::Utc::now().with_timezone(&show_tz(&show));

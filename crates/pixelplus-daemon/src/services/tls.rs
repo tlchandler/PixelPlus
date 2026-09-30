@@ -700,8 +700,11 @@ impl TlsState {
 
 /// Should this node serve HTTPS now? (Leader or not yet set up, and enabled.)
 pub fn active(state: &AppState) -> bool {
+    let show = state.store.get();
     state.config.https_port != 0
-        && state.store.get().settings.https.enabled
+        && show.settings.https.enabled
+        // Phone trust (HTTPS) off in Settings → Features: plain http only.
+        && show.feature(pixelplus_core::model::FeatureId::PhoneTrust)
         && state.identity().role != crate::node::LocalRole::Follower
 }
 

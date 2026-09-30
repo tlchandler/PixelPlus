@@ -833,3 +833,126 @@ async fn follower_renders_the_leaders_map_code_at_the_anchored_position() {
         e.out_pair(0, 1)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Feature toggles (Settings → Features, §12.17)
+// ---------------------------------------------------------------------------
+
+/// A countdown is skipped (and journaled) while Countdown is off; the song
+/// after it plays at once. Turned back on, the countdown plays again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn items_of_a_disabled_feature_are_skipped_and_journaled() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 400, 25, |_| 10)];
+        let mut pl = playlist("p1", &["s1"], 500);
+        pl.intro = vec![countdown_item(
+            2_000,
+            CountdownOthers::Fill,
+            CountdownFinale::None,
+        )];
+        show.playlists = vec![pl];
+        show.settings.features.set(FeatureId::Countdown, false);
+    })
+    .await;
+    crate::services::journal::start(&e.state);
+    let play = || {
+        e.engine.handle.play(PlayRequest {
+            playlist_id: Some("p1".into()),
+            ..Default::default()
+        })
+    };
+    play().await.unwrap();
+    assert!(
+        wait_for(4000, || e
+            .status()
+            .item
+            .is_some_and(|i| i.kind == "sequence"))
+        .await
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    e.state.services.journal.flush().await;
+    let dir = crate::services::journal::dir(&e.dir);
+    let today = e.state.services.journal.now().date_naive();
+    let recs = crate::services::journal::read_day(&dir, today, None);
+    let skipped = recs.iter().find_map(|r| match &r.event {
+        crate::services::journal::Event::Warn { code, msg } if code == "featureOff" => {
+            Some(msg.clone())
+        }
+        _ => None,
+    });
+    let msg = skipped.expect("a featureOff journal entry");
+    assert!(msg.contains("Countdown to showtime is turned off"), "{msg}");
+    assert!(!recs.iter().any(|r| matches!(
+        &r.event,
+        crate::services::journal::Event::ItemStart { item, .. } if item == "countdown"
+    )));
+
+    // Back on: the countdown plays first again (live, no restart).
+    e.state
+        .store
+        .update(|s| {
+            s.settings.features.set(FeatureId::Countdown, true);
+            Ok::<_, crate::api::ApiError>(())
+        })
+        .await
+        .unwrap();
+    // Let the engine pick up the new show.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    play().await.unwrap();
+    assert!(
+        wait_for(4000, || e
+            .status()
+            .item
+            .is_some_and(|i| i.kind == "countdown"))
+        .await
+    );
+}
+
+/// The power limiter (and late-night dimming) stop while Power limiter is off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn power_limiter_stops_while_its_feature_is_off() {
+    let e = env(LocalRole::Leader, false, |_, show| {
+        show.effects = vec![solid("white", "#ffffff", all())];
+        show.settings.power.mode = LimiterMode::Limit;
+        show.power_supplies = vec![PowerSupply {
+            id: "psu".into(),
+            name: "Tiny PSU".into(),
+            volts: 12.0,
+            amps: 0.1,
+            receiver_ids: vec![],
+            direct_outputs: vec![NodeOutputRef {
+                node_id: "n1".into(),
+                output: 1,
+            }],
+            sensor: None,
+        }];
+    })
+    .await;
+    e.engine
+        .handle
+        .play(PlayRequest {
+            effect_id: Some("white".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        wait_for(4000, || uniform(&e.out(0)).is_some_and(|v| v < 200)).await,
+        "{:?}",
+        e.out(0)
+    );
+    e.state
+        .store
+        .update(|s| {
+            s.settings.features.set(FeatureId::Power, false);
+            Ok::<_, crate::api::ApiError>(())
+        })
+        .await
+        .unwrap();
+    assert!(
+        wait_for(4000, || uniform(&e.out(0)) == Some(255)).await,
+        "{:?}",
+        e.out(0)
+    );
+    assert!(wait_for(4000, || e.status().power.is_none()).await);
+}

@@ -22,6 +22,8 @@ pub struct SetupRequest {
     pub password: Option<String>,
     /// Also write the board EEPROM when it is blank.
     pub write_eeprom: bool,
+    /// The wizard's "What will you use?" choice (a new leader only).
+    pub features: Option<pixelplus_core::model::FeatureSettings>,
 }
 
 /// Result of [`apply`].
@@ -183,9 +185,16 @@ pub async fn apply(state: &AppState, req: SetupRequest) -> ApiResult<SetupOutcom
                 .filter(|t| untouched && location.is_none() && t.parse::<chrono_tz::Tz>().is_ok())
         });
         let hash = password_hash.clone();
+        let features = req.features.clone().map(|mut f| {
+            f.normalize();
+            f
+        });
         state
             .store
             .update(move |s| {
+                if let Some(f) = features {
+                    s.settings.features = f;
+                }
                 if let Some(n) = show_name {
                     s.name = n;
                 }

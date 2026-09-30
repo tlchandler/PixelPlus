@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub use crate::features::{FeatureId, FeatureSettings};
+
 /// Generate a short random id (10 chars, `[a-z0-9]`).
 pub fn new_id() -> String {
     use rand::Rng;
@@ -141,6 +143,10 @@ impl Show {
     }
     pub fn leader(&self) -> Option<&Node> {
         self.nodes.iter().find(|n| n.role == NodeRole::Leader)
+    }
+    /// Whether an optional feature is on (Settings → Features).
+    pub fn feature(&self, id: FeatureId) -> bool {
+        self.settings.features.is_enabled(id)
     }
 }
 
@@ -1257,6 +1263,10 @@ pub struct ShowSettings {
     /// xLights FPP Connect upload (F16).
     #[serde(default)]
     pub xlights: XlightsSettings,
+    /// Optional features turned off (Settings → Features). Missing in shows
+    /// from before feature toggles: everything stays on.
+    #[serde(default)]
+    pub features: FeatureSettings,
 }
 
 // --- F1 HTTPS -------------------------------------------------------------
@@ -2189,6 +2199,29 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["units"]["temperature"], "f");
         assert_eq!(v["requests"]["publicUrl"], "lights.example.com/request");
+    }
+
+    /// A show written before feature toggles has no `features` key: every
+    /// feature that was visible before stays on.
+    #[test]
+    fn old_shows_have_every_feature_on() {
+        let show: Show = serde_json::from_value(serde_json::json!({
+            "version": 7, "name": "Old show",
+            "settings": { "games": ShowSettings::default().games }
+        }))
+        .unwrap();
+        assert!(show.settings.features.disabled.is_empty());
+        assert!(FeatureId::ALL.iter().all(|f| show.feature(*f)));
+        let mut s = show.clone();
+        s.settings.features.set(FeatureId::Games, false);
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            v["settings"]["features"]["disabled"],
+            serde_json::json!(["games"])
+        );
+        let back: Show = serde_json::from_value(v).unwrap();
+        assert!(!back.feature(FeatureId::Games));
+        assert!(back.feature(FeatureId::Requests));
     }
 
     /// Every optional field added by the feature wave (F1–F20) stays out of

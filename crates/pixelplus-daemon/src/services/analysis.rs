@@ -631,15 +631,34 @@ fn next_task(state: &AppState) -> (String, Task) {
                 r
             };
             if !paused {
-                if let Some(t) = g.background.pop_front() {
-                    return t;
+                // Work of a feature turned off in Settings → Features waits
+                // in the queue until it is back on.
+                let show = state.store.get();
+                if let Some(i) = g
+                    .background
+                    .iter()
+                    .position(|(_, t)| show.feature(task_feature(t)))
+                {
+                    if let Some(t) = g.background.remove(i) {
+                        return t;
+                    }
                 }
+                svc.wake.wait_for(&mut g, Duration::from_secs(15));
                 continue;
             }
             svc.wake.wait_for(&mut g, Duration::from_secs(15));
             continue;
         }
         svc.wake.wait_for(&mut g, Duration::from_secs(60));
+    }
+}
+
+/// The feature a job belongs to (Settings → Features).
+fn task_feature(t: &Task) -> pixelplus_core::model::FeatureId {
+    use pixelplus_core::model::FeatureId;
+    match t {
+        Task::Analyze { .. } | Task::AutoShow(_) => FeatureId::AutoShows,
+        Task::Preview(_) => FeatureId::Layout,
     }
 }
 

@@ -1469,14 +1469,15 @@ pub fn start(state: &AppState) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            let folder = state
-                .store
-                .get()
+            let show = state.store.get();
+            // Off in Settings → Features: the drop folder isn't watched.
+            let folder = show
                 .settings
                 .xlights
                 .watch_folder
                 .clone()
-                .filter(|f| !f.trim().is_empty());
+                .filter(|f| !f.trim().is_empty())
+                .filter(|_| show.feature(pixelplus_core::model::FeatureId::XlightsUpload));
             let Some(folder) = folder else {
                 seen.clear();
                 continue;

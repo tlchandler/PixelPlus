@@ -607,7 +607,9 @@ pub struct SensorNodesState {
     live: Mutex<HashMap<String, LiveInner>>,
     keys: RwLock<Option<HashMap<String, String>>>,
     nonces: sig::NonceCache,
-    socket: OnceLock<Arc<tokio::net::UdpSocket>>,
+    /// The UDP socket while the listener is open (closed while Sensor nodes
+    /// are off in Settings → Features).
+    socket: Mutex<Option<Arc<tokio::net::UdpSocket>>>,
 }
 
 impl SensorNodesState {
@@ -863,8 +865,8 @@ pub async fn command(state: &AppState, id: &str, cmd: &str) -> ApiResult<()> {
         .services
         .sensornodes
         .socket
-        .get()
-        .cloned()
+        .lock()
+        .clone()
         .ok_or_else(|| ApiError::unavailable("Sensor nodes are turned off on this controller."))?;
     let mut m = serde_json::Map::new();
     m.insert("t".into(), json!("scmd"));
@@ -1186,30 +1188,68 @@ pub fn start(state: &AppState) {
     load_keys(state);
     let state = state.clone();
     tokio::spawn(async move {
-        let sock = match tokio::net::UdpSocket::bind(("0.0.0.0", port)).await {
-            Ok(s) => Arc::new(s),
-            Err(e) => {
-                tracing::warn!("Sensor nodes unavailable: couldn't open UDP port {port}: {e}");
-                return;
-            }
-        };
-        let _ = state.services.sensornodes.socket.set(sock.clone());
-        tracing::info!("Listening for sensor nodes on UDP {port}");
-        let mut buf = vec![0u8; MAX_PACKET + 1];
+        let mut changes = state.store.subscribe();
         loop {
-            let (n, from) = match sock.recv_from(&mut buf).await {
-                Ok(x) => x,
+            // Off in Settings → Features: the port stays closed until it's on.
+            while !listening_wanted(&state) {
+                if changes.changed().await.is_err() {
+                    return;
+                }
+            }
+            let sock = match tokio::net::UdpSocket::bind(("0.0.0.0", port)).await {
+                Ok(s) => Arc::new(s),
                 Err(e) => {
-                    tracing::debug!("sensor socket: {e}");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
+                    tracing::warn!("Sensor nodes unavailable: couldn't open UDP port {port}: {e}");
+                    return;
                 }
             };
-            if let Some(reply) = on_datagram(&state, &buf[..n], from).await {
-                let _ = sock.send_to(&reply, from).await;
+            *state.services.sensornodes.socket.lock() = Some(sock.clone());
+            tracing::info!("Listening for sensor nodes on UDP {port}");
+            let mut buf = vec![0u8; MAX_PACKET + 1];
+            loop {
+                tokio::select! {
+                    r = sock.recv_from(&mut buf) => {
+                        let (n, from) = match r {
+                            Ok(x) => x,
+                            Err(e) => {
+                                tracing::debug!("sensor socket: {e}");
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                continue;
+                            }
+                        };
+                        if let Some(reply) = on_datagram(&state, &buf[..n], from).await {
+                            let _ = sock.send_to(&reply, from).await;
+                        }
+                    }
+                    r = changes.changed() => {
+                        if r.is_err() {
+                            return;
+                        }
+                        if !listening_wanted(&state) {
+                            break;
+                        }
+                    }
+                }
             }
+            *state.services.sensornodes.socket.lock() = None;
+            drop(sock);
+            tracing::info!("Sensor nodes turned off; UDP {port} closed");
         }
     });
+}
+
+/// Sensor nodes are on in Settings → Features.
+fn listening_wanted(state: &AppState) -> bool {
+    state
+        .store
+        .get()
+        .feature(pixelplus_core::model::FeatureId::Sensors)
+}
+
+/// Whether the sensor node UDP listener is open (tests, status).
+#[allow(dead_code)]
+pub fn listening(state: &AppState) -> bool {
+    state.services.sensornodes.socket.lock().is_some()
 }
 
 #[cfg(test)]

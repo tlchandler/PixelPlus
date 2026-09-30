@@ -1344,7 +1344,9 @@ pub fn start(state: &AppState) {
             sample(&state);
             let show = state.store.get();
             let rs = show.settings.reports.clone();
-            if !rs.enabled {
+            // Off in Settings → Features: no nightly report (the journal and
+            // older reports are kept).
+            if !rs.enabled || !show.feature(pixelplus_core::model::FeatureId::Reports) {
                 continue;
             }
             let tz = show_tz(&show);

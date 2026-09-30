@@ -43,6 +43,14 @@ pub struct ManifestSettings {
     /// Props kept dark by the active season profile (F8).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_prop_ids: Vec<String>,
+    /// Features turned off on the leader (Settings → Features), so the
+    /// follower behaves the same (power limiter, sensors, playlist items).
+    #[serde(default, skip_serializing_if = "is_all_on")]
+    pub features: FeatureSettings,
+}
+
+fn is_all_on(f: &FeatureSettings) -> bool {
+    f.disabled.is_empty()
 }
 
 /// What the leader tells one follower (`GET /cluster/manifest/:nodeId`).
@@ -179,6 +187,7 @@ pub fn build(
             // The active season profile keeps these props dark (F8); only
             // the ones this node drives matter to it.
             disabled_prop_ids: disabled,
+            features: show.settings.features.clone(),
         },
         mapping_hash,
         // Power limiter budget of this node's supplies (F12).
@@ -242,6 +251,7 @@ pub fn follower_show(
             oled: manifest.settings.oled.clone(),
             output: manifest.settings.output.clone(),
             security: current.settings.security.clone(),
+            features: manifest.settings.features.clone(),
             ..ShowSettings::default()
         },
         // The leader's active season keeps these props dark (F8): carried as
@@ -520,5 +530,22 @@ pub(crate) mod tests {
         // Serialized manifests stay compact when nothing is masked.
         let v = serde_json::to_value(&m2).unwrap();
         assert!(v["settings"].get("disabledPropIds").is_none());
+        assert!(v["settings"].get("features").is_none());
+    }
+
+    #[test]
+    fn features_reach_the_follower() {
+        let mut show = three_node_show();
+        show.settings.features.set(FeatureId::Power, false);
+        show.settings.features.set(FeatureId::Dj, false);
+        let dir = std::env::temp_dir();
+        let m = build(&show, "leader", "f1", &dir).unwrap();
+        assert_eq!(m.settings.features, show.settings.features);
+        // No limiter budget while the power limiter is off.
+        assert_eq!(m.power, None);
+        let fs = follower_show(&m, &HashMap::new(), &Show::default());
+        assert!(!fs.feature(FeatureId::Power));
+        assert!(!fs.feature(FeatureId::Dj));
+        assert!(fs.feature(FeatureId::Games));
     }
 }

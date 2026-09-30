@@ -21,7 +21,7 @@ use crate::events::Event;
 use crate::player::{PlayRequest, PlayerCmd, PlayerState, PlayerStatus};
 use crate::state::AppState;
 use parking_lot::Mutex;
-use pixelplus_core::model::{MqttSettings, Show};
+use pixelplus_core::model::{FeatureId, MqttSettings, Show};
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions, Packet, QoS};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -414,7 +414,10 @@ async fn session(state: &AppState, s: MqttSettings) {
             r = show_rx.changed() => {
                 if r.is_err() { return; }
                 let show = state.store.get();
-                if !show.settings.mqtt.enabled || show.settings.mqtt != s {
+                if !show.settings.mqtt.enabled
+                    || !show.feature(FeatureId::Mqtt)
+                    || show.settings.mqtt != s
+                {
                     publish(&client, vec![(format!("{base}/availability"), "offline".into())], true);
                     let _ = client.try_disconnect();
                     // Let the disconnect go out.
@@ -491,8 +494,10 @@ pub fn start(state: &AppState) {
     tokio::spawn(async move {
         let mut rx = state.store.subscribe();
         loop {
-            let s = state.store.get().settings.mqtt.clone();
-            if s.enabled && !s.host.trim().is_empty() {
+            let show = state.store.get();
+            let s = show.settings.mqtt.clone();
+            // Off in Settings → Features: disconnected (the settings are kept).
+            if s.enabled && show.feature(FeatureId::Mqtt) && !s.host.trim().is_empty() {
                 session(&state, s).await;
             } else {
                 state.services.mqtt.set(false, None);

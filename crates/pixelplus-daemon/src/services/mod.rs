@@ -5,6 +5,7 @@
 
 // System, content & integrations workstream.
 pub mod alerts;
+pub mod features;
 pub mod games;
 pub mod geometry;
 pub mod health;
@@ -105,6 +106,7 @@ impl Services {
 pub async fn start_all(_state: &AppState) -> anyhow::Result<()> {
     // The journal first, so every other service can record from the start.
     journal::start(_state);
+    features::start(_state);
     // The playback engine next: the cluster and other services talk to it.
     crate::player::engine::start(_state).await?;
     crate::cluster::start(_state).await?;

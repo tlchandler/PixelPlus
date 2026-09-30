@@ -488,12 +488,13 @@ pub struct PublicListener {
 }
 
 impl PublicListener {
-    /// `games_port()` gives the games controller port at connection time.
+    /// `games_port()` gives the games controller port at connection time
+    /// (`None`: games are off, `/play/` answers 404).
     /// `CF-Connecting-IP` is not passed to the games controller.
     #[cfg(test)]
     pub fn new(
         tcp: TcpListener,
-        games_port: impl Fn() -> u16 + Send + Sync + 'static,
+        games_port: impl Fn() -> Option<u16> + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
         Self::with_options(
             tcp,
@@ -510,7 +511,7 @@ impl PublicListener {
     /// page request must be read within `read_deadline`.
     pub fn with_options(
         tcp: TcpListener,
-        games_port: impl Fn() -> u16 + Send + Sync + 'static,
+        games_port: impl Fn() -> Option<u16> + Send + Sync + 'static,
         trust_cf: impl Fn() -> bool + Send + Sync + 'static,
         max_conns: usize,
         read_deadline: Duration,
@@ -567,11 +568,17 @@ impl PublicListener {
                             );
                             let _ = s.write_all(resp.as_bytes()).await;
                         }
-                        PublicRoute::Games(head) => {
-                            let e = end.unwrap_or(buf.len());
-                            bridge_games(s, head, buf[e..].to_vec(), games_port()).await;
-                            drop(slot);
-                        }
+                        PublicRoute::Games(head) => match games_port() {
+                            Some(port) => {
+                                let e = end.unwrap_or(buf.len());
+                                bridge_games(s, head, buf[e..].to_vec(), port).await;
+                                drop(slot);
+                            }
+                            // Games (or remote access) are off in Settings → Features.
+                            None => {
+                                let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 30\r\nConnection: close\r\n\r\nThat page isn't available.\r\n\r\n").await;
+                            }
+                        },
                     }
                 });
             }
@@ -603,7 +610,11 @@ async fn public_gate(
     req: Request,
     next: Next,
 ) -> Response {
-    let mut resp = if state.store.get().settings.remote.public_listener {
+    let show = state.store.get();
+    let open = show.settings.remote.public_listener
+        && show.feature(pixelplus_core::model::FeatureId::Remote);
+    drop(show);
+    let mut resp = if open {
         next.run(req).await
     } else {
         (
@@ -649,9 +660,17 @@ pub async fn serve_public(state: AppState, shutdown: watch::Receiver<bool>) {
     };
     let games_port = {
         let state = state.clone();
-        move || match state.store.get().settings.games.port {
-            0 => 8088,
-            p => p,
+        move || {
+            let show = state.store.get();
+            if !show.feature(pixelplus_core::model::FeatureId::Games)
+                || !show.feature(pixelplus_core::model::FeatureId::Remote)
+            {
+                return None;
+            }
+            Some(match show.settings.games.port {
+                0 => 8088,
+                p => p,
+            })
         }
     };
     let trust_cf = {

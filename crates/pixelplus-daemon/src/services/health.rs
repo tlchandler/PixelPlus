@@ -173,6 +173,8 @@ pub fn content_checks(show: &Show, data_dir: &std::path::Path) -> Vec<Check> {
                         }
                     }
                 }
+                // DJ Studio off: its clips are skipped, nothing to check.
+                PlaylistItem::Dj { .. } if !show.feature(pixelplus_core::model::FeatureId::Dj) => {}
                 PlaylistItem::Dj { dj_clip_id, .. } => match show.dj_clip(dj_clip_id) {
                     Some(c) if !c.dynamic => {
                         let ok = c

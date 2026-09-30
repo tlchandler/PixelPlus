@@ -139,6 +139,10 @@ pub fn intro_lead_ms(show: &Show, pl: &pixelplus_core::model::Playlist) -> u64 {
 /// force at `local` (a window runs from `from` on one of its `days`, empty =
 /// every day, to the next `to`), capped by `maxBrightness`. `None` = 100 %.
 pub fn brightness_cap(show: &Show, now: DateTime<Utc>) -> Option<u8> {
+    // The power page (limiter and dimming) is off in Settings → Features.
+    if !show.feature(pixelplus_core::model::FeatureId::Power) {
+        return None;
+    }
     let p = &show.settings.power;
     let s = &show.schedule;
     let tz = schedule::schedule_timezone(s).unwrap_or(chrono_tz::UTC);

@@ -107,6 +107,14 @@ pub async fn raise(state: &AppState, key: &str, severity: Severity, title: &str,
     }
     tracing::warn!("Alert: {title}: {body}");
     state.events.toast(toast, format!("{title}: {body}"));
+    // Alerts off in Settings → Features: the toast above is all (no email/push).
+    if !state
+        .store
+        .get()
+        .feature(pixelplus_core::model::FeatureId::Alerts)
+    {
+        return;
+    }
     let settings = state.store.get().settings.alerts.clone();
     let show = show_label(state);
     let subject = format!("[{show}] {title}");

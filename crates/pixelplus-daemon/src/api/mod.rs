@@ -11,6 +11,7 @@ pub mod ws;
 pub mod content;
 pub mod debug;
 pub mod effectsapi;
+pub mod features;
 pub mod games;
 pub mod import;
 pub mod overlay;
@@ -103,8 +104,14 @@ pub fn router(state: AppState) -> Router {
         .merge(power::routes())
         .merge(sensornodes::routes())
         .merge(journal::routes())
+        .merge(features::routes())
         .route("/ws", get(ws::handler))
         .fallback(|| async { ApiError::not_found("That API endpoint") })
+        // Optional features that are off answer `feature_disabled` (after auth).
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            features::guard,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth,
@@ -129,7 +136,12 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .nest("/api/v1", api)
         // xLights FPP Connect paths live at the root (F16; checks its own auth).
-        .merge(fppcompat::routes())
+        .merge(
+            fppcompat::routes().layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                features::root_guard,
+            )),
+        )
         .fallback_service(spa)
         .layer(axum::middleware::from_fn_with_state(csp, security::headers))
         .layer(tower_http::compression::CompressionLayer::new())

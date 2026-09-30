@@ -348,7 +348,10 @@ pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> R
         if let Some(h) = &host {
             let show = state.store.get();
             let mut extra = show.settings.security.allowed_hosts.clone();
-            extra.extend(remote_admin_hosts(&show.settings.remote));
+            // Remote access off in Settings → Features: the tunnel names stop working.
+            if show.feature(pixelplus_core::model::FeatureId::Remote) {
+                extra.extend(remote_admin_hosts(&show.settings.remote));
+            }
             if let Some(old) = previous_hostname(std::time::Instant::now()) {
                 extra.push(format!("{old}.local"));
                 extra.push(old);

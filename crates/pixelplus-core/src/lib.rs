@@ -1,6 +1,7 @@
 //! PixelPlus core: show model, fseq, xLights import, mapping, effects,
 //! scheduling and power estimation. Pure logic, no I/O besides files.
 
+pub mod features;
 pub mod model;
 
 // Data path (owned by the "core-data" workstream)

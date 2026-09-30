@@ -19,7 +19,8 @@ use crate::services::journal::Event;
 use crate::state::AppState;
 use parking_lot::Mutex;
 use pixelplus_core::model::{
-    Show, TimeWindow, Trigger, TriggerAction, TriggerActionType, TriggerKind, TriggerWhen,
+    FeatureId, Show, TimeWindow, Trigger, TriggerAction, TriggerActionType, TriggerKind,
+    TriggerWhen,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -85,6 +86,7 @@ pub async fn run_action(state: &AppState, action: &TriggerAction) -> ApiResult<S
             Ok(format!("Showing {}", e.name))
         }
         TriggerActionType::Surprise => {
+            crate::api::features::require(state, FeatureId::Surprises)?;
             let req = surprise_request(&show, "test", action)?;
             let s = p.surprise(req).await?;
             Ok(surprise_message(&s))
@@ -299,6 +301,11 @@ fn now_s() -> f64 {
 /// `Err` when a gate blocked it or the action failed.
 pub async fn fire_trigger(state: &AppState, t: &Trigger, source: &str) -> ApiResult<String> {
     let show = state.store.get();
+    // Off in Settings → Features: triggers (and surprises) never fire.
+    crate::api::features::require(state, FeatureId::Triggers)?;
+    if t.action.kind == TriggerActionType::Surprise {
+        crate::api::features::require(state, FeatureId::Surprises)?;
+    }
     let player = player(state)?;
     let mut m = Moment::of(&player.status());
     m.in_active_window = t
@@ -406,9 +413,12 @@ pub async fn sensor_input(
 }
 
 fn gpio_pins(state: &AppState) -> Vec<u8> {
-    let mut pins: Vec<u8> = state
-        .store
-        .get()
+    let show = state.store.get();
+    // Off in Settings → Features: no GPIO lines are held.
+    if !show.feature(FeatureId::Triggers) {
+        return vec![];
+    }
+    let mut pins: Vec<u8> = show
         .settings
         .triggers
         .iter()
