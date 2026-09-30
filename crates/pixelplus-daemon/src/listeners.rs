@@ -353,11 +353,23 @@ pub fn route_public_head(head: &[u8], peer: IpAddr) -> PublicRoute {
     }
     let mut out = format!("{method} {new_target} {version}\r\n");
     let mut xff: Option<String> = None;
+    let lines: Vec<&str> = lines.filter(|l| !l.is_empty()).collect();
+    // The connection is bridged as a whole, so a kept-alive connection would
+    // carry the visitor's *next* request (e.g. `/request`) to the games
+    // controller too: plain requests ask it to close after answering;
+    // WebSocket upgrades keep their `Connection: Upgrade`.
+    let upgrade = lines
+        .iter()
+        .any(|l| l.to_ascii_lowercase().starts_with("upgrade:"));
     for line in lines {
-        if line.is_empty() {
+        let lower = line.to_ascii_lowercase();
+        if !upgrade
+            && ["connection:", "keep-alive:", "proxy-connection:"]
+                .iter()
+                .any(|h| lower.starts_with(h))
+        {
             continue;
         }
-        let lower = line.to_ascii_lowercase();
         if lower.starts_with("x-forwarded-for:") {
             let v = line["x-forwarded-for:".len()..].trim();
             xff = Some(match xff {
@@ -374,6 +386,9 @@ pub fn route_public_head(head: &[u8], peer: IpAddr) -> PublicRoute {
         Some(prev) if !prev.is_empty() => format!("{prev}, {client}"),
         _ => client,
     };
+    if !upgrade {
+        out.push_str("Connection: close\r\n");
+    }
     out.push_str(&format!("X-Forwarded-For: {xff}\r\n\r\n"));
     PublicRoute::Games(out.into_bytes())
 }

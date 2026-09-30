@@ -306,6 +306,69 @@ Only the song request page and the games are ever public by default: tunnels poi
 PixelPlus's public-only port. The song request page's QR codes follow the public address.
 Docker: see `docker/README.md` (compose profile `tunnel`).
 
+* **Remote sign-in alerts** – whenever someone signs in to the admin pages from outside your
+  home network (through Tailscale, a Cloudflare Tunnel or another proxy, or straight from the
+  internet), you get a *Remote sign-in* alert with the address it came from (in the app, and by
+  email / push if alerts are set up in **Settings → Alerts**). If it wasn't you, change the
+  password in **Settings → Security**.
+* **Fair turns for visitors** – each visitor (one internet address: a household, or a phone
+  network's shared address) may request up to **6 songs an hour** (never more than 3 in
+  10 minutes), and everyone together up to **60 an hour** (**Settings → Song requests**;
+  0 = no limit). In the games, at most **3 phones** from one address wait in line or play at
+  the same time (**Games → Settings → Phones per visitor in line**). Behind a tunnel PixelPlus
+  still tells visitors apart by their real address; forwarded addresses are believed only from
+  the tunnel on the controller itself (or a proxy listed in `security.trustedProxies`).
+
+## Show features at a glance
+
+Where to find what, once the show is running. Everything is on the show leader's web page.
+
+* **Phones as cameras and microphones (Secure connection)** – phone pages that use the camera
+  or microphone need HTTPS. PixelPlus makes its own certificate for your home network: open
+  **Settings → Secure connection**, scan the QR code with the phone and follow the steps for
+  iPhone or Android on the *Trust this phone* page (once per phone). The certificate only works
+  for addresses in your home network.
+* **Sync lights to sound** (**Sync to sound** in the menu) – stand where visitors watch, aim
+  the phone at the lights and start: it listens to the speakers and watches the lights at the
+  same time, then sets the audio delay so the music and the lights land together.
+* **Make a light show** (**Sequences & Audio**, on a song) – PixelPlus finds the beats, tempo
+  and loud and quiet parts of the song and builds a show for your props in a style you pick
+  (classic, candy, rock, calm, party, or *voice* for DJ clips). Re-roll until you like it; it
+  is a normal sequence afterwards. **Preview** plays any sequence on your phone's picture of
+  the display without touching the lights.
+* **Countdown to showtime** (**Playlists → Intro → Countdown**) – a big countdown on the matrix
+  with the other props filling up, a tick or a DJ clip, and the first song starting exactly on
+  zero. Turn on *Start exactly on time* on the schedule entry to have the
+  countdown end right on the minute.
+* **Map my yard** (menu) – point the phone's camera at the house; every output blinks its own code,
+  and PixelPlus proposes where each prop goes on the Layout page and fixes for swapped or
+  reversed wiring (nothing changes until you apply them; a backup is made first). **Check pixel count** on a prop
+  counts the pixels actually connected, and **Controllers → Add a receiver** walks you through
+  wiring a new receiver one port at a time.
+* **Tags and smart playlists** – tag songs (*kids*, *classic*, *new*) on the Sequences page; a
+  **Smart** playlist picks tonight's songs by tags and length, skips songs played on recent
+  nights and can rotate through your whole library. *Tonight* shows exactly what will play.
+* **Seasons** (**Settings → Seasons**) – keep a Halloween and a Christmas show (props, playlists,
+  schedule) and switch all of it with one click, or let PixelPlus switch by date.
+* **Power** (**Settings → Power**) – tell PixelPlus which supply or fuse feeds which outputs and
+  it keeps each within its rating by dimming only what is over budget (in *Warn* mode it only
+  tells you). *Late-night dimming* lowers the whole display after a time you choose. The
+  dashboard shows a badge while any controller is limiting.
+* **Nightly report** (**Reports**, **Settings → Nightly report**) – every morning: how long the
+  show ran, songs, requests, problems, temperatures, sync quality and pixels to check, by email
+  or push, or only when something went wrong.
+* **Upload from xLights** (**Settings → xLights**) – turn on *Let xLights upload here*, then in
+  xLights use **Tools → FPP Connect** → **Add FPP** with the leader's address; set *FSEQ type* to
+  *V2 zstd*, tick *Media*, and upload. A drop folder on the controller works too.
+* **Sensors and surprises** (**Settings → Sensors**, **Settings → Triggers**) – ESP32 boards in
+  the yard with motion sensors, buttons, light beams or door contacts
+  (`firmware/esp32-sensor/README.md` explains building and flashing one). Power it, join its
+  *PixelPlus-Sensor-XXXX* hotspot to give it your Wi-Fi, then **Add** it under *New sensors
+  found*. A trigger such as "Driveway · Motion 1 → a sparkle on the candy canes" layers a short
+  surprise over the song that is playing; **Test** tries it without walking outside. The
+  sensor talks to the leader on UDP port 32422 with its own key, so nobody else on the network
+  can fake it.
+
 ## Troubleshooting
 
 | Problem | What to do |

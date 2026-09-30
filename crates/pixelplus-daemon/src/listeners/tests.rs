@@ -135,12 +135,28 @@ fn public_head_routing() {
         head.ends_with("X-Forwarded-For: 203.0.113.9, 127.0.0.1\r\n\r\n"),
         "{head}"
     );
+    assert!(
+        !head.contains("Connection: close"),
+        "upgrades stay open: {head}"
+    );
     let PublicRoute::Games(head) = route_public_head(b"GET /play/ HTTP/1.1\r\n\r\n", peer) else {
         panic!("games")
     };
     assert_eq!(
         String::from_utf8(head).unwrap(),
-        "GET / HTTP/1.1\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n"
+        "GET / HTTP/1.1\r\nConnection: close\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n"
+    );
+    // A kept-alive page request: the games controller closes after answering,
+    // so the visitor's next request on that connection can't reach it.
+    let PublicRoute::Games(head) = route_public_head(
+        b"GET /play/app.js HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n",
+        peer,
+    ) else {
+        panic!("games")
+    };
+    assert_eq!(
+        String::from_utf8(head).unwrap(),
+        "GET /app.js HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n"
     );
     assert_eq!(route_public_head(b"\xff\xfe", peer), PublicRoute::App);
 }

@@ -112,7 +112,9 @@ the latter it sets `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER`,
 `CC_aarch64_unknown_linux_gnu`/`AR_…` (needed by `zstd-sys`) and `PKG_CONFIG_ALLOW_CROSS` /
 `PKG_CONFIG_LIBDIR` for the arm64 ALSA headers (`alsa-sys`, via cpal); install both with
 `sudo packaging/ci/install-arm64-cross-deps.sh` (Ubuntu: adds the ports.ubuntu.com arm64
-sources). Build on the *oldest*
+sources). Plain `cargo build|check --target aarch64-unknown-linux-gnu -p pixelplus-daemon`
+works too once those are installed: `.cargo/config.toml` sets the same linker, `CC`/`AR` and
+target-scoped `PKG_CONFIG_*` variables (values already in the environment win). Build on the *oldest*
 distribution you target (Ubuntu 22.04 / Debian Bookworm) because glibc is only forward
 compatible.
 

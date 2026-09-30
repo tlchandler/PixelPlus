@@ -517,7 +517,14 @@ async fn context_task(state: AppState, core: Sender<CoreCmd>) {
                         break;
                     }
                 }
-                let key = (id.id.clone(), id.role, state.store.get().version);
+                // A follower's power budget comes with the leader's manifest, not
+                // its show version: check it every tick too.
+                let power = if id.role == LocalRole::Follower {
+                    state.services.cluster.get().and_then(|c| c.manifest_power())
+                } else {
+                    None
+                };
+                let key = (id.id.clone(), id.role, state.store.get().version, power);
                 if last_key.as_ref() == Some(&key) && last_full.elapsed() < CONTEXT_EVERY {
                     continue;
                 }

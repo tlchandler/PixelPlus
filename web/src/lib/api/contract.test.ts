@@ -117,7 +117,10 @@ const OPTIONAL = new Set([
 	'previous',
 	'tempMaxC',
 	// F12: absent while a node's limiter is off.
-	'limiter'
+	'limiter',
+	// F11 night report: no backup yet / no active season.
+	'backupAgeDays',
+	'season'
 ]);
 
 type Problem = { path: string; kind: 'missing' | 'type'; detail: string };
@@ -295,6 +298,18 @@ describe.skipIf(!BASE)('daemon JSON matches the UI contract', () => {
 			compareShape(m, r, '/power/estimate', problems);
 			expect(problems.map((x) => `${x.path}: ${x.detail}`)).toEqual([]);
 		}
+	});
+
+	it('GET /reports/:date (F11 night report)', async () => {
+		const [mockList, list] = await Promise.all([fromMock('/reports?limit=1'), fromDaemon('/reports?limit=1')]);
+		if (!list.length || !mockList?.length) return;
+		const [m, r] = await Promise.all([
+			fromMock(`/reports/${mockList[0].date}`),
+			fromDaemon(`/reports/${list[0].date}`)
+		]);
+		const problems: Problem[] = [];
+		compareShape(m, r, '/reports/:date', problems);
+		expect(problems.map((x) => `${x.path}: ${x.detail}`)).toEqual([]);
 	});
 });
 

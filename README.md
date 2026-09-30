@@ -52,6 +52,29 @@ Pi or in Docker as a show director.
 - **Secure by default** — optional password, per-controller keys with signed cluster
   traffic, hardened against hostile uploads and cross-site attacks.
 
+**New in this release**
+
+- **Light shows from music** — beat, tempo and energy analysis builds a show for your props
+  in one click, in six styles; preview any sequence on your phone without touching the lights.
+- **Sync lights to sound** — your phone's camera and microphone measure the audio delay; a
+  built-in certificate authority gives phones the HTTPS they need, with a one-page trust guide.
+- **Countdown to showtime** — a matrix countdown with the first song starting exactly on the
+  scheduled minute, on every controller.
+- **Map my yard** — film the house with your phone and PixelPlus finds where each prop is and
+  which runs are swapped or reversed; plus a pixel-count check and a guided receiver wizard.
+- **Smart playlists** — tags, rules and nightly rotation pick tonight's songs without repeats.
+- **Seasons** — keep Halloween and Christmas shows side by side and switch by date.
+- **Power limiter** — keeps every fuse and supply within its rating on every controller, plus
+  late-night dimming.
+- **Nightly report** — how last night went, every morning, by email or push.
+- **Upload from xLights** — FPP Connect compatible, or a drop folder.
+- **Sensors and surprises** — ESP32 motion, button and beam sensors set off effects layered
+  over the song that's playing.
+- **Remote access** — Tailscale or Cloudflare Tunnel without port forwarding; only the request
+  page and games go public, with per-visitor limits and an alert on every remote sign-in.
+- **Fleet care** — signed updates for every controller at once with automatic rollback, and
+  one-step replacement of a dead controller or leader from an encrypted transfer file.
+
 ## Getting started
 
 1. **Make an SD card** — see [docs/INSTALL.md](docs/INSTALL.md) (PixelPlus Imager,
