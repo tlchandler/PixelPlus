@@ -1,6 +1,7 @@
 // WS5 (F15): signed cluster updates, and (F10) controller replacement / transfer, in demo mode.
 import type { DiscoveredNode, Node, UpdateInfo, UpdateRun } from '$lib/api/types';
 import { newId } from '$lib/util/id';
+import { normalize } from '$lib/features';
 import { HttpError, nowIso, type FeatureContext } from './context';
 
 export function register(ctx: FeatureContext) {
@@ -228,6 +229,9 @@ export function register(ctx: FeatureContext) {
 		if (body.board) s.system.board = body.board;
 		if (body.location) s.show.schedule.location = body.location;
 		if (body.password) s.password = body.password;
+		// "What will you use?" (Settings → Features preset).
+		if (body.features && Array.isArray(body.features.disabled))
+			s.show.settings.features = { disabled: normalize(body.features.disabled.map(String)) };
 		if (body.role === 'follower') s.system.leaderName = undefined;
 		ctx.bump();
 		return s.system;

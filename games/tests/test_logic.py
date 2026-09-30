@@ -166,6 +166,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg.crop, (0, 8, 256, 232))
         self.assertEqual(cfg.audio_device, "hw:1,0")
 
+    def test_games_feature_toggle(self):
+        # Settings → Features: "games" in features.disabled turns games off; the rest is kept.
+        show = self.show({"enabled": True, "port": 9000})
+        self.assertTrue(config.from_show(show).enabled)
+        show["settings"]["features"] = {"disabled": ["dj", "games"]}
+        cfg = config.from_show(show)
+        self.assertFalse(cfg.enabled)
+        self.assertEqual(cfg.port, 9000)
+        show["settings"]["features"] = {"disabled": ["dj"]}
+        self.assertTrue(config.from_show(show).enabled)
+        # Malformed or missing lists: everything on (shows from before feature toggles).
+        show["settings"]["features"] = {"disabled": "games"}
+        self.assertTrue(config.from_show(show).enabled)
+        show["settings"]["features"] = None
+        self.assertTrue(config.from_show(show).enabled)
+
     def test_values_are_clamped(self):
         cfg = config.from_show(self.show({"gameSeconds": 1, "port": 99999, "inviteFlashes": 50, "outputFps": 60,
                                           "brightness": 400, "crop": [200, 8, 100, 232], "inviteStyle": "sparkles",

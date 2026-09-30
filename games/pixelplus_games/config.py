@@ -211,12 +211,17 @@ def from_show(show):
     settings = show.get("settings") if isinstance(show.get("settings"), dict) else {}
     g = settings.get("games") if isinstance(settings.get("games"), dict) else {}
     audio = settings.get("audio") if isinstance(settings.get("audio"), dict) else {}
+    # Settings → Features: games turned off there are off whatever settings.games says
+    # (the settings themselves are kept for when they come back on).
+    features = settings.get("features") if isinstance(settings.get("features"), dict) else {}
+    disabled = features.get("disabled") if isinstance(features.get("disabled"), list) else []
+    feature_on = "games" not in disabled
     d = GameConfig()
     prop_id = _str(g, "matrixPropId")
     matrix, problem = find_matrix(show, prop_id)
     window = _str(g, "playWindow", d.play_window)
     return GameConfig(
-        enabled=_bool(g, "enabled", d.enabled),
+        enabled=_bool(g, "enabled", d.enabled) and feature_on,
         matrix_prop_id=prop_id,
         port=_int(g, "port", d.port, 1, 65535),
         game_seconds=_int(g, "gameSeconds", d.game_seconds, 10, 600),

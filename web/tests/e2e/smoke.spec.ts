@@ -20,6 +20,7 @@ const pages: [string, string | RegExp][] = [
 ];
 
 const SETTINGS_PAGES: [string, string][] = [
+	['/settings/features', 'Features'],
 	['/settings/https', 'Secure connection'],
 	['/settings/remote', 'Remote access'],
 	['/settings/power', 'Power'],
@@ -110,6 +111,9 @@ test('setup wizard walks through to the checklist', async ({ page }) => {
 	await expect(page.getByRole('heading', { name: '60-Port Transmitter' })).toBeVisible();
 	await page.getByRole('button', { name: /Looks right/ }).click();
 	await page.getByPlaceholder('e.g. Chandler Family Lights').fill('Test Lights');
+	await page.getByRole('button', { name: /Continue/ }).click();
+	await expect(page.getByRole('heading', { name: 'What will you use?' })).toBeVisible();
+	await expect(page.getByRole('button', { name: /Continue/ })).toHaveCount(1);
 	await page.getByRole('button', { name: /Continue/ }).click();
 	await page.getByRole('button', { name: 'Skip' }).click();
 	await expect(page.getByRole('heading', { name: 'Test Lights is ready' })).toBeVisible();

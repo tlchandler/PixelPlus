@@ -10,7 +10,7 @@
 // engine features: countdown, power limiter + dimming (a follower's limiting seen by the leader),
 // surprises, calibration v2, identify; fleet (updates, remote access, transfer file);
 // the public-only listener (public pages only, /play proxied over HTTP and WebSocket,
-// per-visitor request caps); and a simulated ESP32 sensor node (adoption key exchange,
+// per-visitor request caps, Settings → Features turning Games and Song requests off/on); and a simulated ESP32 sensor node (adoption key exchange,
 // MACed heartbeats and events firing a sensor surprise, forged packets ignored).
 //
 //   cargo build -p pixelplus-daemon && (cd web && pnpm build)
@@ -1391,6 +1391,29 @@ async function phasePublic() {
 			ws.close();
 			eq(reply, 'echo:hello lights', 'WebSocket frames pass both ways');
 			check(games.seen.some((x) => x.upgrade && x.url === '/ws'), 'upgrade reached the games controller');
+		});
+
+		await step('feature toggles: Games and Song requests off → public pages 404; back on → they work', async () => {
+			await L.put('/show/settings', { requests: { enabled: true } });
+			const off = await L.put('/features', { disabled: ['games', 'requests'] });
+			eq(off.disabled, ['games', 'requests'], 'features saved');
+			eq((await L.get('/show')).settings.features.disabled, ['games', 'requests'], 'visible in GET /show');
+			const play = await fetch(PUB + '/play/');
+			eq(play.status, 404, '/play/ while games are off');
+			const pubReq = await fetch(PUB + '/api/v1/public/requests');
+			eq(pubReq.status, 404, 'public requests through the tunnel while off');
+			eq((await pubReq.json()).error.code, 'feature_disabled', 'feature_disabled code');
+			await L.get('/public/requests', { expect: 404 });
+			const games = await L.get('/games/status', { expect: 409 });
+			eq(games.error.code, 'feature_disabled', 'admin games API');
+			check(/Settings → Features/.test(games.error.message), `friendly message: ${games.error.message}`);
+			eq((await fetch(PUB + '/api/v1/public/health')).status, 200, 'other public pages keep working');
+			const on = await L.put('/features', { id: 'games', enabled: true });
+			eq(on.changed, ['games'], 'one switch');
+			await L.put('/features', { id: 'requests', enabled: true });
+			eq((await fetch(PUB + '/play/')).status, 200, '/play/ back on');
+			eq((await fetch(PUB + '/api/v1/public/requests')).status, 200, 'public requests back on');
+			await L.get('/games/status');
 		});
 
 		await step('visitor caps: hourly song requests per visitor and for everyone (forwarded address)', async () => {

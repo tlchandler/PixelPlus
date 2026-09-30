@@ -493,6 +493,21 @@
 	.fswitch:focus-visible {
 		box-shadow: var(--ring);
 	}
+	/* Bigger on touch screens: 52 × 32, plus the extended hit area. */
+	@media (pointer: coarse) {
+		.fswitch {
+			width: 52px;
+			height: 32px;
+			margin-top: 4px;
+		}
+		.fswitch .knob {
+			width: 26px;
+			height: 26px;
+		}
+		.fswitch[aria-checked='true'] .knob {
+			transform: translateX(20px);
+		}
+	}
 	.fswitch.busy {
 		opacity: 0.6;
 	}

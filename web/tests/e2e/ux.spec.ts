@@ -20,7 +20,8 @@ const ADMIN = [
 	'/map',
 	'/calibrate',
 	'/settings/seasons',
-	'/settings/power'
+	'/settings/power',
+	'/settings/features'
 ];
 
 async function open(page: Page, path: string, mock = '1', theme?: 'light' | 'dark') {
@@ -75,7 +76,16 @@ test.describe('phone layout', () => {
 
 	test('tap targets are at least 44 px on touch screens', async ({ page }) => {
 		const small: string[] = [];
-		for (const path of ['/', '/props', '/playlists', '/schedule', '/settings#audio', '/games', '/dj']) {
+		for (const path of [
+			'/',
+			'/props',
+			'/playlists',
+			'/schedule',
+			'/settings#audio',
+			'/games',
+			'/dj',
+			'/settings/features'
+		]) {
 			await open(page, path);
 			const found = await page.evaluate(() =>
 				[
