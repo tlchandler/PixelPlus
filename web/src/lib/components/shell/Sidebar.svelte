@@ -5,6 +5,7 @@
 	import { NAV, GROUPS, isActive } from './nav';
 	import Logo from './Logo.svelte';
 	import { Moon, Sun, Keyboard, FlaskConical } from '@lucide/svelte';
+	import { exitMock } from '$lib/api/mode';
 
 	let { onshortcuts }: { onshortcuts: () => void } = $props();
 
@@ -32,7 +33,10 @@
 
 	{#if app.mock}
 		<div class="demo" title="Running against the in-browser demo backend">
-			<FlaskConical size={14} /> Demo mode — no hardware needed
+			<FlaskConical size={14} /> <span class="grow">Demo show</span>
+			{#if !app.mockAuto}
+				<button class="exit" onclick={() => { exitMock(); location.href = '/'; }}>Exit</button>
+			{/if}
 		</div>
 	{/if}
 
@@ -126,6 +130,18 @@
 		gap: 6px;
 		color: var(--purple);
 		background: var(--purple-soft);
+	}
+	.exit {
+		font-size: 11px;
+		font-weight: 600;
+		padding: 2px 8px;
+		border-radius: 6px;
+		color: var(--purple);
+		background: var(--purple-soft);
+	}
+	.exit:hover {
+		background: var(--purple);
+		color: #fff;
 	}
 	.scroll {
 		flex: 1;

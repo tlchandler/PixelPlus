@@ -46,10 +46,6 @@ pub mod timing;
 #[cfg(target_os = "linux")]
 pub mod pinmux;
 
-#[cfg(target_os = "linux")]
-#[path = "backend/dpi.rs"]
-mod dpi;
-
 pub use backend::{NullOutput, OutputStats, PixelOutput, SimHandle, SimOutput, SimSnapshot};
 pub use decoder::{DecodedFrame, DecodedOutput, WsDecoder};
 pub use encoder::{BufferState, EncodeReport, FrameBufferMut, FrameBufferRef, WsEncoder};
@@ -62,7 +58,7 @@ pub use pipeline::{to_wire_order, PixelPipeline};
 pub use timing::{BitTiming, DpiGeometry, Ws281xSpec, PIXEL_CLOCK_HZ};
 
 #[cfg(target_os = "linux")]
-pub use dpi::{detect_soc, DpiConfig, DpiOutput};
+pub use backend::{detect_soc, DpiConfig, DpiOutput};
 
 /// Which backend to construct (mirrors `PIXELPLUS_OUTPUT=dpi|sim|none`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

@@ -6,9 +6,13 @@
 //!   optionally, encodes and decodes every frame to prove timing and data.
 //! * [`NullOutput`] — discards frames (show director / audio-only nodes).
 
+#[cfg(target_os = "linux")]
+mod dpi;
 mod null;
 mod sim;
 
+#[cfg(target_os = "linux")]
+pub use dpi::{detect_soc, DpiConfig, DpiOutput};
 pub use null::NullOutput;
 pub use sim::{SimHandle, SimOutput, SimSnapshot};
 

@@ -12,7 +12,6 @@
 	import { NAV } from '$lib/components/shell/nav';
 	import { togglePlay, playerAct } from '$lib/player';
 	import { api } from '$lib/api/client';
-	import { exitMock } from '$lib/api/mode';
 	import { FlaskConical, X } from '@lucide/svelte';
 
 	let { children } = $props();
@@ -102,9 +101,6 @@
 		<TransportBar />
 		<div class="mob"><TabBar /></div>
 	</div>
-	{#if app.mock && !app.mockAuto}
-		<button class="exit-demo" onclick={() => { exitMock(); location.href = '/'; }} title="Leave demo mode">Exit demo</button>
-	{/if}
 {/if}
 
 <Shortcuts bind:open={shortcuts} />
@@ -161,22 +157,6 @@
 	.banner :global(svg) {
 		color: var(--purple);
 	}
-	.exit-demo {
-		position: fixed;
-		top: 12px;
-		right: 12px;
-		z-index: 30;
-		font-size: 11.5px;
-		font-weight: 560;
-		padding: 5px 10px;
-		border-radius: 99px;
-		color: var(--purple);
-		background: var(--purple-soft);
-		opacity: 0.8;
-	}
-	.exit-demo:hover {
-		opacity: 1;
-	}
 	@media (max-width: 760px) {
 		.desk {
 			display: none;
@@ -190,9 +170,6 @@
 		}
 		.banner {
 			margin: 12px 16px 0;
-		}
-		.exit-demo {
-			display: none;
 		}
 	}
 </style>
