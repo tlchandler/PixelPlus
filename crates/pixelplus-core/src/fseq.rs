@@ -441,8 +441,7 @@ impl<R: Read + Seek> FseqFile<R> {
                 )));
             }
         }
-        if channel_count as u64 > MAX_FRAME_BYTES || header.frame_size() as u64 > MAX_FRAME_BYTES
-        {
+        if channel_count as u64 > MAX_FRAME_BYTES || header.frame_size() as u64 > MAX_FRAME_BYTES {
             return Err(FseqError::Format(format!(
                 "frame of {} channels exceeds the supported maximum of {MAX_FRAME_BYTES}",
                 (channel_count as u64).max(header.frame_size() as u64)
@@ -686,9 +685,8 @@ pub(crate) fn zstd_decompress_capped(
     let mut input = InBuffer::around(src);
     while dst.len() < cap {
         let (in_before, out_before) = (input.pos(), dst.len());
-        let mut out = OutBuffer::around_pos(dst, out_before);
-        let remaining = dec.run(&mut input, &mut out)?;
-        drop(out);
+        // The output buffer updates `dst`'s length as it is filled.
+        let remaining = dec.run(&mut input, &mut OutBuffer::around_pos(dst, out_before))?;
         let progressed = input.pos() != in_before || dst.len() != out_before;
         if !progressed || (input.pos() >= src.len() && remaining == 0) {
             break;
@@ -1498,17 +1496,41 @@ mod tests {
     fn absurd_frame_sizes_are_rejected_not_allocated() {
         let block = zstd::bulk::compress(&[0u8; 30], 3).unwrap();
         // Compressed file declaring ~4 billion channels per frame.
-        let v = v2_raw(1, 0xF000_0000, 1, &[(0, block.len() as u32)], &[], &[], &block);
+        let v = v2_raw(
+            1,
+            0xF000_0000,
+            1,
+            &[(0, block.len() as u32)],
+            &[],
+            &[],
+            &block,
+        );
         assert!(matches!(
             FseqFile::from_reader(Cursor::new(v)),
             Err(FseqError::Format(_))
         ));
         // Sparse ranges summing to ~4 GiB of stored channels.
         let ranges: Vec<(u32, u32)> = (0..255).map(|_| (0, 0xFF_FFFF)).collect();
-        let v = v2_raw(1, 255 * 0xFF_FFFF, 1, &[(0, block.len() as u32)], &ranges, &[], &block);
+        let v = v2_raw(
+            1,
+            255 * 0xFF_FFFF,
+            1,
+            &[(0, block.len() as u32)],
+            &ranges,
+            &[],
+            &block,
+        );
         assert!(FseqFile::from_reader(Cursor::new(v)).is_err());
         // One block claiming billions of frames.
-        let v = v2_raw(1, 1000, u32::MAX, &[(0, block.len() as u32)], &[], &[], &block);
+        let v = v2_raw(
+            1,
+            1000,
+            u32::MAX,
+            &[(0, block.len() as u32)],
+            &[],
+            &[],
+            &block,
+        );
         assert!(matches!(
             FseqFile::from_reader(Cursor::new(v)),
             Err(FseqError::Format(_))

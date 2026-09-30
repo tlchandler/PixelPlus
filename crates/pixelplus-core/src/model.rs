@@ -393,7 +393,8 @@ impl Prop {
 
     /// Byte length of this prop inside an fseq frame.
     pub fn channel_len(&self) -> u32 {
-        self.pixel_count.saturating_mul(self.channels_per_pixel as u32)
+        self.pixel_count
+            .saturating_mul(self.channels_per_pixel as u32)
     }
 
     /// Pixels not covered by any segment (unwired).

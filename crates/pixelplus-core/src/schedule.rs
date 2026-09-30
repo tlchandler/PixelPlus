@@ -413,6 +413,13 @@ fn local_instant(tz: &Tz, date: NaiveDate, time: NaiveTime) -> DateTime<Tz> {
     tz.from_utc_datetime(&naive)
 }
 
+/// Whether `spec` is sun-relative and `date` has no sunrise/sunset (midnight sun).
+fn starts_in_polar_day(spec: &TimeSpec, date: NaiveDate, schedule: &Schedule) -> bool {
+    matches!(spec, TimeSpec::Sunset { .. } | TimeSpec::Sunrise { .. })
+        && sun_times(schedule.location.lat, schedule.location.lon, date).day_kind
+            == crate::sun::DayKind::PolarDay
+}
+
 /// A raw (possibly overlapping) occurrence of one entry.
 struct Raw<'a> {
     entry: &'a ScheduleEntry,
@@ -441,6 +448,13 @@ fn raw_for_date<'a>(
     let mut end = resolve_time(&entry.end, date, tz, schedule)?;
     if end <= start {
         end = resolve_time(&entry.end, date + Duration::days(1), tz, schedule)?;
+        // Midnight sun: a sun-relative start falls back to solar midnight, which is
+        // after an evening end time such as 23:00. Rolling the end to the next day
+        // would then run the show for most of the day; the sun never set, so there
+        // is no show that day instead.
+        if starts_in_polar_day(&entry.start, date, schedule) && end - start > Duration::hours(12) {
+            return None;
+        }
     }
     (end > start).then_some(Raw {
         entry,

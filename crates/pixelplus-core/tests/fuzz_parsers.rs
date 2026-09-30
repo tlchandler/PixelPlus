@@ -91,7 +91,11 @@ fn mutate_bytes(rng: &mut Rng, seed: &[u8]) -> Vec<u8> {
         match rng.below(7) {
             0 | 1 => {
                 if !v.is_empty() {
-                    let i = if rng.below(3) == 0 { rng.below(v.len()) } else { rng.below(hot.min(v.len())) };
+                    let i = if rng.below(3) == 0 {
+                        rng.below(v.len())
+                    } else {
+                        rng.below(hot.min(v.len()))
+                    };
                     v[i] ^= 1 << rng.below(8);
                 }
             }
@@ -100,7 +104,8 @@ fn mutate_bytes(rng: &mut Rng, seed: &[u8]) -> Vec<u8> {
                 let width = *rng.pick(&[1usize, 2, 3, 4, 8]);
                 if v.len() > width {
                     let i = rng.below(hot.min(v.len() - width));
-                    let bytes = (val as u64 | if width == 8 { (val as u64) << 32 } else { 0 }).to_le_bytes();
+                    let bytes = (val as u64 | if width == 8 { (val as u64) << 32 } else { 0 })
+                        .to_le_bytes();
                     v[i..i + width].copy_from_slice(&bytes[..width]);
                 }
             }
@@ -129,7 +134,9 @@ fn mutate_bytes(rng: &mut Rng, seed: &[u8]) -> Vec<u8> {
 }
 
 fn pattern(frame: u32, n: usize) -> Vec<u8> {
-    (0..n).map(|i| (i as u32 ^ frame.wrapping_mul(13)) as u8).collect()
+    (0..n)
+        .map(|i| (i as u32 ^ frame.wrapping_mul(13)) as u8)
+        .collect()
 }
 
 fn fseq_seeds() -> Vec<Vec<u8>> {
@@ -179,7 +186,12 @@ fn exercise_fseq(bytes: Vec<u8>) {
         return;
     };
     let h = f.header().clone();
-    let _ = (h.media_basename(), h.producer(), h.duration_ms(), f.frame_at_ms(u64::MAX));
+    let _ = (
+        h.media_basename(),
+        h.producer(),
+        h.duration_ms(),
+        f.frame_at_ms(u64::MAX),
+    );
     let size = f.frame_size().min(1 << 20);
     let mut buf = vec![0u8; size];
     let n = f.frame_count();
@@ -338,8 +350,13 @@ fn mutate_xml(rng: &mut Rng, seed: &str) -> String {
     picks.sort_unstable();
     picks.dedup();
     for &at in picks.iter().rev() {
-        let Some(len) = out[at..].find('"') else { continue };
-        let val = rng.pick(INTERESTING_ATTR).replace('<', "&lt;").replace('>', "&gt;");
+        let Some(len) = out[at..].find('"') else {
+            continue;
+        };
+        let val = rng
+            .pick(INTERESTING_ATTR)
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
         out.replace_range(at..at + len, &val);
     }
     match rng.below(8) {
@@ -378,7 +395,11 @@ fn xlights_mutations_never_panic() {
     while Instant::now() < deadline || iterations < 100 {
         let (rgb, net) = *rng.pick(&[(RGB, NET), (RGB_2025, NET_2025)]);
         let rgb = mutate_xml(&mut rng, rgb);
-        let net = if rng.below(3) == 0 { mutate_xml(&mut rng, net) } else { net.to_string() };
+        let net = if rng.below(3) == 0 {
+            mutate_xml(&mut rng, net)
+        } else {
+            net.to_string()
+        };
         let mut w = Vec::new();
         let _ = Networks::parse(&net, &mut w);
         if let Ok(p) = import_preview(&rgb, Some(&net), &show) {
@@ -418,19 +439,30 @@ fn hostile_xml_documents_are_rejected_quickly() {
     assert!(import_preview(rec, None, &show).is_err());
     // Deep nesting.
     let depth = 100_000;
-    let deep = format!("<xrgb><models>{}{}</models></xrgb>", "<g>".repeat(depth), "</g>".repeat(depth));
+    let deep = format!(
+        "<xrgb><models>{}{}</models></xrgb>",
+        "<g>".repeat(depth),
+        "</g>".repeat(depth)
+    );
     // roxmltree recurses per nesting level: this used to overflow the stack and abort.
     assert!(import_preview(&deep, None, &show).is_err());
     assert!(Networks::parse(&deep, &mut Vec::new()).is_err());
     // Huge group membership lists.
     let mut big = String::from("<xrgb><models>");
     for i in 0..3000 {
-        big.push_str(&format!(r#"<model name="m{i}" DisplayAs="Single Line" parm1="1" parm2="1" StartChannel="{}"/>"#, i * 3 + 1));
+        big.push_str(&format!(
+            r#"<model name="m{i}" DisplayAs="Single Line" parm1="1" parm2="1" StartChannel="{}"/>"#,
+            i * 3 + 1
+        ));
     }
     big.push_str("</models><modelGroups>");
     let members: Vec<String> = (0..3000).map(|i| format!("m{i}")).collect();
     for g in 0..20 {
-        big.push_str(&format!(r#"<modelGroup name="g{g}" models="{},g{}"/>"#, members.join(","), (g + 1) % 20));
+        big.push_str(&format!(
+            r#"<modelGroup name="g{g}" models="{},g{}"/>"#,
+            members.join(","),
+            (g + 1) % 20
+        ));
     }
     big.push_str("</modelGroups></xrgb>");
     let p = import_preview(&big, None, &show).unwrap();

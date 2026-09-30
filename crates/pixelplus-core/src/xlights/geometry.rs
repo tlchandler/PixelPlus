@@ -668,7 +668,17 @@ fn poly_points(a: Attrs) -> Vec<[f32; 2]> {
 }
 
 fn poly_line(a: Attrs) -> Shape {
-    let drops = parse_drops(a, "1");
+    // xLights (PolyLineModel::ParseDropSizes) treats a 0 drop as 1 light; it is not
+    // skipped, so it still takes a node.
+    let drops: Vec<i64> = a
+        .str("DropPattern")
+        .unwrap_or("1")
+        .split(',')
+        .map(|v| match strtol(v).clamp(-10_000, 10_000) {
+            0 => 1,
+            d => d,
+        })
+        .collect();
     let path = poly_points(a);
     let segments = path.len().saturating_sub(1).max(1);
     let seg_sizes: Option<Vec<u32>> = if a.str("Seg1").is_some() {
@@ -1046,7 +1056,12 @@ pub(crate) fn custom_layers(a: Attrs) -> Vec<Vec<Vec<u32>>> {
             if f[1] > 100_000 || f[2] > 100_000 || layer > 100_000 {
                 continue;
             }
-            cells.push((clamp_count(f[0]), f[1] as usize, f[2] as usize, layer as usize));
+            cells.push((
+                clamp_count(f[0]),
+                f[1] as usize,
+                f[2] as usize,
+                layer as usize,
+            ));
         }
         let rows = cells.iter().map(|c| c.1 + 1).max().unwrap_or(0);
         let cols = cells.iter().map(|c| c.2 + 1).max().unwrap_or(0);
@@ -1121,7 +1136,13 @@ fn custom(a: Attrs) -> Shape {
         .max(1);
     // Channels span node numbers 1..=max over *all* layers (xLights assigns node n the
     // channels at `start + (n-1)*3`, whether or not every number is used).
-    let nodes = layers.iter().flatten().flatten().copied().max().unwrap_or(0);
+    let nodes = layers
+        .iter()
+        .flatten()
+        .flatten()
+        .copied()
+        .max()
+        .unwrap_or(0);
     let strings = clamp_count(a.int("CustomStrings").unwrap_or(1)).max(1);
     let mut s = Shape::new(PropKind::Custom, nodes, strings);
     if strings > 1 {
@@ -1526,7 +1547,7 @@ mod tests {
         assert_eq!(pos(0), 4 * 4 + 2); // bottom row, column 2
         assert_eq!(pos(10), 4 * 4); // strand 1 follows strand 4 (wrap-around)
         assert_eq!(pos(19), 1); // last pixel: top of column 1
-        // Horizontal strands.
+                                // Horizontal strands.
         let s = with_model(
             r#"DisplayAs="Tree" TreeType="1" NumStrings="2" NodesPerString="6" StrandsPerString="1" StrandDir="Horizontal" exportFirstStrand="1""#,
             shape,
@@ -1542,9 +1563,12 @@ mod tests {
             assert!(s.skip.is_some());
             assert_eq!(s.channels(), 3);
         });
-        with_model(r#"DisplayAs="Image" StringType="Single Color White""#, |a| {
-            assert_eq!(shape(a).channels(), 1);
-        });
+        with_model(
+            r#"DisplayAs="Image" StringType="Single Color White""#,
+            |a| {
+                assert_eq!(shape(a).channels(), 1);
+            },
+        );
     }
 
     #[test]
@@ -1555,6 +1579,22 @@ mod tests {
                 let s = shape(a);
                 assert_eq!((s.nodes, s.physical_strings), (100, 4));
             },
+        );
+    }
+
+    #[test]
+    fn poly_line_zero_drops_count_as_one() {
+        with_model(
+            r#"DisplayAs="Poly Line" NodesPerString="12" DropPattern="3,0,2" NumPoints="2" PointData="0,0,0,10,0,0""#,
+            |a| {
+                // Drops 3,1,2,3,1,2 → 12 lights over 6 drop points.
+                let s = shape(a);
+                assert_eq!(s.nodes, 12);
+            },
+        );
+        with_model(
+            r#"DisplayAs="Poly Line" DropPattern="3,0,2" NumPoints="3" PointData="0,0,0,10,0,0,20,0,0" Seg1="2" Seg2="2""#,
+            |a| assert_eq!(shape(a).nodes, 3 + 1 + 2 + 3),
         );
     }
 

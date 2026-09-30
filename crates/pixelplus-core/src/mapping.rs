@@ -688,7 +688,12 @@ mod tests {
         let mut show = Show::default();
         show.nodes.push(node("n1", BoardKind::Difftx));
         // A segment starting four billion pixels into the output.
-        show.props.push(prop("far", 10, 0, vec![seg("n1", 1, u32::MAX - 20, 10, 0, false)]));
+        show.props.push(prop(
+            "far",
+            10,
+            0,
+            vec![seg("n1", 1, u32::MAX - 20, 10, 0, false)],
+        ));
         // Channel start at the very end of the channel space, two adjacent segments.
         show.props.push(prop(
             "end",
@@ -697,7 +702,12 @@ mod tests {
             vec![seg("n1", 2, 0, 2, 0, false), seg("n1", 2, 2, 2, 2, false)],
         ));
         // A huge prop that is not on this node at all.
-        show.props.push(prop("elsewhere", u32::MAX, 0, vec![seg("n2", 1, 0, 10, 0, false)]));
+        show.props.push(prop(
+            "elsewhere",
+            u32::MAX,
+            0,
+            vec![seg("n2", 1, 0, 10, 0, false)],
+        ));
         let map = NodeMap::build(&show, "n1").unwrap();
         assert!(map.total_pixels() <= 4 * MAX_OUTPUT_PIXELS as u64);
         assert!(map.warnings.iter().any(|w| w.contains("far")));

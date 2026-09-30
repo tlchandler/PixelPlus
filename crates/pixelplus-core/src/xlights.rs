@@ -304,7 +304,10 @@ impl std::fmt::Display for XmlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             XmlError::Xml(e) => e.fmt(f),
-            XmlError::TooDeep => write!(f, "elements are nested more than {MAX_XML_DEPTH} levels deep"),
+            XmlError::TooDeep => write!(
+                f,
+                "elements are nested more than {MAX_XML_DEPTH} levels deep"
+            ),
         }
     }
 }
@@ -1245,7 +1248,9 @@ mod tests {
                 i - 1
             ));
         }
-        xml.push_str(r#"<model name="M0" DisplayAs="Single Line" parm1="1" parm2="2" StartChannel="1"/>"#);
+        xml.push_str(
+            r#"<model name="M0" DisplayAs="Single Line" parm1="1" parm2="2" StartChannel="1"/>"#,
+        );
         xml.push_str("</models></xrgb>");
         let p = std::thread::Builder::new()
             .stack_size(256 * 1024)
@@ -1254,7 +1259,11 @@ mod tests {
             .join()
             .expect("import must not overflow the stack");
         assert_eq!(p.props.len(), n);
-        let last = p.props.iter().find(|p| p.name == format!("M{}", n - 1)).unwrap();
+        let last = p
+            .props
+            .iter()
+            .find(|p| p.name == format!("M{}", n - 1))
+            .unwrap();
         assert_eq!(last.channel_start, 6 * (n as u32 - 1));
     }
 
@@ -1285,7 +1294,10 @@ mod tests {
         assert!(xml_depth_exceeds(ok, 1));
         let deep = format!("<a>{}</a>", "<b>".repeat(300));
         assert!(xml_depth_exceeds(deep.as_bytes(), MAX_XML_DEPTH));
-        assert!(!xml_depth_exceeds(include_bytes!("../testdata/xlights_2025_rgbeffects.xml"), 8));
+        assert!(!xml_depth_exceeds(
+            include_bytes!("../testdata/xlights_2025_rgbeffects.xml"),
+            8
+        ));
     }
 
     #[test]

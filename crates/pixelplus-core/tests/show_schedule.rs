@@ -273,6 +273,41 @@ fn polar_night_still_schedules_sunset_shows() {
 }
 
 #[test]
+fn midnight_sun_does_not_turn_sunset_shows_into_all_day_shows() {
+    // Tromsø in June: the sun never sets. The sunset fallback (solar midnight,
+    // ~00:45 local) lies after the 23:00 end; the show used to roll its end to the
+    // next day and run for ~22 hours every day.
+    let mut s = chicago(vec![entry(
+        "arctic",
+        TimeSpec::Sunset { offset_min: 0 },
+        clock("23:00"),
+    )]);
+    s.location = Location {
+        lat: 69.6492,
+        lon: 18.9553,
+        timezone: "Europe/Oslo".into(),
+        label: None,
+    };
+    let occ = occurrences(&s, at(&s, 2026, 6, 20, 0, 0), 3);
+    assert!(
+        occ.iter().all(|o| o.duration() < Duration::hours(12)),
+        "{occ:?}"
+    );
+    // A show that ends after solar midnight still runs (briefly).
+    s.entries[0].end = clock("02:00");
+    let occ = occurrences(&s, at(&s, 2026, 6, 20, 12, 0), 2);
+    assert!(!occ.is_empty());
+    assert!(
+        occ.iter().all(|o| o.duration() < Duration::hours(2)),
+        "{occ:?}"
+    );
+    // Ordinary winter evenings are unaffected.
+    s.entries[0].end = clock("23:00");
+    let occ = occurrences(&s, at(&s, 2026, 11, 20, 12, 0), 1);
+    assert_eq!(occ.len(), 1);
+}
+
+#[test]
 fn dst_fall_back_keeps_local_times() {
     // DST ends in Chicago on Sunday 2026-11-01.
     let s = chicago(vec![entry("eve", clock("18:00"), clock("23:00"))]);

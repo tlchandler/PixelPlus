@@ -37,3 +37,5 @@ pixelplus_tts = ["data/*.json", "data/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# the package lives next to tests/ (not installed): works from tts/ and from the repo root (CI)
+pythonpath = ["."]

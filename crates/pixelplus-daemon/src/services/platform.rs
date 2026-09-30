@@ -526,14 +526,15 @@ pub(crate) async fn follow(
                     format!("{} failed. Details: journalctl -u {unit}", verb.describe()),
                 );
             }
-            let active = run(
+            // oneshot: "activating" while running, "inactive" once done ("failed" handled above)
+            let finished = run(
                 "systemctl",
-                &["is-active", "--quiet", unit],
+                &["show", "--property=ActiveState", "--value", unit],
                 Duration::from_secs(5),
             )
             .await
-            .is_ok_and(|o| o.success);
-            if !active {
+            .is_ok_and(|o| o.success && o.stdout.trim() == "inactive");
+            if finished {
                 if let Some(s) = current.filter(|s| s.done()) {
                     return s;
                 }
