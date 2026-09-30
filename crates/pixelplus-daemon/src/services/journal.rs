@@ -418,11 +418,8 @@ pub fn read_day(dir: &Path, date: NaiveDate, types: Option<&[String]>) -> Vec<Re
     // Only lines that can be of a wanted type are parsed: the minute-by-minute
     // metrics make up most of a season's journal, and the smart playlists
     // read two weeks of it every 30 s (a cheap substring test first).
-    let quoted: Option<Vec<Vec<u8>>> = types.map(|t| {
-        t.iter()
-            .map(|t| format!("\"{t}\"").into_bytes())
-            .collect()
-    });
+    let quoted: Option<Vec<Vec<u8>>> =
+        types.map(|t| t.iter().map(|t| format!("\"{t}\"").into_bytes()).collect());
     // Split on raw bytes: a line torn by a power cut in the middle of a
     // multi-byte character is skipped, not the end of the day's reading.
     std::io::BufReader::new(f)
