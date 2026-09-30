@@ -1126,8 +1126,11 @@ pub(crate) fn build_sync(
                     .find(|e| e.id == item.id)
             })
             .or(extras.effect.clone()),
-        (_, PlayerState::Effect) => extras.effect.clone(),
-        _ => None,
+        // Sequences carry their own lights; for everything else (DJ clips,
+        // pauses, audio-only items, idle and live looks) followers show the
+        // look the leader's engine is showing.
+        (Some(item), _) if item.kind == "sequence" || item.kind == "request" => None,
+        _ => extras.effect.clone(),
     }
     .map(|mut e| {
         pixelplus_core::effects::stamp_world_bounds(&mut e, &show.props);

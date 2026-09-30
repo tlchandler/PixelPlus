@@ -42,10 +42,6 @@ impl MonoClock {
         }
     }
 
-    pub fn is_paused(&self) -> bool {
-        self.paused
-    }
-
     pub fn seek(&mut self, pos_ms: f64, now_ms: f64) {
         self.base_pos = pos_ms;
         self.base_at = now_ms;
@@ -91,20 +87,12 @@ impl SlewClock {
         self.pos
     }
 
-    pub fn rate(&self) -> f64 {
-        self.rate
-    }
-
     pub fn set_running(&mut self, running: bool, now_ms: f64) {
         self.advance(now_ms);
         self.running = running;
         if !running {
             self.rate = 1.0;
         }
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.running
     }
 
     /// Feed the leader's position `target_ms` valid at local time `now_ms`.
@@ -134,6 +122,7 @@ impl SlewClock {
 
 /// Equal-power gain for a fade level in 0..=1 (sin curve). A fade-in at level
 /// `t` and a fade-out at level `1 - t` always sum to constant power.
+#[cfg_attr(not(feature = "audio"), allow(dead_code))]
 pub fn equal_power(level: f32) -> f32 {
     (level.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2).sin()
 }
@@ -245,7 +234,7 @@ mod tests {
         assert_eq!(c.pos(), target + 1000.0);
         // Ahead by 100 ms: slew slower.
         match c.update(target + 900.0, now, 25.0) {
-            SyncAction::Slew(r) => assert!(r < 1.0 && r >= 1.0 - MAX_SLEW),
+            SyncAction::Slew(r) => assert!((1.0 - MAX_SLEW..1.0).contains(&r)),
             other => panic!("expected slew, got {other:?}"),
         }
     }

@@ -84,7 +84,8 @@ impl EngineOptions {
     }
 }
 
-/// A running engine.
+/// A running engine (tests keep it to read the simulated output and stop it).
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct Engine {
     pub handle: PlayerHandle,
     /// The simulated output's frames (when the sim backend is in use).
@@ -92,6 +93,7 @@ pub struct Engine {
     core_tx: Sender<CoreCmd>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl Engine {
     /// Stop the output thread (blanks the outputs).
     pub fn shutdown(&self) {
@@ -153,6 +155,7 @@ pub fn geometry_status() -> GeometryStatus {
 // Messages between the control task and the output thread
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::large_enum_variant)]
 enum CoreCmd {
     Player(PlayerCmd),
     Show(Arc<Show>),
@@ -598,6 +601,9 @@ struct Core {
 
     audio: AudioEngine,
     audio_retry_at: Instant,
+    audio_backoff: Duration,
+    /// An audio device being opened on a helper thread (opening can hang).
+    audio_pending: Option<Receiver<AudioEngine>>,
     audio_device: String,
 
     program: Option<Program>,
@@ -661,16 +667,8 @@ impl Core {
         let kind = choose_backend(&app, &opts, board, is_pi);
         tracing::info!("pixel output: {kind:?} for board {board:?}");
         let audio_device = show.settings.audio.device.clone();
-        let audio = if opts.audio && identity.role != LocalRole::Follower {
-            AudioEngine::open(&audio_device)
-        } else {
-            AudioEngine::disabled("audio is disabled on this controller")
-        };
-        if let Some(e) = audio.error() {
-            if opts.audio && identity.role != LocalRole::Follower {
-                tracing::warn!("audio unavailable: {e}; lights will run on the system clock");
-            }
-        }
+        let want_audio = opts.audio && identity.role != LocalRole::Follower;
+        let audio = AudioEngine::disabled(if want_audio { "the audio device is starting" } else { "audio is disabled on this controller" });
         let volume = show.settings.audio.volume.min(100);
         let t0 = app.started;
         let shm_dir = opts.shm_dir.clone();
@@ -697,7 +695,9 @@ impl Core {
             chan_b: Vec::new(),
             effect_period: Duration::from_millis(25),
             audio,
-            audio_retry_at: Instant::now() + Duration::from_secs(10),
+            audio_retry_at: Instant::now(),
+            audio_backoff: Duration::from_secs(15),
+            audio_pending: None,
             audio_device,
             program: None,
             current: None,
@@ -899,11 +899,10 @@ impl Core {
             self.clear_playback();
             self.look = None;
             self.follow = FollowState::default();
-            self.audio = if now_is_follower || !self.opts.audio {
-                AudioEngine::disabled("audio is disabled on this controller")
-            } else {
-                AudioEngine::open(&self.audio_device)
-            };
+            self.audio = AudioEngine::disabled("audio is disabled on this controller");
+            self.audio_pending = None;
+            self.audio_retry_at = Instant::now();
+            self.audio_backoff = Duration::from_secs(15);
         }
         let show = self.show.clone();
         self.reload(show);
@@ -1060,8 +1059,8 @@ impl Core {
         };
         self.start_program(Program { origin: Origin::Manual, source, playlist, crossfade_ms: crossfade }, first, now_ms);
         match &self.program {
-            Some(_) => Ok(()),
-            None => Err(ApiError::bad_request(
+            Some(p) if p.origin == Origin::Manual => Ok(()),
+            _ => Err(ApiError::bad_request(
                 self.item_error.as_ref().map(|e| e.0.clone()).unwrap_or_else(|| "Nothing playable.".into()),
             )),
         }
@@ -1310,6 +1309,9 @@ impl Core {
             request_name,
             ..Default::default()
         };
+        // Forget the previous showtime render (its placeholders are stale); if the
+        // new one is not ready in time the clip's last saved render plays.
+        self.dj_rendered.remove(&dj_clip_id);
         let _ = self.events.send(CoreEvent::PrerenderDj { clip_id: dj_clip_id, ctx });
     }
 
@@ -1526,9 +1528,8 @@ impl Core {
                 match behavior {
                     EndBehavior::FinishSong => {
                         self.requests.clear();
-                        match self.program.as_mut().map(|p| &mut p.source) {
-                            Some(Source::Playlist(c)) => c.finish_after_current(),
-                            _ => {}
+                        if let Some(Source::Playlist(c)) = self.program.as_mut().map(|p| &mut p.source) {
+                            c.finish_after_current();
                         }
                     }
                     EndBehavior::StopNow => self.stop(false, false, now_ms),
@@ -1602,16 +1603,56 @@ impl Core {
             self.audio.set_volume(effective);
             self.applied_volume = Some(effective);
         }
-        // Reopen after a failure or a device change, only while no audio plays.
+        // (Re)open after a failure or a device change, only while no audio plays.
+        // Opening happens on a helper thread: a hanging device never stalls the lights.
         let wanted = self.show.settings.audio.device.clone();
         let busy = self.current.as_ref().is_some_and(|a| a.audio.is_some()) || self.outgoing.is_some();
-        if self.opts.audio && !busy && now >= self.audio_retry_at && (!self.audio.available() || wanted != self.audio_device) {
-            self.audio_retry_at = now + Duration::from_secs(15);
+        if let Some(rx) = &self.audio_pending {
+            if busy {
+                return; // swap engines between items only
+            }
+            match rx.try_recv() {
+                Ok(engine) => {
+                    self.audio_pending = None;
+                    if engine.available() {
+                        tracing::info!("audio output ready ({})", self.audio_device);
+                        self.audio_backoff = Duration::from_secs(15);
+                    } else {
+                        let e = engine.error().unwrap_or_default();
+                        tracing::warn!(
+                            "audio unavailable: {e}; lights run on the system clock (retrying in {} s)",
+                            self.audio_backoff.as_secs()
+                        );
+                        self.audio_retry_at = now + self.audio_backoff;
+                        self.audio_backoff = (self.audio_backoff * 2).min(Duration::from_secs(600));
+                    }
+                    self.audio = engine;
+                    self.applied_volume = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.audio_pending = None,
+            }
+            return;
+        }
+        let want = self.opts.audio && !self.is_follower();
+        let device_changed = wanted != self.audio_device;
+        if want && !busy && (device_changed || (!self.audio.available() && now >= self.audio_retry_at)) {
+            if device_changed {
+                self.audio_backoff = Duration::from_secs(15);
+            }
             self.audio_device = wanted.clone();
-            self.audio.reopen(&wanted);
-            self.applied_volume = None;
-            if self.audio.available() {
-                tracing::info!("audio output ready ({wanted})");
+            // Close the old device first (ALSA devices are exclusive).
+            self.audio = AudioEngine::disabled("the audio device is starting");
+            let (tx, rx) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new().name("pp-audio-open".into()).spawn(move || {
+                let _ = tx.send(AudioEngine::open(&wanted));
+            });
+            match spawned {
+                Ok(_) => self.audio_pending = Some(rx),
+                Err(e) => {
+                    tracing::warn!("could not start the audio thread: {e}");
+                    self.audio_retry_at = now + self.audio_backoff;
+                }
             }
         }
     }
@@ -1895,6 +1936,13 @@ impl Core {
     fn compose_follower(&mut self, now_ms: f64) {
         self.frame.clear();
         let f = &mut self.follow;
+        if f.meta.is_none() {
+            // The slice finished opening since the last sync packet.
+            if let Some(m) = f.reader.as_ref().and_then(|r| r.meta()) {
+                f.buf = vec![0; m.frame_len];
+                f.meta = Some(m);
+            }
+        }
         let pos = f.clock.as_mut().map_or(0.0, |c| c.advance(now_ms));
         if let (Some(reader), Some(meta)) = (f.reader.as_ref(), f.meta.as_ref()) {
             let idx = (pos.max(0.0) / meta.frame_ms as f64) as u32;
@@ -2024,7 +2072,9 @@ impl Core {
             }
         };
         if let Some(ms) = seq_ms {
-            return clamp(ms).min(if self.outgoing.is_some() { self.effect_period } else { Duration::MAX });
+            // Crossfades and live overlays (games) run at least at the effect rate.
+            let fast = self.outgoing.is_some() || self.overlays.any_active();
+            return clamp(ms).min(if fast { self.effect_period } else { Duration::MAX });
         }
         let busy = self.program.is_some()
             || self.look.is_some()

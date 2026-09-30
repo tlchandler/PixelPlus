@@ -100,7 +100,6 @@ struct Shared {
 /// Background reader of one sequence file.
 pub struct FrameReader {
     shared: Arc<Shared>,
-    path: PathBuf,
 }
 
 /// Memory budget for read-ahead frames.
@@ -114,18 +113,13 @@ impl FrameReader {
             cond: Condvar::new(),
         });
         let s2 = shared.clone();
-        let p2 = path.clone();
         let spawned = std::thread::Builder::new()
             .name("pp-seqread".into())
-            .spawn(move || reader_thread(s2, p2));
+            .spawn(move || reader_thread(s2, path));
         if let Err(e) = spawned {
             shared.state.lock().error = Some(format!("could not start the frame reader: {e}"));
         }
-        FrameReader { shared, path }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
+        FrameReader { shared }
     }
 
     /// Header facts (None while still opening).
@@ -145,6 +139,7 @@ impl FrameReader {
     }
 
     /// Wait up to `timeout` until frame `idx` is available (tests, preloading).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn wait_ready(&self, idx: u32, timeout: Duration) -> bool {
         let deadline = std::time::Instant::now() + timeout;
         let mut st = self.shared.state.lock();

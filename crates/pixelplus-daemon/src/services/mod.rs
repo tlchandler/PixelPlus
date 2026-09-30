@@ -6,15 +6,19 @@
 // System, content & integrations workstream.
 pub mod alerts;
 pub mod games;
+pub mod geometry;
 pub mod health;
 pub mod logs;
 pub mod media;
 pub mod mqtt;
 pub mod network;
 pub mod oled;
+pub mod platform;
+pub mod provision;
 pub mod requests;
 pub mod seed;
 pub mod sensors;
+pub mod setup;
 pub mod snapshots;
 pub mod system;
 pub mod triggers;
@@ -43,6 +47,8 @@ pub struct Services {
     pub mqtt: mqtt::MqttState,
     pub faults: crate::api::test::FaultState,
     pub tools: crate::api::tools::ToolsState,
+    /// Root helper jobs (`pixelplus-helper@<verb>.service`) and their progress.
+    pub helpers: platform::HelperJobs,
 }
 
 impl Services {

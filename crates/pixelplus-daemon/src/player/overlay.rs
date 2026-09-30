@@ -164,10 +164,6 @@ impl OverlayManager {
         }
     }
 
-    pub fn is_enabled(&self, prop_id: &str) -> bool {
-        self.overlays.get(prop_id).is_some_and(|o| o.enabled)
-    }
-
     /// Replace the content with a grid frame (row-major RGB, width×height×3).
     pub fn set_frame(&mut self, prop: &Prop, rgb: &[u8], now: Instant) {
         let o = self.entry(prop);
@@ -408,10 +404,9 @@ mod tests {
         }
     }
 
+    /// A fresh path (created on demand by `open`).
     fn tmp() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("pp-ovl-{}", pixelplus_core::model::new_id()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+        std::env::temp_dir().join(format!("pp-ovl-{}", pixelplus_core::model::new_id()))
     }
 
     fn active(m: &OverlayManager) -> Option<Vec<u8>> {
@@ -516,7 +511,10 @@ mod tests {
         let b = active(&m).unwrap();
         assert_ne!(a, b);
         m.enable(&prop, false);
-        // QR: shows, then expires back to disabled.
+        // QR (needs at least 21×21): too small here, fine on 32×32.
+        assert!(m.qr(&prop, "http://x.y/", 1000, t0).is_err());
+        prop.pixel_count = 32 * 32;
+        prop.matrix = Some(MatrixInfo { width: 32, height: 32, pixel_map: (0..1024).collect() });
         m.qr(&prop, "http://x.y/", 1000, t0).unwrap();
         m.update(t0);
         assert!(active(&m).is_some());

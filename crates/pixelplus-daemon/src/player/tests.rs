@@ -460,7 +460,7 @@ async fn effect_look_and_pause_resume() {
             id: "green".into(),
             name: "Green".into(),
             effect: EffectKind::Solid,
-            params: [("colors".to_string(), serde_json::json!(["#00ff00"]))].into_iter().collect(),
+            params: [("color".to_string(), serde_json::json!("#00ff00"))].into_iter().collect(),
             target: Target { all: true, ..Default::default() },
         });
     })

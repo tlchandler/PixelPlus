@@ -74,14 +74,7 @@ impl PlaylistCursor {
         self.history.clear();
     }
 
-    pub fn playlist(&self) -> &Playlist {
-        &self.playlist
-    }
-
-    pub fn pos(&self) -> Pos {
-        self.pos
-    }
-
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_done(&self) -> bool {
         self.pos.phase == Phase::Done
     }
@@ -144,10 +137,6 @@ impl PlaylistCursor {
     /// Used when a schedule window ends with `finishSong`.
     pub fn finish_after_current(&mut self) {
         self.ending = true;
-    }
-
-    pub fn is_ending(&self) -> bool {
-        self.ending
     }
 
     fn item_at<'a>(&'a self, pos: Pos, order: &[usize]) -> Option<&'a PlaylistItem> {

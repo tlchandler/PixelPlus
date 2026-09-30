@@ -5,7 +5,6 @@
 //! Everything here degrades gracefully on a development machine or in Docker:
 //! missing tools or files simply leave fields empty.
 
-use crate::api::{ApiError, ApiResult};
 use crate::node::LocalRole;
 use crate::state::AppState;
 use parking_lot::Mutex;
@@ -26,6 +25,11 @@ pub async fn start(state: &AppState) {
     crate::services::logs::attach_events(state.events.clone());
     // Probe the board off the async runtime (I2C, EEPROM).
     let _ = tokio::task::spawn_blocking(detection).await;
+    if let Some(b) = board_override() {
+        tracing::info!("Board set by PIXELPLUS_BOARD: {}", b.display_name());
+    }
+    // Settings handed over by pixelplus.txt / the imager (provision.json).
+    crate::services::provision::start(state).await;
     crate::services::media::purge_trash(&state.config.data_dir);
     crate::services::sensors::start(state);
     crate::services::alerts::start(state);
@@ -141,14 +145,10 @@ fn probe_board() -> (BoardDetection, Option<pixelplus_hw::PiInfo>) {
     {
         if pi.is_some() {
             if let Ok(mut bus) = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS) {
-                let mut eeprom =
-                    pixelplus_hw::eeprom::SysfsEeprom::open(1, pixelplus_hw::eeprom::EEPROM_ADDR)
-                        .ok();
+                let mut eeprom = open_board_eeprom(false).ok();
                 let det = pixelplus_hw::board::detect(
                     &mut bus,
-                    eeprom
-                        .as_mut()
-                        .map(|e| e as &mut dyn pixelplus_hw::EepromStore),
+                    eeprom.as_mut().map(|e| e.as_mut() as &mut dyn pixelplus_hw::EepromStore),
                 );
                 return (det, pi);
             }
@@ -157,9 +157,62 @@ fn probe_board() -> (BoardDetection, Option<pixelplus_hw::PiInfo>) {
     (pixelplus_hw::board::classify(None, &[]), pi)
 }
 
+/// The board EEPROM (AT24C256 at 0x50 on i2c-1), without needing root: the
+/// at24 sysfs file when the kernel driver is bound and we may open it
+/// (`write`: for writing), else direct access through `/dev/i2c-1` (group
+/// `i2c`; `I2C_RDWR` also works while a driver holds the address). We never
+/// register the device via `new_device`, which needs root.
+#[cfg(target_os = "linux")]
+pub fn open_board_eeprom(write: bool) -> Result<Box<dyn pixelplus_hw::EepromStore>, String> {
+    use pixelplus_hw::eeprom::{I2cEeprom, SysfsEeprom, EEPROM_ADDR};
+    let sysfs = Path::new(SysfsEeprom::DEFAULT_PATH);
+    let accessible = std::fs::OpenOptions::new()
+        .read(true)
+        .write(write)
+        .open(sysfs)
+        .is_ok();
+    if accessible {
+        if let Ok(e) = SysfsEeprom::open_path(sysfs) {
+            return Ok(Box::new(e));
+        }
+    }
+    let bus = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS).map_err(|e| e.to_string())?;
+    Ok(Box::new(I2cEeprom::new(bus, EEPROM_ADDR)))
+}
+
+/// `PIXELPLUS_BOARD` (e.g. `virtual` in Docker, `difftx` on a bench Pi without
+/// an EEPROM): overrides detection and the setup wizard's choice.
+pub fn board_override() -> Option<BoardKind> {
+    static OVERRIDE: std::sync::OnceLock<Option<BoardKind>> = std::sync::OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        let v = std::env::var("PIXELPLUS_BOARD").ok()?;
+        let parsed = parse_board_override(&v);
+        if parsed.is_none() && !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("auto") {
+            tracing::warn!(
+                "PIXELPLUS_BOARD={v:?} isn't a board PixelPlus knows (difftx, difftxlarge, diffsmart, bare-pi, virtual, auto); ignoring it"
+            );
+        }
+        parsed
+    })
+}
+
+fn parse_board_override(v: &str) -> Option<BoardKind> {
+    let v = v.trim().to_ascii_lowercase();
+    if v.is_empty() || v == "auto" {
+        return None;
+    }
+    let v = if v == "barepi" || v == "bare_pi" || v == "none" { "bare-pi".to_string() } else { v };
+    serde_json::from_value(serde_json::Value::String(v)).ok()
+}
+
 /// The board this node runs: wizard override, else EEPROM, else a Pi without
 /// a board, else virtual (PC / Docker).
+///
+/// `PIXELPLUS_BOARD` (see [`board_override`]) wins over all of these.
 pub fn effective_board(state: &AppState) -> (BoardKind, Option<String>) {
+    if let Some(b) = board_override() {
+        return (b, None);
+    }
     let id = state.identity();
     if let Some(b) = id.board {
         return (b, id.board_rev.clone());
@@ -378,23 +431,10 @@ pub fn system_timezone() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Set the host time zone (root on Linux only; failures are logged, not fatal).
+/// Set the host time zone (via timedated; failures are logged, not fatal).
 pub async fn set_system_timezone(tz: &str) {
-    if tz.parse::<chrono_tz::Tz>().is_err() || !is_root() || in_docker() || !have("timedatectl") {
-        return;
-    }
-    match run(
-        "timedatectl",
-        &["set-timezone", tz],
-        Duration::from_secs(10),
-    )
-    .await
-    {
-        Ok(o) if o.success => tracing::info!("System time zone set to {tz}"),
-        Ok(o) => tracing::warn!(
-            "Could not set the system time zone to {tz}: {}",
-            o.stderr.trim()
-        ),
+    match crate::services::platform::set_timezone(tz).await {
+        Ok(_) => {}
         Err(e) => tracing::warn!("Could not set the system time zone to {tz}: {e}"),
     }
 }
@@ -539,63 +579,10 @@ pub async fn system_info(state: &AppState, authed: bool) -> serde_json::Value {
 }
 
 // ---------------------------------------------------------------------------
-// Power actions
+// Power actions (see services::platform)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PowerAction {
-    Reboot,
-    Shutdown,
-    RestartService,
-}
-
-/// Check that we may reboot/shut down/restart, then do it after a short delay
-/// (so the HTTP response reaches the browser first).
-pub fn power_action(action: PowerAction) -> ApiResult<&'static str> {
-    if in_docker() {
-        return Err(ApiError::forbidden(match action {
-            PowerAction::RestartService => {
-                "PixelPlus is running in Docker. Restart the container from your Docker or NAS dashboard."
-            }
-            _ => "PixelPlus is running in Docker, so it can't restart or turn off the computer. Use your Docker or NAS dashboard.",
-        }));
-    }
-    if !cfg!(target_os = "linux") || !has_systemd() || !have("systemctl") {
-        return Err(ApiError::forbidden(
-            "This computer can't be restarted from PixelPlus (it isn't a PixelPlus Pi). Restart it yourself.",
-        ));
-    }
-    if !is_root() {
-        return Err(ApiError::forbidden(
-            "PixelPlus isn't running as a system service, so it isn't allowed to do that. Restart it yourself.",
-        ));
-    }
-    let (args, msg): (&[&str], &str) = match action {
-        PowerAction::Reboot => (
-            &["reboot"],
-            "Restarting. PixelPlus will be back in about a minute.",
-        ),
-        PowerAction::Shutdown => (
-            &["poweroff"],
-            "Shutting down. Wait for the green light to stop blinking before unplugging.",
-        ),
-        PowerAction::RestartService => (
-            &["restart", "pixelplusd"],
-            "Restarting PixelPlus. This takes a few seconds.",
-        ),
-    };
-    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(800)).await;
-        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        match run("systemctl", &refs, Duration::from_secs(30)).await {
-            Ok(o) if o.success => {}
-            Ok(o) => tracing::error!("systemctl {} failed: {}", refs.join(" "), o.stderr.trim()),
-            Err(e) => tracing::error!("systemctl {} failed: {e}", refs.join(" ")),
-        }
-    });
-    Ok(msg)
-}
+pub use crate::services::platform::PowerAction;
 
 /// Recent log lines as text: journald when running as a service, else the
 /// in-memory ring buffer.

@@ -15,6 +15,9 @@
 //! to ~2 s ahead. The device callback only pops samples, so it stays cheap on
 //! a Zero 2 W.
 
+// Without the `audio` feature the mixer is only exercised by tests.
+#![cfg_attr(not(feature = "audio"), allow(dead_code))]
+
 use super::clock::equal_power;
 use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
@@ -26,7 +29,10 @@ use std::time::{Duration, Instant};
 
 pub type TrackId = u64;
 
+static NEXT_TRACK: AtomicU64 = AtomicU64::new(1);
+
 /// An ALSA output device (for the audio settings page).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioDevice {
@@ -39,6 +45,7 @@ pub struct AudioDevice {
 
 /// List output devices. Always contains `"default"` first. Never fails
 /// (returns just the default entry when audio support is missing).
+#[allow(dead_code, unused_mut)]
 pub fn list_audio_devices() -> Vec<AudioDevice> {
     let mut out = vec![AudioDevice {
         id: "default".into(),
@@ -62,7 +69,7 @@ pub fn list_audio_devices() -> Vec<AudioDevice> {
     out
 }
 
-#[cfg_attr(not(feature = "audio"), allow(dead_code))]
+#[allow(dead_code)]
 fn pretty_device_name(alsa: &str) -> String {
     // "hw:CARD=Headphones,DEV=0" → "Headphones (hw)"
     if let Some((kind, rest)) = alsa.split_once(':') {
@@ -227,6 +234,9 @@ impl Mixer {
                     } else {
                         t.env = (t.env - t.env_step).max(t.env_target);
                     }
+                    if (t.env - t.env_target).abs() < 1e-4 {
+                        t.env = t.env_target;
+                    }
                 }
                 let g = t.gain * equal_power(t.env);
                 let o = &mut out[f * channels..(f + 1) * channels];
@@ -288,21 +298,18 @@ struct Output {
 pub struct AudioEngine {
     out: Option<Arc<Output>>,
     error: Option<String>,
-    device: String,
-    next_id: TrackId,
 }
 
 impl AudioEngine {
     /// An engine without output (lights-only).
     pub fn disabled(reason: impl Into<String>) -> Self {
-        AudioEngine { out: None, error: Some(reason.into()), device: String::new(), next_id: 1 }
+        AudioEngine { out: None, error: Some(reason.into()) }
     }
 
     /// Open `device` ("default" or an ALSA name). Never fails: on error the
     /// engine is unavailable and [`AudioEngine::error`] says why.
     pub fn open(device: &str) -> Self {
         let mut e = Self::disabled("audio not started");
-        e.device = device.to_string();
         match open_output(device) {
             Ok(out) => {
                 e.out = Some(out);
@@ -311,10 +318,6 @@ impl AudioEngine {
             Err(err) => e.error = Some(err),
         }
         e
-    }
-
-    pub fn device(&self) -> &str {
-        &self.device
     }
 
     /// True while a device is open and healthy.
@@ -333,11 +336,11 @@ impl AudioEngine {
     }
 
     /// Start playing `path` from `start_ms` with `gain_db`, fading in over
-    /// `fade_in_ms`. Returns None when audio is unavailable.
+    /// `fade_in_ms`. Returns None when audio is unavailable. Track ids are
+    /// unique per process, so ids from a replaced engine never collide.
     pub fn play(&mut self, path: &Path, start_ms: u64, gain_db: f32, fade_in_ms: u32) -> Option<TrackId> {
         let out = self.out.as_ref().filter(|o| o.failed.lock().is_none())?.clone();
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = NEXT_TRACK.fetch_add(1, Ordering::Relaxed);
         let queue = TrackQueue::new(out.rate);
         spawn_decoder(path.to_path_buf(), start_ms, queue.clone(), out.rate);
         let mut m = out.mixer.lock();
@@ -390,14 +393,6 @@ impl AudioEngine {
         }
     }
 
-    /// Track duration from the file header (ms), if known.
-    pub fn duration_ms(&self, id: TrackId) -> Option<u64> {
-        let o = self.out.as_ref()?;
-        let m = o.mixer.lock();
-        let d = m.track(id)?.queue.duration_ms.load(Ordering::Relaxed);
-        (d > 0).then_some(d)
-    }
-
     /// Decoder error of a track (unreadable file).
     pub fn track_error(&self, id: TrackId) -> Option<String> {
         let o = self.out.as_ref()?;
@@ -444,20 +439,6 @@ impl AudioEngine {
         }
     }
 
-    /// Number of live tracks (tests / diagnostics).
-    pub fn track_count(&self) -> usize {
-        self.out.as_ref().map_or(0, |o| o.mixer.lock().tracks.len())
-    }
-
-    /// Close and reopen the device (after a failure or a device change).
-    pub fn reopen(&mut self, device: &str) {
-        if let Some(o) = self.out.take() {
-            o.stop.store(true, Ordering::Relaxed);
-        }
-        let next = self.next_id;
-        *self = Self::open(device);
-        self.next_id = next;
-    }
 }
 
 impl Drop for AudioEngine {
@@ -709,11 +690,7 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
      -> Result<bool, String> {
         match resampler {
             None => {
-                out.clear();
-                for i in 0..pending[0].len() {
-                    out.push(pending[0][i]);
-                    out.push(pending[1][i]);
-                }
+                interleave(&pending[0], &pending[1], out);
                 pending[0].clear();
                 pending[1].clear();
                 Ok(queue.push(out))
@@ -730,11 +707,7 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
                             .map_err(|e| e.to_string())?;
                         pending[0].clear();
                         pending[1].clear();
-                        out.clear();
-                        for i in 0..res[0].len() {
-                            out.push(res[0][i]);
-                            out.push(res[1][i]);
-                        }
+                        interleave(&res[0], &res[1], out);
                         return Ok(queue.push(out));
                     }
                     let res = rs
@@ -742,11 +715,7 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
                         .map_err(|e| e.to_string())?;
                     pending[0].drain(..need);
                     pending[1].drain(..need);
-                    out.clear();
-                    for i in 0..res[0].len() {
-                        out.push(res[0][i]);
-                        out.push(res[1][i]);
-                    }
+                    interleave(&res[0], &res[1], out);
                     if !queue.push(out) {
                         return Ok(false);
                     }
@@ -811,6 +780,14 @@ fn decode_into(path: &Path, start_ms: u64, queue: &TrackQueue, rate: u32) -> Res
     }
     flush(&mut pending, &mut resampler, &mut out_interleaved, true)?;
     Ok(())
+}
+
+fn interleave(l: &[f32], r: &[f32], out: &mut Vec<f32>) {
+    out.clear();
+    for (a, b) in l.iter().zip(r) {
+        out.push(*a);
+        out.push(*b);
+    }
 }
 
 // ---------------------------------------------------------------------------

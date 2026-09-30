@@ -29,7 +29,10 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
+// Public API for the settings page and the health check.
+#[allow(unused_imports)]
 pub use audio::{list_audio_devices, AudioDevice};
+#[allow(unused_imports)]
 pub use engine::{geometry_status, GeometryStatus};
 pub use types::*;
 
@@ -64,6 +67,7 @@ pub struct SyncPacket {
 
 /// Command sent to the engine task.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum PlayerCmd {
     Play(PlayRequest, oneshot::Sender<ApiResult<()>>),
     Stop { fade: bool },
@@ -83,7 +87,9 @@ pub enum PlayerCmd {
     Sync(SyncPacket),
     /// Overlay control for a prop (games, text, QR, fault finder).
     Overlay(OverlayCmd),
-    /// Show changed (new version): rebuild maps, reload files.
+    /// Show changed (new version): rebuild maps, reload files. (The engine
+    /// also watches the store itself, so sending this is optional.)
+    #[allow(dead_code)]
     Reload,
 }
 

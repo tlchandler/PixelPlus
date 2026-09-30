@@ -377,7 +377,7 @@ mod tests {
             id: "e".into(),
             name: "E".into(),
             effect: EffectKind::Solid,
-            params: [("colors".to_string(), serde_json::json!(["#00ff00"]))].into_iter().collect(),
+            params: [("color".to_string(), serde_json::json!("#00ff00"))].into_iter().collect(),
             target: Target::default(),
         };
         let r = TestRequest { mode: "effect".into(), effect: Some(preset), ..req.clone() };
