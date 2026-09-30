@@ -71,6 +71,17 @@
 	.switch[aria-checked='true'] .knob {
 		transform: translateX(calc(var(--w) - var(--h)));
 	}
+	/* Touch: an iOS-sized switch whose hit area is a full 44 px. */
+	@media (pointer: coarse) {
+		.switch,
+		.switch.sm {
+			--w: 52px;
+			--h: 32px;
+		}
+		.switch::before {
+			inset: -6px -2px;
+		}
+	}
 	.switch:disabled {
 		opacity: 0.4;
 		cursor: not-allowed;

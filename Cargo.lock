@@ -1865,6 +1865,7 @@ dependencies = [
  "png",
  "rand 0.8.8",
  "reqwest",
+ "ring",
  "rubato",
  "rumqttc",
  "serde",

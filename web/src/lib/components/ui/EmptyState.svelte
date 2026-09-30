@@ -42,7 +42,7 @@
 		border-radius: 18px;
 		display: grid;
 		place-items: center;
-		color: var(--accent);
+		color: var(--accent-text);
 		background: radial-gradient(circle at 50% 30%, var(--accent-soft), transparent 70%), var(--surface-2);
 		border: 1px solid var(--border-2);
 		margin-bottom: 8px;

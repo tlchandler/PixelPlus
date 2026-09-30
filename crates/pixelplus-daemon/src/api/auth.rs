@@ -3,8 +3,14 @@
 //! * No password set → everything is open (the UI nudges the user to set one).
 //! * Password set → a session cookie (`pp_session`) is required, except for
 //!   `/api/v1/auth/*`, `/api/v1/public/*`, `/api/v1/system` (so the UI can show
-//!   the sign-in screen), cluster calls carrying a valid `X-PixelPlus-Key`, and
-//!   local sidecars (loopback + `X-PixelPlus-Local: 1`).
+//!   the sign-in screen) and `/api/v1/cluster/*` (signed with a per-follower
+//!   key, checked in `api::cluster`; a cluster key never opens anything else).
+//! * Local sidecars (games) send `X-PixelPlus-Local: <token>`, the random
+//!   token this daemon writes to `/run/pixelplus/local-token` at startup. It
+//!   is accepted only from loopback, only without proxy headers, and only for
+//!   the few routes in [`super::security::sidecar_route`].
+//! * Sign-in is throttled per client address and globally, and password
+//!   hashing runs on at most two blocking threads.
 
 use super::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -18,19 +24,109 @@ use axum::routing::{post, put};
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::collections::{HashMap, VecDeque};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const COOKIE: &str = "pp_session";
 const SESSION_TTL: Duration = Duration::from_secs(60 * 60 * 24 * 30);
+/// Header carrying the local sidecar token.
+pub const LOCAL_HEADER: &str = "x-pixelplus-local";
+/// Shortest accepted new password (the UI says the same).
+pub const MIN_PASSWORD: usize = 6;
+
+/// Wrong passwords allowed per address before it has to wait.
+const FREE_TRIES: u32 = 5;
+const FIRST_LOCKOUT: Duration = Duration::from_secs(60);
+const MAX_LOCKOUT: Duration = Duration::from_secs(15 * 60);
+/// Wrong passwords from everywhere within [`GLOBAL_WINDOW`] before every
+/// sign-in pauses for [`GLOBAL_LOCKOUT`] (attacks from many addresses).
+const GLOBAL_FAILURES: usize = 50;
+const GLOBAL_WINDOW: Duration = Duration::from_secs(10 * 60);
+const GLOBAL_LOCKOUT: Duration = Duration::from_secs(60);
+
+/// Argon2 uses ~19 MiB and tens of ms per hash: never more than two at once.
+static HASHING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+#[derive(Default)]
+struct IpFailures {
+    failures: u32,
+    until: Option<Instant>,
+    last: Option<Instant>,
+}
+
+/// Sign-in throttle (per address, exponential; plus a global brake).
+#[derive(Default)]
+pub struct Throttle {
+    per_ip: HashMap<IpAddr, IpFailures>,
+    recent: VecDeque<Instant>,
+    global_until: Option<Instant>,
+}
+
+impl Throttle {
+    /// `Err(wait)` while `ip` (or everyone) must wait.
+    pub fn check(&mut self, ip: Option<IpAddr>, now: Instant) -> Result<(), Duration> {
+        if let Some(t) = self.global_until.filter(|t| *t > now) {
+            return Err(t - now);
+        }
+        if let Some(until) = ip
+            .and_then(|ip| self.per_ip.get(&ip))
+            .and_then(|f| f.until)
+            .filter(|t| *t > now)
+        {
+            return Err(until - now);
+        }
+        Ok(())
+    }
+
+    pub fn failure(&mut self, ip: Option<IpAddr>, now: Instant) {
+        while self.recent.front().is_some_and(|t| now.duration_since(*t) > GLOBAL_WINDOW) {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(now);
+        if self.recent.len() >= GLOBAL_FAILURES {
+            self.global_until = Some(now + GLOBAL_LOCKOUT);
+        }
+        let Some(ip) = ip else { return };
+        if self.per_ip.len() > 10_000 {
+            self.per_ip
+                .retain(|_, f| f.last.is_some_and(|l| now.duration_since(l) < MAX_LOCKOUT));
+        }
+        let f = self.per_ip.entry(ip).or_default();
+        // A day without mistakes forgives old ones.
+        if f.last.is_some_and(|l| now.duration_since(l) > Duration::from_secs(24 * 3600)) {
+            f.failures = 0;
+        }
+        f.failures += 1;
+        f.last = Some(now);
+        if f.failures >= FREE_TRIES {
+            let doublings = (f.failures - FREE_TRIES).min(10);
+            let wait = (FIRST_LOCKOUT * 2u32.pow(doublings)).min(MAX_LOCKOUT);
+            f.until = Some(now + wait);
+        }
+    }
+
+    pub fn success(&mut self, ip: Option<IpAddr>) {
+        if let Some(ip) = ip {
+            self.per_ip.remove(&ip);
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Sessions {
     tokens: Mutex<HashMap<String, Instant>>,
+    /// Token for local sidecars (`security::init_local_token`).
+    local_token: OnceLock<String>,
+    pub(crate) throttle: Mutex<Throttle>,
 }
 
 impl Sessions {
+    pub(crate) fn set_local_token(&self, token: String) {
+        let _ = self.local_token.set(token);
+    }
+
     pub(crate) fn create(&self) -> String {
         use rand::RngCore;
         let mut raw = [0u8; 32];
@@ -57,8 +153,10 @@ impl Sessions {
 }
 
 pub fn hash_password(password: &str) -> ApiResult<String> {
-    if password.chars().count() < 4 {
-        return Err(ApiError::bad_request("Use at least 4 characters."));
+    if password.chars().count() < MIN_PASSWORD {
+        return Err(ApiError::bad_request(format!(
+            "Use at least {MIN_PASSWORD} characters."
+        )));
     }
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
@@ -73,6 +171,17 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// [`verify_password`] on a blocking thread, at most two at a time.
+pub async fn verify_password_async(hash: &str, password: &str) -> bool {
+    let Ok(_permit) = HASHING.acquire().await else {
+        return false;
+    };
+    let (hash, password) = (hash.to_string(), password.to_string());
+    tokio::task::spawn_blocking(move || verify_password(&hash, &password))
+        .await
+        .unwrap_or(false)
+}
+
 fn session_token(headers: &HeaderMap) -> Option<String> {
     headers
         .get_all(header::COOKIE)
@@ -84,35 +193,43 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
         .map(|(_, v)| v.to_string())
 }
 
-/// True when the request carries a valid cluster key.
-pub fn has_cluster_key(state: &AppState, headers: &HeaderMap) -> bool {
-    let Some(key) = state.identity().cluster_key else {
-        return false;
-    };
-    headers
-        .get("x-pixelplus-key")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| constant_time_eq(v.as_bytes(), key.as_bytes()))
-}
-
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// True when the request is authenticated (or no password is set).
+/// True when the request is authenticated (or no password is set): a valid
+/// session. (Cluster keys and the local token are *not* enough.)
 pub fn is_authenticated(state: &AppState, headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
+    let _ = peer;
     if state.store.get().settings.security.password_hash.is_none() {
         return true;
     }
-    if peer.is_some_and(|p| p.ip().is_loopback())
-        && headers.get("x-pixelplus-local").is_some_and(|v| v == "1")
-    {
-        return true;
-    }
-    if has_cluster_key(state, headers) {
-        return true;
-    }
     session_token(headers).is_some_and(|t| state.sessions.valid(&t))
+}
+
+/// The request comes from a local sidecar: loopback, no proxy headers, and
+/// the token of this daemon run.
+pub fn is_local_sidecar(state: &AppState, headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
+    let Some(token) = state.sessions.local_token.get() else {
+        return false;
+    };
+    peer.is_some_and(|p| p.ip().is_loopback())
+        && !super::security::forwarded(headers)
+        && headers
+            .get(LOCAL_HEADER)
+            .is_some_and(|v| constant_time_eq(v.as_bytes(), token.as_bytes()))
+}
+
+/// [`is_authenticated`], or a local sidecar on one of its routes.
+pub fn is_authenticated_for(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: Option<SocketAddr>,
+    method: &axum::http::Method,
+    path: &str,
+) -> bool {
+    is_authenticated(state, headers, peer)
+        || (super::security::sidecar_route(method, path) && is_local_sidecar(state, headers, peer))
 }
 
 /// Middleware guarding `/api/v1/*`.
@@ -131,13 +248,21 @@ pub async fn require_auth(
         .unwrap_or_else(|| req.uri().path().to_string());
     let path = if path.starts_with("/api/v1/") || path == "/api/v1" { path } else { format!("/api/v1{path}") };
     let path = path.as_str();
+    let unconfigured = state.identity().role == crate::node::LocalRole::Unconfigured;
+    if path == "/api/v1/system/setup"
+        && unconfigured
+        && !peer.0.is_some_and(|p| super::security::lan_peer(p.ip()))
+    {
+        // Claiming a new controller only from the local network.
+        return ApiError::forbidden("Set up this controller from your local network.").into_response();
+    }
     let open = path.starts_with("/api/v1/auth/")
         || path.starts_with("/api/v1/public/")
         || path == "/api/v1/system"
-        || path == "/api/v1/system/setup" && state.identity().role == crate::node::LocalRole::Unconfigured
-        // Cluster endpoints authenticate with the cluster key themselves.
+        || path == "/api/v1/system/setup" && unconfigured
+        // Cluster endpoints check their signatures themselves.
         || path.starts_with("/api/v1/cluster/");
-    if open || is_authenticated(&state, req.headers(), peer.0) {
+    if open || is_authenticated_for(&state, req.headers(), peer.0, req.method(), path) {
         next.run(req).await
     } else {
         ApiError::unauthorized().into_response()
@@ -149,12 +274,36 @@ struct LoginBody {
     password: String,
 }
 
-async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> ApiResult<Response> {
+fn too_many(wait: Duration) -> ApiError {
+    let secs = wait.as_secs().max(1);
+    let when = if secs >= 90 {
+        format!("{} minutes", secs.div_ceil(60))
+    } else {
+        format!("{secs} seconds")
+    };
+    ApiError::new(
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        "too_many_attempts",
+        format!("Too many wrong passwords. Try again in {when}."),
+    )
+}
+
+async fn login(
+    State(state): State<AppState>,
+    peer: super::Peer,
+    headers: HeaderMap,
+    Json(body): Json<LoginBody>,
+) -> ApiResult<Response> {
     let show = state.store.get();
     let Some(hash) = show.settings.security.password_hash.as_deref() else {
         return Ok(Json(serde_json::json!({ "ok": true })).into_response());
     };
-    if !verify_password(hash, &body.password) {
+    let ip = super::security::client_ip(peer.0, &headers, &show.settings.security.trusted_proxies);
+    if let Err(wait) = state.sessions.throttle.lock().check(ip, Instant::now()) {
+        return Err(too_many(wait));
+    }
+    if body.password.len() > 1024 || !verify_password_async(hash, &body.password).await {
+        state.sessions.throttle.lock().failure(ip, Instant::now());
         // Slow down guessing.
         tokio::time::sleep(Duration::from_millis(600)).await;
         return Err(ApiError::new(
@@ -163,6 +312,7 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Ap
             "That password isn't right.",
         ));
     }
+    state.sessions.throttle.lock().success(ip);
     let token = state.sessions.create();
     let cookie = format!(
         "{COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
@@ -208,8 +358,18 @@ async fn set_password(
     let show = state.store.get();
     if let Some(hash) = show.settings.security.password_hash.as_deref() {
         let authed = is_authenticated(&state, &headers, peer.0);
-        let current_ok = body.current.as_deref().is_some_and(|c| verify_password(hash, c));
+        let ip = super::security::client_ip(peer.0, &headers, &show.settings.security.trusted_proxies);
+        if let Err(wait) = state.sessions.throttle.lock().check(ip, Instant::now()) {
+            return Err(too_many(wait));
+        }
+        let current_ok = match body.current.as_deref() {
+            Some(c) if authed => verify_password_async(hash, c).await,
+            _ => false,
+        };
         if !(authed && current_ok) {
+            if authed {
+                state.sessions.throttle.lock().failure(ip, Instant::now());
+            }
             return Err(ApiError::forbidden("Enter your current password to change it."));
         }
     }
@@ -244,6 +404,39 @@ mod tests {
         let h = hash_password("jingle").unwrap();
         assert!(verify_password(&h, "jingle"));
         assert!(!verify_password(&h, "bells"));
+    }
+
+    #[test]
+    fn short_passwords_are_refused() {
+        assert!(hash_password("12345").is_err());
+        assert!(hash_password("123456").is_ok());
+    }
+
+    #[test]
+    fn throttle_backs_off_per_address_and_globally() {
+        let mut t = Throttle::default();
+        let now = Instant::now();
+        let a: IpAddr = "192.168.1.5".parse().unwrap();
+        let b: IpAddr = "192.168.1.6".parse().unwrap();
+        for _ in 0..FREE_TRIES - 1 {
+            t.failure(Some(a), now);
+            assert!(t.check(Some(a), now).is_ok());
+        }
+        t.failure(Some(a), now);
+        assert_eq!(t.check(Some(a), now), Err(FIRST_LOCKOUT));
+        assert!(t.check(Some(b), now).is_ok(), "other addresses are not affected");
+        assert!(t.check(Some(a), now + FIRST_LOCKOUT).is_ok());
+        t.failure(Some(a), now + FIRST_LOCKOUT);
+        assert_eq!(t.check(Some(a), now + FIRST_LOCKOUT), Err(FIRST_LOCKOUT * 2), "doubles");
+        t.success(Some(a));
+        assert!(t.check(Some(a), now + FIRST_LOCKOUT).is_ok());
+        // Many addresses: everyone waits a minute.
+        let mut t = Throttle::default();
+        for i in 0..GLOBAL_FAILURES {
+            t.failure(Some(IpAddr::from([10, 0, (i / 250) as u8, (i % 250) as u8])), now);
+        }
+        assert!(t.check(Some(b), now).is_err());
+        assert!(t.check(Some(b), now + GLOBAL_LOCKOUT).is_ok());
     }
 
     #[test]

@@ -10,9 +10,8 @@
 	import FollowerScreen from '$lib/components/shell/FollowerScreen.svelte';
 	import Shortcuts from '$lib/components/shell/Shortcuts.svelte';
 	import { NAV } from '$lib/components/shell/nav';
-	import { togglePlay, playerAct } from '$lib/player';
-	import { api } from '$lib/api/client';
-	import { FlaskConical, X } from '@lucide/svelte';
+	import { togglePlay, setLightsOff } from '$lib/player';
+	import { FlaskConical, Power, X } from '@lucide/svelte';
 
 	let { children } = $props();
 	let shortcuts = $state(false);
@@ -45,8 +44,9 @@
 			}
 		} else if (e.key === '?') {
 			shortcuts = true;
-		} else if (e.key === 'b' || e.key === 'B') {
-			playerAct(() => api.blackout(!app.status?.blackout));
+		} else if (e.key === 'B' && e.shiftKey) {
+			// Shift+B, not a bare "b": one stray key press shouldn't turn the whole show dark.
+			setLightsOff(!app.status?.blackout);
 		} else if (e.key === 'g') {
 			gPressed = true;
 			clearTimeout(gTimer);
@@ -97,6 +97,16 @@
 					<button class="btn ghost icon sm" aria-label="Hide" onclick={() => (bannerHidden = true)}
 						><X size={15} /></button
 					>
+				</div>
+			{/if}
+			{#if app.status?.blackout}
+				<div class="lights-off" role="status">
+					<span class="lo-ic"><Power size={18} /></span>
+					<div class="grow">
+						<strong>Lights are off</strong>
+						<span class="lo-sub">Every light is dark until you turn them back on.</span>
+					</div>
+					<button class="btn lo-btn" onclick={() => setLightsOff(false)}>Turn lights back on</button>
 				</div>
 			{/if}
 			{#key page.url.pathname}
@@ -162,6 +172,48 @@
 	.banner :global(svg) {
 		color: var(--purple);
 	}
+	.lights-off {
+		position: sticky;
+		top: 0;
+		z-index: 30;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin: 16px 32px 0;
+		padding: 10px 10px 10px 14px;
+		border-radius: 14px;
+		background: #c9302c;
+		color: #fff;
+		box-shadow: 0 8px 28px rgba(201, 48, 44, 0.35);
+		animation: page-in 220ms var(--ease);
+	}
+	.lo-ic {
+		display: grid;
+		place-items: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 10px;
+		background: rgba(255, 255, 255, 0.16);
+		flex: 0 0 auto;
+	}
+	.lights-off strong {
+		display: block;
+		font-size: 14px;
+	}
+	.lo-sub {
+		font-size: 12.5px;
+		opacity: 0.9;
+	}
+	.lo-btn {
+		background: #fff;
+		color: #8f1d1a;
+		border-color: transparent;
+		font-weight: 650;
+	}
+	.lo-btn:hover {
+		background: #ffe9e8;
+		border-color: transparent;
+	}
 	@media (max-width: 760px) {
 		.desk {
 			display: none;
@@ -175,6 +227,13 @@
 		}
 		.banner {
 			margin: 12px 16px 0;
+		}
+		.lights-off {
+			margin: 8px 8px 0;
+			flex-wrap: wrap;
+		}
+		.lights-off .lo-btn {
+			width: 100%;
 		}
 	}
 </style>

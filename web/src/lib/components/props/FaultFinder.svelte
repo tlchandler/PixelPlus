@@ -2,9 +2,16 @@
 	import type { FaultStep, Prop } from '$lib/api/types';
 	import { api } from '$lib/api/client';
 	import Modal from '$lib/components/ui/Modal.svelte';
-	import { Search, CircleCheck, ThumbsUp, ThumbsDown, Wrench } from '@lucide/svelte';
+	import { Search, CircleCheck, ThumbsUp, ThumbsDown, Wrench, NotebookPen } from '@lucide/svelte';
 
-	let { open = $bindable(false), prop }: { open?: boolean; prop: Prop | null } = $props();
+	let {
+		open = $bindable(false),
+		prop,
+		onnote
+	}: { open?: boolean; prop: Prop | null; onnote?: (text: string) => void } = $props();
+
+	/** Same estimate everywhere: the intro, the progress line and the result. */
+	const estimate = $derived(Math.max(1, Math.ceil(Math.log2((prop?.pixelCount ?? 1) + 1))));
 
 	let step = $state<FaultStep | null>(null);
 	let busy = $state(false);
@@ -52,9 +59,8 @@
 				before it) is usually to blame.
 			</p>
 			<p class="muted">
-				PixelPlus lights the prop a section at a time and asks you whether it looks right. It takes about {Math.ceil(
-					Math.log2((prop?.pixelCount ?? 2) + 1)
-				)} questions. Stand where you can see <strong>{prop?.name}</strong>.
+				PixelPlus lights the prop a section at a time and asks you whether it looks right. It takes about {estimate}
+				questions. Stand where you can see <strong>{prop?.name}</strong>.
 			</p>
 			{#if error}<p class="err small">{error}</p>{/if}
 		</div>
@@ -71,8 +77,8 @@
 	{:else}
 		<div class="q">
 			<div class="row between small faint">
-				<span>Question {step.step} of about {step.totalSteps}</span><span class="num"
-					>{Math.round((step.step / step.totalSteps) * 100)}%</span
+				<span>Question {step.step} of about {Math.max(step.totalSteps, step.step)}</span><span class="num"
+					>{Math.round((step.step / Math.max(step.totalSteps, step.step)) * 100)}%</span
 				>
 			</div>
 			<div class="progress"><span style:width="{(step.step / step.totalSteps) * 100}%"></span></div>
@@ -90,15 +96,27 @@
 			<button class="btn ghost" onclick={close}>Cancel</button>
 			<button class="btn primary" onclick={start} disabled={busy}>Start — light the prop</button>
 		{:else if step.done}
+			{#if step.result?.pixelIndex != null && onnote}
+				<button
+					class="btn"
+					onclick={() => {
+						onnote?.(`Replace pixel ${(step?.result?.pixelIndex ?? 0) + 1}`);
+						close();
+					}}><NotebookPen size={16} /> Add “Replace pixel {step.result.pixelIndex + 1}” to notes</button
+				>
+			{/if}
 			<button class="btn primary" onclick={close}>Done</button>
 		{:else}
-			<button class="btn ghost" onclick={close}>Stop</button>
-			<button class="btn" disabled={busy} onclick={() => answer(false)}
-				><ThumbsDown size={16} /> No, something’s wrong</button
-			>
-			<button class="btn primary" disabled={busy} onclick={() => answer(true)}
-				><ThumbsUp size={16} /> Yes, all good</button
-			>
+			<!-- Big, stacked answers: people tap these with gloves on while looking at the prop. -->
+			<div class="answers">
+				<button class="btn primary lg" disabled={busy} onclick={() => answer(true)}
+					><ThumbsUp size={18} /> Yes, all good</button
+				>
+				<button class="btn lg" disabled={busy} onclick={() => answer(false)}
+					><ThumbsDown size={18} /> No, something’s wrong</button
+				>
+				<button class="btn ghost stop" onclick={close}>Stop looking</button>
+			</div>
 		{/if}
 	{/snippet}
 </Modal>
@@ -119,7 +137,7 @@
 		display: grid;
 		place-items: center;
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.halo.ok {
 		background: var(--green-soft);
@@ -160,5 +178,37 @@
 	}
 	.err {
 		color: var(--red);
+	}
+	.answers {
+		display: grid;
+		grid-template-columns: auto 1fr 1fr;
+		gap: 8px;
+		width: 100%;
+	}
+	.answers .stop {
+		grid-column: 1;
+		grid-row: 1;
+	}
+	.answers .primary {
+		grid-column: 3;
+		grid-row: 1;
+	}
+	@media (max-width: 640px) {
+		.answers {
+			grid-template-columns: 1fr;
+		}
+		.answers .primary {
+			grid-column: auto;
+			grid-row: auto;
+		}
+		.answers .btn {
+			height: 56px;
+			font-size: 16px;
+		}
+		.answers .stop {
+			grid-row: auto;
+			height: 44px;
+			font-size: 14px;
+		}
 	}
 </style>

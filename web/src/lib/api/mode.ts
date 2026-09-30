@@ -8,7 +8,10 @@ export function mockRequested(): boolean {
 	if (typeof window === 'undefined') return false;
 	try {
 		const q = new URLSearchParams(location.search).get('mock');
-		if (q === '1' || q === 'true') sessionStorage.setItem(KEY, '1');
+		// ?mock=empty: the demo backend with a brand-new, empty show (first-run and empty states).
+		if (q === '1' || q === 'true' || q === 'empty') sessionStorage.setItem(KEY, '1');
+		if (q === 'empty') sessionStorage.setItem('pp-mock-empty', '1');
+		else if (q === '1' || q === 'true') sessionStorage.removeItem('pp-mock-empty');
 		if (q === '0' || q === 'false') sessionStorage.removeItem(KEY);
 		if (sessionStorage.getItem(KEY) === '1') return true;
 	} catch {
@@ -55,6 +58,7 @@ export async function initBackend(): Promise<{ mock: boolean; auto: boolean }> {
 export function exitMock() {
 	try {
 		sessionStorage.removeItem(KEY);
+		sessionStorage.removeItem('pp-mock-empty');
 	} catch {
 		/* ignore */
 	}

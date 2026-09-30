@@ -2,9 +2,10 @@
 //! warming, commands and overlay forwarding.
 
 use super::proto::{self, FileProgress, Msg, Ping, Pong, SyncState};
+use super::sig;
 use super::{
     log_warning, net, sleep_or_stop, ClusterCommand, ClusterEvent, CommandResult, DiscoveredNode,
-    NodeStatus, Peer, Shared, KEY_HEADER,
+    NodeStatus, Peer, Shared,
 };
 use crate::api::{ApiError, ApiResult};
 use crate::node::LocalRole;
@@ -13,7 +14,6 @@ use crate::state::AppState;
 use pixelplus_core::model::{BoardKind, Node, NodeRole, OutputConfig, Show};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -172,23 +172,6 @@ pub fn remove_node(show: &mut Show, id: &str) {
     show.receivers.retain(|r| r.node_id != id);
 }
 
-/// The leader's cluster key, created (and persisted) on first use.
-pub fn ensure_cluster_key(state: &AppState) -> anyhow::Result<String> {
-    if let Some(k) = state.identity().cluster_key.filter(|k| !k.is_empty()) {
-        return Ok(k);
-    }
-    use rand::RngCore;
-    let mut raw = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut raw);
-    let key = pixelplus_core::fseq::to_hex(&raw);
-    let id = state.set_identity(|i| {
-        if i.cluster_key.as_deref().map_or(true, str::is_empty) {
-            i.cluster_key = Some(key.clone());
-        }
-    })?;
-    Ok(id.cluster_key.unwrap_or(key))
-}
-
 // ---------------------------------------------------------------------------
 // Peers & status
 // ---------------------------------------------------------------------------
@@ -198,17 +181,26 @@ fn member<'a>(peer: Option<&'a Peer>, my_id: &str) -> Option<&'a Peer> {
     peer.filter(|p| p.authenticated && p.beacon.adopted_by.as_deref() == Some(my_id))
 }
 
-/// UDP addresses of adopted followers (heard from within the last minute).
-pub(crate) fn follower_addrs(state: &AppState, sh: &Shared) -> Vec<SocketAddr> {
+/// Adopted followers heard from within the last minute: (id, UDP address, key).
+pub(crate) fn follower_targets(state: &AppState, sh: &Shared) -> Vec<(String, SocketAddr, String)> {
     let my_id = state.identity().id;
     let show = state.store.get();
-    let peers = sh.peers.read();
-    show.nodes
-        .iter()
-        .filter(|n| n.role == NodeRole::Follower && n.adopted)
-        .filter_map(|n| member(peers.get(&n.id), &my_id))
-        .filter(|p| p.last_seen.elapsed() < Duration::from_secs(60))
-        .map(|p| p.addr)
+    let found: Vec<(String, SocketAddr)> = {
+        let peers = sh.peers.read();
+        show.nodes
+            .iter()
+            .filter(|n| n.role == NodeRole::Follower && n.adopted)
+            .filter_map(|n| member(peers.get(&n.id), &my_id))
+            .filter(|p| p.last_seen.elapsed() < Duration::from_secs(60))
+            .map(|p| (p.beacon.id.clone(), p.addr))
+            .collect()
+    };
+    found
+        .into_iter()
+        .filter_map(|(id, addr)| {
+            let key = sh.follower_key(state, &id)?;
+            Some((id, addr, key))
+        })
         .collect()
 }
 
@@ -373,7 +365,8 @@ pub(crate) fn discovered(state: &AppState, sh: &Shared) -> Vec<DiscoveredNode> {
     let mut out: Vec<DiscoveredNode> = peers
         .values()
         .filter(|p| p.last_seen.elapsed() < DISCOVERY_FRESH)
-        .filter(|p| p.beacon.role != LocalRole::Leader)
+        // A leader is offered only while its admin has "Join another show" open.
+        .filter(|p| p.beacon.role != LocalRole::Leader || p.beacon.joining)
         .filter(|p| !show.node(&p.beacon.id).is_some_and(|n| n.adopted))
         .filter(|p| {
             p.beacon.adopted_by.as_deref() != Some(identity.id.as_str()) || !p.authenticated
@@ -392,6 +385,8 @@ pub(crate) fn discovered(state: &AppState, sh: &Shared) -> Vec<DiscoveredNode> {
             ver: p.beacon.ver.clone(),
             adopted_by: p.beacon.adopted_by.clone(),
             last_seen: rfc3339(p.seen_at),
+            duplicate: p.duplicate(),
+            joining: p.beacon.joining,
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
@@ -418,13 +413,15 @@ pub struct AdoptRequest {
     pub force: bool,
 }
 
-/// Leader → follower `POST /cluster/adopt`.
+/// Leader → follower `POST /cluster/adopt` (signed with the follower's
+/// current key when the leader has one: re-adoption / re-keying).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdoptCall {
     pub leader_id: String,
     pub leader_url: String,
-    pub cluster_key: String,
+    /// The leader's X25519 public key (hex) for this adoption.
+    pub dh: String,
     #[serde(default)]
     pub force: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -443,6 +440,12 @@ pub struct AdoptReply {
     pub board_rev: Option<String>,
     #[serde(default)]
     pub pi_model: Option<String>,
+    /// The follower's X25519 public key (hex).
+    #[serde(default)]
+    pub dh: String,
+    /// [`sig::adopt_proof`] with the derived key.
+    #[serde(default)]
+    pub proof: String,
 }
 
 pub fn validate_node_name(name: &str) -> ApiResult<()> {
@@ -469,28 +472,69 @@ pub(crate) async fn error_message(resp: reqwest::Response) -> String {
     }
 }
 
-async fn call_adopt(sh: &Shared, peer: &Peer, call: &AdoptCall) -> ApiResult<AdoptReply> {
+/// Run the adoption handshake with `peer`: returns its reply and the new
+/// follower key. The call is signed with the key we already share with that
+/// controller, if any (re-adoption, re-keying).
+async fn call_adopt(
+    state: &AppState,
+    sh: &Shared,
+    peer: &Peer,
+    force: bool,
+    name: Option<String>,
+) -> ApiResult<(AdoptReply, String)> {
+    let identity = state.identity();
+    let ip = net::local_ip_towards(peer.addr.ip())
+        .or_else(|| net::interfaces().ips.first().copied())
+        .ok_or_else(|| ApiError::internal("this leader has no network address"))?;
+    let offer = sig::dh_offer().map_err(ApiError::internal)?;
+    let call = AdoptCall {
+        leader_id: identity.id.clone(),
+        leader_url: net::http_url(ip, sh.settings.http_port),
+        dh: offer.public_hex.clone(),
+        force,
+        name,
+    };
+    let body = serde_json::to_vec(&call).map_err(ApiError::internal)?;
     let url = format!("{}/api/v1/cluster/adopt", peer.http_base());
-    let resp = sh
-        .http
-        .post(&url)
-        .header(KEY_HEADER, &call.cluster_key)
-        .json(call)
-        .timeout(Duration::from_secs(8))
-        .send()
-        .await
-        .map_err(|e| {
-            ApiError::new(
-                axum::http::StatusCode::BAD_GATEWAY,
-                "unreachable",
-                format!(
-                    "Couldn't reach {} at {} ({}). Check that it is powered on and on the same network.",
-                    peer.beacon.name,
-                    peer.addr.ip(),
-                    short_err(&e)
-                ),
+    let unreachable = |e: &dyn std::fmt::Display| {
+        ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "unreachable",
+            format!(
+                "Couldn't reach {} at {} ({e}). Check that it is powered on and on the same network.",
+                peer.beacon.name,
+                peer.addr.ip(),
+            ),
+        )
+    };
+    let resp = match sh.follower_key(state, &peer.beacon.id) {
+        Some(key) => {
+            sig::call(
+                sh,
+                &key,
+                &identity.id,
+                &peer.beacon.id,
+                reqwest::Method::POST,
+                &url,
+                Some(body),
+                Duration::from_secs(8),
+                &[],
             )
-        })?;
+            .await
+            .map_err(|e| unreachable(&e))?
+            .resp
+        }
+        None => sh
+            .http
+            .post(&url)
+            .header("x-pixelplus-request", "1")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .timeout(Duration::from_secs(8))
+            .send()
+            .await
+            .map_err(|e| unreachable(&short_err(&e)))?,
+    };
     if !resp.status().is_success() {
         let msg = error_message(resp).await;
         return Err(ApiError::conflict(format!(
@@ -498,9 +542,35 @@ async fn call_adopt(sh: &Shared, peer: &Peer, call: &AdoptCall) -> ApiResult<Ado
             peer.beacon.name
         )));
     }
-    resp.json::<AdoptReply>()
+    let reply = resp
+        .json::<AdoptReply>()
         .await
-        .map_err(|e| ApiError::internal(format!("unexpected adopt reply: {e}")))
+        .map_err(|e| ApiError::internal(format!("unexpected adopt reply: {e}")))?;
+    let bad = || {
+        ApiError::conflict(format!(
+            "{} answered, but could not prove it completed the secure handshake. Is it running an older PixelPlus? Update it and try again.",
+            peer.beacon.name
+        ))
+    };
+    if !sig::valid_public(&reply.dh) {
+        return Err(bad());
+    }
+    let key = sig::derive_key(
+        offer,
+        &reply.dh,
+        &identity.id,
+        &reply.id,
+        &call.dh,
+        &reply.dh,
+    )
+    .ok_or_else(bad)?;
+    if !proto::ct_eq(
+        sig::adopt_proof(&key, &identity.id, &reply.id).as_bytes(),
+        reply.proof.as_bytes(),
+    ) {
+        return Err(bad());
+    }
+    Ok((reply, key))
 }
 
 fn short_err(e: &reqwest::Error) -> String {
@@ -511,26 +581,6 @@ fn short_err(e: &reqwest::Error) -> String {
     } else {
         e.to_string()
     }
-}
-
-fn adopt_call_for(
-    state: &AppState,
-    sh: &Shared,
-    peer: &Peer,
-    force: bool,
-    name: Option<String>,
-) -> anyhow::Result<AdoptCall> {
-    let key = ensure_cluster_key(state)?;
-    let ip = net::local_ip_towards(peer.addr.ip())
-        .or_else(|| net::interfaces().ips.first().copied())
-        .ok_or_else(|| anyhow::anyhow!("this leader has no network address"))?;
-    Ok(AdoptCall {
-        leader_id: state.identity().id,
-        leader_url: net::http_url(ip, sh.settings.http_port),
-        cluster_key: key,
-        force,
-        name,
-    })
 }
 
 /// Adopt a discovered controller and add it to the show.
@@ -578,20 +628,37 @@ pub async fn adopt(state: &AppState, sh: &Shared, req: AdoptRequest) -> ApiResul
                 "That controller is not announcing itself any more. Check that it is powered on and on the same network.",
             )
         })?;
-    if peer.beacon.role == LocalRole::Leader && !req.force {
+    if peer.duplicate() {
         return Err(ApiError::conflict(format!(
-            "{} is itself a show leader. Adopting it replaces its own show with this one; confirm to continue.",
+            "Two devices on the network claim to be {} (possible duplicate or impostor). Check that only one controller uses this SD card, then try again in a minute.",
             peer.beacon.name
         )));
     }
-    let call = adopt_call_for(state, sh, &peer, req.force, req.name.clone())
-        .map_err(ApiError::internal)?;
-    let reply = call_adopt(sh, &peer, &call).await?;
+    if peer.beacon.role == LocalRole::Leader {
+        if !peer.beacon.joining {
+            return Err(ApiError::conflict(format!(
+                "{} is itself a show leader. To add it to this show, open PixelPlus on {} and choose Controllers → Join another show, then adopt it here.",
+                peer.beacon.name, peer.beacon.name
+            )));
+        }
+        if !req.force {
+            return Err(ApiError::conflict(format!(
+                "{} is itself a show leader. Adopting it replaces its own show with this one; confirm to continue.",
+                peer.beacon.name
+            )));
+        }
+    }
+    let (reply, key) = call_adopt(state, sh, &peer, req.force, req.name.clone()).await?;
     if reply.id != req.id {
         return Err(ApiError::conflict(
             "A different controller answered at that address; try again.",
         ));
     }
+    let reply_id = reply.id.clone();
+    sh.update_keys(|k| {
+        k.followers.insert(reply_id, key);
+    });
+    sh.replay.lock().forget(&reply.id);
 
     let name = req
         .name
@@ -666,20 +733,26 @@ pub struct ReleaseResult {
 /// Tell a follower to forget this leader (best effort).
 pub(crate) async fn call_release(state: &AppState, sh: &Shared, node_id: &str) -> bool {
     let my_id = state.identity().id;
-    let Some(key) = state.identity().cluster_key else {
+    let Some(key) = sh.follower_key(state, node_id) else {
         return false;
     };
     let Some(peer) = member(sh.peers.read().get(node_id), &my_id).cloned() else {
         return false;
     };
     let url = format!("{}/api/v1/cluster/release", peer.http_base());
-    match sh
-        .http
-        .post(&url)
-        .header(KEY_HEADER, key)
-        .timeout(Duration::from_secs(4))
-        .send()
-        .await
+    match sig::call(
+        sh,
+        &key,
+        &my_id,
+        node_id,
+        reqwest::Method::POST,
+        &url,
+        Some(b"{}".to_vec()),
+        Duration::from_secs(4),
+        &[],
+    )
+    .await
+    .map(|r| r.resp)
     {
         Ok(r) if r.status().is_success() => true,
         Ok(r) => {
@@ -715,6 +788,10 @@ pub async fn release(
         return Err(ApiError::bad_request("The show leader cannot be released."));
     }
     let reached = call_release(state, sh, node_id).await;
+    // A released follower's key is worthless from now on.
+    sh.update_keys(|k| {
+        k.followers.remove(node_id);
+    });
     let id = node_id.to_string();
     state
         .store
@@ -746,9 +823,6 @@ pub(crate) async fn send_command(
 ) -> Vec<CommandResult> {
     let Some(state) = sh.app() else { return vec![] };
     let identity = state.identity();
-    let Some(key) = identity.cluster_key.clone() else {
-        return vec![];
-    };
     let show = state.store.get();
     cmd.stamp(&show.props);
     let targets: Vec<(String, Option<Peer>)> = {
@@ -765,11 +839,13 @@ pub(crate) async fn send_command(
             })
             .collect()
     };
+    let body = serde_json::to_vec(&cmd).unwrap_or_default();
     let calls = targets.into_iter().map(|(id, peer)| {
-        let key = key.clone();
-        let cmd = cmd.clone();
+        let key = sh.follower_key(&state, &id);
+        let body = body.clone();
+        let my_id = identity.id.clone();
         async move {
-            let Some(peer) = peer else {
+            let (Some(peer), Some(key)) = (peer, key) else {
                 return CommandResult {
                     node_id: id,
                     ok: false,
@@ -777,14 +853,19 @@ pub(crate) async fn send_command(
                 };
             };
             let url = format!("{}/api/v1/cluster/command", peer.http_base());
-            let r = sh
-                .http
-                .post(&url)
-                .header(KEY_HEADER, key)
-                .json(&cmd)
-                .timeout(Duration::from_secs(4))
-                .send()
-                .await;
+            let r = sig::call(
+                sh,
+                &key,
+                &my_id,
+                &id,
+                reqwest::Method::POST,
+                &url,
+                Some(body),
+                Duration::from_secs(4),
+                &[],
+            )
+            .await
+            .map(|r| r.resp);
             match r {
                 Ok(r) if r.status().is_success() => CommandResult {
                     node_id: id,
@@ -799,7 +880,7 @@ pub(crate) async fn send_command(
                 Err(e) => CommandResult {
                     node_id: id,
                     ok: false,
-                    error: Some(short_err(&e)),
+                    error: Some(e.short()),
                 },
             }
         }
@@ -814,7 +895,7 @@ pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
     if identity.role != LocalRole::Leader {
         return 0;
     }
-    let (Some(key), Some(sock)) = (identity.cluster_key.as_deref(), sh.overlay_socket.get()) else {
+    let Some(sock) = sh.overlay_socket.get() else {
         return 0;
     };
     let show = state.store.get();
@@ -832,28 +913,34 @@ pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
     if nodes.is_empty() {
         return 0;
     }
-    let frame_no = sh.overlay_frame.fetch_add(1, Ordering::Relaxed);
-    let packet = match proto::encode_overlay(prop_id, frame_no, rgb, key) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::debug!("overlay for {prop_id} not forwarded: {e}");
-            return 0;
-        }
+    let dests: Vec<(String, SocketAddr)> = {
+        let peers = sh.peers.read();
+        nodes
+            .into_iter()
+            .filter_map(|id| member(peers.get(id), &identity.id))
+            .map(|peer| {
+                let port = match peer.beacon.overlay {
+                    0 => peer.addr.port().wrapping_add(1),
+                    p => p,
+                };
+                (peer.beacon.id.clone(), SocketAddr::new(peer.addr.ip(), port))
+            })
+            .collect()
     };
-    let peers = sh.peers.read();
     let mut sent = 0;
-    for id in nodes {
-        let Some(peer) = member(peers.get(id), &identity.id) else {
+    for (id, dest) in dests {
+        let Some(key) = sh.follower_key(&state, &id) else {
             continue;
         };
-        let port = match peer.beacon.overlay {
-            0 => peer.addr.port().wrapping_add(1),
-            p => p,
+        // One packet per follower: each is MACed with that follower's key.
+        let packet = match proto::encode_overlay(prop_id, rgb, sh.stamp(&key)) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::debug!("overlay for {prop_id} not forwarded: {e}");
+                return sent;
+            }
         };
-        if sock
-            .try_send_to(&packet, SocketAddr::new(peer.addr.ip(), port))
-            .is_ok()
-        {
+        if sock.try_send_to(&packet, dest).is_ok() {
             sent += 1;
         }
     }
@@ -864,7 +951,9 @@ pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
 // Clock
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn on_ping(state: &AppState, sh: &Shared, ping: Ping, src: SocketAddr) {
+/// A follower's (authenticated, fresh) clock probe: answer with a pong MACed
+/// with its key.
+pub(crate) async fn on_ping(state: &AppState, sh: &Shared, ping: Ping, key: &str, src: SocketAddr) {
     let t1 = sh.now_ms();
     let identity = state.identity();
     if identity.role != LocalRole::Leader {
@@ -876,8 +965,7 @@ pub(crate) async fn on_ping(state: &AppState, sh: &Shared, ping: Ping, src: Sock
         t1,
         boot: sh.boot.clone(),
     });
-    sh.send_json(&pong, identity.cluster_key.as_deref(), &[src])
-        .await;
+    sh.send_json(&pong, Some(key), &[src]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -998,12 +1086,23 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                 continue;
             };
             match peer.beacon.adopted_by.as_deref() {
-                // It lost its settings (reset, new SD card with the same id…): adopt it again.
-                None if peer.beacon.role != LocalRole::Leader => {
+                // It lost its settings (reset, released locally…): adopt it again.
+                // Not while two devices claim this id (spoofing).
+                None if peer.beacon.role != LocalRole::Leader && !peer.duplicate() => {
                     if h.last_readopt.map_or(true, |t| t.elapsed() > READOPT_EVERY) {
                         h.last_readopt = Some(Instant::now());
                         readopt.push(peer.clone());
                     }
+                }
+                // Adopted by an older PixelPlus with the show-wide key: give
+                // it its own key (signed with the old one).
+                Some(l) if l == identity.id
+                    && m.is_some()
+                    && sh.uses_legacy_key(&node.id)
+                    && h.last_readopt.map_or(true, |t| t.elapsed() > READOPT_EVERY) =>
+                {
+                    h.last_readopt = Some(Instant::now());
+                    readopt.push(peer.clone());
                 }
                 Some(other) if other != identity.id => {
                     if !h.warned_foreign {
@@ -1044,11 +1143,15 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
         let sh2 = sh.clone();
         let state2 = state.clone();
         tokio::spawn(async move {
-            let Ok(call) = adopt_call_for(&state2, &sh2, &peer, false, None) else {
-                return;
-            };
-            match call_adopt(&sh2, &peer, &call).await {
-                Ok(_) => tracing::info!("re-adopted {}", peer.beacon.name),
+            match call_adopt(&state2, &sh2, &peer, false, None).await {
+                Ok((reply, key)) if reply.id == peer.beacon.id => {
+                    sh2.update_keys(|k| {
+                        k.followers.insert(reply.id.clone(), key);
+                    });
+                    sh2.replay.lock().forget(&reply.id);
+                    tracing::info!("re-adopted {} with a new key", peer.beacon.name);
+                }
+                Ok(_) => tracing::warn!("re-adopting {}: a different controller answered", peer.beacon.name),
                 Err(e) => tracing::warn!("re-adopting {} failed: {}", peer.beacon.name, e.message),
             }
         });
@@ -1201,22 +1304,12 @@ async fn sync_loop(state: AppState, sh: Arc<Shared>) {
         if !urgent && !active && n % 8 != 0 {
             continue;
         }
-        let packet = build_sync(&state, &sh, &current.0, current.1);
-        let identity = state.identity();
-        let mut dests = follower_addrs(&state, &sh);
-        dests.extend(sh.static_peers().await);
-        // Broadcast about once a second (or always when changes happen) for
-        // followers whose address we do not know yet.
-        if urgent || n % 4 == 0 {
-            dests.extend(sh.broadcast_dests(sh.settings.port));
+        let packet = Msg::Sync(build_sync(&state, &sh, &current.0, current.1));
+        // Unicast to every adopted follower, MACed with its own key (followers
+        // announce their address in beacons every 2 s).
+        for (_, addr, key) in follower_targets(&state, &sh) {
+            sh.send_json(&packet, Some(&key), &[addr]).await;
         }
-        dests.sort();
-        dests.dedup();
-        if dests.is_empty() || identity.cluster_key.is_none() {
-            continue;
-        }
-        sh.send_json(&Msg::Sync(packet), identity.cluster_key.as_deref(), &dests)
-            .await;
     }
 }
 

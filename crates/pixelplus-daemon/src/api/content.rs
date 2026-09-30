@@ -6,6 +6,7 @@ use super::crud::merge_patch;
 use super::{ApiError, ApiResult};
 use crate::player::PlayerHandle;
 use crate::services::media::{self as media_svc, MediaMeta};
+use crate::services::paths;
 use crate::state::AppState;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -94,9 +95,7 @@ pub(crate) async fn save_field(
 /// The show without the password hash (as `GET /show` returns it).
 pub(crate) fn public_show(show: &Show) -> Show {
     let mut s = show.clone();
-    if s.settings.security.password_hash.is_some() {
-        s.settings.security.password_hash = Some(String::new());
-    }
+    super::show::redact_settings(&mut s.settings);
     s
 }
 
@@ -667,20 +666,21 @@ async fn sequence_thumbnail(
     let seq = show
         .sequence(&id)
         .ok_or_else(|| ApiError::not_found("That sequence"))?;
-    let path = state.config.data_dir.join(
-        seq.thumbnail
-            .clone()
-            .unwrap_or_else(|| format!("thumbnails/{id}.png")),
-    );
+    // Paths come from show.json: only well-formed data paths (services::paths).
+    let data_dir = &state.config.data_dir;
+    let rel = seq
+        .thumbnail
+        .clone()
+        .unwrap_or_else(|| format!("thumbnails/{id}.png"));
+    let path = paths::resolve(data_dir, &rel, paths::Kind::Thumbnail)
+        .ok_or_else(|| ApiError::not_found("A preview for that sequence"))?;
     let bytes = match tokio::fs::read(&path).await {
         Ok(b) => b,
         Err(_) => {
             // Draw it now (older uploads, or a restored show).
-            let (src, dst, props) = (
-                state.config.data_dir.join(&seq.file),
-                path.clone(),
-                show.props.clone(),
-            );
+            let src = paths::resolve(data_dir, &seq.file, paths::Kind::Sequence)
+                .ok_or_else(|| ApiError::not_found("A preview for that sequence"))?;
+            let (dst, props) = (path.clone(), show.props.clone());
             let _ = tokio::fs::create_dir_all(state.config.thumbnails_dir()).await;
             tokio::task::spawn_blocking(move || generate_thumbnail(&src, &props, &dst))
                 .await
@@ -915,23 +915,45 @@ async fn media_file(
     let m = show
         .media_item(&id)
         .ok_or_else(|| ApiError::not_found("That audio file"))?;
-    let path = state.config.data_dir.join(&m.file);
-    if !path.is_file() {
-        return Err(ApiError::not_found("The audio file on disk"));
-    }
-    let resp = tower_http::services::ServeFile::new(path)
+    // Never a path from show.json as such (services::paths), and only ever
+    // served as audio: a whitelisted type, `nosniff` (global) and a download
+    // disposition, so nothing uploaded can run as a page on this origin.
+    let path = paths::resolve(&state.config.data_dir, &m.file, paths::Kind::Media)
+        .filter(|p| p.is_file())
+        .ok_or_else(|| ApiError::not_found("The audio file on disk"))?;
+    let mime = audio_mime(&m.file).ok_or_else(|| ApiError::not_found("The audio file on disk"))?;
+    let resp = tower_http::services::ServeFile::new_with_mime(path, &mime.parse().map_err(ApiError::internal)?)
         .oneshot(req)
         .await
         .map_err(ApiError::internal)?;
     let mut resp = resp.map(axum::body::Body::new);
-    let disp = format!(
-        "inline; filename=\"{}\"",
-        media_original(&state, m).replace('"', "")
+    let name: String = media_original(&state, m)
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '"' | '\\' | ';'))
+        .collect();
+    let ascii: String = name.chars().map(|c| if c.is_ascii() { c } else { '_' }).collect();
+    let disp = format!("attachment; filename=\"{ascii}\"");
+    let h = resp.headers_mut();
+    h.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&disp).unwrap_or(HeaderValue::from_static("attachment")),
     );
-    if let Ok(v) = HeaderValue::from_str(&disp) {
-        resp.headers_mut().insert(header::CONTENT_DISPOSITION, v);
-    }
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     Ok(resp)
+}
+
+/// The only content types audio files are served with.
+pub(crate) fn audio_mime(rel: &str) -> Option<&'static str> {
+    let ext = rel.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "mp3" => "audio/mpeg",
+        "ogg" | "oga" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        _ => return None,
+    })
 }
 
 #[derive(Deserialize)]

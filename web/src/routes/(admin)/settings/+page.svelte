@@ -56,7 +56,8 @@
 		Radio,
 		Terminal,
 		TriangleAlert,
-		X
+		X,
+		WifiOff
 	} from '@lucide/svelte';
 
 	type Sec =
@@ -502,108 +503,126 @@
 									</div>
 								</div>
 							{/if}
-							<div class="form-grid">
-								<label class="field"
-									><span class="label">Controller name on the network</span>
-									<div class="input-group">
-										<input class="input" bind:value={net.hostname} /><span class="suffix">.local</span>
-									</div>
-									<span class="hint">Open the app at http://{net.hostname}.local</span></label
-								>
-								<label class="field"
-									><span class="label">Wi-Fi country</span><select
-										class="select"
-										bind:value={net.wifi.country}
-										>{#each ['US', 'CA', 'GB', 'IE', 'AU', 'NZ', 'DE', 'FR', 'NL', 'SE', 'NO', 'MX'] as c (c)}<option
-												value={c}>{c}</option
-											>{/each}</select
-									></label
-								>
-							</div>
-							<div class="wifi">
-								<div class="row">
-									<h3 class="grow">Wi-Fi network</h3>
-									<button class="btn sm" onclick={doScan} disabled={scanning}
-										><RefreshCw size={14} class={scanning ? 'spin' : ''} />
-										{scanning ? 'Scanning…' : 'Scan'}</button
+							{#if net.managed === false}
+								<!-- Not ours to change: show what the computer uses, read-only. -->
+								<dl class="nw-facts">
+									<dt>Name on the network</dt>
+									<dd class="mono">{net.hostname || sys?.hostname || '—'}</dd>
+									<dt>Addresses</dt>
+									<dd class="mono">{sys?.ips?.length ? sys.ips.join(', ') : '—'}</dd>
+									<dt>Wi-Fi</dt>
+									<dd>{sys?.wifi?.ssid ? `${sys.wifi.ssid} · ${sys.wifi.signal} dBm` : 'Not connected'}</dd>
+								</dl>
+							{:else}
+								<div class="form-grid">
+									<label class="field"
+										><span class="label">Controller name on the network</span>
+										<div class="input-group">
+											<input class="input" bind:value={net.hostname} /><span class="suffix">.local</span>
+										</div>
+										<span class="hint">Open the app at http://{net.hostname}.local</span></label
+									>
+									<label class="field"
+										><span class="label">Wi-Fi country</span><select
+											class="select"
+											bind:value={net.wifi.country}
+											>{#each ['US', 'CA', 'GB', 'IE', 'AU', 'NZ', 'DE', 'FR', 'NL', 'SE', 'NO', 'MX'] as c (c)}<option
+													value={c}>{c}</option
+												>{/each}</select
+										></label
 									>
 								</div>
-								<div class="current">
-									<Wifi size={16} /> Connected to <strong>{net.wifi.ssid || '—'}</strong>{#if sys?.wifi}<span
-											class="faint small">· {sys.wifi.signal} dBm</span
-										>{/if}
-								</div>
-								{#if scan}
-									<div class="nets">
-										{#each scan as n (n.ssid)}
-											{@const Sig = sigIcon(n.signal)}
-											<button
-												class="netrow"
-												class:on={net.wifi.ssid === n.ssid}
-												onclick={() => net && (net.wifi.ssid = n.ssid)}
-											>
-												<Sig size={16} /><span class="grow">{n.ssid}</span>{#if n.secure}<Lock
-														size={13}
-														class="faint"
-													/>{/if}{#if net.wifi.ssid === n.ssid}<Check size={15} />{/if}
-											</button>
-										{/each}
+								<div class="wifi">
+									<div class="row">
+										<h3 class="grow">Wi-Fi network</h3>
+										<button class="btn sm" onclick={doScan} disabled={scanning}
+											><RefreshCw size={14} class={scanning ? 'spin' : ''} />
+											{scanning ? 'Scanning…' : 'Scan'}</button
+										>
 									</div>
-								{/if}
-								<label class="field" style="margin-top:12px"
-									><span class="label">Password for {net.wifi.ssid}</span><input
-										class="input"
-										type="password"
-										placeholder="Leave empty to keep the current password"
-										bind:value={psk}
-										autocomplete="new-password"
-									/></label
-								>
-							</div>
-							<details class="adv">
-								<summary>Wired network (Ethernet)</summary>
-								<div class="form-grid" style="margin-top:12px">
-									<div class="field span-2">
-										<span class="label">Addressing</span><Segmented
-											value={net.ethernet.dhcp ? 'dhcp' : 'static'}
-											label="Addressing"
-											onchange={(v) => net && (net.ethernet.dhcp = v === 'dhcp')}
-											options={[
-												{ value: 'dhcp', label: 'Automatic (DHCP)' },
-												{ value: 'static', label: 'Fixed address' }
-											]}
-										/>
+									<div class="current">
+										{#if net.wifi.ssid}
+											<Wifi size={16} /> Connected to <strong>{net.wifi.ssid}</strong>{#if sys?.wifi}<span
+													class="faint small">· {sys.wifi.signal} dBm</span
+												>{/if}
+										{:else}
+											<WifiOff size={16} /> Not connected to Wi-Fi — scan and pick a network.
+										{/if}
 									</div>
-									{#if !net.ethernet.dhcp}
-										<label class="field"
-											><span class="label">Address</span><input
-												class="input mono"
-												placeholder="192.168.1.40/24"
-												bind:value={net.ethernet.address}
-											/></label
-										>
-										<label class="field"
-											><span class="label">Gateway</span><input
-												class="input mono"
-												placeholder="192.168.1.1"
-												bind:value={net.ethernet.gateway}
-											/></label
-										>
-										<label class="field"
-											><span class="label">DNS</span><input
-												class="input mono"
-												placeholder="1.1.1.1"
-												bind:value={net.ethernet.dns}
-											/></label
-										>
+									{#if scan}
+										<div class="nets">
+											{#each scan as n (n.ssid)}
+												{@const Sig = sigIcon(n.signal)}
+												<button
+													class="netrow"
+													class:on={net.wifi.ssid === n.ssid}
+													onclick={() => net && (net.wifi.ssid = n.ssid)}
+												>
+													<Sig size={16} /><span class="grow">{n.ssid}</span>{#if n.secure}<Lock
+															size={13}
+															class="faint"
+														/>{/if}{#if net.wifi.ssid === n.ssid}<Check size={15} />{/if}
+												</button>
+											{/each}
+										</div>
 									{/if}
+									<label class="field" style="margin-top:12px"
+										><span class="label"
+											>{net.wifi.ssid ? `Password for ${net.wifi.ssid}` : 'Wi-Fi password'}</span
+										><input
+											class="input"
+											type="password"
+											placeholder="Leave empty to keep the current password"
+											bind:value={psk}
+											autocomplete="new-password"
+										/></label
+									>
 								</div>
-							</details>
-							<div class="row" style="margin-top:18px;justify-content:flex-end">
-								<button class="btn primary" disabled={!netDirty || net.managed === false} onclick={saveNet}
-									>Apply network settings</button
-								>
-							</div>
+								<details class="adv">
+									<summary>Wired network (Ethernet)</summary>
+									<div class="form-grid" style="margin-top:12px">
+										<div class="field span-2">
+											<span class="label">Addressing</span><Segmented
+												value={net.ethernet.dhcp ? 'dhcp' : 'static'}
+												label="Addressing"
+												onchange={(v) => net && (net.ethernet.dhcp = v === 'dhcp')}
+												options={[
+													{ value: 'dhcp', label: 'Automatic (DHCP)' },
+													{ value: 'static', label: 'Fixed address' }
+												]}
+											/>
+										</div>
+										{#if !net.ethernet.dhcp}
+											<label class="field"
+												><span class="label">Address</span><input
+													class="input mono"
+													placeholder="192.168.1.40/24"
+													bind:value={net.ethernet.address}
+												/></label
+											>
+											<label class="field"
+												><span class="label">Gateway</span><input
+													class="input mono"
+													placeholder="192.168.1.1"
+													bind:value={net.ethernet.gateway}
+												/></label
+											>
+											<label class="field"
+												><span class="label">DNS</span><input
+													class="input mono"
+													placeholder="1.1.1.1"
+													bind:value={net.ethernet.dns}
+												/></label
+											>
+										{/if}
+									</div>
+								</details>
+								<div class="row" style="margin-top:18px;justify-content:flex-end">
+									<button class="btn primary" disabled={!netDirty} onclick={saveNet}
+										>Apply network settings</button
+									>
+								</div>
+							{/if}
 						{/if}
 					</div>
 				</section>
@@ -1310,12 +1329,22 @@
 							{#if upd.message && upd.canApply === false}<div class="small muted">{upd.message}</div>{/if}
 							{#if upd.notes}<pre class="notes">{upd.notes}</pre>{/if}
 						{:else}
+							<!-- A message without an update means the check couldn't run (no repository,
+							     offline, Docker): don't claim "up to date" then. -->
 							<div class="upd">
-								<span class="icon-tile green"><Check size={20} /></span>
-								<div class="grow">
-									<strong>You’re up to date</strong>
-									<div class="faint small">PixelPlus {upd.current}</div>
-								</div>
+								{#if upd.message}
+									<span class="icon-tile"><Download size={20} /></span>
+									<div class="grow">
+										<strong>PixelPlus {upd.current}</strong>
+										<div class="faint small">Updates can’t be checked from here</div>
+									</div>
+								{:else}
+									<span class="icon-tile green"><Check size={20} /></span>
+									<div class="grow">
+										<strong>You’re up to date</strong>
+										<div class="faint small">PixelPlus {upd.current}</div>
+									</div>
+								{/if}
 							</div>
 							{#if upd.message}<div class="small muted" style="margin-top:10px">{upd.message}</div>{/if}
 						{/if}
@@ -1353,7 +1382,11 @@
 							</div>
 							<div>
 								<dt>CPU · memory</dt>
-								<dd>{sys?.cpuPct}% · {sys?.memPct}%</dd>
+								<dd>
+									{sys?.cpuPct != null ? `${Math.round(sys.cpuPct)}%` : '—'} · {sys?.memPct != null
+										? `${Math.round(sys.memPct)}%`
+										: '—'}
+								</dd>
 							</div>
 							<div>
 								<dt>Free space</dt>
@@ -1361,7 +1394,7 @@
 							</div>
 							<div>
 								<dt>Temperature</dt>
-								<dd>{sys?.tempC?.toFixed(0) ?? '—'} °C</dd>
+								<dd>{sys?.tempC != null ? `${sys.tempC.toFixed(0)} °C` : '—'}</dd>
 							</div>
 						</dl>
 						<div class="setting" style="margin-top:12px">
@@ -1513,7 +1546,7 @@
 		box-shadow: inset 0 0 0 1px var(--border-2);
 	}
 	.si.on :global(svg) {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.content {
 		max-width: 820px;
@@ -1553,6 +1586,20 @@
 	}
 	.nw-note {
 		margin-bottom: 12px;
+	}
+	.nw-facts {
+		display: grid;
+		grid-template-columns: max-content 1fr;
+		gap: 10px 20px;
+		margin: 4px 0 0;
+		font-size: 14px;
+	}
+	.nw-facts dt {
+		color: var(--text-3);
+	}
+	.nw-facts dd {
+		margin: 0;
+		overflow-wrap: anywhere;
 	}
 	.upd-job {
 		display: flex;
@@ -1608,7 +1655,7 @@
 		background: var(--surface-hover);
 	}
 	.netrow.on {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.adv {
 		margin-top: 18px;
@@ -1638,7 +1685,7 @@
 		text-align: center;
 	}
 	.qrbox a {
-		color: var(--accent);
+		color: var(--accent-text);
 		word-break: break-all;
 	}
 	.qlist .list-row {

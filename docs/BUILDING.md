@@ -43,6 +43,56 @@ Environment variables read by `pixelplusd`: `PIXELPLUS_DATA_DIR` (/var/lib/pixel
 `PIXELPLUS_TTS_URL`, `PIXELPLUS_GAMES_SOCKET`, `PIXELPLUS_MDNS` (0 = no mDNS), `PIXELPLUS_DEV`;
 for tests: `PIXELPLUS_RUN_DIR` (/run/pixelplus), `PIXELPLUS_NETWATCH_STATUS`, `PIXELPLUS_BOOT_DIR`.
 On the Pi they come from `pixelplusd.service` and optional overrides in `/etc/default/pixelplus`.
+Cluster tuning: `PIXELPLUS_CLUSTER_PEERS` (static peers `host[:port],…` for networks without
+broadcast), `PIXELPLUS_CLUSTER_OVERLAY_PORT` (cluster port + 1), `PIXELPLUS_CLUSTER_BIND`,
+`PIXELPLUS_CLUSTER_BROADCAST` (0 = unicast to peers only).
+
+`PIXELPLUS_DEV=1` (or `PIXELPLUS_OUTPUT=sim`) enables `GET /api/v1/debug/output`: the last frame
+written to this controller's outputs, `{frameNo, atMs, wallMs, sequence: {id, frame}, master,
+player, outputs: [{index, pixels, rgb, wire}]}` with base64 `rgb` (rendered, colour order not
+applied) and `wire` (what the output backend received), optionally `?outputs=1,2`. With
+`PIXELPLUS_DEV=1` on a machine without I²C, the board's sensors are simulated.
+
+### A three-node cluster on one machine
+
+`scripts/dev-cluster.sh` runs a leader (difftxlarge) and two followers (difftx), each with its
+own data directory, HTTP port and UDP ports, finding each other through
+`PIXELPLUS_CLUSTER_PEERS` on 127.0.0.1 (broadcast and mDNS off), simulated output, no audio:
+
+```sh
+cargo build -p pixelplus-daemon && (cd web && pnpm build)
+scripts/dev-cluster.sh start [--fresh]   # leader http://127.0.0.1:18080, followers :18081 / :18082
+scripts/dev-cluster.sh status            # PIDs, URLs, /public/health
+scripts/dev-cluster.sh logs [leader|f1|f2]
+scripts/dev-cluster.sh restart f1        # or: kill leader (SIGKILL, like a power cut)
+scripts/dev-cluster.sh stop
+```
+
+State and logs live in `PP_CLUSTER_DIR` (default `./.dev-cluster`); `PP_BIN`, `PP_WEB_DIR`,
+`PP_HTTP_BASE`, `PP_CLUSTER_BASE` and `PP_AUDIO` change the binary, UI, ports and leader audio.
+A fresh cluster starts unconfigured: open the leader and run the setup wizard, choose
+"follower" on the other two, then adopt them under **Controllers**.
+
+### End-to-end tests against the real daemons
+
+```sh
+node scripts/e2e/run.mjs            # fresh cluster in a temp dir, whole scenario, then stop
+node scripts/e2e/run.mjs --keep     # leave the cluster running with the e2e show
+cd web && pnpm test:real            # Playwright: every page + real button clicks, desktop & phone
+PIXELPLUS_E2E_URL=http://127.0.0.1:18080 pnpm vitest run src/lib/api/contract.test.ts
+```
+
+`run.mjs` (Node ≥ 22.15, no dependencies) drives the HTTP API like a user would: setup wizard,
+discovery and adoption, xLights import (`crates/pixelplus-core/testdata/xlights_2025_*.xml`),
+a generated zstd `.fseq` with a known pattern (every prop a solid colour that changes each
+second; its first pixel encodes the frame number) plus a WAV, byte-for-byte checks of the
+followers' `.ppseq` slices, a playlist started by the schedule, frame-accurate sync of all three
+nodes through `/debug/output` (±1 frame, every pixel compared), test patterns, fault finder,
+blackout, brightness, live looks, overlays, song requests, snapshots, health, power, sensors,
+password/login, a follower restarted mid-show, a leader crash, live prop changes and
+remove/re-adopt. `pnpm test:real` (`web/playwright.real.config.ts`) walks every page against the
+running leader (no console errors, no failed requests) and saves screenshots to `$SCREENS_DIR`.
+The contract test compares every GET endpoint's JSON shape with the demo backend the UI is built on.
 
 ## Debian package
 

@@ -75,6 +75,47 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  e2e:
+    name: End-to-end (3-node cluster, real daemon + UI)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: cargo build --locked -p pixelplus-daemon
+      - run: pnpm install --frozen-lockfile && pnpm build && pnpm exec playwright install --with-deps chromium
+        working-directory: web
+      - name: Scenario (setup, adoption, import, slices, sync, tools, failures)
+        run: node scripts/e2e/run.mjs --keep
+        env:
+          PP_CLUSTER_DIR: ${{ runner.temp }}/pp-cluster
+      - name: UI against the real leader + API contract
+        working-directory: web
+        run: |
+          pnpm test:real
+          PIXELPLUS_E2E_URL=http://127.0.0.1:18080 pnpm vitest run src/lib/api/contract.test.ts
+      - if: always()
+        run: scripts/dev-cluster.sh stop; tail -n 50 "$PP_CLUSTER_DIR"/*.log || true
+        env:
+          PP_CLUSTER_DIR: ${{ runner.temp }}/pp-cluster
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            web/test-results
+            ${{ runner.temp }}/pp-cluster/*.log
+
   python:
     name: Python (${{ matrix.dir }})
     runs-on: ubuntu-24.04
@@ -119,7 +160,7 @@ jobs:
           shellcheck -x image/build.sh image/build-in-docker.sh \
             image/stage-pixelplus/prerun.sh image/stage-pixelplus/*/*.sh \
             packaging/build-deb.sh packaging/apt-repo.sh packaging/bin/pixelplus-helper \
-            packaging/ci/install-arm64-cross-deps.sh
+            packaging/ci/install-arm64-cross-deps.sh scripts/dev-cluster.sh
           shellcheck -s sh packaging/bin/tts-capable packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm
           if [ -f games/install.sh ]; then shellcheck -s sh games/install.sh; fi
       - name: bash -n

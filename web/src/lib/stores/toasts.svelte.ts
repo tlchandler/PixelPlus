@@ -14,7 +14,10 @@ class Toasts {
 
 	push(t: Partial<Toast> & { message: string }): number {
 		const id = seq++;
-		const toast: Toast = { kind: 'info', timeout: t.action ? 7000 : 4000, ...t, id };
+		const kind = t.kind ?? 'info';
+		// Plain confirmations fade quickly; anything with an action (Undo) stays long enough to use.
+		const timeout = t.action ? 7000 : kind === 'success' ? 3000 : 4000;
+		const toast: Toast = { kind, timeout, ...t, id };
 		this.items = [...this.items.slice(-4), toast];
 		if (toast.timeout > 0) setTimeout(() => this.dismiss(id), toast.timeout);
 		return id;

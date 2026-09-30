@@ -59,6 +59,8 @@ async fn main() -> anyhow::Result<()> {
         services: Default::default(),
     }));
 
+    // Token for local sidecars (/run/pixelplus/local-token).
+    api::security::init_local_token(&state);
     services::start_all(&state).await?;
 
     let app = api::router(state.clone());

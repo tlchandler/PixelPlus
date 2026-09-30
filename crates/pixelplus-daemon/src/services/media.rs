@@ -257,20 +257,36 @@ pub fn resample_peaks(windows: &[f32], n: usize) -> Vec<f32> {
     out
 }
 
+/// ffmpeg input arguments for an uploaded file: local files only (no HLS /
+/// concat / network tricks inside a crafted file), with the demuxer chosen
+/// from the extension when known.
+pub fn ffmpeg_input(path: &Path) -> Vec<String> {
+    let mut args = vec!["-protocol_whitelist".to_string(), "file,pipe".to_string()];
+    let demuxer = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .and_then(|e| match e.as_str() {
+            "mp3" => Some("mp3"),
+            "ogg" | "oga" => Some("ogg"),
+            "m4a" => Some("mov"),
+            "aac" => Some("aac"),
+            "wav" => Some("wav"),
+            "flac" => Some("flac"),
+            _ => None,
+        });
+    if let Some(f) = demuxer {
+        args.extend(["-f".to_string(), f.to_string()]);
+    }
+    args.extend(["-i".to_string(), format!("file:{}", path.to_string_lossy())]);
+    args
+}
+
 fn analyze_ffmpeg(path: &Path) -> Result<MediaMeta, String> {
-    let p = path.to_string_lossy().to_string();
     let out = std::process::Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-nostats",
-            "-i",
-            &p,
-            "-af",
-            "ebur128",
-            "-f",
-            "null",
-            "-",
-        ])
+        .args(["-hide_banner", "-nostats"])
+        .args(ffmpeg_input(path))
+        .args(["-af", "ebur128", "-f", "null", "-"])
         .output()
         .map_err(|e| format!("couldn't run ffmpeg: {e}"))?;
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -284,6 +300,15 @@ fn analyze_ffmpeg(path: &Path) -> Result<MediaMeta, String> {
         loudness_lufs: loudness,
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+#[test]
+fn ffmpeg_inputs_are_local_files_only() {
+    let a = ffmpeg_input(Path::new("/var/lib/pixelplus/media/x.M4A"));
+    assert_eq!(a, ["-protocol_whitelist", "file,pipe", "-f", "mov", "-i", "file:/var/lib/pixelplus/media/x.M4A"]);
+    let a = ffmpeg_input(Path::new("/tmp/upload.tmp"));
+    assert_eq!(a, ["-protocol_whitelist", "file,pipe", "-i", "file:/tmp/upload.tmp"]);
 }
 
 /// `I:  -16.3 LUFS` from the ebur128 summary.
@@ -316,17 +341,11 @@ pub async fn transcode_mp3(src: &Path, dst: &Path) -> Result<Option<()>, String>
     if !super::system::have("ffmpeg") {
         return Ok(None);
     }
-    let s = src.to_string_lossy().to_string();
-    let d = dst.to_string_lossy().to_string();
-    let out = super::system::run(
-        "ffmpeg",
-        &[
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            &s,
+    let input = ffmpeg_input(src);
+    let d = format!("file:{}", dst.to_string_lossy());
+    let mut args: Vec<&str> = vec!["-hide_banner", "-loglevel", "error", "-y"];
+    args.extend(input.iter().map(String::as_str));
+    args.extend([
             "-ar",
             "44100",
             "-ac",
@@ -336,10 +355,8 @@ pub async fn transcode_mp3(src: &Path, dst: &Path) -> Result<Option<()>, String>
             "-b:a",
             "192k",
             &d,
-        ],
-        Duration::from_secs(300),
-    )
-    .await?;
+        ]);
+    let out = super::system::run("ffmpeg", &args, Duration::from_secs(300)).await?;
     if out.success {
         Ok(Some(()))
     } else {
@@ -363,6 +380,10 @@ pub fn trash_dir(data_dir: &Path) -> PathBuf {
 
 /// Move `rel` (relative to the data dir) into the trash. Missing files are ignored.
 pub fn trash(data_dir: &Path, rel: &str) {
+    // Paths come from show.json: only ever well-formed data files.
+    if super::paths::check(rel).is_none() {
+        return;
+    }
     let src = data_dir.join(rel);
     if !src.exists() {
         return;
@@ -384,6 +405,9 @@ pub fn trash(data_dir: &Path, rel: &str) {
 
 /// Bring `rel` back from the trash. Returns true if it was there.
 pub fn untrash(data_dir: &Path, rel: &str) -> bool {
+    if super::paths::check(rel).is_none() {
+        return false;
+    }
     let src = trash_dir(data_dir).join(rel.replace('/', "__"));
     if !src.exists() {
         return false;

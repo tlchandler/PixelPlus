@@ -34,7 +34,10 @@ impl ShowStore {
             let text = std::fs::read_to_string(path)
                 .with_context(|| format!("reading {}", path.display()))?;
             match serde_json::from_str::<Show>(&text) {
-                Ok(show) => show,
+                Ok(mut show) => {
+                    crate::services::paths::sanitize_show(&mut show);
+                    show
+                }
                 Err(e) => {
                     // Never lose a user's show: keep the unreadable file aside.
                     let backup = path.with_extension(format!(
@@ -86,6 +89,8 @@ impl ShowStore {
         let _guard = self.inner.write_lock.lock().await;
         let mut show = (*self.get()).clone();
         let result = f(&mut show)?;
+        // File paths in the show are never trusted (services::paths).
+        crate::services::paths::sanitize_show(&mut show);
         show.version = show.version.wrapping_add(1).max(1);
         let show = Arc::new(show);
         persist(&self.inner.path, &show)

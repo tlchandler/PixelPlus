@@ -29,7 +29,7 @@
 		<dl>
 			<div>
 				<dt>Name</dt>
-				<dd>{sys?.hostname}</dd>
+				<dd>{sys?.name || sys?.hostname}</dd>
 			</div>
 			<div>
 				<dt>Address</dt>
@@ -63,7 +63,7 @@
 	}
 	h1 em {
 		font-style: normal;
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.state {
 		display: inline-flex;

@@ -10,6 +10,7 @@
 	import { receiverFor, portOf } from '$lib/util/boards';
 	import Drawer from '$lib/components/ui/Drawer.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
+	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import PropPreview from '$lib/components/viz/PropPreview.svelte';
 	import WiringEditor from './WiringEditor.svelte';
 	import FaultFinder from './FaultFinder.svelte';
@@ -26,15 +27,25 @@
 	let draft = $state<Prop | null>(null);
 	let loadedFor: string | null = null;
 	let loadedVersion = -1;
-	let saving = $state(false);
 	let faultOpen = $state(false);
 	let power = $state<PowerEstimate | null>(null);
 	let testing = $state<string | null>(null);
+	/** Autosave: every edit saves on its own; closing the panel offers one Undo for the whole visit. */
+	let saveState = $state<'saved' | 'saving' | 'dirty' | 'invalid'>('saved');
+	let saveTimer: ReturnType<typeof setTimeout> | undefined;
+	let visitBefore: Prop | null = null;
+	let visitChanged = false;
 
 	$effect(() => {
 		// (re)load draft when switching prop, or when the show changed and we have no local edits
 		if (!original) return;
 		if (loadedFor !== original.id || (!dirty && loadedVersion !== show.version)) {
+			if (loadedFor !== original.id) {
+				endVisit();
+				visitBefore = structuredClone($state.snapshot(original) as Prop);
+				visitChanged = false;
+				saveState = 'saved';
+			}
 			draft = structuredClone($state.snapshot(original) as Prop);
 			loadedFor = original.id;
 			loadedVersion = show.version;
@@ -50,40 +61,89 @@
 	});
 
 	const dirty = $derived(!!draft && !!original && JSON.stringify(draft) !== JSON.stringify(original));
+	const valid = $derived(
+		!!draft &&
+			!!draft.name.trim() &&
+			draft.pixelCount >= 1 &&
+			draft.segments.every((sg) => sg.pixelCount >= 1 && sg.startPixel >= 0 && sg.nullPixels >= 0)
+	);
+
+	// Any edit (name, wiring, groups…) schedules a save a moment after the typing stops.
+	$effect(() => {
+		if (!draft || !original) return;
+		void JSON.stringify(draft);
+		if (!dirty) return;
+		clearTimeout(saveTimer);
+		if (!valid) {
+			saveState = 'invalid';
+			return;
+		}
+		saveState = 'dirty';
+		saveTimer = setTimeout(save, 700);
+	});
 
 	async function save() {
-		if (!draft || !original) return;
-		saving = true;
-		const before = structuredClone($state.snapshot(original) as Prop);
+		if (!draft || !original || !dirty || !valid) return;
+		saveState = 'saving';
 		const d = $state.snapshot(draft) as Prop;
-		// keep group membership in sync
 		try {
-			await api.props.update(d.id, d);
-			for (const g of show.propGroups) {
-				const want = d.groupIds.includes(g.id);
-				const has = g.propIds.includes(d.id);
-				if (want !== has)
-					await api.groups.update(g.id, {
-						...g,
-						propIds: want ? [...g.propIds, d.id] : g.propIds.filter((x) => x !== d.id)
-					});
-			}
+			await writeProp(d);
+			visitChanged = true;
 			await app.reloadShow();
 			loadedVersion = -1;
-			toasts.success(`Saved ${d.name}`, {
-				label: 'Undo',
-				run: async () => {
-					await api.props.update(before.id, before);
-					await app.reloadShow();
-					loadedVersion = -1;
-				}
-			});
+			saveState = 'saved';
 		} catch (e) {
+			saveState = 'dirty';
 			toasts.error('Could not save prop', (e as Error).message);
-		} finally {
-			saving = false;
 		}
 	}
+
+	/** Save the prop and keep group membership in sync. */
+	async function writeProp(d: Prop) {
+		await api.props.update(d.id, d);
+		for (const g of show.propGroups) {
+			const want = d.groupIds.includes(g.id);
+			const has = g.propIds.includes(d.id);
+			if (want !== has)
+				await api.groups.update(g.id, {
+					...g,
+					propIds: want ? [...g.propIds, d.id] : g.propIds.filter((x) => x !== d.id)
+				});
+		}
+	}
+
+	/** When the panel closes (or another prop opens): flush, then one "Saved · Undo" for the visit. */
+	function endVisit() {
+		const before = visitBefore;
+		if (saveTimer && dirty && valid) {
+			clearTimeout(saveTimer);
+			save();
+			visitChanged = true;
+		}
+		if (before && visitChanged) {
+			toasts.success(`Saved changes to ${draft?.name || before.name}`, {
+				label: 'Undo',
+				run: async () => {
+					try {
+						await writeProp(before);
+						await app.reloadShow();
+						loadedVersion = -1;
+						toasts.info(`${before.name} is back the way it was`);
+					} catch (e) {
+						toasts.error('Could not undo', (e as Error).message);
+					}
+				}
+			});
+		}
+		visitBefore = null;
+		visitChanged = false;
+	}
+	$effect(() => {
+		if (!open && loadedFor) {
+			endVisit();
+			loadedFor = null;
+		}
+	});
 
 	async function remove() {
 		if (!original) return;
@@ -97,6 +157,8 @@
 			}))
 		)
 			return;
+		clearTimeout(saveTimer);
+		visitChanged = false;
 		await app.mutate(() => api.props.remove(p.id));
 		open = false;
 		toasts.success(`Deleted ${p.name}`, { label: 'Undo', run: () => app.mutate(() => api.props.create(p)) });
@@ -139,6 +201,22 @@
 			: [...draft.groupIds, id];
 	}
 
+	/** Power warnings that concern this prop's own receiver ports (the rest belong on the dashboard). */
+	const myWarnings = $derived.by(() => {
+		if (!power || !draft) return [];
+		const d = draft;
+		const ports = d.segments
+			.map((sg) => ({ rx: receiverFor(show, sg.nodeId, sg.output), port: portOf(sg.output) }))
+			.filter((x) => !!x.rx);
+		return power.warnings.filter((w) => {
+			const lw = w.toLowerCase();
+			if (lw.includes(`'${d.name.toLowerCase()}'`)) return true;
+			return ports.some(
+				(x) => lw.includes(x.rx!.name.toLowerCase()) && new RegExp(`\\bport ${x.port}\\b`, 'i').test(w)
+			);
+		});
+	});
+
 	const tabs = [
 		{ value: 'overview', label: 'Overview', icon: Info },
 		{ value: 'wiring', label: 'Wiring', icon: Cable },
@@ -166,10 +244,13 @@
 				<span class="icon-tile accent"><K.icon size={20} /></span>
 				<div class="grow">
 					<h2 class="ellipsis">{draft.name}</h2>
-					<div class="faint small">
-						{K.label} · {draft.pixelCount.toLocaleString()} pixels{draft.xlightsModel
-							? ` · xLights “${draft.xlightsModel}”`
-							: ''}
+					<div class="faint small sub">
+						<span class="ellipsis"
+							>{K.label} · {draft.pixelCount.toLocaleString()} pixels{draft.xlightsModel
+								? ` · xLights “${draft.xlightsModel}”`
+								: ''}</span
+						>
+						<SaveState state={saveState} />
 					</div>
 				</div>
 			</div>
@@ -183,7 +264,11 @@
 		{#if tab === 'overview'}
 			<div class="form-grid">
 				<label class="field span-2"
-					><span class="label">Name</span><input class="input" bind:value={draft.name} /></label
+					><span class="label">Name</span><input
+						class="input"
+						class:bad={!draft.name.trim()}
+						bind:value={draft.name}
+					/></label
 				>
 				<label class="field">
 					<span class="label">Type</span>
@@ -194,6 +279,7 @@
 				<label class="field"
 					><span class="label">Pixels</span><input
 						class="input"
+						class:bad={!(draft.pixelCount >= 1)}
 						type="number"
 						min="1"
 						bind:value={draft.pixelCount}
@@ -261,8 +347,8 @@
 		{:else if tab === 'wiring'}
 			{#if draft.channelRuns?.length}
 				<p class="muted small" style="margin-bottom:12px">
-					Custom start channels from xLights: this prop's strings read their data from
-					{draft.channelRuns.length} separate places in the sequence. Re-import from xLights to change them.
+					This prop’s {draft.channelRuns.length} strings were set up separately in xLights, so each one keeps
+					its own place in the sequence. Re-import from xLights to change that.
 				</p>
 			{/if}
 			<WiringEditor {show} bind:prop={draft} />
@@ -312,16 +398,33 @@
 						</div>
 					{/if}
 				{/each}
-				{#if power?.warnings.length}
+				{#if !draft.segments.length}
+					<p class="faint small">
+						Wire this prop to a port to see how much of the receiver’s fuse it uses.
+					</p>
+				{/if}
+				{#each myWarnings as w (w)}
 					<div class="notice warn small">
 						<Zap size={16} />
-						<div>{power.warnings[0]}</div>
+						<div>{w}</div>
 					</div>
-				{/if}
+				{/each}
+			</div>
+		{:else if tab === 'test' && !draft.segments.length}
+			<div class="unwired-test">
+				<span class="icon-tile accent"><Cable size={20} /></span>
+				<div class="grow">
+					<strong>Wire this prop first to test it</strong>
+					<p class="faint small">
+						PixelPlus needs to know which port it’s plugged into before it can light it up.
+					</p>
+				</div>
+				<button class="btn primary" onclick={() => (tab = 'wiring')}>Wire it</button>
 			</div>
 		{:else if tab === 'test'}
 			<p class="muted small" style="margin-bottom:12px">
-				Lights only this prop so you can check it from the street. The running show is paused while testing.
+				Shows a test pattern on this prop only, on top of whatever is playing, so you can check it from the
+				street.
 			</p>
 			<div class="tests">
 				{#each tests as t (t.label)}
@@ -354,22 +457,16 @@
 		{/if}
 	{/if}
 
-	{#snippet footer()}
-		<span class="small faint grow" style="align-self:center"
-			>{dirty ? 'Unsaved changes' : 'All changes saved'}</span
-		>
-		<button
-			class="btn ghost"
-			disabled={!dirty}
-			onclick={() => original && (draft = structuredClone($state.snapshot(original) as Prop))}>Discard</button
-		>
-		<button class="btn primary" disabled={!dirty || saving} onclick={save}
-			>{saving ? 'Saving…' : 'Save changes'}</button
-		>
-	{/snippet}
 </Drawer>
 
-<FaultFinder bind:open={faultOpen} prop={original} />
+<FaultFinder
+	bind:open={faultOpen}
+	prop={original}
+	onnote={(text) => {
+		if (draft) draft.notes = draft.notes ? `${draft.notes}\n${text}` : text;
+		tab = 'overview';
+	}}
+/>
 
 <style>
 	.preview {
@@ -384,6 +481,32 @@
 		margin-top: 24px;
 		padding-top: 16px;
 		border-top: 1px solid var(--border);
+	}
+	.sub {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-width: 0;
+	}
+	.input.bad {
+		border-color: color-mix(in srgb, var(--red) 60%, transparent);
+	}
+	.unwired-test {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 16px;
+		border-radius: 14px;
+		background: var(--surface-2);
+		border: 1px solid var(--border-2);
+	}
+	@media (max-width: 520px) {
+		.unwired-test {
+			flex-wrap: wrap;
+		}
+		.unwired-test .btn {
+			width: 100%;
+		}
 	}
 	.power {
 		display: flex;

@@ -944,6 +944,25 @@ pub struct ShowSettings {
     pub triggers: Vec<Trigger>,
     #[serde(default)]
     pub games: GameSettings,
+    /// Display units for the UI. `None` = pick from the viewer's locale (US → °F).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub units: Option<UnitSettings>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TemperatureUnit {
+    #[default]
+    C,
+    F,
+}
+
+/// How the UI shows measurements. Values are always stored metric (°C).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UnitSettings {
+    #[serde(default)]
+    pub temperature: TemperatureUnit,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1141,6 +1160,12 @@ pub struct RequestSettings {
     pub playlist_id: Option<String>,
     pub title: String,
     pub message: String,
+    /// FM station visitors tune to, e.g. "88.7 FM". Shown on the request page and yard sign.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radio_frequency: Option<String>,
+    /// Internet address of the request page (e.g. through a tunnel), used for QR codes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 impl Default for RequestSettings {
@@ -1151,6 +1176,8 @@ impl Default for RequestSettings {
             playlist_id: None,
             title: "Request a song".into(),
             message: "Pick a song and it will play next. Merry Christmas!".into(),
+            radio_frequency: None,
+            public_url: None,
         }
     }
 }
@@ -1183,6 +1210,15 @@ pub struct OledSettings {
 pub struct SecuritySettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_hash: Option<String>,
+    /// Extra host names the web UI / API answers to (tunnel or own domain);
+    /// `*.example.com` wildcards allowed. IP addresses, `localhost` and this
+    /// controller's `<hostname>(.local)` always work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_hosts: Vec<String>,
+    /// Reverse proxies on the network (IPs or CIDRs) whose `X-Forwarded-For`
+    /// is believed. Proxies on this machine are always trusted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_proxies: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1256,6 +1292,31 @@ mod tests {
         assert_eq!(BoardKind::Difftxlarge.output_label(1), "J1-1");
         assert_eq!(BoardKind::Difftxlarge.output_label(60), "J15-4");
         assert_eq!(BoardKind::Difftx.output_label(3), "Port 3");
+    }
+
+    #[test]
+    fn units_and_visitor_settings_are_optional() {
+        // Older show files have neither field: they load with the defaults and stay absent on save.
+        let s: ShowSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.units, None);
+        assert_eq!(s.requests.radio_frequency, None);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("units"));
+        assert!(!json.contains("radioFrequency"));
+
+        let s: ShowSettings = serde_json::from_value(serde_json::json!({
+            "units": { "temperature": "f" },
+            "requests": {
+                "enabled": true, "maxQueue": 5, "title": "t", "message": "m",
+                "radioFrequency": "88.7 FM", "publicUrl": "lights.example.com/request"
+            }
+        }))
+        .unwrap();
+        assert_eq!(s.units.as_ref().unwrap().temperature, TemperatureUnit::F);
+        assert_eq!(s.requests.radio_frequency.as_deref(), Some("88.7 FM"));
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["units"]["temperature"], "f");
+        assert_eq!(v["requests"]["publicUrl"], "lights.example.com/request");
     }
 
     #[test]

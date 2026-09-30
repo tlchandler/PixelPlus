@@ -135,6 +135,11 @@ impl TestApp {
         if let Some(c) = &self.cookie {
             req.headers_mut().insert(header::COOKIE, c.parse().unwrap());
         }
+        // What the web UI sends on every request (see api::security).
+        if !req.headers().contains_key("x-pixelplus-request") {
+            req.headers_mut()
+                .insert("x-pixelplus-request", "1".parse().unwrap());
+        }
         if req.extensions().get::<ConnectInfo<SocketAddr>>().is_none() {
             req.extensions_mut().insert(ConnectInfo::<SocketAddr>(
                 "192.168.1.77:50000".parse().unwrap(),
@@ -311,7 +316,7 @@ mod tests {
             .json(
                 "PUT",
                 "/auth/password",
-                Some(json!({"current": "jingle", "password": "bells"})),
+                Some(json!({"current": "jingle", "password": "sleighbells"})),
             )
             .await;
         assert_eq!(s, StatusCode::OK);
@@ -324,7 +329,7 @@ mod tests {
             .password_hash
             .clone()
             .unwrap();
-        assert!(crate::api::auth::verify_password(&h, "bells"));
+        assert!(crate::api::auth::verify_password(&h, "sleighbells"));
     }
 
     #[tokio::test]

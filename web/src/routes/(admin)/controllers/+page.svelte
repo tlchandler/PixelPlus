@@ -735,7 +735,7 @@
 		border-radius: 50%;
 		display: grid;
 		place-items: center;
-		color: var(--accent);
+		color: var(--accent-text);
 		background: var(--accent-soft);
 		animation: pulse 2s infinite;
 	}
@@ -877,7 +877,7 @@
 		transform: rotate(180deg);
 	}
 	.prow :global(.warn-ic) {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.oedit {
 		display: grid;
@@ -898,7 +898,7 @@
 		background: var(--surface-3);
 	}
 	.ochip:hover {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.sensors {
 		display: flex;

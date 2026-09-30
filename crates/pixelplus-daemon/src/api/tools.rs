@@ -191,7 +191,7 @@ async fn snapshot_import(
         };
         let tmp =
             snapshots::dir(&state).join(format!(".import-{}.tmp", pixelplus_core::model::new_id()));
-        save_field(field, &tmp, 8 * 1024 * 1024 * 1024).await?;
+        save_field(field, &tmp, 2 * 1024 * 1024 * 1024).await?;
         return snapshots::import(&state, tmp, &name).await.map(Json);
     }
     Err(ApiError::bad_request(
@@ -361,18 +361,43 @@ async fn alert_test(State(state): State<AppState>, Json(b): Json<ChannelBody>) -
     }
 }
 
+/// The MQTT settings to test: the stored ones, with unsaved form values
+/// merged in. The stored password is only used for the stored broker: a test
+/// against another host must bring its own password (so a forged request can't
+/// send the saved credentials to a broker of its choosing).
+pub(crate) fn mqtt_test_settings(
+    stored: &pixelplus_core::model::MqttSettings,
+    patch: &Value,
+) -> pixelplus_core::model::MqttSettings {
+    let mut settings = stored.clone();
+    if !patch.as_object().is_some_and(|o| !o.is_empty()) {
+        return settings;
+    }
+    let mut cur = serde_json::to_value(&settings).unwrap_or_default();
+    merge_patch(&mut cur, patch);
+    if let Ok(s) = serde_json::from_value::<pixelplus_core::model::MqttSettings>(cur) {
+        settings = s;
+    }
+    let placeholder = super::show::SECRET_PLACEHOLDER;
+    let sent = patch.get("password").and_then(Value::as_str);
+    let same_broker = settings.host.trim().eq_ignore_ascii_case(stored.host.trim())
+        && settings.port == stored.port;
+    match sent {
+        Some(p) if p == placeholder => {
+            settings.password = if same_broker { stored.password.clone() } else { None }
+        }
+        Some(_) => {}
+        None if !same_broker => settings.password = None,
+        None => {}
+    }
+    settings
+}
+
 async fn mqtt_test(State(state): State<AppState>, body: Bytes) -> Json<Value> {
     // Optionally test unsaved settings from the form.
-    let mut settings = state.store.get().settings.mqtt.clone();
-    if let Ok(v) = body_or_default::<Value>(&body) {
-        if v.is_object() && !v.as_object().is_some_and(|o| o.is_empty()) {
-            let mut cur = serde_json::to_value(&settings).unwrap_or_default();
-            merge_patch(&mut cur, &v);
-            if let Ok(s) = serde_json::from_value(cur) {
-                settings = s;
-            }
-        }
-    }
+    let stored = state.store.get().settings.mqtt.clone();
+    let patch = body_or_default::<Value>(&body).unwrap_or(Value::Null);
+    let settings = mqtt_test_settings(&stored, &patch);
     let node = state.identity().id;
     match crate::services::mqtt::test_connection(&settings, &node).await {
         Ok(m) => Json(json!({ "ok": true, "message": m })),
@@ -385,6 +410,24 @@ async fn mqtt_status(State(state): State<AppState>) -> Json<Value> {
     Json(
         json!({ "enabled": state.store.get().settings.mqtt.enabled, "connected": connected, "error": error }),
     )
+}
+
+#[cfg(test)]
+#[test]
+fn mqtt_test_never_sends_stored_password_elsewhere() {
+    let stored = pixelplus_core::model::MqttSettings {
+        host: "ha.local".into(),
+        password: Some("secret".into()),
+        username: Some("u".into()),
+        ..Default::default()
+    };
+    let t = |patch: Value| mqtt_test_settings(&stored, &patch).password;
+    assert_eq!(t(json!({})), Some("secret".into()));
+    assert_eq!(t(json!({"password": "********"})), Some("secret".into()));
+    assert_eq!(t(json!({"host": "attacker.example"})), None);
+    assert_eq!(t(json!({"host": "attacker.example", "password": "********"})), None);
+    assert_eq!(t(json!({"port": 1884})), None);
+    assert_eq!(t(json!({"host": "other", "password": "typed"})), Some("typed".into()));
 }
 
 pub fn routes() -> Router<AppState> {

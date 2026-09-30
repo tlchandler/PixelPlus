@@ -22,7 +22,10 @@ struct OutputQuery {
 /// `{frameNo, atMs, wallMs, sequence: {id, frame} | null, master, player, outputs: [{index, pixels, rgb, wire}]}`
 /// with `rgb` (rendered, colour order not applied) and `wire` (what the output
 /// backend received) base64-encoded.
-async fn output(State(state): State<AppState>, Query(q): Query<OutputQuery>) -> ApiResult<Json<Value>> {
+async fn output(
+    State(state): State<AppState>,
+    Query(q): Query<OutputQuery>,
+) -> ApiResult<Json<Value>> {
     let Some(tap) = state.services.debug_output.get() else {
         return Err(ApiError::not_found(
             "The output tap (only with PIXELPLUS_DEV=1 or PIXELPLUS_OUTPUT=sim)",

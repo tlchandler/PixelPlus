@@ -1,6 +1,6 @@
 //! Discovery: UDP sockets, the receive loops, beacons and mDNS.
 
-use super::proto::{self, Beacon, Msg};
+use super::proto::{self, Beacon, Freshness, Msg};
 use super::{follower, leader, net, sleep_or_stop, Peer, Shared};
 use crate::node::LocalRole;
 use crate::state::AppState;
@@ -11,8 +11,12 @@ use tokio::net::UdpSocket;
 
 /// Peers not heard from for this long are forgotten.
 const PEER_EXPIRY: Duration = Duration::from_secs(300);
-/// How long an authenticated peer entry resists unauthenticated beacons.
-const MEMBER_STICKY: Duration = Duration::from_secs(10);
+/// A peer entry resists beacons of the same id from another address (and an
+/// authenticated entry resists unauthenticated beacons) until it has been
+/// silent this long.
+const ENTRY_STICKY: Duration = Duration::from_secs(30);
+/// How long a "possible duplicate" warning stays up.
+const DUPLICATE_HOLD: Duration = Duration::from_secs(60);
 
 pub(crate) fn spawn(state: &AppState, sh: &Arc<Shared>) {
     tokio::spawn(bind_and_receive(state.clone(), sh.clone(), false));
@@ -92,40 +96,79 @@ async fn bind_and_receive(state: AppState, sh: Arc<Shared>, overlay: bool) {
 
 async fn on_packet(state: &AppState, sh: &Arc<Shared>, data: &[u8], src: SocketAddr) {
     let identity = state.identity();
-    let decoded = match proto::decode(data, identity.cluster_key.as_deref()) {
-        Ok(d) => d,
+    let raw = match proto::parse(data) {
+        Ok(r) => r,
         Err(e) => {
             tracing::trace!("ignoring packet from {src}: {e}");
             return;
         }
     };
-    let auth = decoded.authenticated;
-    match decoded.msg {
-        Msg::Beacon(b) => {
-            if b.id == identity.id {
-                return; // our own broadcast
-            }
-            on_beacon(state, sh, b, src, auth);
+    let sender = raw.sender().to_string();
+    if sender == identity.id {
+        return; // our own broadcast
+    }
+    // The key we share with the sender, if any: a leader has one per adopted
+    // follower, a follower only the one shared with its leader.
+    let key: Option<String> = match identity.role {
+        LocalRole::Leader => sh.follower_key(state, &sender),
+        LocalRole::Follower if identity.leader_id.as_deref() == Some(sender.as_str()) => {
+            identity.cluster_key.clone()
         }
-        Msg::Sync(p) => {
-            if p.leader == identity.id {
+        _ => None,
+    };
+    let mac_ok = key.as_deref().is_some_and(|k| raw.verify(k));
+    let fresh = if mac_ok {
+        let boot = raw.boot.clone().unwrap_or_default();
+        let seq = raw.seq.unwrap_or_default();
+        let new_boot_ok = match (identity.role, &raw.msg) {
+            // A follower accepts a new leader run only through a pong answering
+            // one of its own recent pings (a replayed packet can't do that).
+            (LocalRole::Follower, Msg::Pong(p)) => follower::answers_recent_ping(sh, p.t0),
+            (LocalRole::Follower, _) => false,
+            // A leader accepts a follower restart unless it is an older run.
+            _ => true,
+        };
+        let verdict = sh.replay.lock().check(&sender, &boot, seq, new_boot_ok);
+        match verdict {
+            Freshness::Fresh => true,
+            Freshness::Replayed => {
+                tracing::trace!("dropping replayed packet from {sender} ({src})");
                 return;
             }
-            if auth {
+            Freshness::UnknownBoot => {
+                if identity.role == LocalRole::Follower {
+                    // The leader restarted (or moved): confirm with a ping.
+                    follower::challenge(state, sh, src).await;
+                }
+                return;
+            }
+        }
+    } else {
+        false
+    };
+    match raw.msg {
+        Msg::Beacon(b) => on_beacon(state, sh, b, src, fresh),
+        Msg::Sync(p) => {
+            if fresh {
                 follower::on_sync(state, sh, p, src).await;
             }
         }
         Msg::Ping(p) => {
-            if auth && p.id != identity.id {
-                leader::on_ping(state, sh, p, src).await;
+            if let (true, Some(key)) = (fresh, key.as_deref()) {
+                leader::on_ping(state, sh, p, key, src).await;
             }
         }
         Msg::Pong(p) => {
-            if auth && p.id != identity.id {
+            if fresh {
                 follower::on_pong(state, sh, p, src);
             }
         }
     }
+}
+
+/// Is `new` (from `src`) plausibly the same device as the entry `old`?
+fn same_device(old: &Peer, new: &Beacon, src: SocketAddr) -> bool {
+    old.addr.ip() == src.ip() || new.ips.contains(&old.addr.ip()) || old.beacon.ips.contains(&src.ip())
 }
 
 fn on_beacon(state: &AppState, sh: &Arc<Shared>, b: Beacon, src: SocketAddr, authenticated: bool) {
@@ -138,16 +181,28 @@ fn on_beacon(state: &AppState, sh: &Arc<Shared>, b: Beacon, src: SocketAddr, aut
         if peers.len() >= 1024 && !peers.contains_key(&b.id) {
             return; // someone is flooding us with made-up ids
         }
-        // An unauthenticated beacon must not displace a cluster member that
-        // proved its key recently (spoofing). If the member really lost its
-        // key, its authenticated beacons stop and this gives way after 10 s.
-        if !authenticated
-            && member
-            && peers
-                .get(&b.id)
-                .is_some_and(|p| p.authenticated && now.duration_since(p.last_seen) < MEMBER_STICKY)
-        {
-            return;
+        let mut duplicate_until = None;
+        if let Some(p) = peers.get_mut(&b.id) {
+            duplicate_until = p.duplicate_until.filter(|t| *t > now);
+            let recent = now.duration_since(p.last_seen) < ENTRY_STICKY;
+            if !authenticated && recent {
+                let other_device = !same_device(p, &b, src);
+                if p.authenticated && member {
+                    // An unauthenticated beacon never displaces a peer that proved
+                    // its key recently (spoofing). If the member really lost its
+                    // key its authenticated beacons stop and this gives way.
+                    if other_device {
+                        p.duplicate_until = Some(now + DUPLICATE_HOLD);
+                    }
+                    return;
+                }
+                if other_device {
+                    // Two unverified devices claim the same id: keep the first,
+                    // warn, and refuse to adopt it until it clears.
+                    p.duplicate_until = Some(now + DUPLICATE_HOLD);
+                    return;
+                }
+            }
         }
         peers.insert(
             b.id.clone(),
@@ -157,6 +212,7 @@ fn on_beacon(state: &AppState, sh: &Arc<Shared>, b: Beacon, src: SocketAddr, aut
                 last_seen: now,
                 seen_at: chrono::Utc::now(),
                 authenticated,
+                duplicate_until,
             },
         );
     }
@@ -209,6 +265,7 @@ pub(crate) fn build_beacon(state: &AppState, sh: &Shared, ips: Vec<std::net::IpA
         boot: sh.boot.clone(),
         show_version,
         report,
+        joining: sh.join_window().is_some(),
     }
 }
 
@@ -220,21 +277,34 @@ async fn beacon_loop(state: AppState, sh: Arc<Shared>) {
         let beacon = build_beacon(&state, &sh, ifaces.ips.clone());
         let mut dests = sh.broadcast_dests(sh.settings.port);
         dests.extend(sh.static_peers().await);
-        match identity.role {
-            // Unicast to known followers too: Wi-Fi broadcast is lossy and some
-            // networks filter it.
-            LocalRole::Leader => dests.extend(leader::follower_addrs(&state, &sh)),
-            LocalRole::Follower => dests.extend(follower::leader_addr(&state, &sh)),
-            LocalRole::Unconfigured => {}
+        if let Some(ip) = sh.join_window().and_then(|w| w.leader_ip) {
+            // "Join another show" named a leader: make sure it hears us.
+            dests.push(SocketAddr::new(ip, sh.settings.port));
         }
-        dests.sort();
-        dests.dedup();
-        sh.send_json(
-            &Msg::Beacon(beacon),
-            identity.cluster_key.as_deref(),
-            &dests,
-        )
-        .await;
+        let msg = Msg::Beacon(beacon);
+        match identity.role {
+            LocalRole::Leader => {
+                // Unauthenticated for discovery, plus a copy MACed with each
+                // follower's own key, unicast (Wi-Fi broadcast is lossy and
+                // some networks filter it).
+                dests.sort();
+                dests.dedup();
+                sh.send_json(&msg, None, &dests).await;
+                for (_, addr, key) in leader::follower_targets(&state, &sh) {
+                    sh.send_json(&msg, Some(&key), &[addr]).await;
+                }
+            }
+            LocalRole::Follower | LocalRole::Unconfigured => {
+                dests.extend(follower::leader_addr(&state, &sh));
+                dests.sort();
+                dests.dedup();
+                let key = identity
+                    .cluster_key
+                    .as_deref()
+                    .filter(|_| identity.role == LocalRole::Follower && identity.leader_id.is_some());
+                sh.send_json(&msg, key, &dests).await;
+            }
+        }
         if sleep_or_stop(&mut stop, sh.settings.beacon_interval).await {
             return;
         }

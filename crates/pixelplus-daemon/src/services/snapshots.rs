@@ -102,16 +102,18 @@ fn referenced_files(show: &Show, data_dir: &Path, full: bool) -> Vec<String> {
     files
 }
 
-/// Relative, no `..`, only under our content directories.
+/// Only well-formed data files (`media/<id>.<audio|meta.json>`,
+/// `sequences/<id>.fseq|ppseq`, `thumbnails/<id>.png`; see services::paths).
 fn safe_rel(rel: &str) -> bool {
-    let p = Path::new(rel);
-    p.is_relative()
-        && p.components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)))
-        && ["media/", "sequences/", "thumbnails/", "dj/"]
-            .iter()
-            .any(|d| rel.starts_with(d))
+    super::paths::check(rel).is_some()
 }
+
+/// Largest `show.json` inside a snapshot.
+const MAX_SHOW_JSON: u64 = 64 * 1024 * 1024;
+/// Most bytes a restore may unpack (and never more than the free space
+/// minus [`KEEP_FREE`]).
+const MAX_RESTORE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const KEEP_FREE: u64 = 256 * 1024 * 1024;
 
 /// Create a snapshot (blocking work runs on a worker thread).
 pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> ApiResult<Snapshot> {
@@ -294,8 +296,12 @@ pub fn read_archive_show(path: &Path) -> Result<Show, String> {
             .map(|p| p.to_string_lossy() == "show.json")
             .unwrap_or(false);
         if is_show {
+            if entry.header().size().unwrap_or(u64::MAX) > MAX_SHOW_JSON {
+                return Err("The show in that snapshot is too large.".into());
+            }
             let mut buf = Vec::new();
-            entry
+            (&mut entry)
+                .take(MAX_SHOW_JSON)
                 .read_to_end(&mut buf)
                 .map_err(|_| "The snapshot file is damaged.".to_string())?;
             return serde_json::from_slice(&buf)
@@ -318,6 +324,9 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
     let data_dir = state.config.data_dir.clone();
     let show = tokio::task::spawn_blocking(move || -> Result<Show, String> {
         let show = read_archive_show(&path)?;
+        let free = super::system::disk_space(&data_dir).map(|(f, _)| f).unwrap_or(u64::MAX);
+        let budget = MAX_RESTORE_BYTES.min(free.saturating_sub(KEEP_FREE));
+        let mut unpacked: u64 = 0;
         let f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
         let mut ar = tar::Archive::new(zstd::Decoder::new(f).map_err(|e| e.to_string())?);
         for entry in ar.entries().map_err(|e| e.to_string())? {
@@ -329,6 +338,12 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
                 .to_string();
             if !safe_rel(&rel) || entry.header().entry_type() != tar::EntryType::Regular {
                 continue;
+            }
+            // The size is declared up front: refuse decompression bombs and
+            // archives that would fill the SD card.
+            unpacked = unpacked.saturating_add(entry.header().size().unwrap_or(u64::MAX));
+            if unpacked > budget {
+                return Err("That snapshot is too large to restore here (not enough free space).".into());
             }
             let dst = data_dir.join(&rel);
             if let Some(p) = dst.parent() {
@@ -346,8 +361,11 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
     .map_err(ApiError::internal)?
     .map_err(ApiError::bad_request)?;
     // Keep this device's security settings and its own leader node identity.
+    // File paths come from the archive: rebuild them from ids (services::paths;
+    // the store does it too).
     let current = state.store.get();
     let mut show = show;
+    super::paths::sanitize_show(&mut show);
     show.settings.security = current.settings.security.clone();
     let restored = state.store.replace(show).await.map_err(ApiError::from)?;
     Ok(restored)

@@ -340,16 +340,20 @@ pub fn start(state: &AppState) {
         };
         let mut rx = player.watch();
         loop {
-            let err = rx.borrow_and_update().error.clone();
+            let (err, state) = {
+                let s = rx.borrow_and_update();
+                (s.error.clone(), s.state)
+            };
             let key = "player:error";
             if st.services.alerts.rising(key, err.is_some())
                 && st.store.get().settings.alerts.rules.show_failure
             {
+                let (severity, title) = player_alert(state);
                 raise(
                     &st,
                     key,
-                    Severity::Critical,
-                    "The show stopped",
+                    severity,
+                    title,
                     err.as_deref().unwrap_or("Playback failed."),
                 )
                 .await;
@@ -361,9 +365,31 @@ pub fn start(state: &AppState) {
     });
 }
 
+/// Severity and title of a player problem: most (no sound, a skipped item, a
+/// follower missing a file) leave the lights running, so only an idle player
+/// "stopped".
+fn player_alert(state: crate::player::PlayerState) -> (Severity, &'static str) {
+    use crate::player::PlayerState;
+    match state {
+        PlayerState::Idle => (Severity::Critical, "The show stopped"),
+        _ => (Severity::Warning, "Show problem"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_problems_while_playing_are_not_a_stopped_show() {
+        use crate::player::PlayerState;
+        assert_eq!(player_alert(PlayerState::Playing).1, "Show problem");
+        assert!(matches!(
+            player_alert(PlayerState::Playing).0,
+            Severity::Warning
+        ));
+        assert_eq!(player_alert(PlayerState::Idle).1, "The show stopped");
+    }
 
     #[test]
     fn dedup_and_rate_limit() {

@@ -361,7 +361,7 @@
 		color: var(--text-3);
 	}
 	.step.pixels {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.step.node {
 		color: var(--text);
@@ -372,7 +372,7 @@
 		color: var(--text-2);
 	}
 	.linkish {
-		color: var(--accent);
+		color: var(--accent-text);
 		font-weight: 560;
 		font-size: 12px;
 	}
@@ -431,6 +431,6 @@
 		margin-top: -4px;
 	}
 	.warn-text {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 </style>

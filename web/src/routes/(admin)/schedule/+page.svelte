@@ -729,7 +729,9 @@
 			>
 			<label class="field"
 				><span class="label">Time zone</span><select class="select" bind:value={locDraft.timezone}
-					>{#each tzList as z (z)}<option value={z}>{z.replace(/_/g, ' ')}</option>{/each}</select
+					>{#each tzList.includes(locDraft.timezone) ? tzList : [locDraft.timezone, ...tzList] as z (z)}<option
+							value={z}>{z.replace(/_/g, ' ')}</option
+						>{/each}</select
 				></label
 			>
 			<label class="field"
@@ -848,10 +850,10 @@
 	}
 	.today .dh {
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.today .dw {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.dcol {
 		position: relative;

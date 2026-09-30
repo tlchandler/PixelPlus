@@ -77,6 +77,6 @@
 		width: 160px;
 	}
 	.calc {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 </style>

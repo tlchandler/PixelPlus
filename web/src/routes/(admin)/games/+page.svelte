@@ -212,7 +212,9 @@
 								: status.cooldownS > 0
 									? 'Cooling down'
 									: g.enabled
-										? 'Ready'
+										? status.available === false
+											? 'Not running'
+											: 'Ready'
 										: 'Off'
 							: '—'}</strong
 					>
@@ -242,6 +244,13 @@
 					>
 				</div>
 			</div>
+			{#if status && status.available === false}<div class="notice warn small" style="margin:0 20px 16px">
+					<TriangleAlert size={16} class="ico" /><span
+						>The games service isn’t running on this controller, so visitors can’t play yet. It starts by
+						itself on PixelPlus SD-card images (<code>pixelplus-games</code>); in Docker, start the
+						<code>games</code> profile.</span
+					>
+				</div>{/if}
 			{#if status?.lastError}<div class="notice danger small" style="margin:0 20px 16px">
 					<TriangleAlert size={16} /><span>{status.lastError}</span>
 				</div>{/if}

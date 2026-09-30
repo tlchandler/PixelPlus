@@ -73,7 +73,7 @@
 		color: var(--red);
 	}
 	.warning .ico {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.msg {
 		font-weight: 520;
@@ -95,12 +95,30 @@
 		color: var(--text);
 		background: var(--surface-3);
 	}
+	/* Phones: toasts dock over the mini player, just above the tab bar, so they never cover the
+	   page's own buttons. Only the newest two are shown. */
 	@media (max-width: 760px) {
 		.toaster {
-			right: 16px;
-			left: 16px;
+			right: 8px;
+			left: 8px;
 			width: auto;
-			bottom: calc(var(--tabbar-h) + 76px + env(safe-area-inset-bottom));
+			bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 8px);
+			gap: 6px;
+		}
+		.toast {
+			min-height: 60px;
+			padding: 8px 8px 8px 14px;
+			border-radius: 16px;
+			background: color-mix(in srgb, var(--surface-3) 94%, transparent);
+			box-shadow: var(--shadow-3);
+		}
+		.toast:nth-last-child(n + 3) {
+			display: none;
+		}
+		.x {
+			width: 44px;
+			height: 44px;
+			border-radius: 12px;
 		}
 	}
 </style>

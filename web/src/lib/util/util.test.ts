@@ -38,7 +38,15 @@ describe('boards', () => {
 		const show = buildDemoShow();
 		const leader = show.nodes.find((n) => n.board === 'difftxlarge')!;
 		show.receivers = show.receivers.filter((r) => !(r.nodeId === leader.id && r.jack === 3));
-		const seg = { nodeId: leader.id, output: 10, startPixel: 0, pixelCount: 5, propOffset: 0, reverse: false, nullPixels: 0 };
+		const seg = {
+			nodeId: leader.id,
+			output: 10,
+			startPixel: 0,
+			pixelCount: 5,
+			propOffset: 0,
+			reverse: false,
+			nullPixels: 0
+		};
 		expect(
 			wiringChain(show, seg)
 				.map((s) => s.label)

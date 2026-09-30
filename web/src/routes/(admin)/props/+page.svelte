@@ -50,6 +50,15 @@
 	let addOpen = $state(false);
 	let groupOpen = $state(false);
 	let bulkOpen = $state(false);
+	/** Touch screens: checkboxes appear only after tapping "Select" (no checkbox on every card). */
+	let selecting = $state(false);
+	$effect(() => {
+		// Dashboard / checklist links: /props?import=1 opens the xLights import straight away.
+		if (new URLSearchParams(location.search).get('import') === '1') {
+			importOpen = true;
+			history.replaceState(history.state, '', location.pathname);
+		}
+	});
 
 	try {
 		const v = localStorage.getItem('pp-props-view');
@@ -102,6 +111,19 @@
 	}
 	function selectAll() {
 		selected = selected.size === filtered.length ? new Set() : new Set(filtered.map((p) => p.id));
+	}
+
+	/** "Port 3 · Driveway": the part you need when standing next to the prop (phones). */
+	function portWhere(p: Prop): string {
+		if (!show || !p.segments.length) return '';
+		const steps = wiringChain(show, p.segments[0]);
+		const port = steps.find((s) => s.kind === 'port')?.label ?? '';
+		const where =
+			steps.find((s) => s.kind === 'receiver')?.label.replace(/ receiver$/, '') ??
+			steps.find((s) => s.kind === 'node')?.label ??
+			'';
+		const more = p.segments.length > 1 ? ` +${p.segments.length - 1}` : '';
+		return `${port} · ${where}${more}`;
 	}
 
 	function shortChain(p: Prop): string {
@@ -290,6 +312,17 @@
 			{#each show?.receivers ?? [] as r (r.id)}<option value={r.id}>{r.name}</option>{/each}
 		</select>
 		<span class="grow"></span>
+		{#if show?.props.length}
+			<button
+				class="btn select-btn"
+				class:primary={selecting}
+				aria-pressed={selecting}
+				onclick={() => {
+					selecting = !selecting;
+					if (!selecting) selected = new Set();
+				}}>{selecting ? 'Done' : 'Select'}</button
+			>
+		{/if}
 		<Segmented
 			bind:value={view}
 			label="View"
@@ -372,10 +405,14 @@
 				{@const K = KIND_META[p.kind]}
 				{@const sel = selected.has(p.id)}
 				<article class="card pcard interactive" class:sel>
-					<button class="pv" onclick={() => openProp(p.id)} aria-label="Open {p.name}">
+					<button
+						class="pv"
+						onclick={() => (selecting ? toggle(p.id) : openProp(p.id))}
+						aria-label={selecting ? `Select ${p.name}` : `Open ${p.name}`}
+					>
 						<PropPreview prop={p} height={116} />
 					</button>
-					<label class="pick" class:show={selected.size > 0}>
+					<label class="pick" class:show={selected.size > 0 || selecting}>
 						<input
 							type="checkbox"
 							class="check"
@@ -384,14 +421,19 @@
 							aria-label="Select {p.name}"
 						/>
 					</label>
-					<button class="meta" onclick={() => openProp(p.id)}>
+					<button
+						class="meta"
+						onclick={() =>
+							selecting ? toggle(p.id) : openProp(p.id, p.segments.length ? 'overview' : 'wiring')}
+					>
 						<div class="row">
 							<K.icon size={15} class="kicon" />
 							<span class="name ellipsis grow">{p.name}</span>
 							<span class="faint small num">{p.pixelCount}</span>
 						</div>
 						{#if p.segments.length}
-							<div class="wire ellipsis">{shortChain(p)}</div>
+							<div class="wire ellipsis full">{shortChain(p)}</div>
+							<div class="wire ellipsis compact">{portWhere(p)}</div>
 						{:else}
 							<div class="wire unwired"><Cable size={12} /> Not wired — tap to connect</div>
 						{/if}
@@ -466,8 +508,13 @@
 		<button class="btn sm ghost" onclick={() => (groupOpen = true)}><FolderPlus size={14} /> Group</button>
 		<button class="btn sm ghost" onclick={bulkTest}><FlaskConical size={14} /> Test</button>
 		<button class="btn sm ghost del" onclick={bulkDelete}><Trash2 size={14} /> Delete</button>
-		<button class="btn sm ghost icon" onclick={() => (selected = new Set())} aria-label="Clear selection"
-			><X size={15} /></button
+		<button
+			class="btn sm ghost icon"
+			onclick={() => {
+				selected = new Set();
+				selecting = false;
+			}}
+			aria-label="Clear selection"><X size={15} /></button
 		>
 	</div>
 {/if}
@@ -612,7 +659,7 @@
 		border-radius: 50%;
 	}
 	.warnchip {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.ghostchip {
 		border-style: dashed;
@@ -656,9 +703,39 @@
 	.pick:focus-within {
 		opacity: 1;
 	}
+	.select-btn,
+	.wire.compact {
+		display: none;
+	}
 	@media (pointer: coarse) {
-		.pick {
+		.select-btn {
+			display: inline-flex;
+		}
+		.pcard:hover .pick {
+			opacity: 0;
+		}
+		.pick.show {
 			opacity: 1;
+			width: 44px;
+			height: 44px;
+			top: 6px;
+			left: 6px;
+			border-radius: 12px;
+		}
+		.pick:not(.show) {
+			pointer-events: none;
+		}
+		.pick .check {
+			width: 24px;
+			height: 24px;
+		}
+	}
+	@media (max-width: 640px) {
+		.wire.full {
+			display: none;
+		}
+		.wire.compact {
+			display: block;
 		}
 	}
 	.meta {
@@ -681,7 +758,7 @@
 		color: var(--text-3);
 	}
 	.wire.unwired {
-		color: var(--accent);
+		color: var(--accent-text);
 		display: flex;
 		align-items: center;
 		gap: 5px;
@@ -742,7 +819,7 @@
 		text-align: right;
 	}
 	.warn-t {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	@media (max-width: 1100px) {
 		.c-wire,
@@ -791,7 +868,7 @@
 	}
 	.count {
 		font-weight: 700;
-		color: var(--accent);
+		color: var(--accent-text);
 		margin-right: 2px;
 	}
 	.sep {
@@ -835,6 +912,6 @@
 	.kind.on {
 		border-color: var(--accent);
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 </style>

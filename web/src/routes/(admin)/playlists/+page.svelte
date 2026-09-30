@@ -619,7 +619,7 @@
 	}
 	.pl.on .plicon {
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.pl .grow {
 		display: flex;
@@ -708,7 +708,7 @@
 		border-bottom: 0;
 	}
 	.section.target .stitle {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.section.over {
 		background: var(--accent-soft);
@@ -760,7 +760,7 @@
 	}
 	.iicon.accent {
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.iicon.purple {
 		background: var(--purple-soft);
@@ -800,7 +800,7 @@
 	}
 	.dropzone:hover {
 		border-color: var(--accent);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.library {
 		position: sticky;
@@ -818,7 +818,7 @@
 		flex: 1;
 	}
 	.lib-target strong {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.lib-list {
 		display: flex;
@@ -841,7 +841,7 @@
 	}
 	.lib-item:hover {
 		border-color: var(--accent-line);
-		color: var(--accent);
+		color: var(--accent-text);
 		background: var(--accent-soft);
 	}
 	.lib-item strong {

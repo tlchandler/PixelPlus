@@ -398,6 +398,10 @@ export interface RequestSettings {
 	playlistId?: Id;
 	title: string;
 	message: string;
+	/** FM station visitors tune to, e.g. "88.7 FM" (shown on the request page and yard sign). */
+	radioFrequency?: string;
+	/** Internet address of the request page (e.g. through a tunnel); QR codes use it when set. */
+	publicUrl?: string;
 }
 export type TtsMode = 'auto' | 'device' | 'browser';
 export interface TriggerAction {
@@ -449,6 +453,12 @@ export interface ShowSettings {
 	security: { passwordHash?: string };
 	triggers: Trigger[];
 	games: GameSettings;
+	/** Display units. Absent = follow the viewer's locale (US → °F). Values are stored metric. */
+	units?: UnitSettings;
+}
+export type TemperatureUnit = 'c' | 'f';
+export interface UnitSettings {
+	temperature: TemperatureUnit;
 }
 
 export interface Show {
@@ -475,6 +485,8 @@ export interface SystemInfo {
 	nodeId: Id;
 	role: NodeRole | 'unconfigured';
 	hostname: string;
+	/** This controller's friendly name (setup wizard / adoption); falls back to the hostname. */
+	name?: string;
 	board: BoardKind | null;
 	boardRev?: string;
 	piModel?: string;
@@ -728,6 +740,8 @@ export interface PublicRequests {
 	queue: { id: string; sequenceId: Id; name: string; requestedBy?: string }[];
 	nowPlaying?: { name: string; posMs: number; durationMs: number } | null;
 	maxQueue: number;
+	/** FM station, when the owner set one. */
+	radioFrequency?: string | null;
 }
 
 export interface SongRequest {

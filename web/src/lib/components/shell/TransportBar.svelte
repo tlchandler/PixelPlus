@@ -1,9 +1,12 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { api } from '$lib/api/client';
+	import type { PlaylistItem } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { fmtDuration } from '$lib/util/format';
-	import { togglePlay } from '$lib/player';
+	import { togglePlay, stopShow, setLightsOff, LIGHTS_OFF_HELP } from '$lib/player';
+	import LayoutCanvas from '$lib/components/viz/LayoutCanvas.svelte';
 	import {
 		Play,
 		Pause,
@@ -76,13 +79,39 @@
 			dragBri = false;
 		}, 120);
 	}
-	function blackout() {
-		const on = !st?.blackout;
-		act(() => api.blackout(on));
-		toasts.push({
-			kind: on ? 'warning' : 'info',
-			message: on ? 'Blackout — all lights off' : 'Lights restored'
-		});
+	function lightsOff() {
+		setLightsOff(!st?.blackout);
+	}
+	// The dashboard has its own big Now Playing card; on phones the mini player would repeat it.
+	const onDashboard = $derived(page.url.pathname === '/');
+	const hasProps = $derived(!!app.show?.props.length);
+
+	/** The next few items of the running playlist (in order unless it's shuffled). */
+	const upNext = $derived.by(() => {
+		const show = app.show;
+		const pl = st?.playlist && show?.playlists.find((p) => p.id === st.playlist!.id);
+		if (!show || !pl || pl.shuffle) return st?.nextItem ? [st.nextItem.name] : [];
+		return pl.items
+			.slice(st!.playlist!.index + 1, st!.playlist!.index + 4)
+			.map((it) => itemName(it))
+			.filter(Boolean) as string[];
+	});
+	function itemName(it: PlaylistItem): string | undefined {
+		const show = app.show!;
+		switch (it.type) {
+			case 'sequence':
+				return show.sequences.find((x) => x.id === it.sequenceId)?.name;
+			case 'dj':
+				return show.djClips.find((x) => x.id === it.djClipId)?.name;
+			case 'effect':
+				return show.effects.find((x) => x.id === it.effectId)?.name;
+			case 'media':
+				return show.media.find((x) => x.id === it.mediaId)?.name;
+			case 'pause':
+				return 'Pause';
+			default:
+				return undefined;
+		}
 	}
 </script>
 
@@ -124,7 +153,7 @@
 					fill="currentColor"
 				/>{/if}
 		</button>
-		<button class="cb" onclick={() => act(() => api.stop())} disabled={!active} aria-label="Stop"
+		<button class="cb" onclick={stopShow} disabled={!active} aria-label="Stop"
 			><Square size={big ? 20 : 16} fill="currentColor" /></button
 		>
 		<button class="cb" onclick={() => act(api.next)} disabled={!active} aria-label="Next"
@@ -157,8 +186,9 @@
 	</div>
 {/snippet}
 
-{#snippet levels()}
-	<div class="lv">
+{#snippet levels(labelled = false)}
+	<div class="lv" class:labelled>
+		{#if labelled}<span class="lvl">Volume</span>{/if}
 		<button
 			class="icon-ghost"
 			onclick={() => {
@@ -179,8 +209,10 @@
 			style:--pct="{volume}%"
 			aria-label="Volume"
 		/>
+		{#if labelled}<span class="lvv num">{volume}%</span>{/if}
 	</div>
-	<div class="lv">
+	<div class="lv" class:labelled>
+		{#if labelled}<span class="lvl">Brightness</span>{/if}
 		<span class="icon-ghost" aria-hidden="true"><SunMedium size={17} /></span>
 		<input
 			type="range"
@@ -192,19 +224,20 @@
 			style:--pct="{brightness}%"
 			aria-label="Brightness"
 		/>
+		{#if labelled}<span class="lvv num">{brightness}%</span>{/if}
 	</div>
 	<button
 		class="bo"
 		class:on={st?.blackout}
-		onclick={blackout}
+		onclick={lightsOff}
 		aria-pressed={!!st?.blackout}
-		title="Blackout (B)"
+		title="{LIGHTS_OFF_HELP} (Shift+B)"
 	>
-		<Power size={15} /> <span>Blackout</span>
+		<Power size={15} /> <span>{st?.blackout ? 'Lights are off' : 'Lights off'}</span>
 	</button>
 {/snippet}
 
-<div class="transport" role="region" aria-label="Player">
+<div class="transport" class:home={onDashboard} role="region" aria-label="Player">
 	<div class="line" style:width="{pct}%"></div>
 	<div class="left">
 		<button class="np-btn" onclick={() => (expanded = true)} aria-label="Open player"
@@ -237,11 +270,28 @@
 		<button class="collapse" onclick={() => (expanded = false)} aria-label="Close player"
 			><ChevronDown size={22} /></button
 		>
-		<div class="big-art" class:live={playing}><ItemIcon size={44} strokeWidth={1.5} /></div>
+		<div class="big-art" class:live={playing} class:stage={hasProps} class:dark={st?.blackout}>
+			{#if hasProps && app.show}
+				<LayoutCanvas props={app.show.props} height="100%" />
+				{#if st?.blackout}<span class="art-badge off">LIGHTS OFF</span>{:else if playing}<span
+						class="art-badge"><span class="dot live"></span> LIVE</span
+					>{/if}
+			{:else}
+				<ItemIcon size={44} strokeWidth={1.5} />
+			{/if}
+		</div>
 		<div class="sheet-title">{@render title()}</div>
 		{@render progress()}
 		{@render controls(true)}
-		<div class="sheet-levels">{@render levels()}</div>
+		<div class="sheet-levels">{@render levels(true)}</div>
+		{#if upNext.length}
+			<div class="upnext">
+				<div class="eyebrow">Up next</div>
+				<ol>
+					{#each upNext as n, i (i + n)}<li><span class="num faint">{i + 1}</span>{n}</li>{/each}
+				</ol>
+			</div>
+		{/if}
 	</div>
 {/if}
 
@@ -539,6 +589,9 @@
 			background: var(--overlay);
 			z-index: 70;
 		}
+		.transport.home {
+			display: none;
+		}
 		.sheet {
 			display: flex;
 			flex-direction: column;
@@ -546,6 +599,9 @@
 			left: 0;
 			right: 0;
 			bottom: 0;
+			max-height: 94dvh;
+			overflow-y: auto;
+			overscroll-behavior: contain;
 			padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
 			background: var(--surface);
 			border-top-left-radius: 24px;
@@ -577,6 +633,93 @@
 			color: var(--accent-fg);
 			background: linear-gradient(135deg, #ffc45c, #f08a0c);
 			box-shadow: 0 12px 40px rgba(245, 165, 36, 0.35);
+		}
+		/* The live layout is the "album art": the show itself, playing right now. */
+		.big-art.stage {
+			position: relative;
+			width: 100%;
+			height: auto;
+			aspect-ratio: 16 / 10;
+			max-height: 34dvh;
+			border-radius: 20px;
+			overflow: hidden;
+			background: var(--canvas-bg);
+			border: 1px solid var(--border-2);
+			box-shadow: 0 14px 44px rgba(0, 0, 0, 0.35);
+			margin: 4px 0;
+		}
+		.big-art.stage.live {
+			background: var(--canvas-bg);
+			box-shadow:
+				0 14px 44px rgba(0, 0, 0, 0.35),
+				0 0 0 1px rgba(245, 165, 36, 0.25);
+		}
+		.big-art.stage :global(canvas) {
+			position: absolute;
+			inset: 0;
+			width: 100% !important;
+			height: 100% !important;
+		}
+		.big-art.stage.dark :global(canvas) {
+			opacity: 0.15;
+		}
+		.art-badge {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			padding: 3px 9px;
+			border-radius: 99px;
+			background: rgba(0, 0, 0, 0.6);
+			color: #ff8a8a;
+			font-size: 10.5px;
+			font-weight: 700;
+			letter-spacing: 0.08em;
+		}
+		.art-badge.off {
+			background: #d6363c;
+			color: #fff;
+		}
+		.lv.labelled {
+			display: grid;
+			grid-template-columns: 80px auto 1fr 40px;
+			align-items: center;
+			gap: 8px;
+		}
+		.sheet-levels .icon-ghost {
+			width: 44px;
+			height: 44px;
+		}
+		.lvl {
+			font-size: 12.5px;
+			font-weight: 560;
+			color: var(--text-2);
+		}
+		.lvv {
+			font-size: 12px;
+			color: var(--text-3);
+			text-align: right;
+		}
+		.upnext {
+			margin-top: 4px;
+			padding-top: 12px;
+			border-top: 1px solid var(--border);
+		}
+		.upnext ol {
+			list-style: none;
+			margin: 8px 0 0;
+			padding: 0;
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+		}
+		.upnext li {
+			display: flex;
+			gap: 12px;
+			font-size: 14px;
+			align-items: baseline;
 		}
 		.sheet-title .np {
 			justify-content: center;

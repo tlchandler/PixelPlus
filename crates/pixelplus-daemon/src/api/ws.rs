@@ -37,10 +37,20 @@ pub async fn handler(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    if !super::auth::is_authenticated(&state, &headers, peer.0) {
+    // Signed-in UI, or the local games sidecar (read-only events).
+    if !super::auth::is_authenticated_for(
+        &state,
+        &headers,
+        peer.0,
+        &axum::http::Method::GET,
+        "/api/v1/ws",
+    ) {
         return super::ApiError::unauthorized().into_response();
     }
-    ws.on_upgrade(move |socket| client(state, socket))
+    // Clients only send small control messages.
+    ws.max_message_size(64 * 1024)
+        .max_frame_size(64 * 1024)
+        .on_upgrade(move |socket| client(state, socket))
 }
 
 struct PreviewGuard {

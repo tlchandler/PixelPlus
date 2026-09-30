@@ -533,7 +533,7 @@
 		display: grid;
 		place-items: center;
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 		flex: 0 0 auto;
 	}
 	.uploads {
@@ -555,7 +555,7 @@
 		height: 4px;
 	}
 	.uic {
-		color: var(--accent);
+		color: var(--accent-text);
 		display: flex;
 	}
 	.uic.done {
@@ -620,7 +620,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 4px;
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.detail {
 		padding: 0 20px 18px 104px;

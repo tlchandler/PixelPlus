@@ -198,6 +198,13 @@
 		background: var(--surface-3);
 		color: var(--text);
 	}
+	/* On the pale sidebar a white pill with a hairline reads as "you are here". */
+	:global([data-theme='light']) .item.active {
+		background: var(--surface);
+		box-shadow:
+			var(--shadow-1),
+			inset 0 0 0 1px var(--border-2);
+	}
 	.item.active::before {
 		content: '';
 		position: absolute;
@@ -209,7 +216,7 @@
 		background: var(--accent);
 	}
 	.item.active :global(svg) {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.foot {
 		padding: 10px;

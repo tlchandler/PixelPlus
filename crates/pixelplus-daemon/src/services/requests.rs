@@ -250,6 +250,8 @@ pub fn public_view(state: &AppState) -> serde_json::Value {
         "songs": songs,
         "queue": queue,
         "nowPlaying": now_playing,
+        // "Tune your radio to …" on the visitor page; only when the owner set a station.
+        "radioFrequency": rs.radio_frequency.as_deref().map(str::trim).filter(|f| !f.is_empty()),
     })
 }
 

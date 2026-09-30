@@ -42,7 +42,8 @@ export const GROUPS: { id: NavItem['group']; label: string }[] = [
 	{ id: 'extras', label: 'Extras' }
 ];
 
-export const TABS = ['/', '/props', '/layout', '/playlists'];
+/** Phone tab bar: the pages people touch every night in the yard. Everything else is under More. */
+export const TABS = ['/', '/props', '/playlists', '/schedule'];
 
 export function isActive(href: string, path: string): boolean {
 	if (href === '/') return path === '/';

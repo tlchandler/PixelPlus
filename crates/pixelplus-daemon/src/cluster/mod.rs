@@ -208,6 +208,13 @@ pub struct DiscoveredNode {
     /// Leader that currently owns it (another leader), if any.
     pub adopted_by: Option<String>,
     pub last_seen: String,
+    /// Two devices announce this id from different addresses (cloned SD card
+    /// or an impostor): adoption is refused until it clears.
+    #[serde(default)]
+    pub duplicate: bool,
+    /// A show leader whose admin chose "Join another show".
+    #[serde(default)]
+    pub joining: bool,
 }
 
 /// Commands the leader sends to followers (`POST /cluster/command`).
@@ -346,7 +353,8 @@ pub(crate) struct FollowerRuntime {
     pub last_leader_contact: Option<Instant>,
     pub leader_udp: Option<SocketAddr>,
     pub last_sync_sent_at: Option<u64>,
-    /// Highest overlay frame sequence number from the current leader boot.
+    /// Leader boot id and highest sequence number of accepted overlay frames.
+    pub overlay_boot: String,
     pub overlay_seq: u64,
     /// Pings sent recently: `t0` → when (a pong must answer one of them).
     pub pings: HashMap<u64, Instant>,

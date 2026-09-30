@@ -737,7 +737,8 @@ export function buildDemoShow(): Show {
 				maxQueue: 5,
 				playlistId: 'plmain0001',
 				title: 'Request a song',
-				message: 'Pick a song and it plays next. Merry Christmas from the Chandlers!'
+				message: 'Pick a song and it plays next. Merry Christmas from the Chandlers!',
+				radioFrequency: '88.3 FM'
 			},
 			tts: { mode: 'auto' },
 			oled: { enabled: true },
@@ -779,4 +780,45 @@ export function buildDemoShow(): Show {
 		}
 	};
 	return show;
+}
+
+/**
+ * A brand-new show straight after the setup wizard: just the leader, nothing imported yet.
+ * Used by `?mock=empty` so first-run guidance and every empty state can be seen and tested.
+ */
+export function buildEmptyShow(): Show {
+	const demo = buildDemoShow();
+	const leader = { ...demo.nodes[0], outputs: outputs('difftxlarge', 60) };
+	return {
+		version: 1,
+		name: 'Maple Street Lights',
+		nodes: [leader],
+		receivers: [],
+		props: [],
+		propGroups: [],
+		sequences: [],
+		media: [],
+		djClips: [],
+		djVoices: [],
+		pronunciations: [],
+		effects: [],
+		playlists: [],
+		schedule: {
+			enabled: false,
+			location: demo.schedule.location,
+			entries: []
+		},
+		settings: {
+			...demo.settings,
+			alerts: { rules: { ...demo.settings.alerts.rules } },
+			requests: {
+				enabled: false,
+				maxQueue: 5,
+				title: 'Request a song',
+				message: 'Pick a song and it will play next. Merry Christmas!'
+			},
+			triggers: [],
+			games: { ...demo.settings.games, enabled: false, matrixPropId: undefined, publicUrl: '' }
+		}
+	};
 }

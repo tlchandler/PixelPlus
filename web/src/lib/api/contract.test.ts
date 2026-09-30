@@ -67,7 +67,10 @@ const OPTIONAL = new Set([
 	'ntfy',
 	'email',
 	'playlistId',
-	'matrixPropId'
+	'matrixPropId',
+	'units',
+	'radioFrequency',
+	'publicUrl'
 ]);
 
 type Problem = { path: string; kind: 'missing' | 'type'; detail: string };
@@ -92,7 +95,8 @@ function mergeObjects(items: unknown[]): Record<string, unknown> | undefined {
 	const objs = items.filter((x) => kind(x) === 'object') as Record<string, unknown>[];
 	if (!objs.length) return undefined;
 	const out: Record<string, unknown> = {};
-	for (const o of objs) for (const [k, v] of Object.entries(o)) if (!(k in out) || kind(out[k]) === 'null') out[k] = v;
+	for (const o of objs)
+		for (const [k, v] of Object.entries(o)) if (!(k in out) || kind(out[k]) === 'null') out[k] = v;
 	return out;
 }
 
@@ -147,7 +151,11 @@ export function compareShape(mock: unknown, real: unknown, path: string, out: Pr
 	for (const [k, v] of Object.entries(m)) {
 		if (!(k in r)) {
 			if (!OPTIONAL.has(k) && v !== null && v !== undefined)
-				out.push({ path: `${path}.${k}`, kind: 'missing', detail: `daemon has no "${k}" (mock: ${kind(v)})` });
+				out.push({
+					path: `${path}.${k}`,
+					kind: 'missing',
+					detail: `daemon has no "${k}" (mock: ${kind(v)})`
+				});
 			continue;
 		}
 		compareShape(v, r[k], `${path}.${k}`, out);

@@ -39,6 +39,32 @@ pub fn interfaces() -> Interfaces {
     out
 }
 
+/// `ip` is this host, or inside one of the subnets of its interfaces
+/// (IPv4 by netmask, IPv6 link-local), i.e. on the local network segment.
+pub fn on_local_subnet(ip: IpAddr) -> bool {
+    let ip = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v6)),
+        other => other,
+    };
+    if ip.is_loopback() {
+        return true;
+    }
+    let Ok(list) = if_addrs::get_if_addrs() else {
+        return false;
+    };
+    list.iter().any(|iface| match (&iface.addr, ip) {
+        (if_addrs::IfAddr::V4(v4), IpAddr::V4(peer)) => {
+            let mask = u32::from(v4.netmask);
+            u32::from(v4.ip) & mask == u32::from(peer) & mask
+        }
+        (if_addrs::IfAddr::V6(v6), IpAddr::V6(peer)) => {
+            let mask = u128::from(v6.netmask);
+            mask != 0 && u128::from(v6.ip) & mask == u128::from(peer) & mask
+        }
+        _ => false,
+    })
+}
+
 /// The local address the OS would use to reach `peer` (no packet is sent).
 pub fn local_ip_towards(peer: IpAddr) -> Option<IpAddr> {
     let bind: SocketAddr = match peer {

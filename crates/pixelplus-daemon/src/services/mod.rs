@@ -13,6 +13,7 @@ pub mod media;
 pub mod mqtt;
 pub mod network;
 pub mod oled;
+pub mod paths;
 pub mod platform;
 pub mod provision;
 pub mod requests;

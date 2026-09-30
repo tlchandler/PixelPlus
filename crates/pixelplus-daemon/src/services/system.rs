@@ -527,6 +527,11 @@ fn parse_active_wifi(text: &str) -> Option<WifiStatus> {
 // ---------------------------------------------------------------------------
 
 /// Body of `GET /system`.
+/// Round a percentage to one decimal for display.
+fn round1(v: f32) -> f64 {
+    (v as f64 * 10.0).round() / 10.0
+}
+
 /// `http://192.168.1.20:80` → `192.168.1.20` (fallback name of a follower's leader).
 fn leader_address(url: &str) -> Option<String> {
     let host = url
@@ -585,10 +590,11 @@ pub async fn system_info(state: &AppState, authed: bool) -> serde_json::Value {
     });
     let extra = serde_json::json!({
         "uptimeS": uptime_s(state),
-        "cpuPct": cpu_pct().await.unwrap_or(0.0),
-        "memPct": mem_pct().unwrap_or(0.0),
+        // One decimal: f32 → JSON would otherwise print 33.400001525878906.
+        "cpuPct": round1(cpu_pct().await.unwrap_or(0.0)),
+        "memPct": round1(mem_pct().unwrap_or(0.0)),
         "diskFreeMb": free / (1024 * 1024),
-        "tempC": soc_temp(),
+        "tempC": soc_temp().map(round1),
         "ips": ip_addresses(),
         "wifi": wifi_status().await,
         "leaderName": leader_name,
@@ -717,9 +723,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn percentages_are_rounded_for_json() {
+        assert_eq!(serde_json::json!(round1(33.400_001)).to_string(), "33.4");
+    }
+
+    #[test]
     fn leader_address_fallback() {
-        assert_eq!(leader_address("http://192.168.1.20:80").as_deref(), Some("192.168.1.20"));
-        assert_eq!(leader_address("http://127.0.0.1:18080/").as_deref(), Some("127.0.0.1:18080"));
+        assert_eq!(
+            leader_address("http://192.168.1.20:80").as_deref(),
+            Some("192.168.1.20")
+        );
+        assert_eq!(
+            leader_address("http://127.0.0.1:18080/").as_deref(),
+            Some("127.0.0.1:18080")
+        );
         assert_eq!(leader_address("  "), None);
     }
 

@@ -207,7 +207,14 @@
 						</div>
 					{:else if step === 2}
 						{#if detected && !changingBoard}
-							<div class="found"><CircleCheck size={16} /> Board detected</div>
+							<div class="found">
+								<CircleCheck size={16} />
+								{app.system?.detectedBoard
+									? 'Board detected'
+									: board === 'virtual'
+										? 'No PixelPlus board here — running on a computer'
+										: 'Board set for this controller'}
+							</div>
 							<h1>{BOARDS[board].name}</h1>
 							<p class="lead">{BOARDS[board].blurb}</p>
 						{:else}
@@ -326,7 +333,9 @@
 							</div>
 							<label class="field"
 								><span class="label">Time zone</span><select class="select" bind:value={loc.timezone}
-									>{#each tzs as z (z)}<option value={z}>{z.replace(/_/g, ' ')}</option>{/each}</select
+									>{#each tzs.includes(loc.timezone) ? tzs : [loc.timezone, ...tzs] as z (z)}<option value={z}
+											>{z.replace(/_/g, ' ')}</option
+										>{/each}</select
 								></label
 							>
 						</div>
@@ -561,7 +570,7 @@
 	}
 	.ri.accent {
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.ri.blue {
 		background: var(--blue-soft);
@@ -751,7 +760,7 @@
 		color: var(--text-2);
 	}
 	.ic {
-		color: var(--accent);
+		color: var(--accent-text);
 		display: flex;
 	}
 	@media (max-width: 640px) {

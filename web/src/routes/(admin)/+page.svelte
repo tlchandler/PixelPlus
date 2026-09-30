@@ -4,7 +4,10 @@
 	import type { HealthReport, SensorHistory, SongRequest } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import { playerAct } from '$lib/player';
+	import { playerAct, stopShow, setLightsOff, LIGHTS_OFF_HELP } from '$lib/player';
+	import { fmtTemp, tempSymbol, tempUnitOf, tempValue } from '$lib/util/units';
+	import GetReady from '$lib/components/dashboard/GetReady.svelte';
+	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import { BOARDS, needsPort3Warning } from '$lib/util/boards';
 	import { fmtCountdown, fmtDuration, plural } from '$lib/util/format';
 	import { fmtTime, fmtDate } from '$lib/util/time';
@@ -31,6 +34,7 @@
 		Music,
 		Maximize2,
 		Hand,
+		Map as MapIcon,
 		X
 	} from '@lucide/svelte';
 
@@ -65,13 +69,21 @@
 		return () => clearInterval(t);
 	});
 
-	const greeting = $derived.by(() => {
-		const h = new Date(now).getHours();
-		return h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-	});
-
 	const upcoming = $derived(show ? nextShow(show.schedule, new Date(now)) : undefined);
 	const tz = $derived(show?.schedule.location.timezone);
+	const tunit = $derived(tempUnitOf(show));
+	/** One line that answers "what's happening with my show tonight?" */
+	const tonight = $derived.by(() => {
+		if (!show) return '';
+		if (st?.scheduleEntry) return `The show is on until ${fmtTime(new Date(st.scheduleEntry.endsAt), tz)}`;
+		if (!upcoming || !show.schedule.enabled) return 'No show scheduled yet';
+		const start = new Date(upcoming.start);
+		const today = fmtDate(start, tz) === fmtDate(new Date(now), tz);
+		if (start.getTime() <= now) return `The show is on until ${fmtTime(new Date(upcoming.end), tz)}`;
+		return today
+			? `Show starts at ${fmtTime(start, tz)} tonight · in ${fmtCountdown(start.getTime() - now)}`
+			: `Next show ${fmtDate(start, tz, { weekday: 'long' })} at ${fmtTime(start, tz)}`;
+	});
 	const pct = $derived(st?.durationMs ? (st.posMs / st.durationMs) * 100 : 0);
 
 	async function runHealth() {
@@ -113,13 +125,22 @@
 	}
 
 	const sensorIcon = { temperature: Thermometer, voltage: Zap, current: Activity, power: Gauge };
-	const mainSensors = $derived(
-		app.sensors.filter((s) => ['cpu', 'volts', 'amps', 'watts'].includes(s.id)).length
-			? app.sensors.filter((s) => ['cpu', 'volts', 'amps', 'watts'].includes(s.id))
-			: app.sensors.slice(0, 4)
-	);
+	// The leader's key readings (ids from ARCHITECTURE §8 `GET /system/sensors`), then whatever else it has.
+	const leaderId = $derived(app.system?.nodeId);
+	const leaderName = $derived(app.show?.nodes.find((n) => n.id === leaderId)?.name ?? 'This controller');
+	const mainSensors = $derived.by(() => {
+		const own = app.sensors.filter((s) => !s.nodeId || s.nodeId === leaderId);
+		const key = ['cpuTemp', 'inputVoltage', 'inputCurrent', 'inputPower', 'driverTemp', 'powerTemp'];
+		const ranked = [...own].sort((a, b) => {
+			const ia = key.indexOf(a.id);
+			const ib = key.indexOf(b.id);
+			return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+		});
+		return ranked.slice(0, 4);
+	});
 	const issues = $derived(health?.checks.filter((c) => c.status !== 'ok') ?? []);
 	const warnLogs = $derived(app.logs.filter((l) => l.level === 'warn' || l.level === 'error').slice(0, 3));
+	const canPlay = $derived(!!show?.playlists.some((p) => p.items.length));
 	const totalPixels = $derived(show?.props.reduce((n, p) => n + p.pixelCount, 0) ?? 0);
 </script>
 
@@ -129,9 +150,10 @@
 			<div class="eyebrow">
 				{new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(now)}
 			</div>
-			<h1>{greeting}{show ? `, ${show.name}` : ''}</h1>
+			<h1>{show?.name ?? 'Your show'}</h1>
 			{#if show}
-				<p class="muted">
+				<p class="status-line">{tonight}</p>
+				<p class="faint small stats">
 					{plural(show.props.length, 'prop')} · {totalPixels.toLocaleString()} pixels · {plural(
 						show.nodes.length,
 						'controller'
@@ -139,28 +161,41 @@
 				</p>
 			{/if}
 		</div>
-		<a class="btn" href="/layout"><Maximize2 size={16} /> Full layout</a>
+		{#if show?.props.length}<a class="btn" href="/layout"><Maximize2 size={16} /> Full layout</a>{/if}
 	</header>
+
+	{#if show}<GetReady {show} />{/if}
 
 	<GeometryBanner />
 
-	<section class="hero card">
+	<section class="hero card" class:no-props={show && !show.props.length}>
 		<div class="stage">
-			{#if show}
+			{#if show && !show.props.length}
+				<div class="stage-empty">
+					<EmptyState
+						icon={MapIcon}
+						title="Your display will appear here"
+						message="Import your xLights layout and every prop lights up here, live, while the show plays."
+					>
+						<a class="btn primary" href="/props?import=1">Import from xLights</a>
+					</EmptyState>
+				</div>
+			{:else if show}
 				<LayoutCanvas props={show.props} height="100%" />
 			{:else}
 				<div class="skeleton" style="height:100%"></div>
 			{/if}
 			<div class="stage-badge">
-				{#if st?.state === 'playing'}<span class="live"><span class="dot live"></span> LIVE</span>
+				{#if st?.blackout}<span class="off" title={LIGHTS_OFF_HELP}>LIGHTS OFF</span>
+				{:else if st?.state === 'playing'}<span class="live"><span class="dot live"></span> LIVE</span>
 				{:else if st?.state === 'paused'}<span class="paused">PAUSED</span>
 				{:else if st?.state === 'testing'}<span class="testing">TESTING</span>
-				{:else if st?.blackout}<span class="paused">BLACKOUT</span>
+				{:else if st?.state === 'effect'}<span class="testing">EFFECT</span>
 				{:else}<span class="idle">IDLE</span>{/if}
 			</div>
 		</div>
 		<div class="np">
-			<div class="eyebrow">Now playing</div>
+			<div class="eyebrow">{st?.item ? 'Now playing' : 'Show'}</div>
 			{#if st?.item}
 				<h2 class="song ellipsis">{st.item.name}</h2>
 				<p class="muted small ellipsis">
@@ -180,13 +215,21 @@
 					</div>
 				{/if}
 			{:else}
-				<h2 class="song">The show is resting</h2>
-				<p class="muted small">
-					{#if upcoming}Starts automatically {fmtDate(new Date(upcoming.start), tz)} at {fmtTime(
-							new Date(upcoming.start),
-							tz
-						)}.{:else}Nothing is scheduled. Press play to start any time.{/if}
-				</p>
+				{#if show && !canPlay}
+					<h2 class="song">Nothing to play yet</h2>
+					<p class="muted small">
+						Upload your sequences and put them in a playlist. Then press play, or let the schedule start
+						the show at sunset.
+					</p>
+				{:else}
+					<h2 class="song">The show is resting</h2>
+					<p class="muted small">
+						{#if upcoming}Starts automatically {fmtDate(new Date(upcoming.start), tz)} at {fmtTime(
+								new Date(upcoming.start),
+								tz
+							)}.{:else}Nothing is scheduled. Press play to start any time.{/if}
+					</p>
+				{/if}
 			{/if}
 			<div class="actions">
 				{#if st?.state === 'playing'}
@@ -195,25 +238,29 @@
 					<button class="btn primary lg" onclick={() => playerAct(api.resume)}
 						><Play size={18} /> Resume</button
 					>
+				{:else if show && !canPlay}
+					<a class="btn primary lg" href={show.sequences.length ? '/playlists' : '/sequences'}
+						>{show.sequences.length ? 'Build a playlist' : 'Upload sequences'}</a
+					>
 				{:else}
 					<button class="btn primary lg" onclick={playShow}
 						><Play size={18} fill="currentColor" /> Play show now</button
 					>
 				{/if}
-				<button
-					class="btn lg"
-					disabled={!st || st.state === 'idle'}
-					onclick={() => playerAct(() => api.stop(true))}><Square size={16} /> Stop</button
+				<button class="btn lg" disabled={!st || st.state === 'idle'} onclick={stopShow}
+					><Square size={16} /> Stop</button
 				>
 			</div>
 			<div class="quick">
 				<button
 					class="qa"
 					class:on={st?.blackout}
-					onclick={() => playerAct(() => api.blackout(!st?.blackout))}
+					aria-pressed={!!st?.blackout}
+					title={LIGHTS_OFF_HELP}
+					onclick={() => setLightsOff(!st?.blackout)}
 				>
 					<Power size={16} />
-					{st?.blackout ? 'Lights off' : 'Blackout'}
+					{st?.blackout ? 'Turn lights back on' : 'Lights off'}
 				</button>
 				{#if st?.state === 'testing'}
 					<button class="qa on" onclick={() => playerAct(api.testStop)}><X size={16} /> Stop test</button>
@@ -238,7 +285,9 @@
 							<div class="big-num">in {fmtCountdown(new Date(upcoming.start).getTime() - now)}</div>
 							<div class="muted small">
 								{upcoming.name} · {fmtDate(new Date(upcoming.start), tz)}
-								{fmtTime(new Date(upcoming.start), tz)}–{fmtTime(new Date(upcoming.end), tz)}
+								<span class="nowrap"
+									>{fmtTime(new Date(upcoming.start), tz)}–{fmtTime(new Date(upcoming.end), tz)}</span
+								>
 							</div>
 						{:else if show}
 							<div class="big-num">Not scheduled</div>
@@ -385,7 +434,7 @@
 						</div>
 						<div>
 							<span class="faint tiny">Temp</span><span class="num"
-								>{temp ? `${temp.value.toFixed(0)} °C` : '—'}</span
+								>{temp ? fmtTemp(temp.value, tunit) : '—'}</span
 							>
 						</div>
 					</div>
@@ -399,7 +448,7 @@
 
 	<div class="section-title">
 		<h2>Power & temperature</h2>
-		<span class="faint small">Main Controller · live</span>
+		<span class="faint small">{leaderName} · live</span>
 	</div>
 	<div class="grid grid-4">
 		{#if !app.sensors.length}
@@ -414,9 +463,11 @@
 					<span class="faint small">{s.label}</span><Icon size={16} class="sico" />
 				</div>
 				<div class="sv num">
-					{s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)}<span class="unit"
-						>{s.unit}</span
-					>
+					{#if s.kind === 'temperature'}{tempValue(s.value, tunit).toFixed(0)}<span class="unit"
+							>{tempSymbol(tunit)}</span
+						>{:else}{s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)}<span class="unit"
+							>{s.unit}</span
+						>{/if}
 				</div>
 				<svg viewBox="0 0 100 30" preserveAspectRatio="none" class="spark" aria-hidden="true">
 					<path
@@ -458,6 +509,37 @@
 	.hello h1 {
 		font-size: 28px;
 		margin: 4px 0 4px;
+	}
+	.status-line {
+		font-size: 15px;
+		font-weight: 520;
+		color: var(--text-2);
+	}
+	.stats {
+		margin-top: 2px;
+	}
+	.stage-empty {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		color: #e9e9ee;
+		background:
+			radial-gradient(600px 260px at 50% 40%, rgba(245, 165, 36, 0.08), transparent 70%),
+			repeating-linear-gradient(0deg, transparent 0 23px, rgba(255, 255, 255, 0.025) 23px 24px),
+			repeating-linear-gradient(90deg, transparent 0 23px, rgba(255, 255, 255, 0.025) 23px 24px), #060608;
+	}
+	.stage-empty :global(p) {
+		color: #a9a9b3;
+	}
+	.stage-empty :global(.halo) {
+		background: rgba(245, 165, 36, 0.12);
+		border-color: rgba(255, 255, 255, 0.1);
+		color: #f5a524;
+	}
+	.stage-badge .off {
+		background: #d6363c;
+		color: #fff;
 	}
 	.hero {
 		display: grid;
@@ -563,6 +645,9 @@
 	.row2 {
 		margin-top: 16px;
 	}
+	.nowrap {
+		white-space: nowrap;
+	}
 	.big-num {
 		font-size: 17px;
 		font-weight: 620;
@@ -576,7 +661,7 @@
 		margin-top: 14px;
 		font-size: 12.5px;
 		font-weight: 560;
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.issues {
 		list-style: none;
@@ -596,7 +681,7 @@
 	.issues li :global(svg) {
 		flex: 0 0 auto;
 		margin-top: 2px;
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.issues li.fail :global(svg) {
 		color: var(--red);
@@ -653,7 +738,7 @@
 		align-items: center;
 		gap: 6px;
 		font-size: 12px;
-		color: var(--accent);
+		color: var(--accent-text);
 		margin-top: -4px;
 	}
 	.sensor {
@@ -681,11 +766,11 @@
 	.spark {
 		width: 100%;
 		height: 30px;
-		color: var(--accent);
+		color: var(--accent-text);
 		opacity: 0.8;
 	}
 	.sensor.warn .sv {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.sensor.bad .sv {
 		color: var(--red);
@@ -717,6 +802,10 @@
 		}
 		.stage {
 			min-height: 200px;
+		}
+		/* The checklist above already says "import your layout"; don't repeat it on a small screen. */
+		.hero.no-props .stage {
+			display: none;
 		}
 		.grid-4 {
 			grid-template-columns: repeat(2, minmax(0, 1fr));

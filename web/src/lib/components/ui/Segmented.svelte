@@ -74,8 +74,11 @@
 			0 0 0 1px var(--border-2);
 	}
 	@media (pointer: coarse) {
-		button {
-			height: 38px;
+		button,
+		.sm button {
+			height: 44px;
+			padding: 0 14px;
+			font-size: 13.5px;
 		}
 	}
 </style>

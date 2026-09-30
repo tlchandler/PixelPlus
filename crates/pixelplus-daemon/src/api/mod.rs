@@ -15,6 +15,7 @@ pub mod import;
 pub mod overlay;
 pub mod playerapi;
 pub mod public;
+pub mod security;
 pub mod system;
 pub mod test;
 pub mod tools;
@@ -70,6 +71,8 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(ws::handler))
         .fallback(|| async { ApiError::not_found("That API endpoint") })
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_auth))
+        // Host allow-list, CSRF header, WebSocket origin (before auth).
+        .layer(axum::middleware::from_fn_with_state(state.clone(), security::guard))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
@@ -81,9 +84,14 @@ pub fn router(state: AppState) -> Router {
         .precompressed_gzip()
         .fallback(ServeFile::new(web.join("index.html")));
 
+    let csp = std::sync::Arc::new(
+        security::content_security_policy(web)
+            .and_then(|v| HeaderValue::from_str(&v).ok()),
+    );
     Router::new()
         .nest("/api/v1", api)
         .fallback_service(spa)
+        .layer(axum::middleware::from_fn_with_state(csp, security::headers))
         .layer(tower_http::compression::CompressionLayer::new())
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

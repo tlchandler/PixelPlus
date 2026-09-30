@@ -17,17 +17,19 @@
 	--border-3: rgba(255, 255, 255, 0.18);
 	--text: #ececef;
 	--text-2: #a3a3ad;
-	--text-3: #6e6e7a;
+	--text-3: #8b8b96;
 	--text-inv: #0b0b0e;
 	--accent: #f5a524;
+	/* Accent used for text and icons (links, badges); --accent is for fills. */
+	--accent-text: #f5a524;
 	--accent-2: #ffb84d;
 	--accent-fg: #1d1300;
 	--accent-soft: rgba(245, 165, 36, 0.13);
 	--accent-line: rgba(245, 165, 36, 0.4);
 	--green: #3fcf8e;
 	--green-soft: rgba(63, 207, 142, 0.13);
-	--red: #f2555a;
-	--red-soft: rgba(242, 85, 90, 0.13);
+	--red: #ff6b70;
+	--red-soft: rgba(255, 107, 112, 0.13);
 	--blue: #5b9dff;
 	--blue-soft: rgba(91, 157, 255, 0.13);
 	--purple: #a88bfa;
@@ -56,21 +58,22 @@
 	--border-3: rgba(10, 10, 20, 0.22);
 	--text: #16161a;
 	--text-2: #55555f;
-	--text-3: #8a8a94;
+	--text-3: #63636d;
 	--text-inv: #ffffff;
 	--accent: #e39112;
+	--accent-text: #8a5100;
 	--accent-2: #f5a524;
 	--accent-fg: #1d1300;
 	--accent-soft: rgba(245, 165, 36, 0.16);
 	--accent-line: rgba(227, 145, 18, 0.45);
-	--green: #13a26b;
-	--green-soft: rgba(19, 162, 107, 0.12);
-	--red: #d93b40;
-	--red-soft: rgba(217, 59, 64, 0.1);
-	--blue: #2f74e0;
-	--blue-soft: rgba(47, 116, 224, 0.1);
-	--purple: #7a5ae0;
-	--purple-soft: rgba(122, 90, 224, 0.1);
+	--green: #0a7049;
+	--green-soft: rgba(10, 112, 73, 0.12);
+	--red: #b8232a;
+	--red-soft: rgba(184, 35, 42, 0.1);
+	--blue: #1c59b8;
+	--blue-soft: rgba(28, 89, 184, 0.1);
+	--purple: #6243cc;
+	--purple-soft: rgba(98, 67, 204, 0.1);
 	--yellow: #c79b00;
 	--shadow-1: 0 1px 2px rgba(20, 20, 30, 0.06);
 	--shadow-2: 0 8px 24px rgba(20, 20, 30, 0.1), 0 2px 6px rgba(20, 20, 30, 0.06);
@@ -437,7 +440,7 @@ button {
 .btn.soft {
 	background: var(--accent-soft);
 	border-color: transparent;
-	color: var(--accent);
+	color: var(--accent-text);
 }
 .btn.soft:hover {
 	background: rgba(245, 165, 36, 0.2);
@@ -462,12 +465,18 @@ button {
 .btn.block {
 	width: 100%;
 }
+/* Phones and tablets: every tap target is at least 44 × 44 px (gloves, cold fingers, dark yard). */
 @media (pointer: coarse) {
-	.btn {
+	.btn,
+	.btn.sm {
 		--h: 44px;
 	}
 	.btn.sm {
-		--h: 38px;
+		padding: 0 12px;
+		font-size: 13px;
+	}
+	.btn.icon {
+		min-width: var(--h);
 	}
 }
 
@@ -527,7 +536,9 @@ button {
 }
 @media (pointer: coarse) {
 	.input,
-	.select {
+	.select,
+	.input.sm,
+	.select.sm {
 		height: 44px;
 		font-size: 16px;
 	}
@@ -670,7 +681,7 @@ input[type='color']::-webkit-color-swatch {
 }
 .badge.accent {
 	background: var(--accent-soft);
-	color: var(--accent);
+	color: var(--accent-text);
 }
 .badge.green {
 	background: var(--green-soft);
@@ -693,6 +704,7 @@ input[type='color']::-webkit-color-swatch {
 	border: 1px solid var(--border-2);
 }
 .dot {
+	display: inline-block;
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
@@ -738,11 +750,12 @@ input[type='color']::-webkit-color-swatch {
 .chip.active {
 	background: var(--accent-soft);
 	border-color: var(--accent-line);
-	color: var(--accent);
+	color: var(--accent-text);
 }
 @media (pointer: coarse) {
 	.chip {
-		height: 38px;
+		height: 44px;
+		padding: 0 14px;
 	}
 }
 
@@ -869,7 +882,7 @@ table.table {
 }
 .notice.warn > svg,
 .notice.warn .ico {
-	color: var(--accent);
+	color: var(--accent-text);
 }
 .notice.info {
 	background: var(--blue-soft);
@@ -1005,7 +1018,7 @@ input[type='checkbox'].check:checked::before {
 }
 .icon-tile.accent {
 	background: var(--accent-soft);
-	color: var(--accent);
+	color: var(--accent-text);
 }
 .icon-tile.green {
 	background: var(--green-soft);

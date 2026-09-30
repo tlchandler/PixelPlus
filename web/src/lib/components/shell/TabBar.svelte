@@ -5,11 +5,23 @@
 	import { fade, fly } from 'svelte/transition';
 
 	let more = $state(false);
-	const tabs = $derived(NAV.filter((n) => TABS.includes(n.href)));
+	let sheet: HTMLDivElement | undefined = $state();
+	let moreBtn: HTMLButtonElement | undefined = $state();
+	const tabs = $derived(TABS.map((h) => NAV.find((n) => n.href === h)!).filter(Boolean));
 	const rest = $derived(NAV.filter((n) => !TABS.includes(n.href)));
 	const moreActive = $derived(rest.some((n) => isActive(n.href, page.url.pathname)));
-	const short: Record<string, string> = { '/': 'Home', '/sequences': 'Sequences' };
+	const short: Record<string, string> = { '/sequences': 'Sequences' };
+
+	function close(returnFocus = false) {
+		more = false;
+		if (returnFocus) moreBtn?.focus();
+	}
+	$effect(() => {
+		if (more) requestAnimationFrame(() => sheet?.querySelector<HTMLElement>('a')?.focus());
+	});
 </script>
+
+<svelte:window onkeydown={(e) => more && e.key === 'Escape' && close(true)} />
 
 <nav class="tabbar" aria-label="Main">
 	{#each tabs as t (t.href)}
@@ -20,10 +32,12 @@
 		</a>
 	{/each}
 	<button
+		bind:this={moreBtn}
 		class="tab"
 		class:active={moreActive || more}
 		onclick={() => (more = !more)}
 		aria-expanded={more}
+		aria-haspopup="dialog"
 		aria-label="More pages"
 	>
 		<Ellipsis size={22} />
@@ -32,23 +46,26 @@
 </nav>
 
 {#if more}
+	<div class="scrim" transition:fade={{ duration: 150 }} onclick={() => close()} aria-hidden="true"></div>
 	<div
-		class="scrim"
-		transition:fade={{ duration: 150 }}
-		onclick={() => (more = false)}
-		aria-hidden="true"
-	></div>
-	<div
+		bind:this={sheet}
 		class="sheet"
 		transition:fly={{ y: 300, duration: 240, opacity: 1 }}
 		role="dialog"
+		aria-modal="true"
 		aria-label="More pages"
 	>
 		<div class="grabber"></div>
 		<div class="grid">
 			{#each rest as t (t.href)}
 				{@const active = isActive(t.href, page.url.pathname)}
-				<a href={t.href} class="tile" class:active onclick={() => (more = false)}>
+				<a
+					href={t.href}
+					class="tile"
+					class:active
+					aria-current={active ? 'page' : undefined}
+					onclick={() => close()}
+				>
 					<t.icon size={22} />
 					<span>{short[t.href] ?? t.label}</span>
 				</a>
@@ -79,13 +96,20 @@
 		align-items: center;
 		justify-content: center;
 		gap: 3px;
+		min-width: 0;
 		color: var(--text-3);
 		font-size: 10.5px;
 		font-weight: 560;
 		-webkit-tap-highlight-color: transparent;
 	}
+	.tab span {
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.tab.active {
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.scrim {
 		position: fixed;
@@ -124,6 +148,7 @@
 		justify-content: center;
 		gap: 6px;
 		height: 76px;
+		padding: 0 4px;
 		border-radius: 14px;
 		color: var(--text-2);
 		font-size: 11.5px;
@@ -132,7 +157,7 @@
 		background: var(--surface-2);
 	}
 	.tile.active {
-		color: var(--accent);
+		color: var(--accent-text);
 		background: var(--accent-soft);
 	}
 </style>

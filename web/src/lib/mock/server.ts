@@ -28,7 +28,7 @@ import { propPoints, worldBounds } from '$lib/util/geometry';
 import { expandSchedule, nextShow } from '$lib/util/schedule';
 import { newId } from '$lib/util/id';
 import { KOKORO_VOICES } from '$lib/util/voices';
-import { buildDemoShow, GARAGE, MAIN } from './demo';
+import { buildDemoShow, buildEmptyShow, GARAGE, MAIN } from './demo';
 import type { SocketLike } from '$lib/api/socket';
 
 type Json = any;
@@ -126,13 +126,14 @@ export class MockServer {
 	#routes: [string, RegExp, Handler][] = [];
 	#faultSessions = 0;
 
-	constructor(opts: { needsSetup?: boolean; autoplay?: boolean } = {}) {
-		this.show = buildDemoShow();
+	constructor(opts: { needsSetup?: boolean; autoplay?: boolean; empty?: boolean } = {}) {
+		this.show = opts.empty ? buildEmptyShow() : buildDemoShow();
 		this.system = {
 			version: '0.9.0-demo',
 			nodeId: MAIN,
 			role: opts.needsSetup ? 'unconfigured' : 'leader',
 			hostname: 'pixelplus-main',
+			name: 'Main Controller',
 			board: 'difftxlarge',
 			boardRev: 'A',
 			piModel: 'Raspberry Pi 4 Model B Rev 1.5',
@@ -220,8 +221,14 @@ export class MockServer {
 				time: new Date(now - 1800e3).toISOString()
 			}
 		];
+		if (opts.empty) {
+			this.snapshots = [];
+			this.requests = [];
+			this.discovered = [];
+		}
 		this.#defineRoutes();
-		if (opts.autoplay !== false && !opts.needsSetup) this.#startPlaylist('plmain0001', 1, 38000);
+		if (opts.autoplay !== false && !opts.needsSetup && !opts.empty)
+			this.#startPlaylist('plmain0001', 1, 38000);
 	}
 
 	// ------------------------------------------------------------------ transport
@@ -369,7 +376,7 @@ export class MockServer {
 			uptimeS: this.system.uptimeS + Math.round((Date.now() - this.started) / 1000),
 			time: new Date().toISOString(),
 			cpuPct: Math.round(18 + Math.random() * 14),
-			tempC: +(this.#sensorsNow().find((s) => s.id === 'cpu')?.value ?? 50).toFixed(1),
+			tempC: +(this.#sensorsNow().find((s) => s.id === 'cpuTemp')?.value ?? 50).toFixed(1),
 			passwordSet: !!this.password,
 			outputGeometry: this.geo
 		}));
@@ -657,24 +664,39 @@ export class MockServer {
 		// import
 		r('POST', '/import/xlights', async ({ form }) => {
 			await sleep(900);
-			const f = form?.get('rgbeffects');
-			const base = this.show.props
-				.slice(0, 3)
-				.map((p) => ({ ...clone(p), id: newId(), name: `${p.name} (imported)` }));
+			void form;
+			// Like a real re-import: every model in the layout, three of them new to this show.
+			const fresh = [
+				['Candy Cane 5', 'candycane', 25],
+				['Candy Cane 6', 'candycane', 25],
+				['Mini Tree 4', 'tree', 50]
+			].map(([name, kind, px], i) => {
+				const tpl = clone(this.show.props.find((p) => p.kind === kind) ?? this.show.props[0]);
+				return {
+					...tpl,
+					id: newId(),
+					name: String(name),
+					xlightsModel: String(name),
+					pixelCount: Number(px),
+					segments: [],
+					layout: tpl?.layout ? { ...tpl.layout, x: tpl.layout.x + 40 * (i + 1) } : undefined
+				};
+			});
 			return {
-				props: base,
+				props: [...this.show.props.map((p) => clone(p)), ...fresh],
 				controllers: [
 					{ name: 'PixelPlus-Main', suggestedNodeId: MAIN, ports: 60 },
 					{ name: 'Garage pHAT', suggestedNodeId: GARAGE, ports: 4 }
 				],
-				warnings: [
-					`Read ${f instanceof File ? f.name : 'layout'}: 3 new models, 29 unchanged.`,
-					'Model "Tune To Sign" has no controller connection and was skipped.'
-				]
+				warnings: [`skipped 'Tune To Sign': it isn't connected to a controller in xLights`]
 			};
 		});
 		r('POST', '/import/xlights/apply', ({ body }) => {
-			for (const p of body.preview.props) this.show.props.push(p);
+			for (const p of body.preview.props as Prop[]) {
+				const i = this.show.props.findIndex((x) => x.id === p.id);
+				if (i >= 0) this.show.props[i] = p;
+				else this.show.props.push(p);
+			}
 			this.#bump();
 			return clone(this.show);
 		});
@@ -1150,13 +1172,17 @@ export class MockServer {
 					? `${unwired.map((p) => p.name).join(', ')} not wired to any port`
 					: 'Every prop has a port'
 			},
-			{
-				id: 'port3',
-				label: 'Garage transmitter',
-				status: 'warn',
-				detail: 'Rev D board: make sure port 3 uses the 4/5-swapped lead'
-			},
-			{ id: 'schedule', label: 'Schedule', status: 'ok', detail: 'Next show tonight at sunset' }
+			...this.show.nodes
+				.filter((n) => n.board === 'difftx' && (n.boardRev ?? '').toUpperCase() === 'D')
+				.map((n) => ({
+					id: `port3-${n.id}`,
+					label: n.name,
+					status: 'warn' as const,
+					detail: 'use the swapped patch lead on port 3 (rev D board)'
+				})),
+			this.show.schedule.enabled && this.show.schedule.entries.length
+				? { id: 'schedule', label: 'Schedule', status: 'ok', detail: 'Next show tonight at sunset' }
+				: { id: 'schedule', label: 'Schedule', status: 'ok', detail: 'No show times yet' }
 		];
 		return { ok: !checks.some((c) => c.status === 'fail'), ranAt: new Date().toISOString(), checks };
 	}
@@ -1168,7 +1194,7 @@ export class MockServer {
 		const volts = 12.18 - amps * 0.018 + Math.random() * 0.03;
 		return [
 			{
-				id: 'cpu',
+				id: 'cpuTemp',
 				label: 'Main Controller CPU',
 				kind: 'temperature',
 				value: +(49 + 3 * Math.sin(t / 40) + Math.random()).toFixed(1),
@@ -1178,7 +1204,7 @@ export class MockServer {
 				nodeId: MAIN
 			},
 			{
-				id: 'board1',
+				id: 'powerTemp',
 				label: 'Transmitter board',
 				kind: 'temperature',
 				value: +(33 + Math.sin(t / 60) + Math.random() * 0.4).toFixed(1),
@@ -1188,7 +1214,7 @@ export class MockServer {
 				nodeId: MAIN
 			},
 			{
-				id: 'board2',
+				id: 'driverTemp',
 				label: 'Driver bank',
 				kind: 'temperature',
 				value: +(36 + Math.sin(t / 50) + Math.random() * 0.4).toFixed(1),
@@ -1198,7 +1224,7 @@ export class MockServer {
 				nodeId: MAIN
 			},
 			{
-				id: 'volts',
+				id: 'inputVoltage',
 				label: '12 V supply',
 				kind: 'voltage',
 				value: +volts.toFixed(2),
@@ -1208,7 +1234,7 @@ export class MockServer {
 				nodeId: MAIN
 			},
 			{
-				id: 'amps',
+				id: 'inputCurrent',
 				label: '12 V current',
 				kind: 'current',
 				value: +amps.toFixed(2),
@@ -1218,7 +1244,7 @@ export class MockServer {
 				nodeId: MAIN
 			},
 			{
-				id: 'watts',
+				id: 'inputPower',
 				label: 'Power',
 				kind: 'power',
 				value: +(amps * volts).toFixed(0),

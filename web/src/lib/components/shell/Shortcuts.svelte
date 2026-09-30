@@ -5,7 +5,7 @@
 	const general = [
 		['Space', 'Play / pause the show'],
 		['/', 'Search on this page'],
-		['B', 'Blackout on / off'],
+		['Shift B', 'Lights off / back on'],
 		['?', 'Show this help'],
 		['Esc', 'Close panels and dialogs']
 	];

@@ -191,7 +191,7 @@
 	}
 	.addc:hover {
 		border-color: var(--accent);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	.seg {
 		display: flex;

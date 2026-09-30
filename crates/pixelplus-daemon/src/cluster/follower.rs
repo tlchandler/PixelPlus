@@ -11,13 +11,13 @@
 use super::leader::{error_message, AdoptCall, AdoptReply};
 use super::manifest::{self, ManifestSequence, NodeManifest};
 use super::proto::{self, FileProgress, FollowerReport, Msg, Ping, Pong, SyncState};
-use super::{net, sleep_or_stop, to_player, ClusterCommand, Shared, KEY_HEADER};
+use super::sig;
+use super::{net, sleep_or_stop, to_player, ClusterCommand, Shared};
 use crate::api::{ApiError, ApiResult};
 use crate::node::LocalRole;
 use crate::player::{OverlayCmd, PlayerCmd, PlayerState, SyncPacket, TestRequest, TestTarget};
 use crate::state::AppState;
 use anyhow::Context;
-use axum::http::HeaderMap;
 use pixelplus_core::model::{Node, NodeRole};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -27,8 +27,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 
-/// A leader silent this long may be replaced by a forced adoption.
-const LEADER_GONE: Duration = Duration::from_secs(30);
+/// Without a password on this follower, a leader silent this long may be
+/// replaced by a forced adoption from the local network.
+const LEADER_GONE: Duration = Duration::from_secs(10 * 60);
+/// A pong must answer a ping sent within this time.
+const PING_FRESH: Duration = Duration::from_secs(5);
 
 /// A verified local slice.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -288,12 +291,30 @@ pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]
     if identity.role != LocalRole::Follower {
         return;
     }
-    let Some(key) = identity.cluster_key.as_deref() else {
+    let (Some(key), Some(leader)) = (identity.cluster_key.as_deref(), identity.leader_id.as_deref())
+    else {
         return;
     };
     let Some(frame) = proto::decode_overlay(data, key) else {
         return;
     };
+    // Only frames from the leader run we confirmed (see `answers_recent_ping`),
+    // each sequence number once.
+    {
+        let current = sh.replay.lock().boot(leader).map(String::from);
+        let mut f = sh.follower.lock();
+        if frame.boot != f.overlay_boot {
+            if current.as_deref() != Some(frame.boot.as_str()) {
+                return;
+            }
+            f.overlay_boot = frame.boot.clone();
+            f.overlay_seq = 0;
+        }
+        if frame.seq <= f.overlay_seq {
+            return; // duplicate, late or replayed
+        }
+        f.overlay_seq = frame.seq;
+    }
     let Some(prop) = state.store.get().prop(&frame.prop_id).cloned() else {
         return;
     };
@@ -306,18 +327,6 @@ pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]
         );
         return;
     }
-    {
-        let mut f = sh.follower.lock();
-        let last = f.overlay_frames.get(&frame.prop_id).copied();
-        if let Some(last) = last {
-            let behind = last.wrapping_sub(frame.frame_no);
-            if frame.frame_no == last || (behind > 0 && behind < 1_000) {
-                return; // duplicate or late
-            }
-        }
-        f.overlay_frames
-            .insert(frame.prop_id.clone(), frame.frame_no);
-    }
     to_player(
         state,
         PlayerCmd::Overlay(OverlayCmd::PropPixels {
@@ -328,18 +337,54 @@ pub(crate) async fn on_overlay_packet(state: &AppState, sh: &Shared, data: &[u8]
     .await;
 }
 
+/// Send a clock probe to `dest`, remembering it (pongs must answer one).
+async fn send_ping(state: &AppState, sh: &Shared, dest: SocketAddr) {
+    let identity = state.identity();
+    let t0 = sh.now_ms();
+    {
+        let mut f = sh.follower.lock();
+        f.pings.retain(|_, at| at.elapsed() < PING_FRESH);
+        if f.pings.len() >= 64 {
+            return;
+        }
+        f.pings.insert(t0.to_bits(), Instant::now());
+    }
+    let ping = Msg::Ping(Ping {
+        id: identity.id.clone(),
+        t0,
+    });
+    sh.send_json(&ping, identity.cluster_key.as_deref(), &[dest])
+        .await;
+}
+
+/// `t0` is one of our pings from the last few seconds (consumed): the pong
+/// carrying it is live, not a replay. The only way to accept a new leader run.
+pub(crate) fn answers_recent_ping(sh: &Shared, t0: f64) -> bool {
+    let mut f = sh.follower.lock();
+    f.pings
+        .remove(&t0.to_bits())
+        .is_some_and(|at| at.elapsed() < PING_FRESH)
+}
+
+/// An authenticated packet from an unknown leader run arrived from `src`:
+/// ping it (at most twice a second) so its pong can confirm the new run.
+pub(crate) async fn challenge(state: &AppState, sh: &Shared, src: SocketAddr) {
+    {
+        let mut f = sh.follower.lock();
+        if f.last_challenge.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
+            return;
+        }
+        f.last_challenge = Some(Instant::now());
+    }
+    send_ping(state, sh, src).await;
+}
+
 async fn ping_loop(state: AppState, sh: Arc<Shared>) {
     let mut stop = sh.stop_rx();
     loop {
         if is_follower_with_leader(&state) {
-            let identity = state.identity();
             if let Some(dest) = leader_addr(&state, &sh) {
-                let ping = Msg::Ping(Ping {
-                    id: identity.id.clone(),
-                    t0: sh.now_ms(),
-                });
-                sh.send_json(&ping, identity.cluster_key.as_deref(), &[dest])
-                    .await;
+                send_ping(&state, &sh, dest).await;
             }
         }
         if sleep_or_stop(&mut stop, sh.settings.ping_interval).await {
@@ -352,24 +397,42 @@ async fn ping_loop(state: AppState, sh: Arc<Shared>) {
 // HTTP handlers (called from api::cluster)
 // ---------------------------------------------------------------------------
 
-fn valid_key(k: &str) -> bool {
-    (16..=256).contains(&k.len())
-        && k.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+/// The leader address must be an IP literal on a local network (the leader
+/// always sends its own address), so a stranger's adoption can't make this
+/// controller call arbitrary hosts.
+fn local_leader_host(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    match host.trim_matches(['[', ']']).parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                // 100.64.0.0/10 (carrier-grade NAT, Tailscale)
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        }
+        Ok(std::net::IpAddr::V6(v6)) => !v6.is_multicast() && !v6.is_unspecified(),
+        Err(_) => false,
+    }
 }
 
 fn validate_call(call: &AdoptCall) -> ApiResult<()> {
     if !super::slices::safe_id(&call.leader_id) {
         return Err(ApiError::bad_request("Invalid leader id."));
     }
-    if !valid_key(&call.cluster_key) {
-        return Err(ApiError::bad_request("Invalid cluster key."));
+    if !sig::valid_public(&call.dh) {
+        return Err(ApiError::bad_request(
+            "This leader runs an older PixelPlus. Update it, then adopt this controller again.",
+        ));
     }
     let url = reqwest::Url::parse(&call.leader_url)
         .map_err(|_| ApiError::bad_request("Invalid leader address."))?;
     if call.leader_url.len() > 256
         || !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
+        || !local_leader_host(&url)
+        || url.path() != "/"
+        || url.query().is_some()
     {
         return Err(ApiError::bad_request("Invalid leader address."));
     }
@@ -387,69 +450,104 @@ fn leader_label(sh: &Shared, leader_id: &str) -> String {
         .unwrap_or_else(|| leader_id.to_string())
 }
 
+/// Who is asking to adopt us, as far as `POST /cluster/adopt` can tell.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AdoptAuth {
+    /// Signed with our current key by our current leader.
+    pub signed_by_leader: bool,
+    /// TCP peer address of the request.
+    pub peer: Option<std::net::IpAddr>,
+}
+
+/// Why an adoption is allowed (`None`: refused), per ARCHITECTURE §7.5.
+fn adoption_allowed(
+    state: &AppState,
+    sh: &Shared,
+    call: &AdoptCall,
+    auth: AdoptAuth,
+) -> Result<&'static str, ApiError> {
+    let identity = state.identity();
+    let window = sh
+        .join_window()
+        .filter(|w| w.leader_ip.is_none() || w.leader_ip == auth.peer);
+    match identity.role {
+        LocalRole::Unconfigured => Ok("first adoption of a new controller"),
+        LocalRole::Follower if identity.leader_id.is_none() => {
+            Ok("first adoption since it was released")
+        }
+        LocalRole::Follower => {
+            let current = identity.leader_id.as_deref().unwrap_or_default();
+            if auth.signed_by_leader {
+                return Ok("re-adoption by its leader");
+            }
+            if current == call.leader_id && sh.keys.lock().pending {
+                return Ok("repeated adoption by the same leader");
+            }
+            if window.is_some() {
+                return Ok("adoption allowed on this controller");
+            }
+            let silent = sh
+                .follower
+                .lock()
+                .last_leader_contact
+                .map_or_else(|| sh.started.elapsed(), |t| t.elapsed());
+            let no_password = state.store.get().settings.security.password_hash.is_none();
+            let local = auth.peer.is_some_and(net::on_local_subnet);
+            if call.force && no_password && silent >= LEADER_GONE && local {
+                return Ok("take-over of a controller whose leader is gone");
+            }
+            let label = leader_label(sh, current);
+            let hint = if call.force && silent >= LEADER_GONE {
+                "Open PixelPlus on this controller and choose “Allow a new leader”."
+            } else if call.force {
+                "That leader was online recently: release this controller there first, or open PixelPlus on this controller and choose “Allow a new leader”."
+            } else {
+                "Release it there first, or, if that leader is gone for good, open PixelPlus on this controller and choose “Allow a new leader”."
+            };
+            Err(ApiError::conflict(format!(
+                "This controller already belongs to show leader {label}. {hint}"
+            )))
+        }
+        LocalRole::Leader => {
+            if window.is_some() {
+                Ok("a leader joining another show")
+            } else {
+                Err(ApiError::conflict(
+                    "This controller is itself a show leader. To add it to another show, open PixelPlus on it and choose Controllers → Join another show.",
+                ))
+            }
+        }
+    }
+}
+
 /// `POST /cluster/adopt`.
 pub async fn handle_adopt(
     state: &AppState,
     sh: &Shared,
-    headers: &HeaderMap,
     call: AdoptCall,
+    auth: AdoptAuth,
 ) -> ApiResult<AdoptReply> {
     validate_call(&call)?;
     let identity = state.identity();
     if call.leader_id == identity.id {
         return Err(ApiError::bad_request("A controller cannot adopt itself."));
     }
-    let has_key = crate::api::auth::has_cluster_key(state, headers);
-    match identity.role {
-        LocalRole::Unconfigured => {}
-        LocalRole::Follower if identity.leader_id.is_none() => {}
-        LocalRole::Follower => {
-            let same = identity.leader_id.as_deref() == Some(call.leader_id.as_str())
-                && identity
-                    .cluster_key
-                    .as_deref()
-                    .is_some_and(|k| proto::ct_eq(k.as_bytes(), call.cluster_key.as_bytes()));
-            let leader_gone = sh
-                .follower
-                .lock()
-                .last_leader_contact
-                .map_or(true, |t| t.elapsed() > LEADER_GONE);
-            if !(has_key || same || (call.force && leader_gone)) {
-                let current = leader_label(sh, identity.leader_id.as_deref().unwrap_or_default());
-                let hint = if call.force {
-                    "That leader is still online: release this controller there first."
-                } else {
-                    "Release it there first, or, if that leader is gone for good, take it over."
-                };
-                return Err(ApiError::conflict(format!(
-                    "This controller already belongs to show leader {current}. {hint}"
-                )));
-            }
-            if !same && !has_key {
-                tracing::warn!(
-                    "taken over from silent leader {:?} by {}",
-                    identity.leader_id,
-                    call.leader_id
-                );
-            }
-        }
-        LocalRole::Leader => {
-            if !call.force {
-                return Err(ApiError::conflict(
-                    "This controller is itself a show leader. Adopting it replaces its show with the leader's; confirm to continue.",
-                ));
-            }
-            // Keep the old show, just in case.
-            let backup = sh.cluster_dir.join(format!(
-                "show-before-adopt-{}.json",
-                chrono::Utc::now().format("%Y%m%d%H%M%S")
-            ));
-            let show = state.store.get();
-            if let Err(e) = write_json_atomic(&backup, &*show) {
-                tracing::warn!("could not back up the show before adoption: {e:#}");
-            }
+    let why = adoption_allowed(state, sh, &call, auth)?;
+    if identity.role == LocalRole::Leader {
+        // Keep the old show, just in case.
+        let backup = sh.cluster_dir.join(format!(
+            "show-before-adopt-{}.json",
+            chrono::Utc::now().format("%Y%m%d%H%M%S")
+        ));
+        let show = state.store.get();
+        if let Err(e) = super::write_private_json(&backup, &*show) {
+            tracing::warn!("could not back up the show before adoption: {e:#}");
         }
     }
+    let offer = sig::dh_offer().map_err(ApiError::internal)?;
+    let my_dh = offer.public_hex.clone();
+    let key = sig::derive_key(offer, &call.dh, &call.leader_id, &identity.id, &call.dh, &my_dh)
+        .ok_or_else(|| ApiError::bad_request("Invalid key exchange."))?;
     let changed_leader = identity.leader_id.as_deref() != Some(call.leader_id.as_str());
     let _guard = sh.install_lock.lock().await;
     let identity = state
@@ -457,14 +555,23 @@ pub async fn handle_adopt(
             i.role = LocalRole::Follower;
             i.leader_id = Some(call.leader_id.clone());
             i.leader_url = Some(call.leader_url.clone());
-            i.cluster_key = Some(call.cluster_key.clone());
+            i.cluster_key = Some(key.clone());
             if let Some(n) = &call.name {
                 i.name = Some(n.trim().to_string());
             }
         })
         .map_err(ApiError::internal)?;
+    // Until the leader uses the new key, it may repeat this adoption.
+    sh.update_keys(|k| {
+        k.pending = true;
+        k.followers.clear();
+    });
+    *sh.join.lock() = None;
     if changed_leader {
         sh.clock.lock().reset();
+        if let Some(old) = &identity.leader_id {
+            sh.replay.lock().forget(old);
+        }
         let mut f = sh.follower.lock();
         f.last_sync_sent_at = None;
         f.leader_udp = None;
@@ -472,18 +579,26 @@ pub async fn handle_adopt(
         f.problem = None;
         f.missing = None;
     }
+    sh.replay.lock().forget(&call.leader_id);
     sh.manifest_trigger.notify_one();
     let hostname = net::hostname();
     let (board, board_rev) = net::local_board(state);
-    tracing::info!(
-        "adopted by leader {} at {}",
-        call.leader_id,
-        call.leader_url
+    let from = auth
+        .peer
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|| call.leader_url.clone());
+    super::log_warning(
+        state,
+        format!(
+            "Adopted by show leader {} at {from} ({why}).",
+            leader_label(sh, &call.leader_id)
+        ),
     );
     state.events.toast(
         crate::events::ToastKind::Success,
         "This controller was adopted by the show leader",
     );
+    let proof = sig::adopt_proof(&key, &call.leader_id, &identity.id);
     Ok(AdoptReply {
         id: identity.id.clone(),
         name: identity
@@ -494,7 +609,16 @@ pub async fn handle_adopt(
         board,
         board_rev,
         pi_model: net::pi_model(),
+        dh: my_dh,
+        proof,
     })
+}
+
+/// A signed request from our leader arrived: its key is confirmed.
+pub(crate) fn leader_key_confirmed(sh: &Shared) {
+    if sh.keys.lock().pending {
+        sh.update_keys(|k| k.pending = false);
+    }
 }
 
 /// This node as a standalone follower (no leader).
@@ -531,6 +655,7 @@ pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
         return Err(ApiError::conflict("This controller is not a follower."));
     }
     let _guard = sh.install_lock.lock().await;
+    let old_leader = identity.leader_id.clone();
     state
         .set_identity(|i| {
             i.leader_id = None;
@@ -538,6 +663,10 @@ pub async fn handle_release(state: &AppState, sh: &Shared) -> ApiResult<()> {
             i.cluster_key = None;
         })
         .map_err(ApiError::internal)?;
+    sh.update_keys(|k| k.pending = false);
+    if let Some(old) = old_leader {
+        sh.replay.lock().forget(&old);
+    }
     sh.clock.lock().reset();
     {
         let mut f = sh.follower.lock();
@@ -697,17 +826,26 @@ pub(crate) enum FetchError {
 
 async fn fetch_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<NodeManifest> {
     let identity = state.identity();
-    let (Some(url), Some(key)) = (identity.leader_url.clone(), identity.cluster_key.clone()) else {
+    let (Some(url), Some(key), Some(leader)) = (
+        identity.leader_url.clone(),
+        identity.cluster_key.clone(),
+        identity.leader_id.clone(),
+    ) else {
         anyhow::bail!("no leader configured");
     };
-    let resp = sh
-        .http
-        .get(format!("{url}/api/v1/cluster/manifest/{}", identity.id))
-        .header(KEY_HEADER, key)
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("cannot reach the show leader at {url} ({e})"))?;
+    let sig::SignedResponse { resp, nonce } = sig::call(
+        sh,
+        &key,
+        &identity.id,
+        &leader,
+        reqwest::Method::GET,
+        &format!("{url}/api/v1/cluster/manifest/{}", identity.id),
+        None,
+        Duration::from_secs(15),
+        &[],
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("cannot reach the show leader at {url} ({e})"))?;
     match resp.status().as_u16() {
         200 => {}
         401 | 403 => {
@@ -716,7 +854,20 @@ async fn fetch_manifest(state: &AppState, sh: &Shared) -> anyhow::Result<NodeMan
         404 => anyhow::bail!("the show leader no longer lists this controller"),
         _ => anyhow::bail!("the show leader answered: {}", error_message(resp).await),
     }
-    let m: NodeManifest = resp.json().await.context("reading the manifest")?;
+    let reply = resp
+        .headers()
+        .get(sig::REPLY_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    let body = resp.bytes().await.context("reading the manifest")?;
+    let what = format!("manifest {}", sig::sha256_hex(&body));
+    if !sig::verify_reply(&key, &nonce, &what, reply.as_deref()) {
+        anyhow::bail!("the manifest did not come from the show leader (bad signature)");
+    }
+    let m: NodeManifest = serde_json::from_slice(&body).context("reading the manifest")?;
+    if m.leader_id != leader {
+        anyhow::bail!("the manifest is from another leader");
+    }
     if m.node.id != identity.id {
         anyhow::bail!("the leader sent the manifest of another controller");
     }
@@ -858,7 +1009,11 @@ pub(crate) async fn download_slice(
 ) -> Result<LocalSlice, FetchError> {
     let other = |e: &dyn std::fmt::Display| FetchError::Other(e.to_string());
     let identity = state.identity();
-    let (Some(url), Some(key)) = (identity.leader_url.clone(), identity.cluster_key.clone()) else {
+    let (Some(url), Some(key), Some(leader)) = (
+        identity.leader_url.clone(),
+        identity.cluster_key.clone(),
+        identity.leader_id.clone(),
+    ) else {
         return Err(FetchError::Other("no leader configured".into()));
     };
     if !super::slices::safe_id(&s.id) {
@@ -888,19 +1043,24 @@ pub(crate) async fn download_slice(
             .map_err(|e| other(&e))?;
     }
 
-    let mut req = sh
-        .http
-        .get(format!(
-            "{url}/api/v1/cluster/slice/{}/{}",
-            identity.id, s.id
-        ))
-        .header(KEY_HEADER, &key);
+    let mut extra = vec![];
     if offset > 0 {
-        req = req
-            .header("range", format!("bytes={offset}-"))
-            .header("if-range", &etag);
+        extra.push(("range", format!("bytes={offset}-")));
+        extra.push(("if-range", etag.clone()));
     }
-    let mut resp = req.send().await.map_err(|e| other(&e))?;
+    let sig::SignedResponse { mut resp, nonce } = sig::call(
+        sh,
+        &key,
+        &identity.id,
+        &leader,
+        reqwest::Method::GET,
+        &format!("{url}/api/v1/cluster/slice/{}/{}", identity.id, s.id),
+        None,
+        Duration::from_secs(30),
+        &extra,
+    )
+    .await
+    .map_err(|e| other(&e))?;
     match resp.status().as_u16() {
         200 => offset = 0,
         206 => {
@@ -944,6 +1104,13 @@ pub(crate) async fn download_slice(
             "the leader did not send a checksum".into(),
         ));
     };
+    // The checksum (and so the bytes) must come from our leader.
+    let what = format!("slice {etag} {expected_sha}");
+    if !sig::verify_reply(&key, &nonce, &what, header(sig::REPLY_HEADER).as_deref()) {
+        return Err(FetchError::Other(
+            "the sequence data did not come from the show leader (bad signature)".into(),
+        ));
+    }
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -1066,24 +1233,36 @@ mod tests {
     }
 
     #[test]
-    fn key_and_call_validation() {
-        assert!(valid_key(&"a".repeat(64)));
-        assert!(!valid_key("short"));
-        assert!(!valid_key(&format!("{}!", "a".repeat(20))));
+    fn call_validation() {
         let ok = AdoptCall {
             leader_id: "leader1".into(),
             leader_url: "http://10.0.0.2:80".into(),
-            cluster_key: "k".repeat(64),
+            dh: "ab".repeat(32),
             force: false,
             name: None,
         };
         assert!(validate_call(&ok).is_ok());
-        let mut bad = ok.clone();
-        bad.leader_url = "file:///etc/passwd".into();
-        assert!(validate_call(&bad).is_err());
+        for url in [
+            "file:///etc/passwd",
+            "http://attacker.example.com",
+            "http://8.8.8.8",
+            "http://10.0.0.2/x?y",
+        ] {
+            let mut bad = ok.clone();
+            bad.leader_url = url.into();
+            assert!(validate_call(&bad).is_err(), "{url}");
+        }
+        for url in ["http://127.0.0.1:8080", "http://192.168.1.4", "http://100.100.1.1", "http://[fe80::1]"] {
+            let mut good = ok.clone();
+            good.leader_url = url.into();
+            assert!(validate_call(&good).is_ok(), "{url}");
+        }
         let mut bad = ok.clone();
         bad.leader_id = "../x".into();
         assert!(validate_call(&bad).is_err());
+        let mut bad = ok.clone();
+        bad.dh = "k".repeat(64);
+        assert!(validate_call(&bad).is_err(), "old leaders sent a clusterKey, no dh");
     }
 
     #[test]

@@ -81,7 +81,14 @@ fn wiring_check(show: &Show) -> Check {
         .props
         .iter()
         .filter(|p| !p.segments.is_empty() && p.unwired_pixels() > 0)
-        .map(|p| format!("{} ({} of {} pixels)", p.name, p.unwired_pixels(), p.pixel_count))
+        .map(|p| {
+            format!(
+                "{} ({} of {} pixels)",
+                p.name,
+                p.unwired_pixels(),
+                p.pixel_count
+            )
+        })
         .collect();
     let impossible: Vec<String> = show
         .props
@@ -100,7 +107,10 @@ fn wiring_check(show: &Show) -> Check {
     if !impossible.is_empty() {
         return wiring(
             Status::Fail,
-            format!("Wired to a port that isn't there: {}", list_names(&impossible)),
+            format!(
+                "Wired to a port that isn't there: {}",
+                list_names(&impossible)
+            ),
         );
     }
     let mut problems = Vec::new();
@@ -436,7 +446,16 @@ async fn host_checks(state: &AppState) -> Vec<Check> {
     }
     // Audio device.
     out.push(if crate::player::engine::EngineOptions::from_env().audio {
-        audio_check(&show.settings.audio.device).await
+        let playing_silently = state
+            .services
+            .player
+            .get()
+            .and_then(|p| p.status().error)
+            .filter(|e| is_sound_problem(e));
+        match playing_silently {
+            Some(e) => check("audio", "Audio output", Status::Fail, e),
+            None => audio_check(&show.settings.audio.device).await,
+        }
     } else {
         audio_off_check()
     });
@@ -449,8 +468,8 @@ async fn host_checks(state: &AppState) -> Vec<Check> {
             "The player isn't running",
         ),
         Some(p) => {
-            let st = p.status();
-            match st.error {
+            // "No sound: …" is the audio check's business; the lights keep playing.
+            match p.status().error.filter(|e| !is_sound_problem(e)) {
                 Some(e) => check("output", "Light output", Status::Fail, e),
                 None => check("output", "Light output", Status::Ok, "Ready"),
             }
@@ -483,6 +502,11 @@ pub fn geometry_check(g: &super::geometry::OutputGeometry) -> Option<Check> {
         None
     };
     Some(c)
+}
+
+/// The player's "No sound: … The lights keep playing." status error.
+fn is_sound_problem(error: &str) -> bool {
+    error.starts_with("No sound")
 }
 
 /// `PIXELPLUS_AUDIO=none`: the player never opens a sound card, so don't look for one.
@@ -728,7 +752,10 @@ mod host_tests {
         assert!(!board_rtc_present(&dir));
         std::fs::create_dir_all(dir.join("rtc0")).unwrap();
         std::fs::write(dir.join("rtc0/name"), "rtc_cmos\n").unwrap();
-        assert!(!board_rtc_present(&dir), "a PC's CMOS clock isn't the board RTC");
+        assert!(
+            !board_rtc_present(&dir),
+            "a PC's CMOS clock isn't the board RTC"
+        );
         std::fs::create_dir_all(dir.join("rtc1")).unwrap();
         std::fs::write(dir.join("rtc1/name"), "rtc-ds1307 1-0068\n").unwrap();
         assert!(board_rtc_present(&dir));
@@ -788,7 +815,19 @@ mod host_tests {
         show.props.push(prop("D", vec![(5, 100)]));
         let c = wiring_check(&show);
         assert_eq!(c.status, Status::Fail);
-        assert!(c.detail.contains("port 5 doesn't exist on Porch"), "{}", c.detail);
+        assert!(
+            c.detail.contains("port 5 doesn't exist on Porch"),
+            "{}",
+            c.detail
+        );
+    }
+
+    #[test]
+    fn sound_problems_are_not_light_output_problems() {
+        assert!(is_sound_problem(
+            "No sound: the device is gone. The lights keep playing."
+        ));
+        assert!(!is_sound_problem("The pixel output stopped"));
     }
 
     #[test]

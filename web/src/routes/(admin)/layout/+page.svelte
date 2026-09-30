@@ -283,7 +283,7 @@
 	}
 	.pitem.on {
 		background: var(--accent-soft);
-		color: var(--accent);
+		color: var(--accent-text);
 	}
 	@media (max-width: 760px) {
 		.wrap {
