@@ -1841,6 +1841,16 @@ impl Core {
                 "Choose a playlist, sequence, DJ clip, look or audio file to play.",
             ));
         };
+        // A single DJ clip or look of a feature turned off in Settings →
+        // Features would only be skipped: say why instead.
+        if let (Source::Single, Pending::Item(i)) = (&source, &first) {
+            if let Some(f) =
+                pixelplus_core::features::playlist_item_feature(i).filter(|f| !show.feature(*f))
+            {
+                return Err(crate::api::features::disabled_error(f, false));
+            }
+        }
+        let since = Instant::now();
         self.start_program(
             Program {
                 origin: Origin::manual(&self.facts, req.loop_until_stopped),
@@ -1854,8 +1864,10 @@ impl Core {
         match &self.program {
             Some(p) if p.origin.is_manual() => Ok(()),
             _ => Err(ApiError::bad_request(
+                // Only an error of this attempt (not one left from earlier).
                 self.item_error
                     .as_ref()
+                    .filter(|e| e.1 >= since)
                     .map(|e| e.0.clone())
                     .unwrap_or_else(|| "Nothing playable.".into()),
             )),

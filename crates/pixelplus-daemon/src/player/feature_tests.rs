@@ -993,3 +993,54 @@ fn countdown_tick_sounds_are_prepared_and_pruned() {
     assert_eq!(len, 44 + 5 * 16_000 * 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Playing a single look or DJ clip of a feature that is off says so (it
+/// used to be skipped and answered with "Nothing playable." or an unrelated
+/// error left over from earlier), and a playlist that has nothing left to
+/// play answers without an earlier item's error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn playing_something_of_a_feature_that_is_off_says_why() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        let mut s1 = sequence(dir, "s1", 400, 25, |_| 10);
+        s1.file = "sequences/missing.fseq".into();
+        show.sequences = vec![s1];
+        show.effects.push(solid("green", "#00ff00", all()));
+        let mut pl = playlist("p1", &[], 0);
+        pl.items = vec![PlaylistItem::Effect {
+            id: "i1".into(),
+            effect_id: "green".into(),
+            duration_ms: 1000,
+        }];
+        show.playlists = vec![pl];
+        show.settings.features.set(FeatureId::Effects, false);
+    })
+    .await;
+    let h = &e.engine.handle;
+    let err = h
+        .play(PlayRequest {
+            effect_id: Some("green".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "feature_disabled", "{err:?}");
+    assert!(err.message.contains("Effects"), "{err:?}");
+    // An error from an earlier attempt (a missing sequence file)...
+    let err = h
+        .play(PlayRequest {
+            sequence_id: Some("s1".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("missing"), "{err:?}");
+    // ...is not the answer for a later one.
+    let err = h
+        .play(PlayRequest {
+            playlist_id: Some("p1".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap_err();
+    assert!(!err.message.contains("missing"), "{err:?}");
+}
