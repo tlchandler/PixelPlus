@@ -68,3 +68,34 @@ def test_rubberband_when_available():
         pytest.skip("ffmpeg without the rubberband filter")
     y = prosody.shift_rubberband(tone(200), 2.0)
     assert dominant(y[2000:-2000]) == pytest.approx(200 * 2 ** (2 / 12), rel=0.03)
+
+
+def test_fallback_tail_after_the_punchline_eases_back(monkeypatch):
+    """"Up next, *Feliz Navidad!* Enjoy." - PSOLA lifts only the punchline and eases the tail back
+    to the lead-in level; the fallback used to lift and slow everything after the punchline."""
+    monkeypatch.setattr(prosody, "have_parselmouth", lambda: False)
+    monkeypatch.setattr(prosody, "have_rubberband", lambda: False)
+    voice = {"energy": {"pitch": 0, "lift": 4, "stretch": 1.2, "boost": 3, "max_lift": 12, "ceiling": 3}}
+    x = tone(200, 3.0)
+    curve = energy.energy_curve(["aaaa", "bbbb", "cccc"], 3.0, 0.4, 1.0)   # lead, punch, tail: 1 s each
+    out, gain = energy.add_energy(x, voice, curve, 0.4)
+    # only the middle second is stretched
+    assert len(x) * 1.02 < len(out) < len(x) * 1.1
+    tail = out[-SAMPLE_RATE // 2:-2000]
+    punch_mid = out[int(1.4 * SAMPLE_RATE):int(1.8 * SAMPLE_RATE)]
+    assert dominant(punch_mid) > 200 * 1.2
+    assert dominant(tail) == pytest.approx(200, rel=0.03)   # back at the lead-in pitch
+    assert gain[-200:].max() < 0.5                           # and loudness
+    assert len(gain) == len(out)
+
+
+def test_fallback_is_bounded_for_extreme_settings(monkeypatch):
+    monkeypatch.setattr(prosody, "have_parselmouth", lambda: False)
+    monkeypatch.setattr(prosody, "have_rubberband", lambda: False)
+    voice = {"energy": {"pitch": 500, "lift": 1000, "stretch": 1000, "boost": 3, "max_lift": 1000, "ceiling": 1000}}
+    x = tone(200, 1.0)
+    curve = energy.energy_curve(["aaaa", "bbbb", ""], 1.0, 0.4, 1.0)
+    out, _ = energy.add_energy(x, voice, curve, 0.4)
+    assert len(out) < len(x) * 6 and np.isfinite(out).all()
+    y = prosody.shift_basic(x, 1e6, tempo=1e-9)
+    assert len(y) < len(x) * 6

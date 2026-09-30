@@ -93,8 +93,19 @@ def _resample(x: np.ndarray, n: int) -> np.ndarray:
     return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x)
 
 
+MAX_SEMIS = 24.0            # the energy settings are clamped well inside these; they are a last
+TEMPO_RANGE = (0.25, 4.0)   # line of defence against runaway allocation (1/tempo samples out)
+
+
+def _bounded(semis: float, tempo: float) -> tuple[float, float]:
+    semis = float(semis) if np.isfinite(semis) else 0.0
+    tempo = float(tempo) if np.isfinite(tempo) and tempo > 0 else 1.0
+    return min(max(semis, -MAX_SEMIS), MAX_SEMIS), min(max(tempo, TEMPO_RANGE[0]), TEMPO_RANGE[1])
+
+
 def shift_basic(x: np.ndarray, semis: float, tempo: float = 1.0) -> np.ndarray:
     """Pitch by ``semis`` semitones and speed by ``tempo`` (numpy only)."""
+    semis, tempo = _bounded(semis, tempo)
     x = np.asarray(x, dtype=np.float64)
     if abs(semis) < 1e-3 and abs(tempo - 1) < 1e-3:
         return x.astype(np.float32)
@@ -106,6 +117,7 @@ def shift_basic(x: np.ndarray, semis: float, tempo: float = 1.0) -> np.ndarray:
 
 def shift_rubberband(x: np.ndarray, semis: float, tempo: float = 1.0) -> np.ndarray:
     from .audio import ffmpeg
+    semis, tempo = _bounded(semis, tempo)
     ratio = 2 ** (semis / 12)
     fmt = ["-f", "f32le", "-ar", str(SAMPLE_RATE), "-ac", "1"]
     r = subprocess.run(
@@ -160,9 +172,13 @@ def add_energy(audio: np.ndarray, voice: Mapping, curve, base: float | None = No
     duration = len(audio) / SAMPLE_RATE
     grid = np.linspace(0, duration, 400)
     built = np.array([build(t) for t in grid])
-    after = np.nonzero(built >= 0.5)[0]
-    split_t = float(grid[after[0]]) if len(after) else duration
-    split = int(split_t * SAMPLE_RATE)
+    # Segments: lead-in (below half way up the build), punchline, and - when the punchline was
+    # marked with *asterisks* mid-line - the tail, which PSOLA eases back to the lead-in level.
+    up = np.nonzero(built >= 0.5)[0]
+    split_t = float(grid[up[0]]) if len(up) else duration
+    down = np.nonzero((built < 0.5) & (grid > split_t))[0]
+    tail_t = float(grid[down[0]]) if len(down) else duration
+    split, tail_at = int(split_t * SAMPLE_RATE), int(tail_t * SAMPLE_RATE)
     lead_semis = pitch * base
     # The PSOLA path measures the lead-in and punchline pitch and lands the punchline `lift`
     # above the lead-in, softly capped `ceiling` semitones above the voice's top notes. Without
@@ -170,16 +186,20 @@ def add_energy(audio: np.ndarray, voice: Mapping, curve, base: float | None = No
     # above the median, hence the cap.
     lift = min(hype_setting(voice, "lift") * peak, hype_setting(voice, "max_lift"),
                hype_setting(voice, "ceiling") + 4)
-    stretch = 1 + (hype_setting(voice, "stretch") - 1) * peak
+    stretch = min(max(1 + (hype_setting(voice, "stretch") - 1) * peak, TEMPO_RANGE[0]), TEMPO_RANGE[1])
 
-    lead = shift(audio[:split], lead_semis) if split > 0 else np.zeros(0, np.float32)
-    punch = shift(audio[split:], lead_semis + lift, 1 / stretch) if split < len(audio) else np.zeros(0, np.float32)
-    out = _join(lead, punch)
+    empty = np.zeros(0, np.float32)
+    lead = shift(audio[:split], lead_semis) if split > 0 else empty
+    punch = shift(audio[split:tail_at], lead_semis + lift, 1 / stretch) if tail_at > split else empty
+    tail = shift(audio[tail_at:], lead_semis) if tail_at < len(audio) else empty
+    out = _join(_join(lead, punch), tail)
 
-    # loudness swell on the new timeline (punchline stretched by `stretch`)
+    # loudness swell on the new timeline (only the punchline is stretched by `stretch`)
     boost = hype_setting(voice, "boost") * peak
     idx = np.arange(len(out)) / SAMPLE_RATE
-    lead_len = len(lead) / SAMPLE_RATE
-    orig_t = np.where(idx < lead_len, idx, split_t + (idx - lead_len) / stretch)
+    lead_len, punch_len = len(lead) / SAMPLE_RATE, len(punch) / SAMPLE_RATE
+    orig_t = np.where(idx < lead_len, idx,
+                      np.where(idx < lead_len + punch_len, split_t + (idx - lead_len) / stretch,
+                               tail_t + (idx - lead_len - punch_len)))
     gain_db = boost * np.interp(orig_t, grid, built)
     return out, gain_db

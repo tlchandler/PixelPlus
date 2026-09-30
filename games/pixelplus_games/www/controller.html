@@ -339,6 +339,13 @@
       conn.className = "conn";
       conn.textContent = "Reconnecting…";
       conn.style.display = "block";
+      setTimeout(function () {   // a blip keeps the last status; a longer outage says so
+        if (!ws || ws.readyState !== 1) {
+          phase = "connecting";
+          startWrap.className = "ssbtn";
+          setScreen("RECONNECTING…", "Keep this page open, it reconnects by itself", false);
+        }
+      }, 2500);
       if (!document.hidden) {   // a hidden page reconnects when it is shown again
         timer = setTimeout(connect, retry);
         retry = Math.min(retry * 2, 5000);

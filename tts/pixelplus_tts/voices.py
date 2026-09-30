@@ -51,6 +51,22 @@ DEFAULT_ENERGY = {"pitch": 1.5, "range": 1.5, "speed": 1.0, "stretch": 1.0, "boo
 FALLBACK_ENERGY = {"pitch": 0, "range": 1, "speed": 1, "stretch": 1, "boost": 0, "lift": 0,
                    "ceiling": 3, "max_lift": 12}
 ENERGY_KEYS = tuple(FALLBACK_ENERGY)
+# Accepted range per energy setting (the UI's sliders sit well inside). Values outside are clamped:
+# a 1000-semitone lift or a zero stretch would otherwise make the prosody allocate without bound.
+ENERGY_LIMITS = {"pitch": (-12, 12), "range": (0, 4), "speed": (0.25, 4), "stretch": (0.25, 4),
+                 "boost": (-24, 24), "lift": (-12, 24), "ceiling": (0, 24), "max_lift": (0, 24)}
+_LANG = re.compile(r"^[a-z]{2,3}(-[a-z0-9]{2,8}){0,2}$")  # an espeak-ng language code ("en-us", "cmn")
+MAX_EQ = 400
+
+
+def _finite(v: Any, what: str, lo: float, hi: float) -> float:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} must be a number") from None
+    if not np.isfinite(f):
+        raise ValueError(f"{what} must be a finite number")
+    return min(max(f, lo), hi)
 _SAFE_ID = re.compile(r"^[a-z]{2}_[a-z]+$")
 
 
@@ -111,18 +127,21 @@ def normalize_voice(v: Mapping[str, Any], vid: str | None = None) -> dict[str, A
     for k, val in energy_in.items():
         key = _camel_to_snake(str(k))
         if key in ENERGY_KEYS:
-            energy[key] = float(val)
+            energy[key] = _finite(val, f"voice {vid!r}: energy.{k}", *ENERGY_LIMITS[key])
     de = v.get("defaultEnergy", v.get("default_energy", 0.4))
     first = next(iter(blend))
+    lang = str(v.get("lang") or LANG_BY_PREFIX.get(first[0], "en-us")).strip().lower()
+    if not _LANG.match(lang):
+        raise ValueError(f"voice {vid!r}: lang {lang!r} is not a language code like en-us")
     return {
         "id": vid,
         "name": str(v.get("name") or vid.capitalize()),
         "description": str(v.get("description") or ""),
         "blend": blend,
-        "speed": float(v.get("speed") or 1.0),
-        "lang": str(v.get("lang") or LANG_BY_PREFIX.get(first[0], "en-us")),
+        "speed": _finite(v.get("speed") or 1.0, f"voice {vid!r}: speed", 0.25, 4.0),
+        "lang": lang,
         "eq": v.get("eq") or None,
-        "default_energy": float(0.4 if de is None else de),
+        "default_energy": _finite(0.4 if de is None else de, f"voice {vid!r}: defaultEnergy", 0.0, 2.0),
         "energy": energy,
     }
 
@@ -219,7 +238,9 @@ _EQ_PART = re.compile(r"^([a-z]+)(=[A-Za-z0-9_.:=\-]*)?$")
 def validate_eq(eq: str | None) -> str | None:
     if not eq:
         return None
-    parts = [p.strip() for p in str(eq).split(",") if p.strip()]
+    if not isinstance(eq, str) or len(eq) > MAX_EQ:
+        raise ValueError(f"eq must be a string of at most {MAX_EQ} characters")
+    parts = [p.strip() for p in eq.split(",") if p.strip()]
     for p in parts:
         m = _EQ_PART.match(p)
         if not m or m.group(1) not in _EQ_FILTERS:

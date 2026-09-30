@@ -74,6 +74,14 @@ do.
 * **Guest Wi-Fi** near the display (with the URL as `http://<pi-address>:8088`) if you'd rather
   not touch the internet at all.
 
+What the controller port does to stay up with the whole internet able to reach it: only `/`,
+`/ws` and `/healthz` exist; WebSocket messages are capped at 4 KiB and parsed defensively; a phone
+may send about 60 messages a second (bursts to 120) and is disconnected if it keeps flooding; a
+connection that stays silent for 2 minutes is closed (the page pings every 20 s); and one address
+may hold at most 16 connections (300 in all). Behind Cloudflare Tunnel or another reverse proxy on
+the Pi or the LAN, the visitor's address is taken from `CF-Connecting-IP` / `X-Forwarded-For`;
+those headers are ignored on connections from the internet.
+
 Short URLs read best on an 80×40 matrix (about 20 characters fit; longer ones scroll).
 
 ## Settings (Settings → Games)

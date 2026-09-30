@@ -364,6 +364,12 @@ class ArcadeRaceTests(HubTestCase):
         self.assertEqual(self.engine.arcade_runs, 1)
 
 
+class ConfigTests(unittest.TestCase):
+    def test_infinite_numbers_fall_back_to_defaults(self):
+        cfg = config.from_show({"settings": {"games": {"gameSeconds": 1e999, "port": "inf", "volume": "-inf"}}})
+        self.assertEqual((cfg.game_seconds, cfg.port, cfg.volume), (60, 8088, 80))
+
+
 # --- the arcade loop -------------------------------------------------------------------------
 
 

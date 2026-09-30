@@ -17,6 +17,7 @@ from .voices import blend_style
 
 log = logging.getLogger("pixelplus_tts")
 SAMPLE_RATE = en.SAMPLE_RATE
+MAX_STYLES = 32  # blended style vectors kept (0.5 MB each); every tweak of a blend makes a new one
 
 
 class ModelMissing(RuntimeError):
@@ -122,7 +123,11 @@ class Engine:
             missing = [v for v in blend if v not in known]
             if missing:
                 raise ValueError(f"unknown Kokoro voice(s): {', '.join(missing)}")
+            while len(self._styles) >= MAX_STYLES:
+                self._styles.pop(next(iter(self._styles)))  # oldest first
             self._styles[key] = blend_style(blend, k.get_voice_style)
+        else:
+            self._styles[key] = self._styles.pop(key)  # most recently used goes last
         return self._styles[key]
 
     def phonemize(self, text: str, lang: str) -> str:

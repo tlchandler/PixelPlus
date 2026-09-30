@@ -32,10 +32,16 @@ def ffmpeg() -> str:
         raise RuntimeError("ffmpeg not found: apt install ffmpeg (or pip install imageio-ffmpeg)") from None
 
 
+FFMPEG_TIMEOUT = 600  # s; a wedged ffmpeg must not hold the (single) renderer forever
+
+
 def _run(args: Sequence[str], data: bytes | None) -> subprocess.CompletedProcess:
     extra = ["-nostdin"] if data is None else []
-    r = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", *extra, *args],
-                       input=data, capture_output=True)
+    try:
+        r = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", *extra, *args],
+                           input=data, capture_output=True, timeout=FFMPEG_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"ffmpeg took longer than {FFMPEG_TIMEOUT} s") from None
     if r.returncode != 0:
         raise RuntimeError("ffmpeg failed: " + r.stderr.decode(errors="replace")[-600:])
     return r
@@ -104,8 +110,12 @@ def encode(audio: np.ndarray, fmt: str, rate: int = OUT_RATE, filters: str = "an
     return r.stdout
 
 
-def decode(path: str, rate: int = OUT_RATE) -> np.ndarray:
-    r = _run(["-i", path, "-vn", "-ar", str(rate), "-ac", "2", "-f", "f32le", "pipe:1"], None)
+def decode(path: str, rate: int = OUT_RATE, max_seconds: float | None = None) -> np.ndarray:
+    """A local audio file as float32 stereo. Only the file protocol is allowed, so a playlist-like
+    file (HLS, concat...) can't make ffmpeg fetch URLs; ``max_seconds`` bounds the memory used."""
+    limit = ["-t", f"{max_seconds:.3f}"] if max_seconds else []
+    r = _run(["-protocol_whitelist", "file", "-i", "file:" + path, "-vn", *limit,
+              "-ar", str(rate), "-ac", "2", "-f", "f32le", "pipe:1"], None)
     return np.frombuffer(r.stdout, dtype=np.float32).reshape(-1, 2).copy()
 
 

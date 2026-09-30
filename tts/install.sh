@@ -124,6 +124,10 @@ if [ "$SERVICE" = 1 ]; then
   if [ "$IS_ROOT" = 1 ] && command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
     UNIT=/etc/systemd/system/pixelplus-tts.service
     sed -e "s#/opt/pixelplus-tts#$PREFIX#g" -e "s#/var/lib/pixelplus#$DATA_DIR#g" "$SRC/pixelplus-tts.service" > "$UNIT"
+    if id pixelplus >/dev/null 2>&1; then
+      # run unprivileged, as pixelplusd's user (it owns the data dir and the music beds)
+      sed -i 's#^\[Service\]$#[Service]\nUser=pixelplus\nGroup=pixelplus#' "$UNIT"
+    fi
     if [ ! -f /etc/default/pixelplus-tts ]; then
       cat > /etc/default/pixelplus-tts <<EOF
 # Overrides for pixelplus-tts.service (see $PREFIX/src/README.md)

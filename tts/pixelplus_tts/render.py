@@ -24,6 +24,8 @@ DEFAULT_LUFS = -16.0
 FORMATS = {"mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg"}
 MAX_LINES = 200
 MAX_TEXT = 2000
+MAX_TOTAL_TEXT = 12000  # a clip of ~12 minutes of speech; keeps one request from holding the renderer for hours
+MAX_PLACEHOLDER = 300   # characters per placeholder value
 PLACEHOLDER_RE = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
 
 
@@ -86,8 +88,17 @@ class Cache:
     def prune(self) -> None:
         with self._lock:
             files = []
+            now = time.time()
             for root, _, names in os.walk(self.dir):
                 for n in names:
+                    if n.endswith(".tmp"):  # left by a render that was killed mid-write
+                        p = os.path.join(root, n)
+                        try:
+                            if now - os.stat(p).st_mtime > 3600:
+                                os.remove(p)
+                        except OSError:
+                            pass
+                        continue
                     if n.endswith((".mp3", ".wav", ".ogg")):
                         p = os.path.join(root, n)
                         try:
@@ -115,8 +126,11 @@ def substitute_placeholders(text: str, values: Mapping[str, Any]) -> tuple[str, 
 
     def rep(m: re.Match) -> str:
         name = m.group(1)
-        if name in values and values[name] is not None:
-            return str(values[name])
+        v = values.get(name)
+        if isinstance(v, bool):
+            v = "yes" if v else "no"
+        if isinstance(v, (str, int, float)):
+            return str(v)[:MAX_PLACEHOLDER]
         missing.append(name)
         return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)
 
@@ -173,13 +187,20 @@ def build_job(req: Mapping[str, Any], *, known_base: set[str] | None = None, dat
         raise BadRequest("placeholders must be an object")
     warnings: list[str] = []
     lines = []
+    total_text = 0
     for i, ln in enumerate(raw_lines):
         if not isinstance(ln, Mapping):
             raise BadRequest(f"lines[{i}] must be an object")
-        text = str(ln.get("text") or "").strip()
+        text = ln.get("text")
+        text = text.strip() if isinstance(text, str) else ""
+        text, missing = substitute_placeholders(text, placeholders)
+        text = text.strip()
+        # checked after the placeholders are filled in: their values count too
         if len(text) > MAX_TEXT:
             raise BadRequest(f"lines[{i}].text is longer than {MAX_TEXT} characters")
-        text, missing = substitute_placeholders(text, placeholders)
+        total_text += len(text)
+        if total_text > MAX_TOTAL_TEXT:
+            raise BadRequest(f"the clip is longer than {MAX_TOTAL_TEXT} characters in all", "too_large")
         for name in missing:
             warnings.append(f"lines[{i}]: placeholder {{{name}}} has no value")
         pause = int(_num(ln.get("pauseMs"), f"lines[{i}].pauseMs", 0, 60000, 0))
@@ -230,7 +251,7 @@ def build_job(req: Mapping[str, Any], *, known_base: set[str] | None = None, dat
         rules_pairs=merge(builtin, prons),
         fmt=fmt,
         lufs=_num(req.get("loudnessLufs"), "loudnessLufs", -40, -6, DEFAULT_LUFS),
-        fx=bool(req.get("fx", True)),
+        fx=req.get("fx", True) not in (False, 0, "false", "0", "no", "off"),
         bed=bed,
         warnings=warnings,
     )
@@ -267,7 +288,10 @@ def render_job(engine: Engine, job: Job, progress=None) -> tuple[np.ndarray, lis
     if job.fx:
         joined = au.process(joined, au.OUT_RATE, au.level_filter(joined, job.lufs))
     if job.bed:
-        bed = au.decode(job.bed["path"])
+        # decode only what the mix can use (it loops a shorter bed): an hour-long file would
+        # otherwise become ~1.3 GB of float samples
+        need = len(joined) / au.OUT_RATE + (job.bed["introMs"] + job.bed["outroMs"]) / 1000 + 1
+        bed = au.decode(job.bed["path"], max_seconds=need)
         joined = au.mix_music_bed(joined, bed, job.bed["duckDb"], job.bed["gainDb"], job.lufs,
                                   job.bed["introMs"] / 1000, job.bed["outroMs"] / 1000)
         joined = au.process(joined, au.OUT_RATE, au.level_filter(joined, job.lufs))

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,6 +19,25 @@ from .voices import list_base_voices, presets_as_dj_voices, resolve_voice
 
 log = logging.getLogger("pixelplus_tts")
 MAX_BODY = 1 << 20
+
+
+def is_loopback(host: str) -> bool:
+    import ipaddress
+    h = (host or "").strip().strip("[]")
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def _host_name(header: str) -> str:
+    """'127.0.0.1:7081' -> '127.0.0.1', '[::1]:7081' -> '::1'."""
+    h = header.strip().lower()
+    if h.startswith("["):
+        return h[1:h.find("]")] if "]" in h else h
+    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
 
 
 class App:
@@ -90,6 +110,18 @@ def make_handler(app: App):
     class Handler(BaseHTTPRequestHandler):
         server_version = f"pixelplus-tts/{__version__}"
         protocol_version = "HTTP/1.1"
+        timeout = 60  # a client that stops sending mid-request doesn't keep a thread forever
+
+        def _allowed(self) -> bool:
+            """Loopback callers only (pixelplusd), and not a web page: a browser on this machine
+            could otherwise be steered at the service by any website (CSRF / DNS rebinding)."""
+            host = self.headers.get("Host")
+            origin = self.headers.get("Origin")
+            if (host is not None and not is_loopback(_host_name(host))) or (origin and origin != "null"):
+                self.close_connection = True
+                self._error(403, "forbidden", "the TTS service only answers local requests")
+                return False
+            return True
 
         def log_message(self, fmt, *args):  # route to logging
             log.debug("%s " + fmt, self.address_string(), *args)
@@ -112,13 +144,20 @@ def make_handler(app: App):
             self._json(status, {"error": {"code": code, "message": message}})
 
         def _body(self) -> dict:
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_BODY:
-                raise BadRequest("request body too large", "too_large")
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if n < 0 or n > MAX_BODY or self.headers.get("Transfer-Encoding"):
+                # the body is left unread, so this connection can't carry another request
+                self.close_connection = True
+                if n > MAX_BODY:
+                    raise BadRequest("request body too large", "too_large")
+                raise BadRequest("a JSON body with a Content-Length is required")
             raw = self.rfile.read(n) if n else b"{}"
             try:
                 obj = json.loads(raw or b"{}")
-            except ValueError:
+            except (ValueError, RecursionError):
                 raise BadRequest("body is not valid JSON") from None
             if not isinstance(obj, dict):
                 raise BadRequest("body must be a JSON object")
@@ -126,6 +165,8 @@ def make_handler(app: App):
 
         def do_GET(self):
             path = self.path.split("?", 1)[0].rstrip("/") or "/"
+            if not self._allowed():
+                return
             try:
                 if path == "/health":
                     return self._json(200, app.health())
@@ -142,6 +183,8 @@ def make_handler(app: App):
 
         def do_POST(self):
             path = self.path.split("?", 1)[0].rstrip("/")
+            if not self._allowed():
+                return
             try:
                 body = self._body()
                 if path in ("/render", "/audition"):
@@ -177,9 +220,23 @@ def make_handler(app: App):
 
 
 def serve(cfg: Config) -> None:
+    if not is_loopback(cfg.host) and os.environ.get("PIXELPLUS_TTS_ALLOW_REMOTE", "") not in ("1", "true", "yes"):
+        # The service has no authentication: anything that can reach it can make it read audio
+        # files under the data dir and burn CPU. It is meant for pixelplusd on the same machine.
+        raise SystemExit(f"refusing to listen on {cfg.host}: the TTS service is loopback-only "
+                         "(set PIXELPLUS_TTS_ALLOW_REMOTE=1 to override)")
     app = App(cfg)
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), make_handler(app))
     httpd.daemon_threads = True
+
+    def _terminate(*_):  # systemd stop: leave serve_forever() through the finally below
+        raise KeyboardInterrupt
+
+    try:
+        import signal
+        signal.signal(signal.SIGTERM, _terminate)
+    except ValueError:  # not the main thread (tests)
+        pass
     log.info("pixelplus-tts %s on http://%s:%d (model %s, %s)", __version__, cfg.host, cfg.port,
              app.engine.variant, "present" if app.engine.available else "MISSING")
     try:
