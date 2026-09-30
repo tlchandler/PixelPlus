@@ -2069,7 +2069,7 @@ impl Core {
         let seq_item = p
             .item
             .as_ref()
-            .filter(|i| matches!(p.state, PlayerState::Playing | PlayerState::Paused))
+            .filter(|_| matches!(p.state, PlayerState::Playing | PlayerState::Paused))
             .filter(|i| i.kind == "sequence" || i.kind == "request")
             .cloned();
         let key = seq_item.as_ref().map(|i| format!("seq:{}", i.id));

@@ -12,7 +12,7 @@
 //! byte is ignored). The file is created mode 0666 so the games sidecar can
 //! write it whatever user it runs as.
 
-use super::types::OverlayInfo;
+use super::OverlayInfo;
 use pixelplus_core::effects::Rgb;
 use pixelplus_core::model::{MatrixInfo, Prop};
 use pixelplus_core::text::{self, Font, QrStyle, RgbGrid};
