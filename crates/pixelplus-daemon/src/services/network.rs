@@ -38,7 +38,12 @@ pub struct EthernetConfig {
 
 impl Default for EthernetConfig {
     fn default() -> Self {
-        EthernetConfig { dhcp: true, address: None, gateway: None, dns: None }
+        EthernetConfig {
+            dhcp: true,
+            address: None,
+            gateway: None,
+            dns: None,
+        }
     }
 }
 
@@ -104,24 +109,33 @@ fn parse_cidr(s: &str) -> Option<(Ipv4Addr, u8)> {
 }
 
 fn split_dns(s: &str) -> Vec<&str> {
-    s.split(|c: char| c == ',' || c.is_whitespace()).filter(|x| !x.is_empty()).collect()
+    s.split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|x| !x.is_empty())
+        .collect()
 }
 
 pub fn validate(cfg: &NetworkConfig) -> ApiResult<()> {
     validate_hostname(&cfg.hostname)?;
     let w = &cfg.wifi;
     if w.ssid.len() > 32 {
-        return Err(ApiError::bad_request("A Wi-Fi network name can be at most 32 characters."));
+        return Err(ApiError::bad_request(
+            "A Wi-Fi network name can be at most 32 characters.",
+        ));
     }
     if let Some(psk) = w.psk.as_deref().filter(|p| !p.is_empty()) {
         let hex64 = psk.len() == 64 && psk.chars().all(|c| c.is_ascii_hexdigit());
         if !(8..=63).contains(&psk.chars().count()) && !hex64 {
-            return Err(ApiError::bad_request("A Wi-Fi password needs 8 to 63 characters."));
+            return Err(ApiError::bad_request(
+                "A Wi-Fi password needs 8 to 63 characters.",
+            ));
         }
     }
-    let country_ok = w.country.is_empty() || (w.country.len() == 2 && w.country.chars().all(|c| c.is_ascii_alphabetic()));
+    let country_ok = w.country.is_empty()
+        || (w.country.len() == 2 && w.country.chars().all(|c| c.is_ascii_alphabetic()));
     if !country_ok {
-        return Err(ApiError::bad_request("Pick your Wi-Fi country (a two-letter code like US or GB)."));
+        return Err(ApiError::bad_request(
+            "Pick your Wi-Fi country (a two-letter code like US or GB).",
+        ));
     }
     let e = &cfg.ethernet;
     if !e.dhcp {
@@ -132,11 +146,14 @@ pub fn validate(cfg: &NetworkConfig) -> ApiResult<()> {
             ));
         };
         if let Some(gw) = e.gateway.as_deref().filter(|g| !g.trim().is_empty()) {
-            let gw: Ipv4Addr = gw
-                .trim()
-                .parse()
-                .map_err(|_| ApiError::bad_request("The router (gateway) address should look like 192.168.1.1."))?;
-            let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+            let gw: Ipv4Addr = gw.trim().parse().map_err(|_| {
+                ApiError::bad_request("The router (gateway) address should look like 192.168.1.1.")
+            })?;
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - prefix)
+            };
             if u32::from(gw) & mask != u32::from(ip) & mask {
                 return Err(ApiError::bad_request(format!(
                     "The router address {gw} isn't on the same network as {ip}/{prefix}."
@@ -146,7 +163,9 @@ pub fn validate(cfg: &NetworkConfig) -> ApiResult<()> {
         if let Some(dns) = e.dns.as_deref() {
             for d in split_dns(dns) {
                 if d.parse::<std::net::IpAddr>().is_err() {
-                    return Err(ApiError::bad_request(format!("\"{d}\" isn't a valid DNS server address.")));
+                    return Err(ApiError::bad_request(format!(
+                        "\"{d}\" isn't a valid DNS server address."
+                    )));
                 }
             }
         }
@@ -197,7 +216,11 @@ async fn wifi_country() -> String {
 }
 
 pub async fn read_config() -> NetworkConfig {
-    let mut cfg = NetworkConfig { hostname: hostname(), managed: managed(), ..Default::default() };
+    let mut cfg = NetworkConfig {
+        hostname: hostname(),
+        managed: managed(),
+        ..Default::default()
+    };
     if !cfg.managed {
         return cfg;
     }
@@ -214,14 +237,27 @@ pub async fn read_config() -> NetworkConfig {
     }
     cfg.wifi.country = wifi_country().await;
     if let Some((name, _, _, _)) = conns.iter().find(|c| c.1 == "802-3-ethernet") {
-        if let Ok(out) = nm(&["-t", "-f", "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "con", "show", name]).await {
+        if let Ok(out) = nm(&[
+            "-t",
+            "-f",
+            "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns",
+            "con",
+            "show",
+            name,
+        ])
+        .await
+        {
             for l in out.lines() {
-                let Some((k, v)) = l.split_once(':') else { continue };
+                let Some((k, v)) = l.split_once(':') else {
+                    continue;
+                };
                 let v = v.trim();
                 match k {
                     "ipv4.method" => cfg.ethernet.dhcp = v != "manual",
                     "ipv4.addresses" if !v.is_empty() => cfg.ethernet.address = Some(v.to_string()),
-                    "ipv4.gateway" if !v.is_empty() && v != "--" => cfg.ethernet.gateway = Some(v.to_string()),
+                    "ipv4.gateway" if !v.is_empty() && v != "--" => {
+                        cfg.ethernet.gateway = Some(v.to_string())
+                    }
                     "ipv4.dns" if !v.is_empty() => cfg.ethernet.dns = Some(v.to_string()),
                     _ => {}
                 }
@@ -240,7 +276,12 @@ pub fn parse_scan(text: &str) -> Vec<WifiNetwork> {
         }
         let quality: u8 = f[1].parse().unwrap_or(0);
         let secure = !f[2].trim().is_empty() && f[2].trim() != "--";
-        let n = WifiNetwork { ssid: f[0].clone(), signal: quality_to_dbm(quality), quality, secure };
+        let n = WifiNetwork {
+            ssid: f[0].clone(),
+            signal: quality_to_dbm(quality),
+            quality,
+            secure,
+        };
         match nets.iter_mut().find(|x| x.ssid == n.ssid) {
             Some(x) if x.quality < n.quality => *x = n,
             Some(_) => {}
@@ -257,9 +298,18 @@ pub async fn scan() -> ApiResult<Vec<WifiNetwork>> {
             "Wi-Fi scanning only works on a PixelPlus Pi (NetworkManager was not found).",
         ));
     }
-    let out = nm(&["-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "yes"])
-        .await
-        .map_err(|e| ApiError::unavailable(format!("Couldn't scan for Wi-Fi networks: {e}")))?;
+    let out = nm(&[
+        "-t",
+        "-f",
+        "SSID,SIGNAL,SECURITY",
+        "dev",
+        "wifi",
+        "list",
+        "--rescan",
+        "yes",
+    ])
+    .await
+    .map_err(|e| ApiError::unavailable(format!("Couldn't scan for Wi-Fi networks: {e}")))?;
     Ok(parse_scan(&out))
 }
 
@@ -283,7 +333,13 @@ pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkCon
         tokio::time::sleep(Duration::from_millis(700)).await;
         let mut problems: Vec<String> = Vec::new();
         if new.hostname != current.hostname {
-            match run("hostnamectl", &["set-hostname", &new.hostname], Duration::from_secs(10)).await {
+            match run(
+                "hostnamectl",
+                &["set-hostname", &new.hostname],
+                Duration::from_secs(10),
+            )
+            .await
+            {
                 Ok(o) if o.success => {
                     // Keep /etc/hosts resolving the new name (sudo warnings otherwise).
                     if let Ok(hosts) = std::fs::read_to_string("/etc/hosts") {
@@ -293,7 +349,9 @@ pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkCon
                             .map(|l| {
                                 if l.starts_with("127.0.1.1") {
                                     format!("127.0.1.1\t{}", new.hostname)
-                                } else if !old.is_empty() && l.split_whitespace().skip(1).any(|w| w == old) {
+                                } else if !old.is_empty()
+                                    && l.split_whitespace().skip(1).any(|w| w == old)
+                                {
                                     l.replace(old.as_str(), &new.hostname)
                                 } else {
                                     l.to_string()
@@ -303,16 +361,31 @@ pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkCon
                             .join("\n");
                         let _ = std::fs::write("/etc/hosts", updated + "\n");
                     }
-                    let _ = run("systemctl", &["try-restart", "avahi-daemon"], Duration::from_secs(10)).await;
+                    let _ = run(
+                        "systemctl",
+                        &["try-restart", "avahi-daemon"],
+                        Duration::from_secs(10),
+                    )
+                    .await;
                 }
-                Ok(o) => problems.push(format!("the name couldn't be changed ({})", o.stderr.trim())),
+                Ok(o) => problems.push(format!(
+                    "the name couldn't be changed ({})",
+                    o.stderr.trim()
+                )),
                 Err(e) => problems.push(format!("the name couldn't be changed ({e})")),
             }
         }
-        if !new.wifi.country.is_empty() && !new.wifi.country.eq_ignore_ascii_case(&current.wifi.country) {
+        if !new.wifi.country.is_empty()
+            && !new.wifi.country.eq_ignore_ascii_case(&current.wifi.country)
+        {
             let cc = new.wifi.country.to_ascii_uppercase();
             let ok = if have("raspi-config") {
-                run("raspi-config", &["nonint", "do_wifi_country", &cc], Duration::from_secs(20)).await
+                run(
+                    "raspi-config",
+                    &["nonint", "do_wifi_country", &cc],
+                    Duration::from_secs(20),
+                )
+                .await
             } else {
                 run("iw", &["reg", "set", &cc], Duration::from_secs(10)).await
             };
@@ -326,13 +399,30 @@ pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkCon
             if let Some((name, _, _, _)) = conns.iter().find(|c| c.1 == "802-3-ethernet") {
                 let e = &new.ethernet;
                 let args: Vec<String> = if e.dhcp {
-                    ["con", "mod", name, "ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", ""]
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect()
+                    [
+                        "con",
+                        "mod",
+                        name,
+                        "ipv4.method",
+                        "auto",
+                        "ipv4.addresses",
+                        "",
+                        "ipv4.gateway",
+                        "",
+                        "ipv4.dns",
+                        "",
+                    ]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
                 } else {
-                    let (ip, prefix) = parse_cidr(e.address.as_deref().unwrap_or("")).unwrap_or((Ipv4Addr::UNSPECIFIED, 24));
-                    let dns = e.dns.as_deref().map(|d| split_dns(d).join(",")).unwrap_or_default();
+                    let (ip, prefix) = parse_cidr(e.address.as_deref().unwrap_or(""))
+                        .unwrap_or((Ipv4Addr::UNSPECIFIED, 24));
+                    let dns = e
+                        .dns
+                        .as_deref()
+                        .map(|d| split_dns(d).join(","))
+                        .unwrap_or_default();
                     vec![
                         "con".into(),
                         "mod".into(),
@@ -351,7 +441,8 @@ pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkCon
                 match nm(&refs).await {
                     Ok(_) => {
                         if let Err(e) = nm(&["con", "up", name]).await {
-                            problems.push(format!("the wired connection didn't come back up ({e})"));
+                            problems
+                                .push(format!("the wired connection didn't come back up ({e})"));
                         }
                     }
                     Err(e) => problems.push(format!("the wired settings couldn't be saved ({e})")),
@@ -361,10 +452,18 @@ pub async fn apply(new: NetworkConfig, events: EventBus) -> ApiResult<NetworkCon
             }
         }
         let wifi_changed = !new.wifi.ssid.is_empty()
-            && (new.wifi.ssid != current.wifi.ssid || new.wifi.psk.as_deref().is_some_and(|p| !p.is_empty()));
+            && (new.wifi.ssid != current.wifi.ssid
+                || new.wifi.psk.as_deref().is_some_and(|p| !p.is_empty()));
         if wifi_changed {
             let _ = nm(&["con", "delete", "pixelplus-wifi"]).await;
-            let mut args = vec!["--wait", "45", "dev", "wifi", "connect", new.wifi.ssid.as_str()];
+            let mut args = vec![
+                "--wait",
+                "45",
+                "dev",
+                "wifi",
+                "connect",
+                new.wifi.ssid.as_str(),
+            ];
             if let Some(psk) = new.wifi.psk.as_deref().filter(|p| !p.is_empty()) {
                 args.extend(["password", psk]);
             }
@@ -390,7 +489,11 @@ mod tests {
     use super::*;
 
     fn cfg() -> NetworkConfig {
-        NetworkConfig { hostname: "pixelplus-main".into(), managed: true, ..Default::default() }
+        NetworkConfig {
+            hostname: "pixelplus-main".into(),
+            managed: true,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -403,7 +506,12 @@ mod tests {
         c.wifi.psk = Some("short".into());
         assert!(validate(&c).unwrap_err().message.contains("8 to 63"));
         c = cfg();
-        c.ethernet = EthernetConfig { dhcp: false, address: Some("192.168.1.50".into()), gateway: Some("192.168.2.1".into()), dns: None };
+        c.ethernet = EthernetConfig {
+            dhcp: false,
+            address: Some("192.168.1.50".into()),
+            gateway: Some("192.168.2.1".into()),
+            dns: None,
+        };
         assert!(validate(&c).unwrap_err().message.contains("same network"));
         c.ethernet.gateway = Some("192.168.1.1".into());
         c.ethernet.dns = Some("1.1.1.1, 8.8.8.8".into());

@@ -68,9 +68,15 @@ impl RequestQueue {
     pub fn check_rate(&self, ip: Option<IpAddr>, now: Instant) -> bool {
         let Some(ip) = ip else { return true };
         let mut hits = self.hits.lock();
-        hits.retain(|_, v| v.back().is_some_and(|t| now.duration_since(*t) < RATE_WINDOW));
+        hits.retain(|_, v| {
+            v.back()
+                .is_some_and(|t| now.duration_since(*t) < RATE_WINDOW)
+        });
         let q = hits.entry(ip).or_default();
-        while q.front().is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW) {
+        while q
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW)
+        {
             q.pop_front();
         }
         if q.len() >= RATE_MAX {
@@ -136,7 +142,11 @@ impl RequestQueue {
         let mut items = self.items.lock();
         // Re-check under the lock (concurrent submissions).
         if items.iter().any(|r| r.sequence_id == sequence_id) {
-            return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "already_queued", "That song is already in the line-up!"));
+            return Err(ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "already_queued",
+                "That song is already in the line-up!",
+            ));
         }
         items.push_back(req.clone());
         Ok((req, items.len()))
@@ -147,7 +157,11 @@ impl RequestQueue {
     pub fn on_status(&self, status: &PlayerStatus, now: Instant) -> Option<SongRequest> {
         let mut head = self.head.lock();
         let mut items = self.items.lock();
-        let playing_id = status.item.as_ref().filter(|i| i.kind == "request" || i.kind == "sequence").map(|i| i.id.clone());
+        let playing_id = status
+            .item
+            .as_ref()
+            .filter(|i| i.kind == "request" || i.kind == "sequence")
+            .map(|i| i.id.clone());
         if let Some((req_id, h)) = head.clone() {
             let Some(req) = items.iter().find(|r| r.id == req_id).cloned() else {
                 *head = None;
@@ -178,7 +192,12 @@ impl RequestQueue {
 
 fn clean_name(n: &str) -> String {
     let s: String = n.chars().filter(|c| !c.is_control()).collect();
-    s.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(NAME_MAX).collect()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(NAME_MAX)
+        .collect()
 }
 
 /// Sequences visitors may pick: those in the requests playlist, else all.
@@ -253,9 +272,15 @@ pub fn start(state: &AppState) {
             }
             let status = rx.borrow().clone();
             if let Some(req) = state.services.requests.on_status(&status, Instant::now()) {
-                let cmd = PlayerCmd::Enqueue { sequence_id: req.sequence_id.clone(), name: req.requested_by.clone() };
+                let cmd = PlayerCmd::Enqueue {
+                    sequence_id: req.sequence_id.clone(),
+                    name: req.requested_by.clone(),
+                };
                 if player.send(cmd).await.is_err() {
-                    tracing::warn!("Couldn't hand the song request \"{}\" to the player", req.name);
+                    tracing::warn!(
+                        "Couldn't hand the song request \"{}\" to the player",
+                        req.name
+                    );
                 }
             }
         }
@@ -272,7 +297,12 @@ mod tests {
         let mut s = Show::default();
         s.settings.requests.enabled = true;
         s.settings.requests.max_queue = 3;
-        for (id, name) in [("s1", "Jingle"), ("s2", "Bells"), ("s3", "Rock"), ("s4", "Noel")] {
+        for (id, name) in [
+            ("s1", "Jingle"),
+            ("s2", "Bells"),
+            ("s3", "Rock"),
+            ("s4", "Noel"),
+        ] {
             s.sequences.push(Sequence {
                 id: id.into(),
                 name: name.into(),
@@ -298,14 +328,26 @@ mod tests {
         let (r, pos) = q.submit(&s, "s1", Some("  Tom\u{7} "), ip, t).unwrap();
         assert_eq!(pos, 1);
         assert_eq!(r.requested_by.as_deref(), Some("Tom"));
-        assert_eq!(q.submit(&s, "s1", None, None, t).unwrap_err().code, "already_queued");
-        assert_eq!(q.submit(&s, "nope", None, None, t).unwrap_err().code, "not_found");
+        assert_eq!(
+            q.submit(&s, "s1", None, None, t).unwrap_err().code,
+            "already_queued"
+        );
+        assert_eq!(
+            q.submit(&s, "nope", None, None, t).unwrap_err().code,
+            "not_found"
+        );
         q.submit(&s, "s2", None, ip, t).unwrap();
         q.submit(&s, "s3", None, ip, t).unwrap();
-        assert_eq!(q.submit(&s, "s4", None, None, t).unwrap_err().code, "queue_full");
+        assert_eq!(
+            q.submit(&s, "s4", None, None, t).unwrap_err().code,
+            "queue_full"
+        );
         let mut closed = s.clone();
         closed.settings.requests.enabled = false;
-        assert_eq!(q.submit(&closed, "s4", None, None, t).unwrap_err().code, "requests_closed");
+        assert_eq!(
+            q.submit(&closed, "s4", None, None, t).unwrap_err().code,
+            "requests_closed"
+        );
     }
 
     #[test]
@@ -327,7 +369,10 @@ mod tests {
         s.playlists.push(Playlist {
             id: "p".into(),
             name: "Req".into(),
-            items: vec![PlaylistItem::Sequence { id: "i".into(), sequence_id: "s2".into() }],
+            items: vec![PlaylistItem::Sequence {
+                id: "i".into(),
+                sequence_id: "s2".into(),
+            }],
             intro: vec![],
             outro: vec![],
             shuffle: false,
@@ -351,12 +396,20 @@ mod tests {
         assert_eq!(q.on_status(&idle, t).unwrap().sequence_id, "s1");
         assert!(q.on_status(&idle, t).is_none());
         let mut playing = PlayerStatus {
-            item: Some(ItemRef { kind: "request".into(), id: "s1".into(), name: "Jingle".into() }),
+            item: Some(ItemRef {
+                kind: "request".into(),
+                id: "s1".into(),
+                name: "Jingle".into(),
+            }),
             ..Default::default()
         };
         assert!(q.on_status(&playing, t).is_none());
         assert_eq!(q.list().len(), 2);
-        playing.item = Some(ItemRef { kind: "sequence".into(), id: "zz".into(), name: "Other".into() });
+        playing.item = Some(ItemRef {
+            kind: "sequence".into(),
+            id: "zz".into(),
+            name: "Other".into(),
+        });
         assert_eq!(q.on_status(&playing, t).unwrap().sequence_id, "s2");
         assert_eq!(q.list().len(), 1);
     }

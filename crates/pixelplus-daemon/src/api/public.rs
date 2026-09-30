@@ -41,29 +41,51 @@ fn client_ip(peer: Peer, headers: &HeaderMap) -> Option<IpAddr> {
     direct
 }
 
-async fn submit(State(state): State<AppState>, peer: Peer, headers: HeaderMap, Json(b): Json<SubmitBody>) -> ApiResult<Json<Value>> {
+async fn submit(
+    State(state): State<AppState>,
+    peer: Peer,
+    headers: HeaderMap,
+    Json(b): Json<SubmitBody>,
+) -> ApiResult<Json<Value>> {
     let show = state.store.get();
-    let (req, position) = state
-        .services
-        .requests
-        .submit(&show, &b.sequence_id, b.name.as_deref(), client_ip(peer, &headers), Instant::now())?;
-    let who = req.requested_by.as_deref().map(|n| format!(" (from {n})")).unwrap_or_default();
+    let (req, position) = state.services.requests.submit(
+        &show,
+        &b.sequence_id,
+        b.name.as_deref(),
+        client_ip(peer, &headers),
+        Instant::now(),
+    )?;
+    let who = req
+        .requested_by
+        .as_deref()
+        .map(|n| format!(" (from {n})"))
+        .unwrap_or_default();
+    state.events.toast(
+        crate::events::ToastKind::Info,
+        format!("New song request: {}{who}", req.name),
+    );
     state
         .events
-        .toast(crate::events::ToastKind::Info, format!("New song request: {}{who}", req.name));
-    state.events.publish("requests", &state.services.requests.list());
-    Ok(Json(json!({ "ok": true, "id": req.id, "position": position })))
+        .publish("requests", &state.services.requests.list());
+    Ok(Json(
+        json!({ "ok": true, "id": req.id, "position": position }),
+    ))
 }
 
 async fn admin_list(State(state): State<AppState>) -> Json<Vec<SongRequest>> {
     Json(state.services.requests.list())
 }
 
-async fn admin_delete(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn admin_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     if !state.services.requests.remove(&id) {
         return Err(ApiError::not_found("That request"));
     }
-    state.events.publish("requests", &state.services.requests.list());
+    state
+        .events
+        .publish("requests", &state.services.requests.list());
     Ok(Json(json!({ "ok": true })))
 }
 

@@ -38,15 +38,30 @@ struct PowerQuery {
     sequence_id: Option<String>,
 }
 
-async fn power(State(state): State<AppState>, Query(q): Query<PowerQuery>) -> ApiResult<Json<Arc<PowerEstimate>>> {
+async fn power(
+    State(state): State<AppState>,
+    Query(q): Query<PowerQuery>,
+) -> ApiResult<Json<Arc<PowerEstimate>>> {
     let show = state.store.get();
     let Some(seq_id) = q.sequence_id.filter(|s| !s.is_empty()) else {
         let s = show.clone();
-        let est = tokio::task::spawn_blocking(move || estimate_full_white(&s)).await.map_err(ApiError::internal)?;
+        let est = tokio::task::spawn_blocking(move || estimate_full_white(&s))
+            .await
+            .map_err(ApiError::internal)?;
         return Ok(Json(Arc::new(est)));
     };
-    let seq = show.sequence(&seq_id).ok_or_else(|| ApiError::not_found("That sequence"))?.clone();
-    let key = (if seq.hash.is_empty() { seq.id.clone() } else { seq.hash.clone() }, show.version);
+    let seq = show
+        .sequence(&seq_id)
+        .ok_or_else(|| ApiError::not_found("That sequence"))?
+        .clone();
+    let key = (
+        if seq.hash.is_empty() {
+            seq.id.clone()
+        } else {
+            seq.hash.clone()
+        },
+        show.version,
+    );
     if let Some(hit) = state.services.tools.power.lock().get(&key).cloned() {
         return Ok(Json(hit));
     }
@@ -58,7 +73,12 @@ async fn power(State(state): State<AppState>, Query(q): Query<PowerQuery>) -> Ap
     })
     .await
     .map_err(ApiError::internal)?
-    .map_err(|e| ApiError::bad_request(format!("Couldn't read \"{}\" to estimate power: {e}", seq.name)))?;
+    .map_err(|e| {
+        ApiError::bad_request(format!(
+            "Couldn't read \"{}\" to estimate power: {e}",
+            seq.name
+        ))
+    })?;
     let est = Arc::new(est);
     let mut cache = state.services.tools.power.lock();
     cache.retain(|(_, v), _| *v == show.version);
@@ -106,46 +126,77 @@ struct FullQuery {
     full: Option<String>,
 }
 
-async fn snapshot_create(State(state): State<AppState>, Query(q): Query<FullQuery>, body: Bytes) -> ApiResult<Json<snapshots::Snapshot>> {
+async fn snapshot_create(
+    State(state): State<AppState>,
+    Query(q): Query<FullQuery>,
+    body: Bytes,
+) -> ApiResult<Json<snapshots::Snapshot>> {
     let b: CreateSnapshot = body_or_default(&body)?;
     let full = b.full || q.full.as_deref().is_some_and(|f| f == "1" || f == "true");
-    snapshots::create(&state, &b.label, false, full).await.map(Json)
+    snapshots::create(&state, &b.label, false, full)
+        .await
+        .map(Json)
 }
 
-async fn snapshot_restore(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn snapshot_restore(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     let show = snapshots::restore(&state, &id).await?;
-    state.events.toast(crate::events::ToastKind::Success, "Snapshot restored.");
+    state
+        .events
+        .toast(crate::events::ToastKind::Success, "Snapshot restored.");
     Ok(Json(json!({ "ok": true, "version": show.version })))
 }
 
-async fn snapshot_delete(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn snapshot_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     snapshots::delete(&state, &id).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn snapshot_download(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Response> {
-    let path = snapshots::archive_file(&state, &id).ok_or_else(|| ApiError::not_found("That snapshot"))?;
+async fn snapshot_download(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let path =
+        snapshots::archive_file(&state, &id).ok_or_else(|| ApiError::not_found("That snapshot"))?;
     let file = tokio::fs::File::open(&path).await?;
     let len = file.metadata().await?.len();
     let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(file));
     let mut resp = body.into_response();
     let h = resp.headers_mut();
-    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/zstd"));
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zstd"),
+    );
     h.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
-    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"pixelplus-{id}.tar.zst\"")) {
+    if let Ok(v) =
+        HeaderValue::from_str(&format!("attachment; filename=\"pixelplus-{id}.tar.zst\""))
+    {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     Ok(resp)
 }
 
-async fn snapshot_import(State(state): State<AppState>, mut mp: Multipart) -> ApiResult<Json<snapshots::Snapshot>> {
+async fn snapshot_import(
+    State(state): State<AppState>,
+    mut mp: Multipart,
+) -> ApiResult<Json<snapshots::Snapshot>> {
     while let Some(field) = mp.next_field().await.map_err(multipart_error)? {
-        let Some(name) = field.file_name().map(str::to_string) else { continue };
-        let tmp = snapshots::dir(&state).join(format!(".import-{}.tmp", pixelplus_core::model::new_id()));
+        let Some(name) = field.file_name().map(str::to_string) else {
+            continue;
+        };
+        let tmp =
+            snapshots::dir(&state).join(format!(".import-{}.tmp", pixelplus_core::model::new_id()));
         save_field(field, &tmp, 8 * 1024 * 1024 * 1024).await?;
         return snapshots::import(&state, tmp, &name).await.map(Json);
     }
-    Err(ApiError::bad_request("Choose a PixelPlus snapshot file (.tar.zst) to import."))
+    Err(ApiError::bad_request(
+        "Choose a PixelPlus snapshot file (.tar.zst) to import.",
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +216,10 @@ struct BulkBody {
     ops: Vec<BulkOp>,
 }
 
-async fn props_bulk(State(state): State<AppState>, Json(body): Json<BulkBody>) -> ApiResult<Json<Vec<Prop>>> {
+async fn props_bulk(
+    State(state): State<AppState>,
+    Json(body): Json<BulkBody>,
+) -> ApiResult<Json<Vec<Prop>>> {
     if body.ops.iter().any(|o| o.op == "delete") {
         crate::services::snapshots::auto(&state, "Before deleting props").await;
     }
@@ -187,17 +241,23 @@ async fn props_bulk(State(state): State<AppState>, Json(body): Json<BulkBody>) -
                             .iter()
                             .position(|p| p.id == op.id)
                             .ok_or_else(|| ApiError::not_found("One of those props"))?;
-                        let mut v = serde_json::to_value(&show.props[idx]).map_err(ApiError::internal)?;
+                        let mut v =
+                            serde_json::to_value(&show.props[idx]).map_err(ApiError::internal)?;
                         if let Some(patch) = &op.patch {
                             merge_patch(&mut v, patch);
                         }
-                        let mut p: Prop = serde_json::from_value(v)
-                            .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
+                        let mut p: Prop = serde_json::from_value(v).map_err(|e| {
+                            ApiError::bad_request(format!("That change isn't valid: {e}"))
+                        })?;
                         p.id = op.id.clone();
                         p.validate(show)?;
                         show.props[idx] = p;
                     }
-                    other => return Err(ApiError::bad_request(format!("Unknown operation \"{other}\"."))),
+                    other => {
+                        return Err(ApiError::bad_request(format!(
+                            "Unknown operation \"{other}\"."
+                        )))
+                    }
                 }
             }
             Ok(show.props.clone())
@@ -211,13 +271,22 @@ struct ReorderBody {
     ids: Vec<String>,
 }
 
-async fn props_reorder(State(state): State<AppState>, Json(body): Json<ReorderBody>) -> ApiResult<Json<Value>> {
+async fn props_reorder(
+    State(state): State<AppState>,
+    Json(body): Json<ReorderBody>,
+) -> ApiResult<Json<Value>> {
     state
         .store
         .update(move |show| {
-            let order: HashMap<&str, usize> = body.ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+            let order: HashMap<&str, usize> = body
+                .ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.as_str(), i))
+                .collect();
             // Stable: unlisted props keep their relative order after the listed ones.
-            show.props.sort_by_key(|p| order.get(p.id.as_str()).copied().unwrap_or(usize::MAX));
+            show.props
+                .sort_by_key(|p| order.get(p.id.as_str()).copied().unwrap_or(usize::MAX));
             Ok(())
         })
         .await?;
@@ -235,8 +304,12 @@ struct DaysQuery {
 }
 
 pub(crate) fn schedule_preview_json(show: &Show, days: u32) -> ApiResult<Value> {
-    let tz = pixelplus_core::schedule::schedule_timezone(&show.schedule)
-        .map_err(|_| ApiError::bad_request(format!("\"{}\" isn't a time zone PixelPlus knows. Pick your city again in the schedule.", show.schedule.location.timezone)))?;
+    let tz = pixelplus_core::schedule::schedule_timezone(&show.schedule).map_err(|_| {
+        ApiError::bad_request(format!(
+            "\"{}\" isn't a time zone PixelPlus knows. Pick your city again in the schedule.",
+            show.schedule.location.timezone
+        ))
+    })?;
     let now = chrono::Utc::now().with_timezone(&tz);
     let occ = pixelplus_core::schedule::occurrences(&show.schedule, now, days.clamp(1, 366));
     Ok(Value::Array(
@@ -257,7 +330,10 @@ pub(crate) fn schedule_preview_json(show: &Show, days: u32) -> ApiResult<Value> 
     ))
 }
 
-async fn schedule_preview(State(state): State<AppState>, Query(q): Query<DaysQuery>) -> ApiResult<Json<Value>> {
+async fn schedule_preview(
+    State(state): State<AppState>,
+    Query(q): Query<DaysQuery>,
+) -> ApiResult<Json<Value>> {
     schedule_preview_json(&state.store.get(), q.days.unwrap_or(14)).map(Json)
 }
 
@@ -265,7 +341,10 @@ async fn schedule_preview(State(state): State<AppState>, Query(q): Query<DaysQue
 // Triggers, alerts, MQTT
 // ---------------------------------------------------------------------------
 
-async fn trigger_fire(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn trigger_fire(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     let msg = crate::services::triggers::fire(&state, &id).await?;
     Ok(Json(json!({ "ok": true, "message": msg })))
 }
@@ -303,7 +382,9 @@ async fn mqtt_test(State(state): State<AppState>, body: Bytes) -> Json<Value> {
 
 async fn mqtt_status(State(state): State<AppState>) -> Json<Value> {
     let (connected, error) = state.services.mqtt.status();
-    Json(json!({ "enabled": state.store.get().settings.mqtt.enabled, "connected": connected, "error": error }))
+    Json(
+        json!({ "enabled": state.store.get().settings.mqtt.enabled, "connected": connected, "error": error }),
+    )
 }
 
 pub fn routes() -> Router<AppState> {
@@ -312,13 +393,17 @@ pub fn routes() -> Router<AppState> {
         .route("/health", get(health))
         .route("/health/run", post(health_run))
         .route("/snapshots", get(snapshot_list).post(snapshot_create))
-        .route("/snapshots/import", post(snapshot_import).layer(DefaultBodyLimit::disable()))
+        .route(
+            "/snapshots/import",
+            post(snapshot_import).layer(DefaultBodyLimit::disable()),
+        )
         .route("/snapshots/{id}", delete(snapshot_delete))
         .route("/snapshots/{id}/restore", post(snapshot_restore))
         .route("/snapshots/{id}/download", get(snapshot_download))
         .route("/props/bulk", post(props_bulk))
         .route("/props/reorder", post(props_reorder))
         .route("/schedule/preview", get(schedule_preview))
+        .route("/triggers/{id}", post(trigger_fire))
         .route("/triggers/{id}/fire", post(trigger_fire))
         .route("/alerts/test", post(alert_test))
         .route("/mqtt/test", post(mqtt_test))

@@ -45,9 +45,19 @@ pub fn dir(state: &AppState) -> PathBuf {
 fn slug(label: &str) -> String {
     let s: String = label
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    let s = s
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
     let s: String = s.chars().take(40).collect();
     if s.is_empty() {
         "snapshot".into()
@@ -58,7 +68,11 @@ fn slug(label: &str) -> String {
 
 /// Valid snapshot ids are file-name safe.
 pub fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 100 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    !id.is_empty()
+        && id.len() <= 100
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn archive_path(dir: &Path, id: &str) -> PathBuf {
@@ -92,8 +106,11 @@ fn referenced_files(show: &Show, data_dir: &Path, full: bool) -> Vec<String> {
 fn safe_rel(rel: &str) -> bool {
     let p = Path::new(rel);
     p.is_relative()
-        && p.components().all(|c| matches!(c, std::path::Component::Normal(_)))
-        && ["media/", "sequences/", "thumbnails/", "dj/"].iter().any(|d| rel.starts_with(d))
+        && p.components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        && ["media/", "sequences/", "thumbnails/", "dj/"]
+            .iter()
+            .any(|d| rel.starts_with(d))
 }
 
 /// Create a snapshot (blocking work runs on a worker thread).
@@ -101,7 +118,11 @@ pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> Ap
     let show = state.store.get();
     let dir = dir(state);
     let data_dir = state.config.data_dir.clone();
-    let label = if label.trim().is_empty() { "Snapshot".to_string() } else { label.trim().chars().take(100).collect() };
+    let label = if label.trim().is_empty() {
+        "Snapshot".to_string()
+    } else {
+        label.trim().chars().take(100).collect()
+    };
     let now = chrono::Local::now();
     let mut id = format!("{}-{}", now.format("%Y%m%d-%H%M%S"), slug(&label));
     if archive_path(&dir, &id).exists() {
@@ -129,7 +150,11 @@ pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> Ap
             append_bytes(&mut tar, META_NAME, &serde_json::to_vec_pretty(&meta)?)?;
             let mut show_clean = (*show).clone();
             show_clean.nodes.iter_mut().for_each(|n| n.last_seen = None);
-            append_bytes(&mut tar, "show.json", &serde_json::to_vec_pretty(&show_clean)?)?;
+            append_bytes(
+                &mut tar,
+                "show.json",
+                &serde_json::to_vec_pretty(&show_clean)?,
+            )?;
             for rel in &files {
                 tar.append_path_with_name(data_dir.join(rel), rel)?;
             }
@@ -141,7 +166,10 @@ pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> Ap
         std::fs::rename(&tmp, &path)?;
         let mut meta = meta;
         meta.size_bytes = std::fs::metadata(&path)?.len();
-        std::fs::write(dir.join(format!("{id}.json")), serde_json::to_vec_pretty(&meta)?)?;
+        std::fs::write(
+            dir.join(format!("{id}.json")),
+            serde_json::to_vec_pretty(&meta)?,
+        )?;
         Ok(meta)
     })
     .await
@@ -153,7 +181,11 @@ pub async fn create(state: &AppState, label: &str, auto: bool, full: bool) -> Ap
     Ok(snap)
 }
 
-fn append_bytes<W: std::io::Write>(tar: &mut tar::Builder<W>, name: &str, data: &[u8]) -> std::io::Result<()> {
+fn append_bytes<W: std::io::Write>(
+    tar: &mut tar::Builder<W>,
+    name: &str,
+    data: &[u8],
+) -> std::io::Result<()> {
     let mut h = tar::Header::new_gnu();
     h.set_size(data.len() as u64);
     h.set_mode(0o644);
@@ -166,7 +198,11 @@ fn append_bytes<W: std::io::Write>(tar: &mut tar::Builder<W>, name: &str, data: 
 /// snapshot already has this show version). Never fails the caller.
 pub async fn auto(state: &AppState, label: &str) {
     let version = state.store.version();
-    if list(state).await.first().is_some_and(|s| s.show_version == Some(version)) {
+    if list(state)
+        .await
+        .first()
+        .is_some_and(|s| s.show_version == Some(version))
+    {
         return;
     }
     if let Err(e) = create(state, label, true, false).await {
@@ -177,15 +213,21 @@ pub async fn auto(state: &AppState, label: &str) {
 /// All snapshots, newest first.
 pub async fn list(state: &AppState) -> Vec<Snapshot> {
     let dir = dir(state);
-    tokio::task::spawn_blocking(move || list_blocking(&dir)).await.unwrap_or_default()
+    tokio::task::spawn_blocking(move || list_blocking(&dir))
+        .await
+        .unwrap_or_default()
 }
 
 fn list_blocking(dir: &Path) -> Vec<Snapshot> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return out;
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        let Some(id) = name.strip_suffix(".tar.zst") else { continue };
+        let Some(id) = name.strip_suffix(".tar.zst") else {
+            continue;
+        };
         if !valid_id(id) {
             continue;
         }
@@ -239,16 +281,25 @@ fn read_archive_meta(path: &Path) -> anyhow::Result<Snapshot> {
 /// Read `show.json` out of an archive (validates it is a PixelPlus snapshot).
 pub fn read_archive_show(path: &Path) -> Result<Show, String> {
     let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let dec = zstd::Decoder::new(f).map_err(|_| "That isn't a PixelPlus snapshot file.".to_string())?;
+    let dec =
+        zstd::Decoder::new(f).map_err(|_| "That isn't a PixelPlus snapshot file.".to_string())?;
     let mut ar = tar::Archive::new(dec);
-    let entries = ar.entries().map_err(|_| "That isn't a PixelPlus snapshot file.".to_string())?;
+    let entries = ar
+        .entries()
+        .map_err(|_| "That isn't a PixelPlus snapshot file.".to_string())?;
     for entry in entries {
         let mut entry = entry.map_err(|_| "The snapshot file is damaged.".to_string())?;
-        let is_show = entry.path().map(|p| p.to_string_lossy() == "show.json").unwrap_or(false);
+        let is_show = entry
+            .path()
+            .map(|p| p.to_string_lossy() == "show.json")
+            .unwrap_or(false);
         if is_show {
             let mut buf = Vec::new();
-            entry.read_to_end(&mut buf).map_err(|_| "The snapshot file is damaged.".to_string())?;
-            return serde_json::from_slice(&buf).map_err(|e| format!("The show in that snapshot can't be read: {e}"));
+            entry
+                .read_to_end(&mut buf)
+                .map_err(|_| "The snapshot file is damaged.".to_string())?;
+            return serde_json::from_slice(&buf)
+                .map_err(|e| format!("The show in that snapshot can't be read: {e}"));
         }
     }
     Err("That isn't a PixelPlus snapshot (it has no show.json).".into())
@@ -271,7 +322,11 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
         let mut ar = tar::Archive::new(zstd::Decoder::new(f).map_err(|e| e.to_string())?);
         for entry in ar.entries().map_err(|e| e.to_string())? {
             let mut entry = entry.map_err(|e| e.to_string())?;
-            let rel = entry.path().map_err(|e| e.to_string())?.to_string_lossy().to_string();
+            let rel = entry
+                .path()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
             if !safe_rel(&rel) || entry.header().entry_type() != tar::EntryType::Regular {
                 continue;
             }
@@ -280,7 +335,9 @@ pub async fn restore(state: &AppState, id: &str) -> ApiResult<std::sync::Arc<Sho
                 std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
             }
             let tmp = dst.with_extension("restore.tmp");
-            entry.unpack(&tmp).map_err(|e| format!("couldn't unpack {rel}: {e}"))?;
+            entry
+                .unpack(&tmp)
+                .map_err(|e| format!("couldn't unpack {rel}: {e}"))?;
             std::fs::rename(&tmp, &dst).map_err(|e| e.to_string())?;
         }
         Ok(show)
@@ -324,8 +381,15 @@ pub async fn import(state: &AppState, tmp: PathBuf, original_name: &str) -> ApiR
             let show = read_archive_show(&tmp)?;
             let meta = read_archive_meta(&tmp).ok();
             let now = chrono::Local::now();
-            let label = format!("Imported: {}", if name.is_empty() { "backup" } else { &name });
-            let id = format!("{}-{}", now.format("%Y%m%d-%H%M%S"), slug(&format!("imported {}", name.trim_end_matches(".tar.zst"))));
+            let label = format!(
+                "Imported: {}",
+                if name.is_empty() { "backup" } else { &name }
+            );
+            let id = format!(
+                "{}-{}",
+                now.format("%Y%m%d-%H%M%S"),
+                slug(&format!("imported {}", name.trim_end_matches(".tar.zst")))
+            );
             let dst = archive_path(&d, &id);
             std::fs::rename(&tmp, &dst).map_err(|e| e.to_string())?;
             let snap = Snapshot {
@@ -338,7 +402,10 @@ pub async fn import(state: &AppState, tmp: PathBuf, original_name: &str) -> ApiR
                 full: meta.map(|m| m.full).unwrap_or(false),
                 show_name: Some(show.name),
             };
-            let _ = std::fs::write(d.join(format!("{id}.json")), serde_json::to_vec_pretty(&snap).unwrap_or_default());
+            let _ = std::fs::write(
+                d.join(format!("{id}.json")),
+                serde_json::to_vec_pretty(&snap).unwrap_or_default(),
+            );
             Ok(snap)
         })();
         if res.is_err() {

@@ -20,32 +20,55 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-const TEST_MODES: &[&str] = &["solid", "chase", "rgbCycle", "countPixels", "walk", "effect"];
+const TEST_MODES: &[&str] = &[
+    "solid",
+    "chase",
+    "rgbCycle",
+    "countPixels",
+    "walk",
+    "effect",
+];
 
-async fn test_start(State(state): State<AppState>, Json(req): Json<TestRequest>) -> ApiResult<Json<Value>> {
+async fn test_start(
+    State(state): State<AppState>,
+    Json(req): Json<TestRequest>,
+) -> ApiResult<Json<Value>> {
     if !TEST_MODES.contains(&req.mode.as_str()) {
-        return Err(ApiError::bad_request(format!("Unknown test pattern \"{}\".", req.mode)));
+        return Err(ApiError::bad_request(format!(
+            "Unknown test pattern \"{}\".",
+            req.mode
+        )));
     }
     let show = state.store.get();
     let t = &req.target;
     if let Some(node) = &t.node_id {
-        let n = show.node(node).ok_or_else(|| ApiError::not_found("That controller"))?;
+        let n = show
+            .node(node)
+            .ok_or_else(|| ApiError::not_found("That controller"))?;
         if let Some(o) = t.output {
             if o == 0 || o as usize > n.outputs.len() {
-                return Err(ApiError::bad_request(format!("{} doesn't have output {o}.", n.name)));
+                return Err(ApiError::bad_request(format!(
+                    "{} doesn't have output {o}.",
+                    n.name
+                )));
             }
         }
     } else {
         for id in &t.props.prop_ids {
-            show.prop(id).ok_or_else(|| ApiError::not_found("That prop"))?;
+            show.prop(id)
+                .ok_or_else(|| ApiError::not_found("That prop"))?;
         }
         if !t.props.all && t.props.prop_ids.is_empty() && t.props.group_ids.is_empty() {
-            return Err(ApiError::bad_request("Pick which props (or which controller output) to test."));
+            return Err(ApiError::bad_request(
+                "Pick which props (or which controller output) to test.",
+            ));
         }
     }
     if let Some(c) = &req.color {
         if pixelplus_core::effects::Rgb::from_hex(c).is_none() {
-            return Err(ApiError::bad_request(format!("\"{c}\" isn't a colour (use #rrggbb).")));
+            return Err(ApiError::bad_request(format!(
+                "\"{c}\" isn't a colour (use #rrggbb)."
+            )));
         }
     }
     if req.mode == "effect" && req.effect.is_none() {
@@ -134,7 +157,12 @@ pub async fn stop_fault_session(state: &AppState) {
     if let Some(s) = old {
         s.task.abort();
         if let Some(p) = state.services.player.get() {
-            let _ = p.send(PlayerCmd::Overlay(OverlayCmd::Enable { prop_id: s.prop_id.clone(), enabled: false })).await;
+            let _ = p
+                .send(PlayerCmd::Overlay(OverlayCmd::Enable {
+                    prop_id: s.prop_id.clone(),
+                    enabled: false,
+                }))
+                .await;
         }
     }
 }
@@ -145,9 +173,15 @@ struct StartBody {
     prop_id: String,
 }
 
-async fn fault_start(State(state): State<AppState>, Json(b): Json<StartBody>) -> ApiResult<Json<FaultStep>> {
+async fn fault_start(
+    State(state): State<AppState>,
+    Json(b): Json<StartBody>,
+) -> ApiResult<Json<FaultStep>> {
     let show = state.store.get();
-    let prop = show.prop(&b.prop_id).ok_or_else(|| ApiError::not_found("That prop"))?.clone();
+    let prop = show
+        .prop(&b.prop_id)
+        .ok_or_else(|| ApiError::not_found("That prop"))?
+        .clone();
     if prop.pixel_count == 0 {
         return Err(ApiError::bad_request("This prop has no pixels to test."));
     }
@@ -159,7 +193,11 @@ async fn fault_start(State(state): State<AppState>, Json(b): Json<StartBody>) ->
     }
     let p = player(&state)?.clone();
     stop_fault_session(&state).await;
-    p.send(PlayerCmd::Overlay(OverlayCmd::Enable { prop_id: prop.id.clone(), enabled: true })).await?;
+    p.send(PlayerCmd::Overlay(OverlayCmd::Enable {
+        prop_id: prop.id.clone(),
+        enabled: true,
+    }))
+    .await?;
     let finder = Arc::new(Mutex::new(FaultFinder::new(prop.pixel_count)));
     let id = format!("ff{}", pixelplus_core::model::new_id());
     let task = {
@@ -173,19 +211,36 @@ async fn fault_start(State(state): State<AppState>, Json(b): Json<StartBody>) ->
             loop {
                 tick.tick().await;
                 let mut rgb = vec![0u8; n];
-                finder.lock().render(started.elapsed().as_millis() as u64, &mut rgb);
-                if p.send(PlayerCmd::Overlay(OverlayCmd::PropPixels { prop_id: prop_id.clone(), rgb })).await.is_err() {
+                finder
+                    .lock()
+                    .render(started.elapsed().as_millis() as u64, &mut rgb);
+                if p.send(PlayerCmd::Overlay(OverlayCmd::PropPixels {
+                    prop_id: prop_id.clone(),
+                    rgb,
+                }))
+                .await
+                .is_err()
+                {
                     break;
                 }
             }
         })
     };
     let step = step_of(&id, &prop.id, &finder.lock());
-    *state.services.faults.session.lock() = Some(FaultSession { id, prop_id: prop.id.clone(), finder, task });
+    *state.services.faults.session.lock() = Some(FaultSession {
+        id,
+        prop_id: prop.id.clone(),
+        finder,
+        task,
+    });
     Ok(Json(step))
 }
 
-fn with_session<R>(state: &AppState, session: &str, f: impl FnOnce(&FaultSession) -> R) -> ApiResult<R> {
+fn with_session<R>(
+    state: &AppState,
+    session: &str,
+    f: impl FnOnce(&FaultSession) -> R,
+) -> ApiResult<R> {
     let guard = state.services.faults.session.lock();
     match guard.as_ref() {
         Some(s) if s.id == session => Ok(f(s)),
@@ -205,8 +260,15 @@ struct AnswerBody {
     lit: Option<bool>,
 }
 
-async fn fault_answer(State(state): State<AppState>, Path(session): Path<String>, Json(b): Json<AnswerBody>) -> ApiResult<Json<FaultStep>> {
-    let ok = b.ok.or(b.lit).ok_or_else(|| ApiError::bad_request("Answer with {\"ok\": true} or {\"ok\": false}."))?;
+async fn fault_answer(
+    State(state): State<AppState>,
+    Path(session): Path<String>,
+    Json(b): Json<AnswerBody>,
+) -> ApiResult<Json<FaultStep>> {
+    let ok = b
+        .ok
+        .or(b.lit)
+        .ok_or_else(|| ApiError::bad_request("Answer with {\"ok\": true} or {\"ok\": false}."))?;
     with_session(&state, &session, |s| {
         let mut ff = s.finder.lock();
         ff.answer(ok);
@@ -215,7 +277,10 @@ async fn fault_answer(State(state): State<AppState>, Path(session): Path<String>
     .map(Json)
 }
 
-async fn fault_undo(State(state): State<AppState>, Path(session): Path<String>) -> ApiResult<Json<FaultStep>> {
+async fn fault_undo(
+    State(state): State<AppState>,
+    Path(session): Path<String>,
+) -> ApiResult<Json<FaultStep>> {
     with_session(&state, &session, |s| {
         let mut ff = s.finder.lock();
         ff.undo();
@@ -229,7 +294,11 @@ async fn fault_stop(State(state): State<AppState>, _body: Bytes) -> ApiResult<Js
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn fault_stop_session(State(state): State<AppState>, Path(_session): Path<String>, body: Bytes) -> ApiResult<Json<Value>> {
+async fn fault_stop_session(
+    State(state): State<AppState>,
+    Path(_session): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Value>> {
     let _: Value = body_or_default(&body)?;
     stop_fault_session(&state).await;
     Ok(Json(json!({ "ok": true })))

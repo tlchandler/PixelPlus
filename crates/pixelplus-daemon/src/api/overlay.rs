@@ -14,7 +14,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 fn prop(state: &AppState, id: &str) -> ApiResult<Prop> {
-    state.store.get().prop(id).cloned().ok_or_else(|| ApiError::not_found("That prop"))
+    state
+        .store
+        .get()
+        .prop(id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("That prop"))
 }
 
 fn matrix(p: &Prop) -> ApiResult<MatrixInfo> {
@@ -26,13 +31,20 @@ fn matrix(p: &Prop) -> ApiResult<MatrixInfo> {
     })
 }
 
-async fn open(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<OverlayInfo>> {
+async fn open(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<OverlayInfo>> {
     let p = prop(&state, &id)?;
     matrix(&p)?;
     player(&state)?.overlay_open(id).await.map(Json)
 }
 
-async fn frame(State(state): State<AppState>, Path(id): Path<String>, body: Bytes) -> ApiResult<Json<Value>> {
+async fn frame(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Value>> {
     let p = prop(&state, &id)?;
     let m = matrix(&p)?;
     let want = m.width as usize * m.height as usize * 3;
@@ -45,7 +57,12 @@ async fn frame(State(state): State<AppState>, Path(id): Path<String>, body: Byte
             body.len()
         )));
     }
-    player(&state)?.send(PlayerCmd::Overlay(OverlayCmd::Frame { prop_id: id, rgb: body })).await?;
+    player(&state)?
+        .send(PlayerCmd::Overlay(OverlayCmd::Frame {
+            prop_id: id,
+            rgb: body,
+        }))
+        .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -54,10 +71,17 @@ struct EnableBody {
     enabled: bool,
 }
 
-async fn enable(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<EnableBody>) -> ApiResult<Json<Value>> {
+async fn enable(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<EnableBody>,
+) -> ApiResult<Json<Value>> {
     prop(&state, &id)?;
     player(&state)?
-        .send(PlayerCmd::Overlay(OverlayCmd::Enable { prop_id: id, enabled: b.enabled }))
+        .send(PlayerCmd::Overlay(OverlayCmd::Enable {
+            prop_id: id,
+            enabled: b.enabled,
+        }))
         .await?;
     Ok(Json(json!({ "ok": true, "enabled": b.enabled })))
 }
@@ -78,7 +102,11 @@ fn yes() -> bool {
     true
 }
 
-async fn text(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<TextBody>) -> ApiResult<Json<Value>> {
+async fn text(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<TextBody>,
+) -> ApiResult<Json<Value>> {
     let p = prop(&state, &id)?;
     matrix(&p)?;
     let text = b.text.trim().to_string();
@@ -86,15 +114,25 @@ async fn text(State(state): State<AppState>, Path(id): Path<String>, Json(b): Js
         return Err(ApiError::bad_request("Type some text to show."));
     }
     if text.chars().count() > 500 {
-        return Err(ApiError::bad_request("That text is too long (500 characters max)."));
+        return Err(ApiError::bad_request(
+            "That text is too long (500 characters max).",
+        ));
     }
     let color = b.color.unwrap_or_else(|| "#ffffff".into());
     if pixelplus_core::effects::Rgb::from_hex(&color).is_none() {
-        return Err(ApiError::bad_request(format!("\"{color}\" isn't a colour (use #rrggbb).")));
+        return Err(ApiError::bad_request(format!(
+            "\"{color}\" isn't a colour (use #rrggbb)."
+        )));
     }
     let duration_ms = b.duration_ms.unwrap_or(15_000).clamp(1_000, 3_600_000);
     player(&state)?
-        .send(PlayerCmd::Overlay(OverlayCmd::Text { prop_id: id, text, color, scroll: b.scroll, duration_ms }))
+        .send(PlayerCmd::Overlay(OverlayCmd::Text {
+            prop_id: id,
+            text,
+            color,
+            scroll: b.scroll,
+            duration_ms,
+        }))
         .await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -107,33 +145,50 @@ struct QrBody {
     duration_ms: Option<u64>,
 }
 
-async fn qr(State(state): State<AppState>, Path(id): Path<String>, Json(b): Json<QrBody>) -> ApiResult<Json<Value>> {
+async fn qr(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<QrBody>,
+) -> ApiResult<Json<Value>> {
     let p = prop(&state, &id)?;
     let m = matrix(&p)?;
     let url = b.url.trim().to_string();
     if url.is_empty() {
-        return Err(ApiError::bad_request("Enter the link the QR code should open."));
+        return Err(ApiError::bad_request(
+            "Enter the link the QR code should open.",
+        ));
     }
     // Check it fits before asking the player to draw it.
     pixelplus_core::text::render_qr(&url, m.width, m.height, Default::default())
         .map_err(|e| ApiError::bad_request(capitalize(&e.to_string())))?;
     let duration_ms = b.duration_ms.unwrap_or(30_000).clamp(1_000, 3_600_000);
     player(&state)?
-        .send(PlayerCmd::Overlay(OverlayCmd::Qr { prop_id: id, url, duration_ms }))
+        .send(PlayerCmd::Overlay(OverlayCmd::Qr {
+            prop_id: id,
+            url,
+            duration_ms,
+        }))
         .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
-    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str() + ".").unwrap_or_default()
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str() + ".")
+        .unwrap_or_default()
 }
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/overlay/{prop_id}", post(enable))
         .route("/overlay/{prop_id}/open", post(open))
-        .route("/overlay/{prop_id}/frame", put(frame).post(frame).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route(
+            "/overlay/{prop_id}/frame",
+            put(frame)
+                .post(frame)
+                .layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
         .route("/overlay/{prop_id}/text", post(text))
         .route("/overlay/{prop_id}/qr", post(qr))
 }

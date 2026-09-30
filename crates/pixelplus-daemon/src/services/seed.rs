@@ -72,7 +72,10 @@ pub fn parse_pronunciations(text: &str) -> Vec<Pronunciation> {
         if word.is_empty() || say.is_empty() || out.iter().any(|p| p.word == word) {
             continue;
         }
-        out.push(Pronunciation { word: word.into(), say: say.into() });
+        out.push(Pronunciation {
+            word: word.into(),
+            say: say.into(),
+        });
     }
     out
 }

@@ -26,19 +26,23 @@ struct NameBody {
     name: String,
 }
 
-async fn put_name(State(state): State<AppState>, Json(body): Json<NameBody>) -> ApiResult<Json<Value>> {
+async fn put_name(State(state): State<AppState>, Json(body): Json<NameBody>) -> ApiResult<Json<Show>> {
     let name = body.name.trim().to_string();
     if name.is_empty() {
         return Err(ApiError::bad_request("Please give your show a name."));
     }
-    state
+    if name.chars().count() > 120 {
+        return Err(ApiError::bad_request("That name is too long (120 characters max)."));
+    }
+    let (_, show) = state
         .store
         .update(|s| {
             s.name = name;
             Ok(())
         })
         .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    // The UI expects the updated show (without the password hash).
+    Ok(Json(super::content::public_show(&show)))
 }
 
 async fn put_settings(State(state): State<AppState>, Json(patch): Json<Value>) -> ApiResult<Json<ShowSettings>> {

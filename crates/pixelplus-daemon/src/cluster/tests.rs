@@ -547,6 +547,24 @@ async fn leader_adopts_followers_and_drives_them() {
     })
     .await;
 
+    // Identify: the follower blinks all its outputs.
+    let req = tokio::spawn({
+        let http = http.clone();
+        let url = leader.url(&format!("/nodes/{f1_id}/identify"));
+        async move { http.post(url).send().await.unwrap().status() }
+    });
+    let cmd = next_cmd(&mut f1.player_rx, "identify", |c| {
+        matches!(c, PlayerCmd::TestStart(..))
+    })
+    .await;
+    let PlayerCmd::TestStart(test, reply) = cmd else {
+        unreachable!()
+    };
+    assert_eq!(test.mode, "chase");
+    assert_eq!(test.target.node_id.as_deref(), Some(f1_id.as_str()));
+    reply.send(Ok(())).unwrap();
+    assert_eq!(req.await.unwrap(), 200);
+
     // 9. Cluster endpoints need the key.
     let r = http
         .get(leader.url(&format!("/cluster/manifest/{f1_id}")))
@@ -633,13 +651,19 @@ async fn leader_adopts_followers_and_drives_them() {
     })
     .await;
 
-    // 13. Deleting a wired controller needs confirmation.
+    // 13. Deleting a wired controller releases it but keeps it (and its
+    // wiring) in the show; `force` removes it with its wiring.
     let r = http
         .delete(leader.url(&format!("/nodes/{f2_id}")))
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 409);
+    assert_eq!(r.status(), 200);
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(body["removed"], false);
+    assert_eq!(body["released"], true);
+    assert!(!leader.state.store.get().node(&f2_id).unwrap().adopted);
+    assert_eq!(f2.state.identity().leader_id, None);
     let r = http
         .delete(leader.url(&format!("/nodes/{f2_id}?force=1")))
         .send()

@@ -240,10 +240,10 @@ fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus
         online: true,
         last_seen: Some(rfc3339(chrono::Utc::now())),
         board,
-        sync_offset_ms: match &report {
-            Some(r) => r.sync_offset_ms,
-            None => Some(0.0),
-        },
+        sync_offset_ms: report
+            .as_ref()
+            .and_then(|r| r.sync_offset_ms)
+            .unwrap_or(0.0),
         sync_state: report
             .as_ref()
             .map(|r| r.state)
@@ -296,9 +296,11 @@ fn follower_status(
         role: node.role,
         adopted: node.adopted,
         online,
-        last_seen: peer.map(|p| rfc3339(p.seen_at)),
+        last_seen: peer
+            .map(|p| rfc3339(p.seen_at))
+            .or_else(|| node.last_seen.clone()),
         board: node.board,
-        sync_offset_ms: online.then_some(report.sync_offset_ms).flatten(),
+        sync_offset_ms: report.sync_offset_ms.filter(|_| online).unwrap_or(0.0),
         sync_state,
         files: if online {
             report.files
@@ -345,7 +347,7 @@ pub(crate) fn nodes_status(state: &AppState, sh: &Shared) -> Vec<NodeStatus> {
                     online,
                     last_seen: Some(rfc3339(leader.seen_at)),
                     board: leader.beacon.board,
-                    sync_offset_ms: Some(0.0),
+                    sync_offset_ms: 0.0,
                     sync_state: if online {
                         SyncState::Synced
                     } else {
@@ -383,11 +385,11 @@ pub(crate) fn discovered(state: &AppState, sh: &Shared) -> Vec<DiscoveredNode> {
             role: p.beacon.role,
             board: p.beacon.board,
             board_rev: p.beacon.board_rev.clone(),
-            pi_model: p.beacon.pi.clone(),
+            pi: p.beacon.pi.clone(),
             ip: p.addr.ip().to_string(),
             ips: p.beacon.ips.clone(),
             http: p.beacon.http,
-            version: p.beacon.ver.clone(),
+            ver: p.beacon.ver.clone(),
             adopted_by: p.beacon.adopted_by.clone(),
             last_seen: rfc3339(p.seen_at),
         })
@@ -918,6 +920,7 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
     let show = state.store.get();
     let peers: std::collections::HashMap<String, Peer> = sh.peers.read().clone();
     let past_grace = sh.started.elapsed() > STARTUP_GRACE;
+    let mut went_offline: Vec<(String, String)> = Vec::new();
     let mut readopt = Vec::new();
     let mut facts: Vec<(String, String, Option<String>, Option<String>)> = Vec::new();
     {
@@ -949,6 +952,10 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
                 (Some(true), false) => {
                     h.online = Some(false);
                     let last = peer.map(|p| rfc3339(p.seen_at));
+                    if let Some(t) = &last {
+                        // Remember it across leader restarts ("last seen …").
+                        went_offline.push((node.id.clone(), t.clone()));
+                    }
                     log_warning(state, format!("{} went offline", node.name));
                     sh.emit(ClusterEvent::NodeOffline {
                         node_id: node.id.clone(),
@@ -1046,10 +1053,15 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
             }
         });
     }
-    if !facts.is_empty() {
+    if !facts.is_empty() || !went_offline.is_empty() {
         let _ = state
             .store
             .update(move |s| {
+                for (id, seen) in went_offline {
+                    if let Some(n) = s.nodes.iter_mut().find(|n| n.id == id) {
+                        n.last_seen = Some(seen);
+                    }
+                }
                 for (id, hostname, pi, rev) in facts {
                     if let Some(n) = s.nodes.iter_mut().find(|n| n.id == id) {
                         if !hostname.is_empty() {

@@ -34,7 +34,13 @@ pub fn screen(state: &AppState) -> StatusScreen {
         .map(|r| r.sensor.value)
         .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |a| a.max(v))))
         .or_else(|| super::system::soc_temp().map(f64::from));
-    StatusScreen { name, state: st, song, ip: super::system::ip_addresses().into_iter().next(), temp_c }
+    StatusScreen {
+        name,
+        state: st,
+        song,
+        ip: super::system::ip_addresses().into_iter().next(),
+        temp_c,
+    }
 }
 
 pub fn start(state: &AppState) {
@@ -75,7 +81,8 @@ pub fn start(state: &AppState) {
                 let res = tokio::task::spawn_blocking(move || -> Result<(), String> {
                     let mut guard = p.lock();
                     if guard.is_none() {
-                        let bus = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS).map_err(|e| e.to_string())?;
+                        let bus = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS)
+                            .map_err(|e| e.to_string())?;
                         let mut d = Ssd1306::new(bus, OLED_ADDR);
                         d.init().map_err(|e| e.to_string())?;
                         *guard = Some(d);

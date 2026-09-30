@@ -16,16 +16,18 @@ use events::EventBus;
 use state::{AppInner, AppState};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    tracing_subscriber::registry()
+        .with(
             EnvFilter::try_from_env("PIXELPLUS_LOG")
                 .unwrap_or_else(|_| EnvFilter::new("info,tower_http=warn")),
         )
-        .with_target(false)
+        .with(tracing_subscriber::fmt::layer().with_target(false))
+        .with(crate::services::logs::layer())
         .init();
 
     let config = Config::from_env();

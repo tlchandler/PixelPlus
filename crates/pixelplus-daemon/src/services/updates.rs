@@ -35,7 +35,11 @@ pub fn parse_policy(text: &str) -> (Option<String>, Option<String>, Option<Strin
         .lines()
         .skip_while(|l| !l.contains("***"))
         .nth(1)
-        .and_then(|l| l.split_whitespace().nth(2).map(|s| s.split('/').next().unwrap_or(s).to_string()));
+        .and_then(|l| {
+            l.split_whitespace()
+                .nth(2)
+                .map(|s| s.split('/').next().unwrap_or(s).to_string())
+        });
     (field("Installed:"), field("Candidate:"), channel)
 }
 
@@ -63,7 +67,13 @@ pub async fn check() -> UpdateInfo {
         // Refresh only our repository's index when possible; ignore failures (offline).
         let _ = run("apt-get", &["update", "-qq"], Duration::from_secs(90)).await;
     }
-    match run("apt-cache", &["policy", "pixelplus"], Duration::from_secs(20)).await {
+    match run(
+        "apt-cache",
+        &["policy", "pixelplus"],
+        Duration::from_secs(20),
+    )
+    .await
+    {
         Ok(o) if o.success => {
             let (installed, candidate, channel) = parse_policy(&o.stdout);
             let installed = installed.unwrap_or_else(|| CURRENT.into());
@@ -74,14 +84,18 @@ pub async fn check() -> UpdateInfo {
                 info.latest = c;
             } else {
                 info.latest = installed;
-                info.message = Some("The PixelPlus package repository isn't set up on this computer.".into());
+                info.message =
+                    Some("The PixelPlus package repository isn't set up on this computer.".into());
             }
             info.can_apply = info.available && is_root() && have("systemd-run");
             if info.available && !info.can_apply {
                 info.message = Some("An update is available. Install it with: sudo apt install --only-upgrade pixelplus".into());
             }
         }
-        _ => info.message = Some("Couldn't check for updates right now. Is the internet connected?".into()),
+        _ => {
+            info.message =
+                Some("Couldn't check for updates right now. Is the internet connected?".into())
+        }
     }
     info
 }
@@ -122,7 +136,9 @@ pub async fn apply() -> ApiResult<String> {
         if err.contains("already") {
             return Err(ApiError::conflict("An update is already being installed."));
         }
-        return Err(ApiError::unavailable(format!("The update couldn't start: {err}")));
+        return Err(ApiError::unavailable(format!(
+            "The update couldn't start: {err}"
+        )));
     }
     Ok("Installing the update. PixelPlus will restart by itself in a minute or two.".into())
 }

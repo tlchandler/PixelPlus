@@ -45,7 +45,9 @@ pub fn ring() -> &'static Arc<LogRing> {
 /// Tracing layer feeding [`ring()`]. Install it in `main.rs`:
 /// `tracing_subscriber::registry().with(filter).with(fmt::layer()).with(services::logs::layer()).init()`.
 pub fn layer() -> RingLayer {
-    RingLayer { ring: ring().clone() }
+    RingLayer {
+        ring: ring().clone(),
+    }
 }
 
 /// Start publishing warnings/errors as `log` WebSocket events.
@@ -80,7 +82,13 @@ impl LogRing {
 pub fn format_lines(lines: &[LogLine]) -> String {
     let mut out = String::new();
     for l in lines {
-        let _ = writeln!(out, "{}  {:<5}  {}", l.time, l.level.to_uppercase(), l.message);
+        let _ = writeln!(
+            out,
+            "{}  {:<5}  {}",
+            l.time,
+            l.level.to_uppercase(),
+            l.message
+        );
     }
     out
 }
@@ -156,7 +164,11 @@ mod tests {
     fn ring_keeps_last_lines_and_formats() {
         let ring = LogRing::default();
         for i in 0..(CAPACITY + 10) {
-            ring.push(LogLine { level: "info", message: format!("line {i}"), time: "t".into() });
+            ring.push(LogLine {
+                level: "info",
+                message: format!("line {i}"),
+                time: "t".into(),
+            });
         }
         let recent = ring.recent(3);
         assert_eq!(recent.len(), 3);
@@ -172,8 +184,16 @@ mod tests {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
         let _ = ring.events.set(bus);
-        ring.push(LogLine { level: "info", message: "quiet".into(), time: "t".into() });
-        ring.push(LogLine { level: "warn", message: "loud".into(), time: "t".into() });
+        ring.push(LogLine {
+            level: "info",
+            message: "quiet".into(),
+            time: "t".into(),
+        });
+        ring.push(LogLine {
+            level: "warn",
+            message: "loud".into(),
+            time: "t".into(),
+        });
         match rx.recv().await.unwrap() {
             crate::events::Event::Json { kind, data } => {
                 assert_eq!(kind, "log");

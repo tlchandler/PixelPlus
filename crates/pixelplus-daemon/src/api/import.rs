@@ -5,7 +5,7 @@
 //! the two XML files are found inside it. Files dropped in the wrong slot are
 //! sorted out by their root element.
 
-use super::content::{multipart_error, public_show};
+use super::content::{multipart_error, public_show, save_field};
 use super::{ApiError, ApiResult};
 use crate::state::AppState;
 use axum::extract::{DefaultBodyLimit, Multipart, State};
@@ -17,7 +17,8 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::Read;
 
-const MAX_UPLOAD: usize = 200 * 1024 * 1024;
+/// A zipped show folder may include sequences; it is streamed to disk.
+const MAX_UPLOAD: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_XML: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +43,11 @@ fn xml_kind(text: &str) -> XmlKind {
             break;
         }
     }
-    let root: String = rest.trim_start_matches('<').chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+    let root: String = rest
+        .trim_start_matches('<')
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
     match root.to_ascii_lowercase().as_str() {
         "xrgb" => XmlKind::RgbEffects,
         "networks" => XmlKind::Networks,
@@ -58,8 +63,10 @@ fn decode_text(bytes: Vec<u8>) -> ApiResult<String> {
 }
 
 /// Pull the xLights XML files out of a zip (anywhere in the archive).
-fn from_zip(bytes: &[u8]) -> ApiResult<(Option<String>, Option<String>)> {
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+fn from_zip<R: std::io::Read + std::io::Seek>(
+    reader: R,
+) -> ApiResult<(Option<String>, Option<String>)> {
+    let mut zip = zip::ZipArchive::new(reader)
         .map_err(|_| ApiError::bad_request("That zip file couldn't be opened. Is it complete?"))?;
     let mut rgb = None;
     let mut net = None;
@@ -67,14 +74,21 @@ fn from_zip(bytes: &[u8]) -> ApiResult<(Option<String>, Option<String>)> {
         let Ok(mut f) = zip.by_index(i) else { continue };
         let name = f.name().to_ascii_lowercase();
         let base = name.rsplit('/').next().unwrap_or(&name).to_string();
-        if name.contains("__macosx") || !(base == "xlights_rgbeffects.xml" || base == "xlights_networks.xml") {
+        if name.contains("__macosx")
+            || !(base == "xlights_rgbeffects.xml" || base == "xlights_networks.xml")
+        {
             continue;
         }
         if f.size() > MAX_XML {
-            return Err(ApiError::bad_request(format!("{base} in the zip is unexpectedly large.")));
+            return Err(ApiError::bad_request(format!(
+                "{base} in the zip is unexpectedly large."
+            )));
         }
         let mut buf = Vec::new();
-        f.by_ref().take(MAX_XML).read_to_end(&mut buf).map_err(|_| ApiError::bad_request("That zip file is damaged."))?;
+        f.by_ref()
+            .take(MAX_XML)
+            .read_to_end(&mut buf)
+            .map_err(|_| ApiError::bad_request("That zip file is damaged."))?;
         let text = decode_text(buf)?;
         if base == "xlights_rgbeffects.xml" && rgb.is_none() {
             rgb = Some(text);
@@ -85,33 +99,77 @@ fn from_zip(bytes: &[u8]) -> ApiResult<(Option<String>, Option<String>)> {
     Ok((rgb, net))
 }
 
-async fn preview(State(state): State<AppState>, mut mp: Multipart) -> ApiResult<Json<ImportPreview>> {
+/// One uploaded file: XML text, or the XML files found in a zip.
+enum Upload {
+    Xml(String),
+    Zip(Option<String>, Option<String>),
+}
+
+/// Read an uploaded file from disk (zips are read in place, never loaded whole).
+fn read_upload(path: &std::path::Path) -> ApiResult<Upload> {
+    let mut f = std::fs::File::open(path)?;
+    let mut magic = [0u8; 4];
+    let n = f.read(&mut magic)?;
+    if n == 4 && &magic == b"PK\x03\x04" {
+        use std::io::Seek;
+        f.rewind()?;
+        let (r, n) = from_zip(std::io::BufReader::new(f))?;
+        return Ok(Upload::Zip(r, n));
+    }
+    if f.metadata()?.len() > MAX_XML {
+        return Err(ApiError::bad_request(
+            "That file is too large to be an xLights layout. Choose xlights_rgbeffects.xml.",
+        ));
+    }
+    Ok(Upload::Xml(decode_text(std::fs::read(path)?)?))
+}
+
+async fn preview(
+    State(state): State<AppState>,
+    mut mp: Multipart,
+) -> ApiResult<Json<ImportPreview>> {
     let mut rgb: Option<String> = None;
     let mut net: Option<String> = None;
     let mut others: Vec<String> = Vec::new();
+    let tmp_dir = state.config.data_dir.join(".import");
+    tokio::fs::create_dir_all(&tmp_dir).await?;
     while let Some(field) = mp.next_field().await.map_err(multipart_error)? {
         let slot = field.name().unwrap_or_default().to_string();
-        let bytes = field.bytes().await.map_err(multipart_error)?;
-        if bytes.is_empty() {
+        if field.file_name().is_none() && slot != "rgbeffects" && slot != "networks" {
             continue;
         }
-        if bytes.starts_with(b"PK\x03\x04") {
-            let (r, n) = from_zip(&bytes)?;
-            if r.is_none() && n.is_none() {
-                return Err(ApiError::bad_request(
-                    "That zip doesn't contain xlights_rgbeffects.xml. Zip your whole xLights show folder and try again.",
-                ));
+        let tmp = tmp_dir.join(pixelplus_core::model::new_id());
+        let saved = save_field(field, &tmp, MAX_UPLOAD).await;
+        let read = match saved {
+            Ok((0, _)) => {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                continue;
             }
-            rgb = rgb.or(r);
-            net = net.or(n);
-            continue;
-        }
-        let text = decode_text(bytes.to_vec())?;
-        match (xml_kind(&text), slot.as_str()) {
-            (XmlKind::RgbEffects, _) => rgb = Some(text),
-            (XmlKind::Networks, _) => net = Some(text),
-            (XmlKind::Other, "rgbeffects") => others.push(text),
-            _ => {}
+            Ok(_) => {
+                let t = tmp.clone();
+                tokio::task::spawn_blocking(move || read_upload(&t))
+                    .await
+                    .map_err(ApiError::internal)
+            }
+            Err(e) => Err(e),
+        };
+        let _ = tokio::fs::remove_file(&tmp).await;
+        match read?? {
+            Upload::Zip(r, n) => {
+                if r.is_none() && n.is_none() {
+                    return Err(ApiError::bad_request(
+                        "That zip doesn't contain xlights_rgbeffects.xml. Zip your whole xLights show folder and try again.",
+                    ));
+                }
+                rgb = rgb.or(r);
+                net = net.or(n);
+            }
+            Upload::Xml(text) => match (xml_kind(&text), slot.as_str()) {
+                (XmlKind::RgbEffects, _) => rgb = Some(text),
+                (XmlKind::Networks, _) => net = Some(text),
+                (XmlKind::Other, "rgbeffects") => others.push(text),
+                _ => {}
+            },
         }
     }
     let rgb = match (rgb, others.pop()) {
@@ -142,7 +200,10 @@ struct ApplyBody {
     controller_map: BTreeMap<String, String>,
 }
 
-async fn apply(State(state): State<AppState>, Json(body): Json<ApplyBody>) -> ApiResult<Json<Show>> {
+async fn apply(
+    State(state): State<AppState>,
+    Json(body): Json<ApplyBody>,
+) -> ApiResult<Json<Show>> {
     if body.preview.props.is_empty() && body.preview.groups.is_empty() {
         return Err(ApiError::bad_request("There's nothing to import."));
     }
@@ -157,7 +218,11 @@ async fn apply(State(state): State<AppState>, Json(body): Json<ApplyBody>) -> Ap
         }
     }
     crate::services::snapshots::auto(&state, "Before xLights import").await;
-    let map: BTreeMap<String, String> = body.controller_map.into_iter().filter(|(_, v)| !v.is_empty()).collect();
+    let map: BTreeMap<String, String> = body
+        .controller_map
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
     let preview = body.preview;
     let (_, show) = state
         .store
@@ -174,8 +239,14 @@ async fn apply(State(state): State<AppState>, Json(body): Json<ApplyBody>) -> Ap
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/import/xlights", post(preview).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
-        .route("/import/xlights/apply", post(apply).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route(
+            "/import/xlights",
+            post(preview).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/import/xlights/apply",
+            post(apply).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
 }
 
 #[cfg(test)]
@@ -184,8 +255,14 @@ mod tests {
 
     #[test]
     fn detects_root_elements() {
-        assert_eq!(xml_kind("<?xml version=\"1.0\"?>\n<!-- hi -->\n<xrgb><models/></xrgb>"), XmlKind::RgbEffects);
-        assert_eq!(xml_kind("\u{feff}<?xml version=\"1.0\"?><Networks computer=\"x\"/>"), XmlKind::Networks);
+        assert_eq!(
+            xml_kind("<?xml version=\"1.0\"?>\n<!-- hi -->\n<xrgb><models/></xrgb>"),
+            XmlKind::RgbEffects
+        );
+        assert_eq!(
+            xml_kind("\u{feff}<?xml version=\"1.0\"?><Networks computer=\"x\"/>"),
+            XmlKind::Networks
+        );
         assert_eq!(xml_kind("<html></html>"), XmlKind::Other);
     }
 
@@ -204,7 +281,7 @@ mod tests {
             w.write_all(b"x").unwrap();
             w.finish().unwrap();
         }
-        let (r, n) = from_zip(buf.get_ref()).unwrap();
+        let (r, n) = from_zip(std::io::Cursor::new(buf.get_ref())).unwrap();
         assert_eq!(r.as_deref(), Some("<xrgb><models/></xrgb>"));
         assert_eq!(n.as_deref(), Some("<Networks/>"));
     }

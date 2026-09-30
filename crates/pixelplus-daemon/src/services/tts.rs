@@ -37,7 +37,12 @@ pub async fn health(state: &AppState) -> Option<Value> {
         }
     }
     let url = format!("{}/health", state.config.tts_url.trim_end_matches('/'));
-    let v = match client().get(&url).timeout(Duration::from_secs(3)).send().await {
+    let v = match client()
+        .get(&url)
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+    {
         Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
         _ => None,
     };
@@ -47,9 +52,9 @@ pub async fn health(state: &AppState) -> Option<Value> {
 
 /// On-device rendering possible right now.
 pub async fn device_available(state: &AppState) -> bool {
-    health(state)
-        .await
-        .is_some_and(|h| h["ok"].as_bool().unwrap_or(true) && h["modelAvailable"].as_bool().unwrap_or(true))
+    health(state).await.is_some_and(|h| {
+        h["ok"].as_bool().unwrap_or(true) && h["modelAvailable"].as_bool().unwrap_or(true)
+    })
 }
 
 /// Effective mode: "device" or "browser".
@@ -109,14 +114,24 @@ pub fn static_voices() -> Vec<VoiceInfo> {
         ("bm_lewis", "Lewis", "en-gb", "male"),
     ];
     V.iter()
-        .map(|(id, name, lang, g)| VoiceInfo { id: (*id).into(), name: (*name).into(), language: (*lang).into(), gender: (*g).into() })
+        .map(|(id, name, lang, g)| VoiceInfo {
+            id: (*id).into(),
+            name: (*name).into(),
+            language: (*lang).into(),
+            gender: (*g).into(),
+        })
         .collect()
 }
 
 /// `{base, presets}` from the sidecar, or the static list.
 pub async fn voices(state: &AppState) -> Value {
     let url = format!("{}/voices", state.config.tts_url.trim_end_matches('/'));
-    if let Ok(r) = client().get(&url).timeout(Duration::from_secs(5)).send().await {
+    if let Ok(r) = client()
+        .get(&url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
         if r.status().is_success() {
             if let Ok(v) = r.json::<Value>().await {
                 return v;
@@ -130,7 +145,8 @@ pub async fn status(state: &AppState) -> Value {
     let mode = resolved_mode(state).await;
     let health = health(state).await;
     let base: Vec<VoiceInfo> = match &health {
-        Some(_) => serde_json::from_value(voices(state).await["base"].clone()).unwrap_or_else(|_| static_voices()),
+        Some(_) => serde_json::from_value(voices(state).await["base"].clone())
+            .unwrap_or_else(|_| static_voices()),
         None => static_voices(),
     };
     json!({
@@ -176,8 +192,14 @@ pub fn context_from_player(state: &AppState) -> DynamicContext {
     let mut ctx = DynamicContext::default();
     if let Some(p) = state.services.player.get() {
         let st = p.status();
-        ctx.next_song = st.next_item.filter(|i| i.kind == "sequence" || i.kind == "request").map(|i| i.name);
-        ctx.prev_song = st.item.filter(|i| i.kind == "sequence" || i.kind == "request").map(|i| i.name);
+        ctx.next_song = st
+            .next_item
+            .filter(|i| i.kind == "sequence" || i.kind == "request")
+            .map(|i| i.name);
+        ctx.prev_song = st
+            .item
+            .filter(|i| i.kind == "sequence" || i.kind == "request")
+            .map(|i| i.name);
     }
     ctx
 }
@@ -198,7 +220,13 @@ fn resolve_voice(show: &Show, voice: &Value) -> Value {
 }
 
 /// Build the sidecar `/render` body.
-pub fn render_body(show: &Show, lines: &[Value], speed: f32, ctx: &DynamicContext, format: &str) -> Value {
+pub fn render_body(
+    show: &Show,
+    lines: &[Value],
+    speed: f32,
+    ctx: &DynamicContext,
+    format: &str,
+) -> Value {
     let tctx = template_context(show, ctx);
     let lines: Vec<Value> = lines
         .iter()
@@ -246,7 +274,10 @@ pub struct Rendered {
 async fn sidecar_error(r: reqwest::Response) -> ApiError {
     let status = r.status();
     let body: Value = r.json().await.unwrap_or(Value::Null);
-    let msg = body["error"]["message"].as_str().map(str::to_string).unwrap_or_else(|| format!("the voice service answered {status}"));
+    let msg = body["error"]["message"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("the voice service answered {status}"));
     let code = body["error"]["code"].as_str().unwrap_or("");
     match code {
         "model_missing" => ApiError::unavailable("The voice model isn't installed on this controller yet. Use browser voices, or install it with the PixelPlus TTS installer."),
@@ -275,16 +306,32 @@ pub async fn post_audio(state: &AppState, path: &str, body: &Value) -> ApiResult
     let duration_ms = get("x-duration-ms").and_then(|v| v.parse().ok());
     let loudness_lufs = get("x-loudness-lufs").and_then(|v| v.parse().ok());
     let warnings = get("x-warnings");
-    let bytes = r.bytes().await.map_err(|e| ApiError::unavailable(format!("The voice engine stopped mid-render: {e}")))?;
-    Ok(Rendered { bytes, content_type, duration_ms, loudness_lufs, warnings })
+    let bytes = r
+        .bytes()
+        .await
+        .map_err(|e| ApiError::unavailable(format!("The voice engine stopped mid-render: {e}")))?;
+    Ok(Rendered {
+        bytes,
+        content_type,
+        duration_ms,
+        loudness_lufs,
+        warnings,
+    })
 }
 
 fn clip_lines(clip: &DjClip) -> Vec<Value> {
-    clip.lines.iter().map(|l: &DjLine| serde_json::to_value(l).unwrap_or(Value::Null)).collect()
+    clip.lines
+        .iter()
+        .map(|l: &DjLine| serde_json::to_value(l).unwrap_or(Value::Null))
+        .collect()
 }
 
 fn with_bed(state: &AppState, show: &Show, clip: &DjClip, mut body: Value) -> Value {
-    if let Some(bed) = clip.music_bed_media_id.as_deref().and_then(|id| show.media_item(id)) {
+    if let Some(bed) = clip
+        .music_bed_media_id
+        .as_deref()
+        .and_then(|id| show.media_item(id))
+    {
         let path = state.config.data_dir.join(&bed.file);
         body["musicBed"] = json!({ "path": path.to_string_lossy(), "duckDb": 12, "gainDb": -6, "introMs": 1500, "outroMs": 2500 });
     }
@@ -294,9 +341,14 @@ fn with_bed(state: &AppState, show: &Show, clip: &DjClip, mut body: Value) -> Va
 /// Render a clip on the device and store it as the clip's media (kind `dj`).
 pub async fn render_clip(state: &AppState, clip_id: &str) -> ApiResult<DjClip> {
     let show = state.store.get();
-    let clip = show.dj_clip(clip_id).cloned().ok_or_else(|| ApiError::not_found("That DJ clip"))?;
+    let clip = show
+        .dj_clip(clip_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("That DJ clip"))?;
     if clip.lines.iter().all(|l| l.text.trim().is_empty()) {
-        return Err(ApiError::bad_request("Write something for the DJ to say first."));
+        return Err(ApiError::bad_request(
+            "Write something for the DJ to say first.",
+        ));
     }
     if resolved_mode(state).await != "device" {
         return Err(ApiError::unavailable(
@@ -304,9 +356,22 @@ pub async fn render_clip(state: &AppState, clip_id: &str) -> ApiResult<DjClip> {
         ));
     }
     let ctx = context_from_player(state);
-    let body = with_bed(state, &show, &clip, render_body(&show, &clip_lines(&clip), clip.speed, &ctx, "mp3"));
+    let body = with_bed(
+        state,
+        &show,
+        &clip,
+        render_body(&show, &clip_lines(&clip), clip.speed, &ctx, "mp3"),
+    );
     let r = post_audio(state, "/render", &body).await?;
-    save_clip_audio(state, &clip, &r.bytes, "mp3", r.duration_ms, r.loudness_lufs).await
+    save_clip_audio(
+        state,
+        &clip,
+        &r.bytes,
+        "mp3",
+        r.duration_ms,
+        r.loudness_lufs,
+    )
+    .await
 }
 
 /// Store audio for a clip (reusing the clip's own dj media id when it has one).
@@ -320,8 +385,16 @@ pub async fn save_clip_audio(
 ) -> ApiResult<DjClip> {
     let show = state.store.get();
     let media_dir = state.config.media_dir();
-    let existing = clip.media_id.as_deref().and_then(|id| show.media_item(id)).filter(|m| m.kind == MediaKind::Dj).cloned();
-    let id = existing.as_ref().map(|m| m.id.clone()).unwrap_or_else(pixelplus_core::model::new_id);
+    let existing = clip
+        .media_id
+        .as_deref()
+        .and_then(|id| show.media_item(id))
+        .filter(|m| m.kind == MediaKind::Dj)
+        .cloned();
+    let id = existing
+        .as_ref()
+        .map(|m| m.id.clone())
+        .unwrap_or_else(pixelplus_core::model::new_id);
     let rel = format!("media/{id}.{ext}");
     let path = state.config.data_dir.join(&rel);
     tokio::fs::create_dir_all(&media_dir).await?;
@@ -335,7 +408,9 @@ pub async fn save_clip_audio(
     }
     // Measure what the sidecar didn't tell us.
     let p = path.clone();
-    let meta = tokio::task::spawn_blocking(move || super::media::analyze(&p)).await.map_err(ApiError::internal)?;
+    let meta = tokio::task::spawn_blocking(move || super::media::analyze(&p))
+        .await
+        .map_err(ApiError::internal)?;
     let mut meta = meta.unwrap_or_default();
     if let Some(d) = duration_ms {
         meta.duration_ms = d;
@@ -363,7 +438,11 @@ pub async fn save_clip_audio(
                 Some(m) => *m = media.clone(),
                 None => s.media.push(media.clone()),
             }
-            let c = s.dj_clips.iter_mut().find(|c| c.id == clip_id).ok_or_else(|| ApiError::not_found("That DJ clip"))?;
+            let c = s
+                .dj_clips
+                .iter_mut()
+                .find(|c| c.id == clip_id)
+                .ok_or_else(|| ApiError::not_found("That DJ clip"))?;
             c.media_id = Some(media.id.clone());
             Ok(c.clone())
         })
@@ -375,18 +454,36 @@ pub async fn save_clip_audio(
 /// clip is due; a Pi 4 needs a while to load it). Errors are ignored.
 pub async fn warmup(state: &AppState) {
     let url = format!("{}/warmup", state.config.tts_url.trim_end_matches('/'));
-    let _ = client().post(&url).timeout(Duration::from_secs(60)).send().await;
+    let _ = client()
+        .post(&url)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await;
 }
 
 /// Render a dynamic clip for showtime with live placeholder values. The
 /// file is written to `media/live-<clipId>.mp3` (not added to the show).
 /// For the player: call shortly before the clip is due; on error, fall back
 /// to the clip's last rendered `mediaId`.
-pub async fn render_dynamic_clip(state: &AppState, clip_id: &str, ctx: DynamicContext) -> anyhow::Result<PathBuf> {
+pub async fn render_dynamic_clip(
+    state: &AppState,
+    clip_id: &str,
+    ctx: DynamicContext,
+) -> anyhow::Result<PathBuf> {
     let show = state.store.get();
-    let clip = show.dj_clip(clip_id).cloned().ok_or_else(|| anyhow::anyhow!("DJ clip {clip_id} not found"))?;
-    let body = with_bed(state, &show, &clip, render_body(&show, &clip_lines(&clip), clip.speed, &ctx, "mp3"));
-    let r = post_audio(state, "/render", &body).await.map_err(|e| anyhow::anyhow!(e.message))?;
+    let clip = show
+        .dj_clip(clip_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("DJ clip {clip_id} not found"))?;
+    let body = with_bed(
+        state,
+        &show,
+        &clip,
+        render_body(&show, &clip_lines(&clip), clip.speed, &ctx, "mp3"),
+    );
+    let r = post_audio(state, "/render", &body)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.message))?;
     let path = state.config.media_dir().join(format!("live-{clip_id}.mp3"));
     let tmp = path.with_extension("tmp");
     tokio::fs::write(&tmp, &r.bytes).await?;
@@ -409,7 +506,10 @@ mod tests {
             json!({"voice": "nick", "text": "Welcome to {showName}!", "pauseMs": 0}),
             json!({"voice": "af_sky", "text": "Up next: {nextSong}", "pauseMs": 300}),
         ];
-        let ctx = DynamicContext { next_song: Some("Feliz Navidad".into()), ..Default::default() };
+        let ctx = DynamicContext {
+            next_song: Some("Feliz Navidad".into()),
+            ..Default::default()
+        };
         let b = render_body(&show, &lines, 1.0, &ctx, "mp3");
         assert!((b["lines"][0]["voice"]["blend"]["am_puck"].as_f64().unwrap() - 0.4).abs() < 1e-6);
         assert_eq!(b["lines"][0]["text"], "Welcome to Chandler Lights!");

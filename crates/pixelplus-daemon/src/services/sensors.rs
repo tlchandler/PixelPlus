@@ -43,7 +43,11 @@ impl History {
         for (id, v) in values {
             let s = self.series.entry(id.clone()).or_default();
             s.fine.push_back((t_ms, *v));
-            while s.fine.front().is_some_and(|(t, _)| *t < t_ms - FINE_KEEP_MS) {
+            while s
+                .fine
+                .front()
+                .is_some_and(|(t, _)| *t < t_ms - FINE_KEEP_MS)
+            {
                 s.fine.pop_front();
             }
             let minute = t_ms - t_ms.rem_euclid(COARSE_STEP_MS);
@@ -59,7 +63,11 @@ impl History {
                     *acc = Some((minute, *v, 1));
                 }
             }
-            while s.coarse.front().is_some_and(|(t, _)| *t < t_ms - COARSE_KEEP_MS) {
+            while s
+                .coarse
+                .front()
+                .is_some_and(|(t, _)| *t < t_ms - COARSE_KEEP_MS)
+            {
                 s.coarse.pop_front();
             }
         }
@@ -74,10 +82,18 @@ impl History {
             .iter()
             .map(|(id, s)| {
                 let pts: Vec<[f64; 2]> = if minutes <= 60 {
-                    s.fine.iter().filter(|(t, _)| *t >= from).map(|(t, v)| [*t as f64, *v]).collect()
+                    s.fine
+                        .iter()
+                        .filter(|(t, _)| *t >= from)
+                        .map(|(t, v)| [*t as f64, *v])
+                        .collect()
                 } else {
-                    let mut v: Vec<[f64; 2]> =
-                        s.coarse.iter().filter(|(t, _)| *t >= from).map(|(t, v)| [*t as f64, *v]).collect();
+                    let mut v: Vec<[f64; 2]> = s
+                        .coarse
+                        .iter()
+                        .filter(|(t, _)| *t >= from)
+                        .map(|(t, v)| [*t as f64, *v])
+                        .collect();
                     if let Some((m, sum, n)) = s.acc {
                         v.push([m as f64, round3(sum / f64::from(n))]);
                     }
@@ -106,13 +122,20 @@ impl SensorState {
     }
 
     pub fn history(&self, minutes: u32) -> BTreeMap<String, Vec<[f64; 2]>> {
-        self.history.lock().query(chrono::Utc::now().timestamp_millis(), minutes)
+        self.history
+            .lock()
+            .query(chrono::Utc::now().timestamp_millis(), minutes)
     }
 
     /// Record a new set of readings (also used by tests).
     pub fn record(&self, readings: Vec<Reading>) {
-        let values: Vec<(String, f64)> = readings.iter().map(|r| (r.sensor.id.clone(), r.sensor.value)).collect();
-        self.history.lock().push(chrono::Utc::now().timestamp_millis(), &values);
+        let values: Vec<(String, f64)> = readings
+            .iter()
+            .map(|r| (r.sensor.id.clone(), r.sensor.value))
+            .collect();
+        self.history
+            .lock()
+            .push(chrono::Utc::now().timestamp_millis(), &values);
         *self.latest.lock() = readings;
     }
 }
@@ -144,7 +167,11 @@ pub fn start(state: &AppState) {
             let node_id = state.identity().id;
             let readings: Vec<Reading> = sensors
                 .into_iter()
-                .map(|s| Reading { status: s.status(), sensor: s, node_id: node_id.clone() })
+                .map(|s| Reading {
+                    status: s.status(),
+                    sensor: s,
+                    node_id: node_id.clone(),
+                })
                 .collect();
             state.services.sensors.record(readings.clone());
             if let Ok(v) = serde_json::to_value(&readings) {

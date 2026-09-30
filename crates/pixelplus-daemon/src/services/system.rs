@@ -59,8 +59,13 @@ pub async fn run(program: &str, args: &[&str], timeout: Duration) -> Result<CmdO
         .env("LC_ALL", "C");
     let child = cmd.output();
     match tokio::time::timeout(timeout, child).await {
-        Err(_) => Err(format!("{program} did not answer within {} s", timeout.as_secs())),
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Err(format!("{program} is not installed")),
+        Err(_) => Err(format!(
+            "{program} did not answer within {} s",
+            timeout.as_secs()
+        )),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(format!("{program} is not installed"))
+        }
         Ok(Err(e)) => Err(format!("could not run {program}: {e}")),
         Ok(Ok(out)) => Ok(CmdOutput {
             success: out.status.success(),
@@ -136,10 +141,14 @@ fn probe_board() -> (BoardDetection, Option<pixelplus_hw::PiInfo>) {
     {
         if pi.is_some() {
             if let Ok(mut bus) = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS) {
-                let mut eeprom = pixelplus_hw::eeprom::SysfsEeprom::open(1, pixelplus_hw::eeprom::EEPROM_ADDR).ok();
+                let mut eeprom =
+                    pixelplus_hw::eeprom::SysfsEeprom::open(1, pixelplus_hw::eeprom::EEPROM_ADDR)
+                        .ok();
                 let det = pixelplus_hw::board::detect(
                     &mut bus,
-                    eeprom.as_mut().map(|e| e as &mut dyn pixelplus_hw::EepromStore),
+                    eeprom
+                        .as_mut()
+                        .map(|e| e as &mut dyn pixelplus_hw::EepromStore),
                 );
                 return (det, pi);
             }
@@ -179,7 +188,11 @@ static CPU: Mutex<Option<CpuSample>> = Mutex::new(None);
 fn read_cpu_times() -> Option<(u64, u64)> {
     let stat = std::fs::read_to_string("/proc/stat").ok()?;
     let line = stat.lines().next()?;
-    let nums: Vec<u64> = line.split_whitespace().skip(1).filter_map(|v| v.parse().ok()).collect();
+    let nums: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|v| v.parse().ok())
+        .collect();
     if nums.len() < 4 {
         return None;
     }
@@ -198,12 +211,22 @@ pub async fn cpu_pct() -> Option<f32> {
             tokio::time::sleep(Duration::from_millis(150)).await;
             let (t1, i1) = read_cpu_times()?;
             let pct = pct_of(total, idle, t1, i1);
-            *CPU.lock() = Some(CpuSample { at: Instant::now(), total: t1, idle: i1, pct });
+            *CPU.lock() = Some(CpuSample {
+                at: Instant::now(),
+                total: t1,
+                idle: i1,
+                pct,
+            });
             return Some(pct);
         }
     };
     let pct = pct_of(t0, i0, total, idle);
-    *CPU.lock() = Some(CpuSample { at: Instant::now(), total, idle, pct });
+    *CPU.lock() = Some(CpuSample {
+        at: Instant::now(),
+        total,
+        idle,
+        pct,
+    });
     Some(pct)
 }
 
@@ -316,7 +339,9 @@ pub fn ip_addresses() -> Vec<String> {
                         let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in6);
                         let ip = std::net::Ipv6Addr::from(sin.sin6_addr.s6_addr);
                         let seg0 = ip.segments()[0];
-                        let global = !ip.is_loopback() && (seg0 & 0xffc0) != 0xfe80 && (seg0 & 0xfe00) != 0xfc00;
+                        let global = !ip.is_loopback()
+                            && (seg0 & 0xffc0) != 0xfe80
+                            && (seg0 & 0xfe00) != 0xfc00;
                         if global {
                             v6.push(ip.to_string());
                         }
@@ -358,9 +383,18 @@ pub async fn set_system_timezone(tz: &str) {
     if tz.parse::<chrono_tz::Tz>().is_err() || !is_root() || in_docker() || !have("timedatectl") {
         return;
     }
-    match run("timedatectl", &["set-timezone", tz], Duration::from_secs(10)).await {
+    match run(
+        "timedatectl",
+        &["set-timezone", tz],
+        Duration::from_secs(10),
+    )
+    .await
+    {
         Ok(o) if o.success => tracing::info!("System time zone set to {tz}"),
-        Ok(o) => tracing::warn!("Could not set the system time zone to {tz}: {}", o.stderr.trim()),
+        Ok(o) => tracing::warn!(
+            "Could not set the system time zone to {tz}: {}",
+            o.stderr.trim()
+        ),
         Err(e) => tracing::warn!("Could not set the system time zone to {tz}: {e}"),
     }
 }
@@ -390,11 +424,15 @@ pub async fn wifi_status() -> Option<WifiStatus> {
         }
     }
     let v = if have("nmcli") {
-        run("nmcli", &["-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"], Duration::from_secs(5))
-            .await
-            .ok()
-            .filter(|o| o.success)
-            .and_then(|o| parse_active_wifi(&o.stdout))
+        run(
+            "nmcli",
+            &["-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"],
+            Duration::from_secs(5),
+        )
+        .await
+        .ok()
+        .filter(|o| o.success)
+        .and_then(|o| parse_active_wifi(&o.stdout))
     } else {
         None
     };
@@ -425,7 +463,11 @@ fn parse_active_wifi(text: &str) -> Option<WifiStatus> {
         let f = nmcli_fields(l);
         if f.len() >= 3 && f[0] == "yes" && !f[1].is_empty() {
             let q: u8 = f[2].parse().unwrap_or(0);
-            Some(WifiStatus { ssid: f[1].clone(), signal: quality_to_dbm(q), quality: q })
+            Some(WifiStatus {
+                ssid: f[1].clone(),
+                signal: quality_to_dbm(q),
+                quality: q,
+            })
         } else {
             None
         }
@@ -473,7 +515,10 @@ pub async fn system_info(state: &AppState, authed: bool) -> serde_json::Value {
         return info;
     }
     let (free, _) = disk_space(&state.config.data_dir).unwrap_or((0, 0));
-    let leader_name = id.leader_url.clone().map(|u| u.trim_start_matches("http://").to_string());
+    let leader_name = id
+        .leader_url
+        .clone()
+        .map(|u| u.trim_start_matches("http://").to_string());
     let extra = serde_json::json!({
         "uptimeS": uptime_s(state),
         "cpuPct": cpu_pct().await.unwrap_or(0.0),
@@ -526,9 +571,18 @@ pub fn power_action(action: PowerAction) -> ApiResult<&'static str> {
         ));
     }
     let (args, msg): (&[&str], &str) = match action {
-        PowerAction::Reboot => (&["reboot"], "Restarting. PixelPlus will be back in about a minute."),
-        PowerAction::Shutdown => (&["poweroff"], "Shutting down. Wait for the green light to stop blinking before unplugging."),
-        PowerAction::RestartService => (&["restart", "pixelplusd"], "Restarting PixelPlus. This takes a few seconds."),
+        PowerAction::Reboot => (
+            &["reboot"],
+            "Restarting. PixelPlus will be back in about a minute.",
+        ),
+        PowerAction::Shutdown => (
+            &["poweroff"],
+            "Shutting down. Wait for the green light to stop blinking before unplugging.",
+        ),
+        PowerAction::RestartService => (
+            &["restart", "pixelplusd"],
+            "Restarting PixelPlus. This takes a few seconds.",
+        ),
     };
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     tokio::spawn(async move {
@@ -551,7 +605,15 @@ pub async fn logs_text(lines: usize) -> String {
         let n = lines.to_string();
         if let Ok(o) = run(
             "journalctl",
-            &["-u", "pixelplusd", "-n", &n, "--no-pager", "-o", "short-iso"],
+            &[
+                "-u",
+                "pixelplusd",
+                "-n",
+                &n,
+                "--no-pager",
+                "-o",
+                "short-iso",
+            ],
             Duration::from_secs(10),
         )
         .await
@@ -611,7 +673,9 @@ pub fn parse_aplay_l(text: &str) -> Vec<(String, String)> {
         .filter(|(i, _)| i.starts_with("plughw:"))
         .map(|(i, _)| i.trim_start_matches("plughw:").to_string())
         .collect();
-    out.retain(|(i, _)| !(i.starts_with("hw:") && plug.contains(&i.trim_start_matches("hw:").to_string())));
+    out.retain(|(i, _)| {
+        !(i.starts_with("hw:") && plug.contains(&i.trim_start_matches("hw:").to_string()))
+    });
     out
 }
 

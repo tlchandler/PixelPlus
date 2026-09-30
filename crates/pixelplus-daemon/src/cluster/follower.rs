@@ -582,6 +582,9 @@ pub async fn handle_command(state: &AppState, sh: &Shared, cmd: ClusterCommand) 
         .cloned()
         .ok_or_else(|| ApiError::unavailable("The player is not running."))?;
     match cmd {
+        ClusterCommand::Identify { duration_ms } => {
+            super::identify_local(state, &state.identity().id, duration_ms).await
+        }
         ClusterCommand::TestStart { test } => player.test_start(test).await,
         ClusterCommand::Effect { effect } => {
             player

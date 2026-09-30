@@ -27,6 +27,7 @@ pub fn routes() -> Router<AppState> {
         .route("/nodes/{id}/outputs/{index}", put(update_output))
         .route("/nodes/{id}/release", post(release))
         .route("/nodes/{id}/resync", post(resync))
+        .route("/nodes/{id}/identify", post(identify))
 }
 
 /// A node plus its live status (status fields win).
@@ -343,6 +344,13 @@ struct DeleteQuery {
     force: Option<String>,
 }
 
+/// `DELETE /nodes/:id`: release a controller.
+///
+/// * Adopted followers are told to forget this leader (best effort).
+/// * A controller with nothing wired to it is removed from the show.
+/// * A wired one stays in the show as "released" (its props keep their wiring
+///   and light again when it is adopted again), unless `?force=1`, which
+///   removes it together with its wiring (the props themselves stay).
 async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -366,41 +374,73 @@ async fn delete(
         .filter(|p| p.segments.iter().any(|s| s.node_id == id))
         .count();
     let receivers = show.receivers.iter().filter(|r| r.node_id == id).count();
-    if (props > 0 || receivers > 0) && !force {
-        let mut what = Vec::new();
-        if props > 0 {
-            what.push(format!("{props} prop{}", if props == 1 { "" } else { "s" }));
-        }
-        if receivers > 0 {
-            what.push(format!(
-                "{receivers} receiver{}",
-                if receivers == 1 { "" } else { "s" }
-            ));
-        }
-        return Err(ApiError::conflict(format!(
-            "{} {} wired to {}. Removing it also removes that wiring (the props themselves stay).",
-            what.join(" and "),
-            if props + receivers == 1 { "is" } else { "are" },
-            node.name
-        )));
-    }
-    let mut reached = false;
+    let mut released = false;
     if node.adopted {
         if let Ok(cluster) = handle(&state) {
-            reached = leader::call_release(&state, &cluster.shared, &id).await;
+            released = leader::call_release(&state, &cluster.shared, &id).await;
         }
     }
+    let remove = force || (props == 0 && receivers == 0);
     let id2 = id.clone();
     state
         .store
         .update(move |s| {
-            leader::remove_node(s, &id2);
+            if remove {
+                leader::remove_node(s, &id2);
+            } else if let Some(n) = s.nodes.iter_mut().find(|n| n.id == id2) {
+                n.adopted = false;
+            }
             Ok(())
         })
         .await?;
-    Ok(Json(
-        json!({ "ok": true, "released": reached, "props": props, "receivers": receivers }),
-    ))
+    Ok(Json(json!({
+        "ok": true,
+        "released": released,
+        "removed": remove,
+        "props": props,
+        "receivers": receivers,
+    })))
+}
+
+/// `POST /nodes/:id/identify`: blink the controller's outputs for 5 s.
+async fn identify(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    require_leader(&state)?;
+    let show = state.store.get();
+    let node = show
+        .node(&id)
+        .ok_or_else(|| ApiError::not_found("That controller"))?;
+    if id == state.identity().id {
+        crate::cluster::identify_local(&state, &id, crate::cluster::IDENTIFY_MS).await?;
+        return Ok(Json(json!({ "ok": true })));
+    }
+    if !node.adopted {
+        return Err(ApiError::conflict(format!("{} is not adopted.", node.name)));
+    }
+    let cluster = handle(&state)?;
+    let res = cluster
+        .send_command(
+            Some(&id),
+            ClusterCommand::Identify {
+                duration_ms: crate::cluster::IDENTIFY_MS,
+            },
+        )
+        .await;
+    match res.into_iter().next() {
+        Some(r) if r.ok => Ok(Json(json!({ "ok": true }))),
+        Some(r) if r.error.as_deref() == Some("offline") => {
+            Err(ApiError::unavailable(format!("{} is offline.", node.name)))
+        }
+        Some(r) => Err(ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "node_error",
+            format!(
+                "{}: {}",
+                node.name,
+                r.error.unwrap_or_else(|| "failed".into())
+            ),
+        )),
+        None => Err(ApiError::unavailable(format!("{} is offline.", node.name))),
+    }
 }
 
 #[cfg(test)]

@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 fn player(state: &AppState) -> ApiResult<&crate::player::PlayerHandle> {
-    state.services.player.get().ok_or_else(|| ApiError::unavailable("The player is still starting. Try again in a moment."))
+    state.services.player.get().ok_or_else(|| {
+        ApiError::unavailable("The player is still starting. Try again in a moment.")
+    })
 }
 
 /// Carry out a trigger action. Returns a short description of what happened.
@@ -33,23 +35,43 @@ pub async fn run_action(state: &AppState, action: &TriggerAction) -> ApiResult<S
         TriggerActionType::PlayPlaylist => {
             let pl = show
                 .playlist(r)
-                .or_else(|| show.playlists.iter().find(|p| p.name.eq_ignore_ascii_case(r)))
-                .ok_or_else(|| ApiError::bad_request("This trigger's playlist no longer exists. Edit the trigger."))?;
-            p.play(PlayRequest { playlist_id: Some(pl.id.clone()), ..empty }).await?;
+                .or_else(|| {
+                    show.playlists
+                        .iter()
+                        .find(|p| p.name.eq_ignore_ascii_case(r))
+                })
+                .ok_or_else(|| {
+                    ApiError::bad_request(
+                        "This trigger's playlist no longer exists. Edit the trigger.",
+                    )
+                })?;
+            p.play(PlayRequest {
+                playlist_id: Some(pl.id.clone()),
+                ..empty
+            })
+            .await?;
             Ok(format!("Playing {}", pl.name))
         }
         TriggerActionType::PlaySequence => {
-            let s = show
-                .sequence(r)
-                .ok_or_else(|| ApiError::bad_request("This trigger's sequence no longer exists. Edit the trigger."))?;
-            p.play(PlayRequest { sequence_id: Some(s.id.clone()), ..empty }).await?;
+            let s = show.sequence(r).ok_or_else(|| {
+                ApiError::bad_request("This trigger's sequence no longer exists. Edit the trigger.")
+            })?;
+            p.play(PlayRequest {
+                sequence_id: Some(s.id.clone()),
+                ..empty
+            })
+            .await?;
             Ok(format!("Playing {}", s.name))
         }
         TriggerActionType::Effect => {
-            let e = show
-                .effect(r)
-                .ok_or_else(|| ApiError::bad_request("This trigger's look no longer exists. Edit the trigger."))?;
-            p.play(PlayRequest { effect_id: Some(e.id.clone()), ..empty }).await?;
+            let e = show.effect(r).ok_or_else(|| {
+                ApiError::bad_request("This trigger's look no longer exists. Edit the trigger.")
+            })?;
+            p.play(PlayRequest {
+                effect_id: Some(e.id.clone()),
+                ..empty
+            })
+            .await?;
             Ok(format!("Showing {}", e.name))
         }
     }
@@ -138,7 +160,10 @@ fn spawn_gpio_thread(
                 Ok(b) => b,
                 Err(e) => {
                     tracing::warn!("Trigger buttons unavailable: {e}");
-                    events.toast(crate::events::ToastKind::Warning, format!("Trigger buttons can't be used: {e}"));
+                    events.toast(
+                        crate::events::ToastKind::Warning,
+                        format!("Trigger buttons can't be used: {e}"),
+                    );
                     return;
                 }
             };

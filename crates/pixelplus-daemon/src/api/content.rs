@@ -31,11 +31,9 @@ pub const AUDIO_MAX: u64 = 512 * 1024 * 1024;
 
 /// The playback engine, or a friendly 503.
 pub(crate) fn player(state: &AppState) -> ApiResult<&PlayerHandle> {
-    state
-        .services
-        .player
-        .get()
-        .ok_or_else(|| ApiError::unavailable("The player is still starting. Try again in a moment."))
+    state.services.player.get().ok_or_else(|| {
+        ApiError::unavailable("The player is still starting. Try again in a moment.")
+    })
 }
 
 pub(crate) fn multipart_error(e: axum::extract::multipart::MultipartError) -> ApiError {
@@ -43,7 +41,10 @@ pub(crate) fn multipart_error(e: axum::extract::multipart::MultipartError) -> Ap
     if status == StatusCode::PAYLOAD_TOO_LARGE {
         ApiError::new(status, "too_large", "That file is too large.")
     } else {
-        ApiError::bad_request(format!("The upload didn't come through completely ({}). Please try again.", e.body_text()))
+        ApiError::bad_request(format!(
+            "The upload didn't come through completely ({}). Please try again.",
+            e.body_text()
+        ))
     }
 }
 
@@ -68,7 +69,10 @@ pub(crate) async fn save_field(
                 return Err(ApiError::new(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "too_large",
-                    format!("That file is too large (the limit is {} MB).", limit / (1024 * 1024)),
+                    format!(
+                        "That file is too large (the limit is {} MB).",
+                        limit / (1024 * 1024)
+                    ),
                 ));
             }
             hasher.update(&chunk);
@@ -123,7 +127,9 @@ pub(crate) async fn ingest_audio(
         )));
     };
     let t = tmp.clone();
-    let analysis = tokio::task::spawn_blocking(move || media_svc::analyze(&t)).await.map_err(ApiError::internal)?;
+    let analysis = tokio::task::spawn_blocking(move || media_svc::analyze(&t))
+        .await
+        .map_err(ApiError::internal)?;
     let mut meta = match analysis {
         Ok(m) => m,
         Err(e) => {
@@ -141,7 +147,9 @@ pub(crate) async fn ingest_audio(
     let target = state.store.get().settings.audio.target_lufs;
     Ok(Media {
         id,
-        name: name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| media_svc::display_name(original)),
+        name: name
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| media_svc::display_name(original)),
         kind,
         file: rel,
         duration_ms: meta.duration_ms,
@@ -160,13 +168,25 @@ fn media_original(state: &AppState, m: &Media) -> String {
 
 /// Find the song that belongs to a sequence: the fseq header's media file name,
 /// else the sequence's own file/display name.
-fn find_audio_for(state: &AppState, show: &Show, media_basename: Option<&str>, seq_names: &[&str]) -> Option<String> {
-    let songs: Vec<&Media> = show.media.iter().filter(|m| m.kind == MediaKind::Song).collect();
+fn find_audio_for(
+    state: &AppState,
+    show: &Show,
+    media_basename: Option<&str>,
+    seq_names: &[&str],
+) -> Option<String> {
+    let songs: Vec<&Media> = show
+        .media
+        .iter()
+        .filter(|m| m.kind == MediaKind::Song)
+        .collect();
     let keys: Vec<(String, &Media)> = songs
         .iter()
         .flat_map(|m| {
             let orig = media_original(state, m);
-            [(media_svc::match_key(&orig), *m), (media_svc::match_key(&m.name), *m)]
+            [
+                (media_svc::match_key(&orig), *m),
+                (media_svc::match_key(&m.name), *m),
+            ]
         })
         .filter(|(k, _)| !k.is_empty())
         .collect();
@@ -217,7 +237,11 @@ pub(crate) fn channel_warnings(props: &[Prop], channel_count: u32) -> Vec<String
     if beyond.is_empty() {
         return vec![];
     }
-    let names = if beyond.len() <= 4 { beyond.join(", ") } else { format!("{} and {} more", beyond[..4].join(", "), beyond.len() - 4) };
+    let names = if beyond.len() <= 4 {
+        beyond.join(", ")
+    } else {
+        format!("{} and {} more", beyond[..4].join(", "), beyond.len() - 4)
+    };
     vec![format!(
         "This sequence doesn't include data for {names}, so {} stay dark while it plays. Re-export it from xLights after updating your layout.",
         if beyond.len() == 1 { "that prop will" } else { "those props will" }
@@ -237,7 +261,10 @@ pub fn generate_thumbnail(fseq: &FsPath, props: &[Prop], out: &FsPath) -> Result
     let ranges: Vec<Vec<(usize, usize)>> = if props.is_empty() {
         let bands = 32usize.min((frame_size / 3).max(1));
         let per = frame_size.div_ceil(bands).max(3);
-        (0..bands).map(|b| vec![(b * per, ((b + 1) * per).min(frame_size))]).filter(|r| r[0].0 < r[0].1).collect()
+        (0..bands)
+            .map(|b| vec![(b * per, ((b + 1) * per).min(frame_size))])
+            .filter(|r| r[0].0 < r[0].1)
+            .collect()
     } else {
         let rows = props.len().min(HEIGHT as usize);
         let mut groups: Vec<Vec<(usize, usize)>> = vec![vec![]; rows];
@@ -276,7 +303,8 @@ pub fn generate_thumbnail(fseq: &FsPath, props: &[Prop], out: &FsPath) -> Result
                 continue;
             }
             // Averages of mostly-dark props are dim: lift them for legibility.
-            let rgb = sum.map(|v| (255.0 * ((v as f64 / n as f64) / 255.0).powf(0.55)).round() as u8);
+            let rgb =
+                sum.map(|v| (255.0 * ((v as f64 / n as f64) / 255.0).powf(0.55)).round() as u8);
             for y in 0..row_h {
                 let o = (((r as u32 * row_h + y) * cols + c) * 3) as usize;
                 img[o..o + 3].copy_from_slice(&rgb);
@@ -300,8 +328,17 @@ async fn list_sequences(State(state): State<AppState>) -> Json<Vec<Sequence>> {
     Json(state.store.get().sequences.clone())
 }
 
-async fn get_sequence(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Sequence>> {
-    state.store.get().sequence(&id).cloned().map(Json).ok_or_else(|| ApiError::not_found("That sequence"))
+async fn get_sequence(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Sequence>> {
+    state
+        .store
+        .get()
+        .sequence(&id)
+        .cloned()
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("That sequence"))
 }
 
 async fn create_sequence(State(state): State<AppState>, req: Request) -> ApiResult<Json<Value>> {
@@ -322,7 +359,9 @@ impl<T: serde::de::DeserializeOwned> FromReq for Json<T> {
         let bytes = axum::body::to_bytes(req.into_body(), 16 * 1024 * 1024)
             .await
             .map_err(|_| ApiError::bad_request("The request is too large."))?;
-        serde_json::from_slice(&bytes).map(Json).map_err(|e| ApiError::bad_request(format!("That isn't valid: {e}")))
+        serde_json::from_slice(&bytes)
+            .map(Json)
+            .map_err(|e| ApiError::bad_request(format!("That isn't valid: {e}")))
     }
 }
 trait FromReqMp: Sized {
@@ -345,7 +384,9 @@ async fn restore_sequence(state: &AppState, seq: Sequence) -> ApiResult<Json<Val
         media_svc::untrash(&data, t);
     }
     if !data.join(&seq.file).is_file() {
-        return Err(ApiError::bad_request("The sequence file is gone. Please upload it again."));
+        return Err(ApiError::bad_request(
+            "The sequence file is gone. Please upload it again.",
+        ));
     }
     let (s, _) = state
         .store
@@ -354,7 +395,11 @@ async fn restore_sequence(state: &AppState, seq: Sequence) -> ApiResult<Json<Val
                 return Err(ApiError::conflict("That sequence already exists."));
             }
             let mut seq = seq;
-            if seq.media_id.as_deref().is_some_and(|m| show.media_item(m).is_none()) {
+            if seq
+                .media_id
+                .as_deref()
+                .is_some_and(|m| show.media_item(m).is_none())
+            {
                 seq.media_id = None;
             }
             show.sequences.push(seq.clone());
@@ -366,7 +411,10 @@ async fn restore_sequence(state: &AppState, seq: Sequence) -> ApiResult<Json<Val
 
 async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value> {
     let upload_id = new_id();
-    let seq_tmp = state.config.sequences_dir().join(format!(".upload-{upload_id}.fseq"));
+    let seq_tmp = state
+        .config
+        .sequences_dir()
+        .join(format!(".upload-{upload_id}.fseq"));
     let mut fseq_name: Option<String> = None;
     let mut audio: Option<(PathBuf, String)> = None;
     let mut display: Option<String> = None;
@@ -389,7 +437,14 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
         let name = field.name().unwrap_or_default().to_string();
         let file_name = field.file_name().map(str::to_string);
         match (name.as_str(), file_name) {
-            ("name", None) => display = field.text().await.ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+            ("name", None) => {
+                display = field
+                    .text()
+                    .await
+                    .ok()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+            }
             (_, Some(fname)) if fname.to_ascii_lowercase().ends_with(".fseq") || name == "fseq" => {
                 if fseq_name.is_some() {
                     continue;
@@ -410,7 +465,10 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
                     continue;
                 }
                 let ext = media_svc::audio_ext(&fname).unwrap_or_else(|| "bin".into());
-                let tmp = state.config.media_dir().join(format!(".upload-{upload_id}.{ext}"));
+                let tmp = state
+                    .config
+                    .media_dir()
+                    .join(format!(".upload-{upload_id}.{ext}"));
                 if let Err(e) = save_field(field, &tmp, AUDIO_MAX).await {
                     cleanup(&seq_tmp, &audio);
                     return Err(e);
@@ -422,10 +480,15 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
     }
     let Some(fseq_name) = fseq_name else {
         cleanup(&seq_tmp, &audio);
-        return Err(ApiError::bad_request("Choose an .fseq file exported from xLights (File → Export → FSEQ)."));
+        return Err(ApiError::bad_request(
+            "Choose an .fseq file exported from xLights (File → Export → FSEQ).",
+        ));
     };
     let t = seq_tmp.clone();
-    let info = match tokio::task::spawn_blocking(move || read_fseq_info(&t)).await.map_err(ApiError::internal)? {
+    let info = match tokio::task::spawn_blocking(move || read_fseq_info(&t))
+        .await
+        .map_err(ApiError::internal)?
+    {
         Ok(i) => i,
         Err(e) => {
             cleanup(&seq_tmp, &audio);
@@ -436,8 +499,15 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
     };
     let show = state.store.get();
     // Re-uploading the same xLights file replaces it (keeps playlists intact).
-    let existing = show.sequences.iter().find(|s| s.xlights_name.as_deref() == Some(fseq_name.as_str())).cloned();
-    let id = existing.as_ref().map(|s| s.id.clone()).unwrap_or_else(new_id);
+    let existing = show
+        .sequences
+        .iter()
+        .find(|s| s.xlights_name.as_deref() == Some(fseq_name.as_str()))
+        .cloned();
+    let id = existing
+        .as_ref()
+        .map(|s| s.id.clone())
+        .unwrap_or_else(new_id);
     let rel = format!("sequences/{id}.fseq");
     tokio::fs::rename(&seq_tmp, state.config.data_dir.join(&rel)).await?;
 
@@ -453,20 +523,32 @@ async fn upload_sequence(state: AppState, mut mp: Multipart) -> ApiResult<Value>
         None => existing
             .as_ref()
             .and_then(|s| s.media_id.clone())
-            .or_else(|| find_audio_for(&state, &show, info.media_basename.as_deref(), &[&fseq_name, &name])),
+            .or_else(|| {
+                find_audio_for(
+                    &state,
+                    &show,
+                    info.media_basename.as_deref(),
+                    &[&fseq_name, &name],
+                )
+            }),
     };
     // Thumbnail.
     let thumb_rel = format!("thumbnails/{id}.png");
-    let (src, dst, props) = (state.config.data_dir.join(&rel), state.config.data_dir.join(&thumb_rel), show.props.clone());
+    let (src, dst, props) = (
+        state.config.data_dir.join(&rel),
+        state.config.data_dir.join(&thumb_rel),
+        show.props.clone(),
+    );
     let _ = tokio::fs::create_dir_all(state.config.thumbnails_dir()).await;
-    let thumbnail = match tokio::task::spawn_blocking(move || generate_thumbnail(&src, &props, &dst)).await {
-        Ok(Ok(())) => Some(thumb_rel),
-        Ok(Err(e)) => {
-            tracing::warn!("Couldn't draw a preview for \"{name}\": {e}");
-            None
-        }
-        Err(_) => None,
-    };
+    let thumbnail =
+        match tokio::task::spawn_blocking(move || generate_thumbnail(&src, &props, &dst)).await {
+            Ok(Ok(())) => Some(thumb_rel),
+            Ok(Err(e)) => {
+                tracing::warn!("Couldn't draw a preview for \"{name}\": {e}");
+                None
+            }
+            Err(_) => None,
+        };
     let warnings = channel_warnings(&show.props, info.channel_count);
     let seq = Sequence {
         id: id.clone(),
@@ -514,10 +596,15 @@ async fn update_sequence(
     let (seq, _) = state
         .store
         .update(move |show| {
-            let idx = show.sequences.iter().position(|s| s.id == id).ok_or_else(|| ApiError::not_found("That sequence"))?;
+            let idx = show
+                .sequences
+                .iter()
+                .position(|s| s.id == id)
+                .ok_or_else(|| ApiError::not_found("That sequence"))?;
             let mut v = serde_json::to_value(&show.sequences[idx]).map_err(ApiError::internal)?;
             merge_patch(&mut v, &patch);
-            let seq: Sequence = serde_json::from_value(v).map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
+            let seq: Sequence = serde_json::from_value(v)
+                .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
             if seq.name.trim().is_empty() {
                 return Err(ApiError::bad_request("Please give it a name."));
             }
@@ -533,7 +620,10 @@ async fn update_sequence(
     Ok(Json(seq))
 }
 
-async fn delete_sequence(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn delete_sequence(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     if state.store.get().sequence(&id).is_none() {
         return Err(ApiError::not_found("That sequence"));
     }
@@ -551,7 +641,13 @@ async fn delete_sequence(State(state): State<AppState>, Path(id): Path<String>) 
             Ok(seq)
         })
         .await?;
-    for r in state.services.requests.list().into_iter().filter(|r| r.sequence_id == seq.id) {
+    for r in state
+        .services
+        .requests
+        .list()
+        .into_iter()
+        .filter(|r| r.sequence_id == seq.id)
+    {
         state.services.requests.remove(&r.id);
     }
     media_svc::trash(&state.config.data_dir, &seq.file);
@@ -561,15 +657,28 @@ async fn delete_sequence(State(state): State<AppState>, Path(id): Path<String>) 
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn sequence_thumbnail(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Response> {
+async fn sequence_thumbnail(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
     let show = state.store.get();
-    let seq = show.sequence(&id).ok_or_else(|| ApiError::not_found("That sequence"))?;
-    let path = state.config.data_dir.join(seq.thumbnail.clone().unwrap_or_else(|| format!("thumbnails/{id}.png")));
+    let seq = show
+        .sequence(&id)
+        .ok_or_else(|| ApiError::not_found("That sequence"))?;
+    let path = state.config.data_dir.join(
+        seq.thumbnail
+            .clone()
+            .unwrap_or_else(|| format!("thumbnails/{id}.png")),
+    );
     let bytes = match tokio::fs::read(&path).await {
         Ok(b) => b,
         Err(_) => {
             // Draw it now (older uploads, or a restored show).
-            let (src, dst, props) = (state.config.data_dir.join(&seq.file), path.clone(), show.props.clone());
+            let (src, dst, props) = (
+                state.config.data_dir.join(&seq.file),
+                path.clone(),
+                show.props.clone(),
+            );
             let _ = tokio::fs::create_dir_all(state.config.thumbnails_dir()).await;
             tokio::task::spawn_blocking(move || generate_thumbnail(&src, &props, &dst))
                 .await
@@ -578,7 +687,14 @@ async fn sequence_thumbnail(State(state): State<AppState>, Path(id): Path<String
             tokio::fs::read(&path).await?
         }
     };
-    Ok(([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "max-age=60")], bytes).into_response())
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "max-age=60"),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -589,8 +705,17 @@ async fn list_media(State(state): State<AppState>) -> Json<Vec<Media>> {
     Json(state.store.get().media.clone())
 }
 
-async fn get_media(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Media>> {
-    state.store.get().media_item(&id).cloned().map(Json).ok_or_else(|| ApiError::not_found("That audio file"))
+async fn get_media(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Media>> {
+    state
+        .store
+        .get()
+        .media_item(&id)
+        .cloned()
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("That audio file"))
 }
 
 async fn create_media(State(state): State<AppState>, req: Request) -> ApiResult<Json<Value>> {
@@ -600,7 +725,9 @@ async fn create_media(State(state): State<AppState>, req: Request) -> ApiResult<
         media_svc::untrash(&data, &m.file);
         media_svc::untrash(&data, &format!("media/{}.meta.json", m.id));
         if !data.join(&m.file).is_file() {
-            return Err(ApiError::bad_request("The audio file is gone. Please upload it again."));
+            return Err(ApiError::bad_request(
+                "The audio file is gone. Please upload it again.",
+            ));
         }
         let (m, _) = state
             .store
@@ -624,21 +751,28 @@ async fn create_media(State(state): State<AppState>, req: Request) -> ApiResult<
         match (field.name().unwrap_or_default(), fname) {
             ("kind", None) => {
                 let k = field.text().await.unwrap_or_default();
-                kind = serde_json::from_value(json!(k.trim())).map_err(|_| ApiError::bad_request("Kind must be song, dj or sfx."))?;
+                kind = serde_json::from_value(json!(k.trim()))
+                    .map_err(|_| ApiError::bad_request("Kind must be song, dj or sfx."))?;
             }
             ("name", None) => name = field.text().await.ok(),
             (_, Some(fname)) if file.is_none() => {
                 let ext = media_svc::audio_ext(&fname).ok_or_else(|| {
-                    ApiError::bad_request(format!("\"{fname}\" isn't a supported audio file. Use MP3, OGG, M4A, WAV or FLAC."))
+                    ApiError::bad_request(format!(
+                        "\"{fname}\" isn't a supported audio file. Use MP3, OGG, M4A, WAV or FLAC."
+                    ))
                 })?;
-                let tmp = state.config.media_dir().join(format!(".upload-{upload_id}.{ext}"));
+                let tmp = state
+                    .config
+                    .media_dir()
+                    .join(format!(".upload-{upload_id}.{ext}"));
                 save_field(field, &tmp, AUDIO_MAX).await?;
                 file = Some((tmp, fname));
             }
             _ => {}
         }
     }
-    let (tmp, fname) = file.ok_or_else(|| ApiError::bad_request("Choose an audio file to upload."))?;
+    let (tmp, fname) =
+        file.ok_or_else(|| ApiError::bad_request("Choose an audio file to upload."))?;
     let media = ingest_audio(&state, tmp, &fname, kind, name).await?;
     // Link sequences that were waiting for this song.
     let show = state.store.get();
@@ -648,12 +782,24 @@ async fn create_media(State(state): State<AppState>, req: Request) -> ApiResult<
         let key_name = media_svc::match_key(&media.name);
         for s in show.sequences.iter().filter(|s| s.media_id.is_none()) {
             let path = state.config.data_dir.join(&s.file);
-            let basename = tokio::task::spawn_blocking(move || FseqFile::open(&path).ok().and_then(|f| f.header().media_basename()))
-                .await
-                .ok()
-                .flatten();
-            let keys = [basename.as_deref().map(media_svc::match_key), Some(media_svc::match_key(&s.name)), s.xlights_name.as_deref().map(media_svc::match_key)];
-            if keys.iter().flatten().any(|k| !k.is_empty() && (*k == key_orig || *k == key_name)) {
+            let basename = tokio::task::spawn_blocking(move || {
+                FseqFile::open(&path)
+                    .ok()
+                    .and_then(|f| f.header().media_basename())
+            })
+            .await
+            .ok()
+            .flatten();
+            let keys = [
+                basename.as_deref().map(media_svc::match_key),
+                Some(media_svc::match_key(&s.name)),
+                s.xlights_name.as_deref().map(media_svc::match_key),
+            ];
+            if keys
+                .iter()
+                .flatten()
+                .any(|k| !k.is_empty() && (*k == key_orig || *k == key_name))
+            {
                 link.push(s.id.clone());
             }
         }
@@ -662,26 +808,41 @@ async fn create_media(State(state): State<AppState>, req: Request) -> ApiResult<
         .store
         .update(move |s| {
             s.media.push(media.clone());
-            for seq in s.sequences.iter_mut().filter(|x| link.contains(&x.id) && x.media_id.is_none()) {
+            for seq in s
+                .sequences
+                .iter_mut()
+                .filter(|x| link.contains(&x.id) && x.media_id.is_none())
+            {
                 seq.media_id = Some(media.id.clone());
             }
             Ok(media)
         })
         .await?;
-    Ok(Json(serde_json::to_value(media).map_err(ApiError::internal)?))
+    Ok(Json(
+        serde_json::to_value(media).map_err(ApiError::internal)?,
+    ))
 }
 
-async fn update_media(State(state): State<AppState>, Path(id): Path<String>, Json(mut patch): Json<Value>) -> ApiResult<Json<Media>> {
+async fn update_media(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(mut patch): Json<Value>,
+) -> ApiResult<Json<Media>> {
     if let Value::Object(p) = &mut patch {
         p.retain(|k, _| matches!(k.as_str(), "name" | "kind" | "gainDb"));
     }
     let (m, _) = state
         .store
         .update(move |show| {
-            let idx = show.media.iter().position(|m| m.id == id).ok_or_else(|| ApiError::not_found("That audio file"))?;
+            let idx = show
+                .media
+                .iter()
+                .position(|m| m.id == id)
+                .ok_or_else(|| ApiError::not_found("That audio file"))?;
             let mut v = serde_json::to_value(&show.media[idx]).map_err(ApiError::internal)?;
             merge_patch(&mut v, &patch);
-            let mut m: Media = serde_json::from_value(v).map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
+            let mut m: Media = serde_json::from_value(v)
+                .map_err(|e| ApiError::bad_request(format!("That change isn't valid: {e}")))?;
             if m.name.trim().is_empty() {
                 return Err(ApiError::bad_request("Please give it a name."));
             }
@@ -695,7 +856,10 @@ async fn update_media(State(state): State<AppState>, Path(id): Path<String>, Jso
     Ok(Json(m))
 }
 
-async fn delete_media(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn delete_media(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     if state.store.get().media_item(&id).is_none() {
         return Err(ApiError::not_found("That audio file"));
     }
@@ -703,9 +867,17 @@ async fn delete_media(State(state): State<AppState>, Path(id): Path<String>) -> 
     let (m, _) = state
         .store
         .update(|show| {
-            let idx = show.media.iter().position(|m| m.id == id).ok_or_else(|| ApiError::not_found("That audio file"))?;
+            let idx = show
+                .media
+                .iter()
+                .position(|m| m.id == id)
+                .ok_or_else(|| ApiError::not_found("That audio file"))?;
             let m = show.media.remove(idx);
-            for s in show.sequences.iter_mut().filter(|s| s.media_id.as_deref() == Some(id.as_str())) {
+            for s in show
+                .sequences
+                .iter_mut()
+                .filter(|s| s.media_id.as_deref() == Some(id.as_str()))
+            {
                 s.media_id = None;
             }
             for c in &mut show.dj_clips {
@@ -718,7 +890,9 @@ async fn delete_media(State(state): State<AppState>, Path(id): Path<String>) -> 
             }
             for p in &mut show.playlists {
                 for list in [&mut p.items, &mut p.intro, &mut p.outro] {
-                    list.retain(|i| !matches!(i, PlaylistItem::Media { media_id, .. } if *media_id == id));
+                    list.retain(
+                        |i| !matches!(i, PlaylistItem::Media { media_id, .. } if *media_id == id),
+                    );
                 }
             }
             Ok(m)
@@ -730,16 +904,28 @@ async fn delete_media(State(state): State<AppState>, Path(id): Path<String>) -> 
 }
 
 /// Serve the audio file (supports Range requests for seeking).
-async fn media_file(State(state): State<AppState>, Path(id): Path<String>, req: Request) -> ApiResult<Response> {
+async fn media_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    req: Request,
+) -> ApiResult<Response> {
     let show = state.store.get();
-    let m = show.media_item(&id).ok_or_else(|| ApiError::not_found("That audio file"))?;
+    let m = show
+        .media_item(&id)
+        .ok_or_else(|| ApiError::not_found("That audio file"))?;
     let path = state.config.data_dir.join(&m.file);
     if !path.is_file() {
         return Err(ApiError::not_found("The audio file on disk"));
     }
-    let resp = tower_http::services::ServeFile::new(path).oneshot(req).await.map_err(ApiError::internal)?;
+    let resp = tower_http::services::ServeFile::new(path)
+        .oneshot(req)
+        .await
+        .map_err(ApiError::internal)?;
     let mut resp = resp.map(axum::body::Body::new);
-    let disp = format!("inline; filename=\"{}\"", media_original(&state, m).replace('"', ""));
+    let disp = format!(
+        "inline; filename=\"{}\"",
+        media_original(&state, m).replace('"', "")
+    );
     if let Ok(v) = HeaderValue::from_str(&disp) {
         resp.headers_mut().insert(header::CONTENT_DISPOSITION, v);
     }
@@ -752,9 +938,16 @@ struct PeaksQuery {
     n: Option<usize>,
 }
 
-async fn media_peaks(State(state): State<AppState>, Path(id): Path<String>, Query(q): Query<PeaksQuery>) -> ApiResult<Json<Vec<f32>>> {
+async fn media_peaks(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<PeaksQuery>,
+) -> ApiResult<Json<Vec<f32>>> {
     let show = state.store.get();
-    let m = show.media_item(&id).ok_or_else(|| ApiError::not_found("That audio file"))?.clone();
+    let m = show
+        .media_item(&id)
+        .ok_or_else(|| ApiError::not_found("That audio file"))?
+        .clone();
     let n = q.n.unwrap_or(160).clamp(8, 4000);
     let dir = state.config.media_dir();
     let meta = match media_svc::read_meta(&dir, &id).filter(|m| !m.peaks.is_empty()) {
@@ -764,7 +957,9 @@ async fn media_peaks(State(state): State<AppState>, Path(id): Path<String>, Quer
             let meta: MediaMeta = tokio::task::spawn_blocking(move || media_svc::analyze(&path))
                 .await
                 .map_err(ApiError::internal)?
-                .map_err(|e| ApiError::bad_request(format!("Couldn't read that audio file: {e}")))?;
+                .map_err(|e| {
+                    ApiError::bad_request(format!("Couldn't read that audio file: {e}"))
+                })?;
             let _ = media_svc::write_meta(&dir, &id, &meta);
             meta
         }
@@ -776,21 +971,40 @@ async fn media_peaks(State(state): State<AppState>, Path(id): Path<String>, Quer
 // DJ clips & TTS
 // ---------------------------------------------------------------------------
 
-async fn render_clip(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<DjClip>> {
-    crate::services::tts::render_clip(&state, &id).await.map(Json)
+async fn render_clip(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<DjClip>> {
+    crate::services::tts::render_clip(&state, &id)
+        .await
+        .map(Json)
 }
 
-async fn upload_clip(State(state): State<AppState>, Path(id): Path<String>, mut mp: Multipart) -> ApiResult<Json<DjClip>> {
-    let clip = state.store.get().dj_clip(&id).cloned().ok_or_else(|| ApiError::not_found("That DJ clip"))?;
+async fn upload_clip(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    mut mp: Multipart,
+) -> ApiResult<Json<DjClip>> {
+    let clip = state
+        .store
+        .get()
+        .dj_clip(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("That DJ clip"))?;
     let upload_id = new_id();
     let mut saved: Option<(PathBuf, String)> = None;
     while let Some(field) = mp.next_field().await.map_err(multipart_error)? {
-        let Some(fname) = field.file_name().map(str::to_string) else { continue };
+        let Some(fname) = field.file_name().map(str::to_string) else {
+            continue;
+        };
         if saved.is_some() {
             continue;
         }
         let ext = media_svc::audio_ext(&fname).unwrap_or_else(|| "wav".into());
-        let tmp = state.config.media_dir().join(format!(".upload-{upload_id}.{ext}"));
+        let tmp = state
+            .config
+            .media_dir()
+            .join(format!(".upload-{upload_id}.{ext}"));
         save_field(field, &tmp, 100 * 1024 * 1024).await?;
         saved = Some((tmp, ext));
     }
@@ -816,15 +1030,24 @@ async fn upload_clip(State(state): State<AppState>, Path(id): Path<String>, mut 
     };
     let _ = tokio::fs::remove_file(&tmp).await;
     // Validate it is audio before storing.
-    let probe = state.config.media_dir().join(format!(".probe-{upload_id}.{ext}"));
+    let probe = state
+        .config
+        .media_dir()
+        .join(format!(".probe-{upload_id}.{ext}"));
     tokio::fs::write(&probe, &bytes).await?;
     let p = probe.clone();
-    let ok = tokio::task::spawn_blocking(move || media_svc::analyze(&p)).await.map_err(ApiError::internal)?;
+    let ok = tokio::task::spawn_blocking(move || media_svc::analyze(&p))
+        .await
+        .map_err(ApiError::internal)?;
     let _ = tokio::fs::remove_file(&probe).await;
     if let Err(e) = ok {
-        return Err(ApiError::bad_request(format!("That recording couldn't be read ({e}). Please render it again.")));
+        return Err(ApiError::bad_request(format!(
+            "That recording couldn't be read ({e}). Please render it again."
+        )));
     }
-    crate::services::tts::save_clip_audio(&state, &clip, &bytes, &ext, None, None).await.map(Json)
+    crate::services::tts::save_clip_audio(&state, &clip, &bytes, &ext, None, None)
+        .await
+        .map(Json)
 }
 
 async fn tts_status(State(state): State<AppState>) -> Json<Value> {
@@ -844,7 +1067,10 @@ fn audio_response(r: crate::services::tts::Rendered) -> Response {
     if let Some(d) = r.duration_ms {
         h.insert("x-duration-ms", HeaderValue::from(d));
     }
-    if let Some(l) = r.loudness_lufs.and_then(|l| HeaderValue::from_str(&l.to_string()).ok()) {
+    if let Some(l) = r
+        .loudness_lufs
+        .and_then(|l| HeaderValue::from_str(&l.to_string()).ok())
+    {
         h.insert("x-loudness-lufs", l);
     }
     if let Some(w) = r.warnings.and_then(|w| HeaderValue::from_str(&w).ok()) {
@@ -865,25 +1091,40 @@ struct TtsRenderBody {
     context: Option<crate::services::tts::DynamicContext>,
 }
 
-async fn tts_render(State(state): State<AppState>, Json(body): Json<TtsRenderBody>) -> ApiResult<Response> {
+async fn tts_render(
+    State(state): State<AppState>,
+    Json(body): Json<TtsRenderBody>,
+) -> ApiResult<Response> {
     if body.lines.is_empty() {
-        return Err(ApiError::bad_request("Write something for the DJ to say first."));
+        return Err(ApiError::bad_request(
+            "Write something for the DJ to say first.",
+        ));
     }
     if crate::services::tts::resolved_mode(&state).await != "device" {
-        return Err(ApiError::unavailable("On-device voices aren't available here; your browser will render instead."));
+        return Err(ApiError::unavailable(
+            "On-device voices aren't available here; your browser will render instead.",
+        ));
     }
     let show = state.store.get();
-    let ctx = body.context.unwrap_or_else(|| crate::services::tts::context_from_player(&state));
+    let ctx = body
+        .context
+        .unwrap_or_else(|| crate::services::tts::context_from_player(&state));
     let fmt = match body.format.as_deref() {
         Some("wav") => "wav",
         Some("ogg") => "ogg",
         _ => "mp3",
     };
-    let req = crate::services::tts::render_body(&show, &body.lines, body.speed.unwrap_or(1.0), &ctx, fmt);
-    Ok(audio_response(crate::services::tts::post_audio(&state, "/render", &req).await?))
+    let req =
+        crate::services::tts::render_body(&show, &body.lines, body.speed.unwrap_or(1.0), &ctx, fmt);
+    Ok(audio_response(
+        crate::services::tts::post_audio(&state, "/render", &req).await?,
+    ))
 }
 
-async fn tts_audition(State(state): State<AppState>, Json(mut body): Json<Value>) -> ApiResult<Response> {
+async fn tts_audition(
+    State(state): State<AppState>,
+    Json(mut body): Json<Value>,
+) -> ApiResult<Response> {
     let show = state.store.get();
     if let Some(v) = body.get("voice").and_then(Value::as_str) {
         if let Some(dv) = show.dj_voices.iter().find(|d| d.id == v) {
@@ -893,7 +1134,9 @@ async fn tts_audition(State(state): State<AppState>, Json(mut body): Json<Value>
     if body.get("voice").is_none() {
         return Err(ApiError::bad_request("Pick a voice to hear."));
     }
-    Ok(audio_response(crate::services::tts::post_audio(&state, "/audition", &body).await?))
+    Ok(audio_response(
+        crate::services::tts::post_audio(&state, "/audition", &body).await?,
+    ))
 }
 
 pub fn routes() -> Router<AppState> {
@@ -902,16 +1145,38 @@ pub fn routes() -> Router<AppState> {
             "/sequences",
             // Size limits are enforced while streaming (save_field); a body limit
             // here would also overflow on 32-bit Pis.
-            get(list_sequences).post(create_sequence).layer(DefaultBodyLimit::disable()),
+            get(list_sequences)
+                .post(create_sequence)
+                .layer(DefaultBodyLimit::disable()),
         )
-        .route("/sequences/{id}", get(get_sequence).put(update_sequence).patch(update_sequence).delete(delete_sequence))
+        .route(
+            "/sequences/{id}",
+            get(get_sequence)
+                .put(update_sequence)
+                .patch(update_sequence)
+                .delete(delete_sequence),
+        )
         .route("/sequences/{id}/thumbnail", get(sequence_thumbnail))
-        .route("/media", get(list_media).post(create_media).layer(DefaultBodyLimit::disable()))
-        .route("/media/{id}", get(get_media).put(update_media).patch(update_media).delete(delete_media))
+        .route(
+            "/media",
+            get(list_media)
+                .post(create_media)
+                .layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/media/{id}",
+            get(get_media)
+                .put(update_media)
+                .patch(update_media)
+                .delete(delete_media),
+        )
         .route("/media/{id}/file", get(media_file))
         .route("/media/{id}/peaks", get(media_peaks))
         .route("/dj-clips/{id}/render", post(render_clip))
-        .route("/dj-clips/{id}/upload", post(upload_clip).layer(DefaultBodyLimit::max(101 * 1024 * 1024)))
+        .route(
+            "/dj-clips/{id}/upload",
+            post(upload_clip).layer(DefaultBodyLimit::max(101 * 1024 * 1024)),
+        )
         .route("/tts/status", get(tts_status))
         .route("/tts/voices", get(tts_voices))
         .route("/tts/render", post(tts_render))

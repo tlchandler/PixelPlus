@@ -36,11 +36,17 @@ impl AlertState {
     /// Whether an alert with `key` may go out now (records it if so).
     pub fn admit(&self, key: &str, now: Instant) -> bool {
         let mut last = self.last.lock();
-        if last.get(key).is_some_and(|t| now.duration_since(*t) < DEDUP_WINDOW) {
+        if last
+            .get(key)
+            .is_some_and(|t| now.duration_since(*t) < DEDUP_WINDOW)
+        {
             return false;
         }
         let mut sent = self.sent.lock();
-        while sent.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(3600)) {
+        while sent
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(3600))
+        {
             sent.pop_front();
         }
         if sent.len() >= MAX_PER_HOUR {
@@ -84,7 +90,11 @@ pub async fn raise(state: &AppState, key: &str, severity: Severity, title: &str,
     let settings = state.store.get().settings.alerts.clone();
     let show = show_label(state);
     let subject = format!("[{show}] {title}");
-    if let Some(email) = settings.email.clone().filter(|e| !e.smtp_host.is_empty() && !e.to.is_empty()) {
+    if let Some(email) = settings
+        .email
+        .clone()
+        .filter(|e| !e.smtp_host.is_empty() && !e.to.is_empty())
+    {
         if let Err(e) = send_email(&email, &subject, body).await {
             tracing::warn!("Couldn't send the alert email: {e}");
         }
@@ -112,7 +122,10 @@ pub async fn send_test(state: &AppState, channel: &str) -> Result<String, String
             Ok(format!("Test email sent to {}.", email.to))
         }
         "ntfy" => {
-            let ntfy = settings.ntfy.filter(|n| !n.topic.is_empty()).ok_or("Choose an ntfy topic first.")?;
+            let ntfy = settings
+                .ntfy
+                .filter(|n| !n.topic.is_empty())
+                .ok_or("Choose an ntfy topic first.")?;
             send_ntfy(&ntfy, &subject, body, Severity::Info).await?;
             Ok(format!("Test notification sent to \"{}\".", ntfy.topic))
         }
@@ -125,13 +138,24 @@ pub async fn send_email(cfg: &EmailSettings, subject: &str, body: &str) -> Resul
     use lettre::transport::smtp::authentication::Credentials;
     use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
-    let from_addr = if cfg.from.trim().is_empty() { cfg.username.trim() } else { cfg.from.trim() };
+    let from_addr = if cfg.from.trim().is_empty() {
+        cfg.username.trim()
+    } else {
+        cfg.from.trim()
+    };
     let from = from_addr
         .parse()
         .map_err(|_| format!("\"{from_addr}\" isn't a valid sender address."))?;
     let mut builder = Message::builder().from(from).subject(subject);
-    for to in cfg.to.split([',', ';']).map(str::trim).filter(|s| !s.is_empty()) {
-        builder = builder.to(to.parse().map_err(|_| format!("\"{to}\" isn't a valid email address."))?);
+    for to in cfg
+        .to
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        builder = builder.to(to
+            .parse()
+            .map_err(|_| format!("\"{to}\" isn't a valid email address."))?);
     }
     let msg = builder
         .header(ContentType::TEXT_PLAIN)
@@ -143,12 +167,17 @@ pub async fn send_email(cfg: &EmailSettings, subject: &str, body: &str) -> Resul
     } else if cfg.tls {
         AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
     } else {
-        Ok(AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host))
+        Ok(AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+            host,
+        ))
     }
     .map_err(|e| format!("Couldn't use mail server {host}: {e}"))?;
-    let mut transport = transport.port(cfg.smtp_port).timeout(Some(Duration::from_secs(20)));
+    let mut transport = transport
+        .port(cfg.smtp_port)
+        .timeout(Some(Duration::from_secs(20)));
     if !cfg.username.is_empty() {
-        transport = transport.credentials(Credentials::new(cfg.username.clone(), cfg.password.clone()));
+        transport =
+            transport.credentials(Credentials::new(cfg.username.clone(), cfg.password.clone()));
     }
     transport
         .build()
@@ -170,8 +199,17 @@ pub fn http_client() -> &'static reqwest::Client {
     })
 }
 
-pub async fn send_ntfy(cfg: &NtfySettings, title: &str, body: &str, severity: Severity) -> Result<(), String> {
-    let server = if cfg.server.trim().is_empty() { "https://ntfy.sh" } else { cfg.server.trim() };
+pub async fn send_ntfy(
+    cfg: &NtfySettings,
+    title: &str,
+    body: &str,
+    severity: Severity,
+) -> Result<(), String> {
+    let server = if cfg.server.trim().is_empty() {
+        "https://ntfy.sh"
+    } else {
+        cfg.server.trim()
+    };
     let server = if server.starts_with("http://") || server.starts_with("https://") {
         server.to_string()
     } else {
@@ -208,7 +246,10 @@ pub async fn check_sensors(state: &AppState, readings: &[super::sensors::Reading
             SensorKind::Temperature => (
                 s.value as f32 > rules.temp_c,
                 "Controller is too hot",
-                format!("{} is {:.0} °C (limit {:.0} °C). Check ventilation and sun exposure.", s.label, s.value, rules.temp_c),
+                format!(
+                    "{} is {:.0} °C (limit {:.0} °C). Check ventilation and sun exposure.",
+                    s.label, s.value, rules.temp_c
+                ),
             ),
             SensorKind::Voltage => (
                 (s.value as f32) < rules.voltage_min,
@@ -266,12 +307,24 @@ pub fn start(state: &AppState) {
                     let key = format!("offline:{node_id}");
                     if st.services.alerts.was_active(&key) {
                         st.services.alerts.rising(&key, false);
-                        st.events.toast(ToastKind::Success, format!("{name} is back online."));
+                        st.events
+                            .toast(ToastKind::Success, format!("{name} is back online."));
                     }
                 }
-                ClusterEvent::SyncProblem { node_id, name, message } => {
+                ClusterEvent::SyncProblem {
+                    node_id,
+                    name,
+                    message,
+                } => {
                     let key = format!("sync:{node_id}");
-                    raise(&st, &key, Severity::Warning, &format!("{name} can't get its show files"), &message).await;
+                    raise(
+                        &st,
+                        &key,
+                        Severity::Warning,
+                        &format!("{name} can't get its show files"),
+                        &message,
+                    )
+                    .await;
                 }
             }
         }
@@ -289,8 +342,17 @@ pub fn start(state: &AppState) {
         loop {
             let err = rx.borrow_and_update().error.clone();
             let key = "player:error";
-            if st.services.alerts.rising(key, err.is_some()) && st.store.get().settings.alerts.rules.show_failure {
-                raise(&st, key, Severity::Critical, "The show stopped", err.as_deref().unwrap_or("Playback failed.")).await;
+            if st.services.alerts.rising(key, err.is_some())
+                && st.store.get().settings.alerts.rules.show_failure
+            {
+                raise(
+                    &st,
+                    key,
+                    Severity::Critical,
+                    "The show stopped",
+                    err.as_deref().unwrap_or("Playback failed."),
+                )
+                .await;
             }
             if rx.changed().await.is_err() {
                 break;

@@ -175,7 +175,8 @@ pub struct NodeStatus {
     pub online: bool,
     pub last_seen: Option<String>,
     pub board: BoardKind,
-    pub sync_offset_ms: Option<f64>,
+    /// Estimated sync accuracy (ms); 0 when unknown / not applicable.
+    pub sync_offset_ms: f64,
     pub sync_state: SyncState,
     pub files: FileProgress,
     pub ip: Option<String>,
@@ -195,11 +196,13 @@ pub struct DiscoveredNode {
     pub role: LocalRole,
     pub board: BoardKind,
     pub board_rev: Option<String>,
-    pub pi_model: Option<String>,
+    /// Raspberry Pi model.
+    pub pi: Option<String>,
     pub ip: String,
     pub ips: Vec<IpAddr>,
     pub http: u16,
-    pub version: String,
+    /// PixelPlus version.
+    pub ver: String,
     /// Leader that currently owns it (another leader), if any.
     pub adopted_by: Option<String>,
     pub last_seen: String,
@@ -242,6 +245,11 @@ pub enum ClusterCommand {
     },
     /// Re-fetch the manifest and slices now.
     Refresh,
+    /// Blink this controller's outputs (white chase) so it can be found.
+    #[serde(rename_all = "camelCase")]
+    Identify {
+        duration_ms: u64,
+    },
 }
 
 impl ClusterCommand {
@@ -538,6 +546,46 @@ pub(crate) async fn to_player(state: &AppState, cmd: PlayerCmd) -> bool {
         tokio::time::timeout(Duration::from_millis(200), player.send(cmd)).await,
         Ok(Ok(()))
     )
+}
+
+/// Default length of an "identify" blink.
+pub const IDENTIFY_MS: u64 = 5_000;
+
+/// Blink every output of `node_id` (this node) with a white chase for
+/// `duration_ms`, then stop the test (unless another test replaced it).
+pub(crate) async fn identify_local(
+    state: &AppState,
+    node_id: &str,
+    duration_ms: u64,
+) -> crate::api::ApiResult<()> {
+    let player = state
+        .services
+        .player
+        .get()
+        .cloned()
+        .ok_or_else(|| crate::api::ApiError::unavailable("The player is not running."))?;
+    let test = TestRequest {
+        mode: "chase".into(),
+        color: Some("#ffffff".into()),
+        speed: None,
+        target: crate::player::TestTarget {
+            node_id: Some(node_id.to_string()),
+            output: None,
+            props: Default::default(),
+        },
+        effect: None,
+    };
+    player.test_start(test.clone()).await?;
+    let duration = Duration::from_millis(duration_ms.clamp(1_000, 60_000));
+    tokio::spawn(async move {
+        tokio::time::sleep(duration).await;
+        let status = player.status();
+        // End the blink (if a test is still running).
+        if status.state == crate::player::PlayerState::Testing {
+            let _ = player.send(PlayerCmd::TestStop).await;
+        }
+    });
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

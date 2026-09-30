@@ -18,7 +18,9 @@ pub async fn command(state: &AppState, cmd: Value) -> Result<Value, String> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let path = state.config.games_socket.clone();
         let fut = async move {
-            let mut stream = tokio::net::UnixStream::connect(&path).await.map_err(|_| ())?;
+            let mut stream = tokio::net::UnixStream::connect(&path)
+                .await
+                .map_err(|_| ())?;
             let mut line = serde_json::to_vec(&cmd).map_err(|_| ())?;
             line.push(b'\n');
             stream.write_all(&line).await.map_err(|_| ())?;
@@ -60,7 +62,9 @@ pub fn list_roms(state: &AppState) -> Vec<Value> {
         })
         .collect();
     v.sort();
-    v.into_iter().map(|(name, size)| json!({ "name": name, "sizeBytes": size })).collect()
+    v.into_iter()
+        .map(|(name, size)| json!({ "name": name, "sizeBytes": size }))
+        .collect()
 }
 
 /// Safe ROM file name: keeps letters, digits, space, `-_.()`; must end in `.nes`.
@@ -71,7 +75,8 @@ pub fn sanitize_rom_name(name: &str) -> Option<String> {
         .filter(|c| c.is_ascii_alphanumeric() || " -_.()".contains(*c))
         .collect();
     let clean = clean.trim().trim_start_matches('.').to_string();
-    (clean.to_ascii_lowercase().ends_with(".nes") && clean.len() > 4 && clean.len() <= 100).then_some(clean)
+    (clean.to_ascii_lowercase().ends_with(".nes") && clean.len() > 4 && clean.len() <= 100)
+        .then_some(clean)
 }
 
 /// iNES / NES 2.0 header check.
@@ -112,8 +117,14 @@ mod tests {
 
     #[test]
     fn rom_names() {
-        assert_eq!(sanitize_rom_name("Super Mario Bros (W).nes").as_deref(), Some("Super Mario Bros (W).nes"));
-        assert_eq!(sanitize_rom_name("../../etc/smb.NES").as_deref(), Some("smb.NES"));
+        assert_eq!(
+            sanitize_rom_name("Super Mario Bros (W).nes").as_deref(),
+            Some("Super Mario Bros (W).nes")
+        );
+        assert_eq!(
+            sanitize_rom_name("../../etc/smb.NES").as_deref(),
+            Some("smb.NES")
+        );
         assert_eq!(sanitize_rom_name("evil.sh"), None);
         assert_eq!(sanitize_rom_name(".nes"), None);
         assert!(looks_like_nes(b"NES\x1a0123456789abcdef"));

@@ -52,13 +52,19 @@ pub fn gain_for(target: f32, lufs: Option<f32>) -> Option<f32> {
 
 /// Lower-case extension if it is an accepted audio type.
 pub fn audio_ext(filename: &str) -> Option<String> {
-    let ext = Path::new(filename).extension()?.to_str()?.to_ascii_lowercase();
+    let ext = Path::new(filename)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase();
     AUDIO_EXTS.contains(&ext.as_str()).then_some(ext)
 }
 
 /// "02_Wizards_in_Winter.mp3" -> "02 Wizards in Winter".
 pub fn display_name(filename: &str) -> String {
-    let stem = Path::new(filename).file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
     let s: String = stem.replace(['_'], " ");
     let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if s.is_empty() {
@@ -78,13 +84,17 @@ pub fn match_key(name: &str) -> String {
     let base = if Path::new(name.trim())
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| AUDIO_EXTS.contains(&e.to_ascii_lowercase().as_str()) || e.eq_ignore_ascii_case("fseq"))
-    {
+        .is_some_and(|e| {
+            AUDIO_EXTS.contains(&e.to_ascii_lowercase().as_str()) || e.eq_ignore_ascii_case("fseq")
+        }) {
         stem
     } else {
         name.trim()
     };
-    base.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+    base.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
 }
 
 /// Analyze an audio file (blocking; run in `spawn_blocking`).
@@ -117,7 +127,12 @@ fn analyze_symphonia(path: &Path) -> Result<MediaMeta, String> {
         hint.with_extension(ext);
     }
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| format!("not a supported audio format ({e})"))?;
     let mut format = probed.format;
     let track = format
@@ -225,8 +240,12 @@ pub fn resample_peaks(windows: &[f32], n: usize) -> Vec<f32> {
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let a = i * windows.len() / n;
-        let b = (((i + 1) * windows.len()) / n).max(a + 1).min(windows.len());
-        let m = windows[a.min(windows.len() - 1)..b].iter().fold(0f32, |x, y| x.max(*y));
+        let b = (((i + 1) * windows.len()) / n)
+            .max(a + 1)
+            .min(windows.len());
+        let m = windows[a.min(windows.len() - 1)..b]
+            .iter()
+            .fold(0f32, |x, y| x.max(*y));
         out.push(m);
     }
     let max = out.iter().fold(0f32, |a, b| a.max(*b));
@@ -241,7 +260,17 @@ pub fn resample_peaks(windows: &[f32], n: usize) -> Vec<f32> {
 fn analyze_ffmpeg(path: &Path) -> Result<MediaMeta, String> {
     let p = path.to_string_lossy().to_string();
     let out = std::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-nostats", "-i", &p, "-af", "ebur128", "-f", "null", "-"])
+        .args([
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            &p,
+            "-af",
+            "ebur128",
+            "-f",
+            "null",
+            "-",
+        ])
         .output()
         .map_err(|e| format!("couldn't run ffmpeg: {e}"))?;
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -250,7 +279,11 @@ fn analyze_ffmpeg(path: &Path) -> Result<MediaMeta, String> {
     }
     let loudness = parse_ffmpeg_loudness(&stderr);
     let duration_ms = parse_ffmpeg_duration(&stderr).ok_or("ffmpeg couldn't find the duration")?;
-    Ok(MediaMeta { duration_ms, loudness_lufs: loudness, ..Default::default() })
+    Ok(MediaMeta {
+        duration_ms,
+        loudness_lufs: loudness,
+        ..Default::default()
+    })
 }
 
 /// `I:  -16.3 LUFS` from the ebur128 summary.
@@ -259,7 +292,11 @@ pub fn parse_ffmpeg_loudness(stderr: &str) -> Option<f32> {
     summary.lines().find_map(|l| {
         let l = l.trim();
         let rest = l.strip_prefix("I:")?;
-        rest.split_whitespace().next()?.parse::<f32>().ok().filter(|v| v.is_finite())
+        rest.split_whitespace()
+            .next()?
+            .parse::<f32>()
+            .ok()
+            .filter(|v| v.is_finite())
     })
 }
 
@@ -283,14 +320,33 @@ pub async fn transcode_mp3(src: &Path, dst: &Path) -> Result<Option<()>, String>
     let d = dst.to_string_lossy().to_string();
     let out = super::system::run(
         "ffmpeg",
-        &["-hide_banner", "-loglevel", "error", "-y", "-i", &s, "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "192k", &d],
+        &[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            &s,
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            &d,
+        ],
         Duration::from_secs(300),
     )
     .await?;
     if out.success {
         Ok(Some(()))
     } else {
-        Err(format!("ffmpeg couldn't convert the audio: {}", out.stderr.trim()))
+        Err(format!(
+            "ffmpeg couldn't convert the audio: {}",
+            out.stderr.trim()
+        ))
     }
 }
 
@@ -318,7 +374,10 @@ pub fn trash(data_dir: &Path, rel: &str) {
         let _ = std::fs::remove_file(&src);
     } else {
         // Touch so the age check measures time since deletion.
-        let _ = std::fs::File::options().append(true).open(&dst).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+        let _ = std::fs::File::options()
+            .append(true)
+            .open(&dst)
+            .and_then(|f| f.set_modified(std::time::SystemTime::now()));
     }
     purge_trash(data_dir);
 }
@@ -336,7 +395,9 @@ pub fn untrash(data_dir: &Path, rel: &str) -> bool {
 }
 
 pub fn purge_trash(data_dir: &Path) {
-    let Ok(rd) = std::fs::read_dir(trash_dir(data_dir)) else { return };
+    let Ok(rd) = std::fs::read_dir(trash_dir(data_dir)) else {
+        return;
+    };
     for e in rd.flatten() {
         let old = e
             .metadata()
@@ -360,7 +421,9 @@ pub mod tests {
         let n = (seconds * rate as f32) as u32;
         let mut data = Vec::with_capacity(n as usize * 2);
         for i in 0..n {
-            let v = (amplitude * (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 32767.0) as i16;
+            let v = (amplitude
+                * (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin()
+                * 32767.0) as i16;
             data.extend_from_slice(&v.to_le_bytes());
         }
         let mut f = Vec::new();
@@ -382,7 +445,8 @@ pub mod tests {
 
     #[test]
     fn analyzes_wav() {
-        let dir = std::env::temp_dir().join(format!("pp-media-{}", pixelplus_core::model::new_id()));
+        let dir =
+            std::env::temp_dir().join(format!("pp-media-{}", pixelplus_core::model::new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("tone.wav");
         sine_wav(&p, 3.0, 0.5);
@@ -400,9 +464,15 @@ pub mod tests {
 
     #[test]
     fn names_and_keys() {
-        assert_eq!(display_name("02_Wizards_in_Winter.mp3"), "02 Wizards in Winter");
+        assert_eq!(
+            display_name("02_Wizards_in_Winter.mp3"),
+            "02 Wizards in Winter"
+        );
         assert_eq!(match_key("Wizards In Winter.MP3"), "wizardsinwinter");
-        assert_eq!(match_key("C:\\x\\Mr. Sandman"), match_key("c:\\x\\mr sandman"));
+        assert_eq!(
+            match_key("C:\\x\\Mr. Sandman"),
+            match_key("c:\\x\\mr sandman")
+        );
         assert_eq!(audio_ext("a.FLAC").as_deref(), Some("flac"));
         assert_eq!(audio_ext("a.txt"), None);
     }
@@ -423,7 +493,8 @@ pub mod tests {
 
     #[test]
     fn trash_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("pp-trash-{}", pixelplus_core::model::new_id()));
+        let dir =
+            std::env::temp_dir().join(format!("pp-trash-{}", pixelplus_core::model::new_id()));
         std::fs::create_dir_all(dir.join("media")).unwrap();
         std::fs::write(dir.join("media/a.mp3"), b"x").unwrap();
         trash(&dir, "media/a.mp3");
