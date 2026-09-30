@@ -9,7 +9,7 @@ import numpy as np
 
 from . import arcade, config, font, hat
 from .audio import AudioOut
-from .display import OverlayModel, Scaler, frame_to_rgb
+from .display import OverlayModel, Scaler
 from .libretro import Core, find_core, JOYPAD_A, JOYPAD_B, JOYPAD_SELECT, JOYPAD_START
 from .smb import SMB
 
@@ -70,6 +70,9 @@ class Session:
         self.brightness = cfg.brightness
         self.model = OverlayModel(api, cfg.matrix)
         self.paused_show = False
+        # Set (from any thread) when the overlay must be opened again: pixelplusd restarted
+        # (the overlay is off and its buffer no longer read) or the matrix changed size.
+        self.reopen = threading.Event()
 
     def __enter__(self):
         self.model.open()
@@ -96,6 +99,20 @@ class Session:
             self.api.resume()
         return False
 
+    def reopen_model(self):
+        """Map the overlay buffer again and switch the overlay back on (game thread only)."""
+        self.reopen.clear()
+        old = (self.model.width, self.model.height)
+        try:
+            self.model.open()
+            self.model.enable()
+        except Exception as e:  # keep playing; the next request tries again
+            log.warning("Could not reopen the matrix overlay: %s", e)
+            return False
+        if (self.model.width, self.model.height) != old:
+            log.info("Matrix is now %dx%d", self.model.width, self.model.height)
+        return True
+
     def text(self, lines):
         img = np.zeros((self.model.height, self.model.width, 3), np.uint8)
         g = self.brightness / 100.0
@@ -109,6 +126,13 @@ class Engine:
         self.core = None
         self.rom = None
         self.lock = threading.Lock()  # one emulator, one user at a time
+        self.session = None           # the Session on the matrix, if any
+
+    def request_reopen(self):
+        """Ask the running session (if any) to reopen the overlay (thread-safe)."""
+        session = self.session
+        if session is not None:
+            session.reopen.set()
 
     # --- setup ------------------------------------------------------------------
 
@@ -160,6 +184,9 @@ class Engine:
                 if stop.is_set():
                     reason = "stop"
                     break
+                if session.reopen.is_set():
+                    session.reopen_model()
+                    scaler.resize(session.model.width, session.model.height)
                 if until and now >= until:
                     break
                 buttons = controls.buttons
@@ -177,7 +204,7 @@ class Engine:
                 audio.play(core.run())
                 if show and core.frame is not None:
                     next_output = max(next_output + output_every, now - output_every)
-                    img = scaler.scale(frame_to_rgb(core.frame))
+                    img = scaler.scale_frame(core.frame)
                     if on_frame:
                         on_frame(img, int(until - now + 0.999) if until else 0)
                     session.model.write(img)
@@ -207,6 +234,7 @@ class Engine:
         with self.lock:
             try:
                 with Session(self.api, cfg, show="pause") as session:
+                    self.session = session
                     model, brightness = session.model, session.brightness
                     session.text([("WORLD", (255, 255, 255)), (level, (255, 200, 0))])
                     on_update({"phase": "starting", "level": level})
@@ -250,6 +278,8 @@ class Engine:
             except Exception as e:
                 log.exception("Game session failed")
                 on_update({"phase": "error", "message": str(e)})
+            finally:
+                self.session = None
         return score
 
     # --- Arcade mode ----------------------------------------------------------------
@@ -264,6 +294,7 @@ class Engine:
         with self.lock:
             try:
                 with Session(self.api, cfg, show="stop") as session:
+                    self.session = session
                     model = session.model
                     scaler = Scaler(model.width, model.height, crop=ARCADE_CROP,
                                     mode=cfg.scale_mode, brightness=session.brightness)
@@ -274,6 +305,9 @@ class Engine:
                         choice = menu.run(session, controls, stop, folder)
                         if choice is None:
                             break
+                        # A turn that ended while the list was up has already landed on the list:
+                        # it must not bounce the next player straight out of the game they pick.
+                        to_menu.clear()
                         name = arcade.display_name(choice)
                         session.text([("LOADING", (255, 255, 255)), (name[:20], (255, 200, 0))])
                         on_update({"phase": "arcade", "game": name})
@@ -293,6 +327,8 @@ class Engine:
             except Exception as e:
                 log.exception("Arcade failed")
                 on_update({"phase": "error", "message": str(e)})
+            finally:
+                self.session = None
 
 
 def draw_countdown(img, scaler, remaining, brightness):

@@ -118,7 +118,15 @@ pub fn start_with(state: &AppState, opts: EngineOptions) -> anyhow::Result<Engin
     let (core_tx, core_rx) = std::sync::mpsc::channel::<CoreCmd>();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel::<CoreEvent>();
 
-    let core = Core::new(state.clone(), opts, core_rx, ev_tx, status_tx);
+    let mut core = Core::new(state.clone(), opts, core_rx, ev_tx, status_tx);
+    if state.config.dev || state.config.output == crate::config::OutputMode::Sim {
+        let tap = state
+            .services
+            .debug_output
+            .get_or_init(|| std::sync::Arc::new(super::debugtap::OutputTap::new()))
+            .clone();
+        core.tap = Some(tap);
+    }
     let sim = core.output.sim.clone();
     std::thread::Builder::new()
         .name("pp-output".into())
@@ -639,6 +647,10 @@ struct Core {
     preview_no: u32,
     panics: u32,
     last_extras: (Option<EffectPreset>, Option<TestRequest>),
+    /// Development output tap (`GET /debug/output`).
+    tap: Option<std::sync::Arc<super::debugtap::OutputTap>>,
+    /// Sequence and frame index composed for the current output frame.
+    shown: Option<(String, u32)>,
 }
 
 fn item_ref(kind: &str, id: &str, name: &str) -> ItemRef {
@@ -729,6 +741,8 @@ impl Core {
             preview_no: 0,
             panics: 0,
             last_extras: (None, None),
+            tap: None,
+            shown: None,
             show: show.clone(),
             app,
             opts,
@@ -828,7 +842,7 @@ impl Core {
         let chan_len = show
             .props
             .iter()
-            .map(|p| p.channel_start as usize + p.pixel_count as usize * 3)
+            .map(|p| p.channel_end() as usize)
             .max()
             .unwrap_or(0);
         self.chan.resize(chan_len, 0);
@@ -1887,10 +1901,14 @@ impl Core {
             Self::render_active(&mut o.active, pos, &mut self.chan_b, self.idle_layer.as_mut(), now_ms);
             blend_t = Some(crossfade_progress(o.start_ms, o.len_ms, now_ms));
         }
+        self.shown = None;
         if let Some(a) = self.current.as_mut() {
             let pos = if a.started { Self::position(&self.audio, a, paused, now_ms) } else { 0.0 };
             if a.started || blend_t.is_none() {
                 Self::render_active(a, pos, &mut self.chan, self.idle_layer.as_mut(), now_ms);
+            }
+            if let (true, ActiveKind::Sequence { meta: Some(m), .. }) = (a.have_frame, &a.kind) {
+                self.shown = Some((a.iref.id.clone(), (pos / m.frame_ms as f64) as u32));
             }
         } else if self.program.is_none() {
             if let Some(l) = self.look.as_mut() {
@@ -1944,10 +1962,15 @@ impl Core {
             }
         }
         let pos = f.clock.as_mut().map_or(0.0, |c| c.advance(now_ms));
+        self.shown = None;
         if let (Some(reader), Some(meta)) = (f.reader.as_ref(), f.meta.as_ref()) {
             let idx = (pos.max(0.0) / meta.frame_ms as f64) as u32;
             if f.buf.len() == meta.frame_len && reader.get(idx, &mut f.buf) {
                 f.have_frame = true;
+            }
+            if f.have_frame {
+                let id = f.pkt.as_ref().and_then(|p| p.item.as_ref()).map(|i| i.id.clone());
+                self.shown = id.map(|id| (id, idx));
             }
             if f.have_frame {
                 match &meta.layout {
@@ -2026,6 +2049,10 @@ impl Core {
                 self.pipeline.process(&input, &mut self.wire);
                 let wire = self.wire.as_frame_ref();
                 self.output.write(&wire, now);
+                if let Some(tap) = &self.tap {
+                    let shown = self.shown.as_ref().map(|(id, f)| (id.as_str(), *f));
+                    tap.record(self.frames_out + 1, now_ms, shown, master, &ppo[..n], data, &mut wire.iter());
+                }
             }
             Err(e) => tracing::debug!("frame layout mismatch: {e}"),
         }

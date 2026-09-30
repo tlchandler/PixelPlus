@@ -19,6 +19,7 @@
 pub mod audio;
 pub mod clock;
 pub mod compose;
+pub mod debugtap;
 pub mod engine;
 pub mod overlay;
 pub mod playlist;

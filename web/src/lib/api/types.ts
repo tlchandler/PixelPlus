@@ -101,6 +101,13 @@ export interface MatrixInfo {
 	pixelMap: number[];
 }
 
+/** Prop pixels `propOffset .. propOffset + pixelCount` read from `channelStart` (0-based byte offset). */
+export interface ChannelRun {
+	propOffset: number;
+	channelStart: number;
+	pixelCount: number;
+}
+
 export interface Prop {
 	id: Id;
 	name: string;
@@ -109,6 +116,8 @@ export interface Prop {
 	xlightsModel?: string;
 	channelStart: number;
 	channelsPerPixel: number;
+	/** Non-contiguous channels (xLights individual start channels); absent = contiguous from channelStart. */
+	channelRuns?: ChannelRun[];
 	segments: PropSegment[];
 	groupIds: Id[];
 	layout?: PropLayout;

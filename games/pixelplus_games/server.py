@@ -42,6 +42,19 @@ SHOW_POLL_LIVE = 60       # refetch /show this often even with live updates (saf
 SHOW_POLL = 5             # ... and this often when the event stream is down
 STATUS_STALE = 5          # poll /player when no status event arrived for this long
 KEEP_STOPPED_EVERY = 5    # arcade: seconds between attempts to stop a show that started
+ARCADE_RETRY = 10         # arcade: seconds between starts (so a failing arcade isn't restarted 1/s)
+MSG_RATE = 60             # messages per second a phone may send on average...
+MSG_BURST = 120           # ... with bursts up to this many; a phone that keeps exceeding it is cut off
+MAX_GONE = 2000           # remembered departed players (for the reconnect grace), oldest dropped first
+
+
+def _parse(text):
+    """A phone message as a dict, or None. Never raises on hostile input (deep nesting, NaN...)."""
+    try:
+        msg = json.loads(text)
+    except Exception:  # ValueError, RecursionError...
+        return None
+    return msg if isinstance(msg, dict) else None
 
 
 class Client:
@@ -49,7 +62,18 @@ class Client:
         self.id = cid
         self.ws = ws
         self.last_seen = time.monotonic()
-        self.msg_times = []
+        self.tokens = float(MSG_BURST)    # flood control (token bucket)
+        self.strikes = 0
+
+    def allow(self, now):
+        """Token bucket: False when this phone is sending faster than a person could."""
+        self.tokens = min(MSG_BURST, self.tokens + (now - self.last_seen) * MSG_RATE)
+        self.last_seen = now
+        if self.tokens >= 1:
+            self.tokens -= 1
+            return True
+        self.strikes += 1
+        return False
 
 
 class Hub:
@@ -70,6 +94,7 @@ class Hub:
         self.stop_event = threading.Event()
         self.game_thread = None
         self.game_view = {}
+        self.game_played = False
         self.last_result = {}       # id -> result shown after a game
         self.player_status = {}     # latest PlayerStatus from pixelplusd
         self.player_state = "unknown"
@@ -83,6 +108,8 @@ class Hub:
         self.arcade_stop = threading.Event()
         self.to_menu = threading.Event()
         self.arcade_view = {}
+        self.arcade_cfg = None      # the settings the running arcade started with
+        self.arcade_restart = False  # closing the arcade only to reopen it with new settings
         self.turn_started = 0
         self.last_show_stop = 0
         # settings refresh
@@ -90,6 +117,9 @@ class Hub:
         self._refresh_task = None
         self._refresh_again = False
         self.events = None
+        self._was_live = False
+        self._pixelplusd_down = False
+        self.arcade_started = -ARCADE_RETRY
         self.server = None
         self.server_port = None
         self._page = None
@@ -127,7 +157,24 @@ class Hub:
             self.loop.run_in_executor(None, self.api.overlay_enable, cfg.matrix.prop_id, False)
         elif old.matrix and old.matrix != cfg.matrix and not self.game_running() and not self.arcade_running():
             self.loop.run_in_executor(None, self.api.overlay_enable, old.matrix.prop_id, False)
+        if old.matrix and cfg.matrix and old.matrix.prop_id == cfg.matrix.prop_id \
+                and old.matrix != cfg.matrix:
+            # Same prop, new size: pixelplusd stops reading the old buffer until it is opened again.
+            self._request_reopen()
         self.push_all()
+
+    def _request_reopen(self):
+        request = getattr(self.engine, "request_reopen", None)
+        if request is not None:
+            request()
+
+    def _pixelplusd_seen(self, ok):
+        """Track whether pixelplusd answers. When it comes back (e.g. it restarted, forgetting the
+        overlay), a running game/arcade opens and enables its overlay again."""
+        if ok and self._pixelplusd_down:
+            log.info("pixelplusd is back")
+            self._request_reopen()
+        self._pixelplusd_down = not ok
 
     async def refresh_show(self):
         """Fetch /show and apply it. Concurrent requests collapse into one extra fetch."""
@@ -149,7 +196,9 @@ class Hub:
                 else:
                     log.warning("Waiting for pixelplusd: %s", e)
                 self._set_api_error(str(e))
+                self._pixelplusd_seen(False)
                 return False
+            self._pixelplusd_seen(True)
             self.apply_show(show)
             if self.last_error and self.last_error.startswith("pixelplusd"):
                 self.last_error = None
@@ -267,7 +316,8 @@ class Hub:
             return
         if self.offer and self.offer[0] == cid:
             self.offer = None
-            self.queue.remove(cid)
+            if cid in self.queue:
+                self.queue.remove(cid)
             self.start_game(cid)
         elif not self.active and not self.game_running() and not self.offer and not self.queue \
                 and not self.busy_reason:
@@ -286,6 +336,7 @@ class Hub:
         self.controls.reset()
         self.stop_event.clear()
         self.game_view = {"phase": "starting", "level": level}
+        self.game_played = False
         cfg = self.cfg
 
         def update(d):
@@ -307,6 +358,8 @@ class Hub:
             self.last_error = None
         if cid != self.active:
             return
+        if d.get("phase") == "playing":
+            self.game_played = True
         self.game_view.update(d)
         if d.get("phase") in ("over", "error"):
             self.controls.buttons = 0
@@ -323,7 +376,9 @@ class Hub:
         self.game_thread = None
         self.game_view = {}
         self.controls.buttons = 0
-        cooldown = self.cfg.cooldown_minutes * 60
+        # A game that failed before anyone got to play (no ROM core, overlay error...) earns
+        # nobody a cooldown: the line moves on (and hits the same error, which shows).
+        cooldown = self.cfg.cooldown_minutes * 60 if self.game_played else 0
         self.cooldown_until = time.monotonic() + cooldown
         if cooldown:
             # Nobody plays until the cooldown is over, so there is no line to keep:
@@ -379,14 +434,23 @@ class Hub:
     def _manage_arcade(self, now):
         """Start/stop the full-time arcade to match the setting; police turns."""
         want = self.arcade_mode() and not self.engine.ready(self.cfg, arcade_mode=True)
+        if not want and not self.arcade_running():
+            self.arcade_restart = False
         if want and not self.arcade_running():
             if self.game_running():
                 self.stop_event.set()  # a Mario game is on; the arcade starts once it has ended
                 return
-            if self.busy_reason:
+            if self.busy_reason or now - self.arcade_started < ARCADE_RETRY:
                 return
-            log.info("Arcade mode on: stopping the show and opening the arcade")
-            self.queue, self.offer, self.cooldown_until = [], None, 0
+            if self.arcade_restart:
+                # reopening on the new matrix: the player keeps their turn, the line is kept
+                log.info("Arcade: reopening on matrix %s", self.cfg.matrix.name)
+                self.arcade_restart = False
+            else:
+                log.info("Arcade mode on: stopping the show and opening the arcade")
+                self.queue, self.offer, self.cooldown_until = [], None, 0
+            self.arcade_started = now
+            self.arcade_cfg = self.cfg
             self.arcade_stop.clear()
             self.to_menu.clear()
             self.arcade_view = {}
@@ -402,7 +466,15 @@ class Hub:
             self.arcade_thread.start()
             self.push_all()
             return
+        if want and self.arcade_running() and self.arcade_cfg is not None \
+                and self.arcade_cfg.prop_id != self.cfg.prop_id and not self.arcade_stop.is_set():
+            log.info("Arcade: the games matrix changed; moving the arcade to it")
+            self.arcade_restart = True
+            self.arcade_started = -ARCADE_RETRY
+            self.arcade_stop.set()
+            return
         if not want and self.arcade_running():
+            self.arcade_restart = False
             log.info("Arcade mode off: closing the arcade (start the show again from PixelPlus)")
             if self.active:
                 self.end_turn("The arcade has closed.")
@@ -449,21 +521,25 @@ class Hub:
 
     async def handle_ws(self, ws):
         client = None
+        hellos = 0
         try:
             while True:
                 text = await ws.recv()
                 if text is None:
                     break
-                try:
-                    msg = json.loads(text)
-                    kind = msg.get("t")
-                except (ValueError, AttributeError):
+                msg = _parse(text)
+                if msg is None:
                     continue
+                kind = msg.get("t")
                 if client is None:
                     if kind != "hello":
+                        hellos += 1
+                        if hellos > 20:
+                            break      # not our page
                         continue
-                    cid = str(msg.get("id", ""))[:64]
-                    if len(cid) < 16 or not cid.replace("-", "").isalnum():
+                    cid = msg.get("id")
+                    cid = cid[:64] if isinstance(cid, str) else ""
+                    if len(cid) < 16 or not cid.replace("-", "").isalnum() or not cid.isascii():
                         cid = secrets.token_hex(16)
                     old = self.clients.get(cid)
                     if old and old.ws is not ws:
@@ -477,18 +553,18 @@ class Hub:
                     ws.send_json({"t": "welcome", "id": cid})
                     self.push(cid)
                     continue
-                client.last_seen = time.monotonic()
-                # simple flood control: at most 60 messages per second
-                now = client.last_seen
-                client.msg_times = [t for t in client.msg_times if now - t < 1.0]
-                client.msg_times.append(now)
-                if len(client.msg_times) > 60:
-                    continue
-                if kind == "in" and client.id == self.active:
-                    try:
-                        self.controls.set(int(msg.get("b", 0)) & BUTTON_MASK)
-                    except (TypeError, ValueError):
-                        pass
+                if not client.allow(time.monotonic()):
+                    if client.strikes > 5 * MSG_BURST:
+                        log.info("Player %s is flooding the controller; disconnecting", client.id[:6])
+                        break
+                    if kind != "in":
+                        continue
+                    # never drop button changes (a lost release would hold a button down)
+                if kind == "in":
+                    if client.id == self.active:
+                        b = msg.get("b", 0)
+                        if isinstance(b, int) and not isinstance(b, bool):
+                            self.controls.set(b & BUTTON_MASK)
                 elif kind == "start":
                     self.press_start(client.id)
                 elif kind == "leave":
@@ -500,10 +576,16 @@ class Hub:
                 elif kind == "ack":
                     self.last_result.pop(client.id, None)
                     self.push(client.id)
+                elif kind == "ping":
+                    ws.send_json({"t": "pong"})
         finally:
             if client and self.clients.get(client.id) is client:
                 del self.clients[client.id]
                 self.gone[client.id] = time.monotonic()
+                while len(self.gone) > MAX_GONE:
+                    oldest = next(iter(self.gone))
+                    del self.gone[oldest]
+                    self.last_result.pop(oldest, None)
                 if client.id == self.active:
                     self.controls.set(0)
 
@@ -526,19 +608,27 @@ class Hub:
 
         await self._update_server()
 
+        if live and not self._was_live and self.show_loaded:
+            self._request_reopen()   # the event stream reconnected: pixelplusd may have restarted
+        self._was_live = live
+
         changed = False
         if not live or now - self.status_at > STATUS_STALE:
             status = await self.loop.run_in_executor(None, self.api.player)
+            self._pixelplusd_seen(isinstance(status, dict))
             changed = self._set_player_status(status if isinstance(status, dict) else {"state": "unknown"})
 
         now = time.monotonic()
         if self.active and self.active not in self.clients:
             gone_at = self.gone.get(self.active, now)
-            if now - gone_at > ABANDON_AFTER and not self.stop_event.is_set():
-                log.info("Player left; ending their game early")
+            if now - gone_at > ABANDON_AFTER:
+                # (stop_event belongs to Mario games; it may still be set from an earlier game
+                # when the arcade runs, so it must not stop an arcade turn from ending)
                 if self.arcade_running():
+                    log.info("Player left; ending their arcade turn")
                     self.end_turn("You left the page.")
-                else:
+                elif not self.stop_event.is_set():
+                    log.info("Player left; ending their game early")
                     self.stop_game()
         for cid, t in list(self.gone.items()):
             if now - t > 300:
@@ -656,6 +746,10 @@ class Hub:
     def _matrix_busy(self):
         if self.game_running() or self.arcade_running():
             return "a game is on the matrix"
+        if self.active or self.offer:
+            # someone is about to play: an invite/test pattern would switch the overlay off
+            # under their game when it ends
+            return "a player is taking their turn"
         if self.busy_reason:
             return "the matrix is busy (%s)" % self.busy_reason
         return None
@@ -693,7 +787,7 @@ class Hub:
             return {"ok": False, "error": "games are turned off"}
         if self.cooldown_left() and not req.get("force"):
             return {"ok": False, "error": "cooldown: %d seconds left" % self.cooldown_left()}
-        url = str(req.get("url") or self.cfg.public_url).strip()
+        url = str(req.get("url") or self.cfg.public_url).strip()[:256]
         if not url:
             return {"ok": False, "error": "set the Public URL on the Games page"}
         if self.cfg.matrix is None:

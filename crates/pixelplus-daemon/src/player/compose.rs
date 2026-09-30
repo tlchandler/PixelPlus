@@ -4,16 +4,16 @@
 
 use super::types::TestRequest;
 use pixelplus_core::effects::{builtin_presets, EffectRenderer, TestPattern};
-use pixelplus_core::mapping::{prop_channels, OutputFrame, PropMap};
-use pixelplus_core::model::{EffectPreset, Prop, Show, Target};
+use pixelplus_core::mapping::{read_prop_channels, write_channel_runs, OutputFrame, PropMap};
+use pixelplus_core::model::{ChannelRun, EffectPreset, Prop, Show, Target};
 use std::ops::Range;
 
 /// One prop as a composition target.
 #[derive(Debug, Clone)]
 pub struct PropSlot {
     pub id: String,
-    /// Byte offset of the prop in channel space.
-    pub chan_start: usize,
+    /// Where the prop's pixels live in channel space (`Prop::channel_ranges`).
+    pub runs: Vec<ChannelRun>,
     /// `pixelCount × 3`.
     pub len: usize,
 }
@@ -22,7 +22,7 @@ impl PropSlot {
     pub fn of(prop: &Prop) -> Self {
         PropSlot {
             id: prop.id.clone(),
-            chan_start: prop.channel_start as usize,
+            runs: prop.channel_ranges().collect(),
             len: prop.pixel_count as usize * 3,
         }
     }
@@ -41,11 +41,7 @@ impl Sink<'_> {
     pub fn put(&mut self, slot: &PropSlot, px: &[u8]) {
         match self {
             Sink::Chan(chan) => {
-                let start = slot.chan_start.min(chan.len());
-                let end = (slot.chan_start + slot.len.min(px.len())).min(chan.len());
-                if end > start {
-                    chan[start..end].copy_from_slice(&px[..end - start]);
-                }
+                write_channel_runs(slot.runs.iter().copied(), &px[..slot.len.min(px.len())], chan);
             }
             Sink::Frame(frame, map) => {
                 map.apply_overlay(&slot.id, &px[..slot.len.min(px.len())], frame);
@@ -250,8 +246,8 @@ pub fn preview_frame(
         let n = p.pixel_count as usize * 3;
         let start = out.len();
         if let Some(chan) = chan {
-            out.extend_from_slice(prop_channels(p, chan));
             out.resize(start + n, 0);
+            read_prop_channels(p, chan, &mut out[start..start + n]);
         } else {
             out.resize(start + n, 0);
             if let Some((frame, map)) = local {
@@ -278,6 +274,7 @@ mod tests {
             xlights_model: None,
             channel_start: chan,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: vec![PropSegment {
                 node_id: "n1".into(),
                 output: out,
@@ -331,6 +328,20 @@ mod tests {
         let mut frame = OutputFrame::new(map.pixels_per_output());
         Sink::Frame(&mut frame, &map).put(&slot, &[9; 9]);
         assert_eq!(frame.output(1), &[9; 9]);
+
+        // xLights individual start channels: pixel 0 at byte 12, pixels 1-2 at byte 3;
+        // the preview reads them back in prop order.
+        let mut s = s;
+        s.props[1].channel_runs = Some(vec![
+            ChannelRun { prop_offset: 0, channel_start: 12, pixel_count: 1 },
+            ChannelRun { prop_offset: 1, channel_start: 3, pixel_count: 2 },
+        ]);
+        let slot = PropSlot::of(&s.props[1]);
+        let mut chan = vec![0u8; 15];
+        Sink::Chan(&mut chan).put(&slot, &[1, 1, 1, 2, 2, 2, 3, 3, 3]);
+        assert_eq!(chan, [0, 0, 0, 2, 2, 2, 3, 3, 3, 0, 0, 0, 1, 1, 1]);
+        let pv = preview_frame(&s, 1, 1.0, Some(&chan), None);
+        assert_eq!(&pv[5 + 6..], &[1, 1, 1, 2, 2, 2, 3, 3, 3]);
     }
 
     #[test]

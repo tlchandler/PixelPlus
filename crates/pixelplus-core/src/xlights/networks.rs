@@ -89,6 +89,15 @@ impl Networks {
                     let name = attr(child, "Name")
                         .map(str::to_string)
                         .unwrap_or_else(|| format!("Controller {}", controllers.len() + 1));
+                    // xLights ignores controllers of types it does not know (their
+                    // outputs take no channels).
+                    let kind = child.attribute("Type").unwrap_or("");
+                    if !CONTROLLER_TYPES.contains(&kind) {
+                        warnings.push(format!(
+                            "controller '{name}' in xlights_networks.xml has unknown type '{kind}'; ignored like xLights does"
+                        ));
+                        continue;
+                    }
                     let ip = attr(child, "IP").map(str::to_string);
                     let active = match attr(child, "ActiveState") {
                         Some(s) => !s.eq_ignore_ascii_case("inactive"),
@@ -100,7 +109,7 @@ impl Networks {
                         .children()
                         .filter(|c| c.is_element() && c.tag_name().name() == "network")
                     {
-                        outputs.extend(parse_outputs(net, ip.as_deref(), &mut next));
+                        outputs.extend(parse_outputs(net, ip.as_deref(), &mut next, warnings));
                     }
                     if outputs.is_empty() {
                         warnings.push(format!(
@@ -112,7 +121,7 @@ impl Networks {
                         .or_else(|| outputs.first().map(|o| o.kind.clone()));
                     controllers.push(NetController {
                         name,
-                        kind: attr(child, "Type").unwrap_or("Ethernet").to_string(),
+                        kind: kind.to_string(),
                         ip,
                         protocol,
                         vendor: attr(child, "Vendor").map(str::to_string),
@@ -127,7 +136,10 @@ impl Networks {
                     // Pre-2020 files list outputs directly; treat each as a controller.
                     legacy_index += 1;
                     let start = next;
-                    let outputs = parse_outputs(child, None, &mut next);
+                    let outputs = parse_outputs(child, None, &mut next, warnings);
+                    if outputs.is_empty() {
+                        continue;
+                    }
                     let first = outputs.first().cloned();
                     let name = attr(child, "Description")
                         .map(str::to_string)
@@ -203,8 +215,53 @@ impl Networks {
     }
 }
 
-fn parse_outputs(net: Node, controller_ip: Option<&str>, next: &mut u32) -> Vec<NetOutput> {
-    let kind = attr(net, "NetworkType").unwrap_or("NULL").to_string();
+/// Controller `Type`s xLights loads (`Controller::Create`).
+const CONTROLLER_TYPES: &[&str] = &["Null", "Ethernet", "Serial"];
+
+/// Output `NetworkType`s xLights loads (`Output::Create`).
+const OUTPUT_TYPES: &[&str] = &[
+    "E131",
+    "ZCPP",
+    "NULL",
+    "ArtNet",
+    "KINET",
+    "DDP",
+    "DMX",
+    "xxx Serial",
+    "OPC",
+    "Pixelnet",
+    "LOR",
+    "LOR Optimised",
+    "D-Light",
+    "Renard",
+    "OpenDMX",
+    "Pixelnet-Open",
+    "Generic Serial",
+    "xxx Ethernet",
+    "Twinkly",
+];
+
+fn parse_outputs(
+    net: Node,
+    controller_ip: Option<&str>,
+    next: &mut u32,
+    warnings: &mut Vec<String>,
+) -> Vec<NetOutput> {
+    let raw = net.attribute("NetworkType").unwrap_or("");
+    // xLights maps old "Sy... Ethernet" names to "xxx Ethernet".
+    let known = if raw.starts_with("Sy") && raw.ends_with(" Ethernet") {
+        "xxx Ethernet"
+    } else {
+        raw
+    };
+    if !OUTPUT_TYPES.contains(&known) {
+        // xLights drops outputs it does not recognise; they take no channels.
+        warnings.push(format!(
+            "output type '{raw}' in xlights_networks.xml is unknown; ignored like xLights does"
+        ));
+        return Vec::new();
+    }
+    let kind = known.to_string();
     let channels = attr_u32(net, "MaxChannels").unwrap_or(0);
     // xLights reads `BaudRate` with a default of 1.
     let universe = attr_u32(net, "BaudRate").unwrap_or(1);
@@ -279,5 +336,30 @@ mod tests {
         assert_eq!(n.controllers[0].channels, 1536);
         assert_eq!(n.universe_channel(None, 3, 1), Some(1025));
         assert!(Networks::parse("<Networks><oops", &mut w).is_err());
+    }
+
+    #[test]
+    fn unknown_controller_and_output_types_take_no_channels() {
+        let mut w = vec![];
+        let n = Networks::parse(
+            r#"<Networks>
+              <Controller Name="A" Type="Ethernet"><network NetworkType="DDP" MaxChannels="100"/></Controller>
+              <Controller Name="Future" Type="Hologram"><network NetworkType="DDP" MaxChannels="100"/></Controller>
+              <Controller Name="NoType"><network NetworkType="DDP" MaxChannels="100"/></Controller>
+              <Controller Name="B" Type="Serial">
+                <network NetworkType="Warp" MaxChannels="512"/>
+                <network NetworkType="DMX" MaxChannels="512"/>
+              </Controller>
+              <Controller Name="C" Type="Ethernet"><network NetworkType="SyncLink Ethernet" MaxChannels="10"/></Controller>
+            </Networks>"#,
+            &mut w,
+        )
+        .unwrap();
+        let names: Vec<&str> = n.controllers.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["A", "B", "C"]);
+        assert_eq!((n.controllers[1].start, n.controllers[1].channels), (101, 512));
+        assert_eq!(n.controllers[2].outputs[0].kind, "xxx Ethernet");
+        let w = w.join("\n");
+        assert!(w.contains("'Future'") && w.contains("'NoType'") && w.contains("'Warp'"), "{w}");
     }
 }

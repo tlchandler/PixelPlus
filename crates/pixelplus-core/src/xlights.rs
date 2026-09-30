@@ -10,7 +10,11 @@
 //!   `DisplayAs` parameters, `channelStart` from its `StartChannel` (all xLights forms:
 //!   absolute, `!Controller:ch`, `@Model:ch`, `>Model:ch`, `#universe:ch`,
 //!   `#ip:universe:ch`), kind, preview geometry and — for matrices, custom models and
-//!   flat trees — a [`MatrixInfo`](crate::model::MatrixInfo) grid map.
+//!   flat trees — a [`MatrixInfo`](crate::model::MatrixInfo) grid map. Individual
+//!   per-string start channels (`Advanced="1"`, `StringN`) become
+//!   [`Prop::channel_runs`] following xLights' per-model node numbering.
+//! * Inactive models (`Active="0"`) are skipped (xLights never outputs them) but still
+//!   count for start-channel chaining.
 //! * `ControllerConnection` ports become [`PropSegment`]s: model port → node output,
 //!   models chained on one port get consecutive pixels in start-channel order (after
 //!   start/end null pixels), multi-string models continue on the following ports, and
@@ -39,8 +43,8 @@ use roxmltree::{Document, Node};
 use serde::{Deserialize, Serialize};
 
 use crate::layout;
-use crate::model::{new_id, Prop, PropGroup, PropLayout, PropSegment, Show};
-use geometry::{shape, strtol, Attrs, Placement, Shape};
+use crate::model::{new_id, ChannelRun, Prop, PropGroup, PropLayout, PropSegment, Show};
+use geometry::{shape, strtol, Attrs, Placement, Shape, StringChannels};
 pub use networks::{NetController, NetOutput, Networks};
 
 /// Errors that prevent an import altogether (individual model problems are warnings).
@@ -116,11 +120,23 @@ struct XModel<'a, 'i> {
     conn: Conn,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+/// Resolved channels of one model (1-based absolute channel numbers).
+#[derive(Clone, Debug, PartialEq)]
+struct ModelChannels {
+    /// Lowest channel of any node (xLights `GetFirstChannel() + 1`).
+    first: u32,
+    /// One past the highest channel (xLights `GetLastChannel() + 2`).
+    end: u64,
+    /// `(first node, node count, start channel)` per run when the model's individual
+    /// start channels ("Advanced") do not form one contiguous block.
+    runs: Option<Vec<(u32, u32, u32)>>,
+}
+
+#[derive(Clone, PartialEq)]
 enum Resolve {
     Pending,
     Visiting,
-    Done(Option<u32>),
+    Done(Option<ModelChannels>),
 }
 
 struct Resolver<'m, 'a, 'i> {
@@ -131,58 +147,189 @@ struct Resolver<'m, 'a, 'i> {
     warnings: Vec<String>,
 }
 
+/// 0-based first node of each of a model's `strings` logical strings (xLights
+/// `stringStartChan` order): the model's individual start nodes, or an even split.
+fn string_first_nodes(shape: &Shape, strings: u32) -> Vec<u32> {
+    let n = shape.nodes;
+    match &shape.string_start_nodes {
+        Some(v) if v.len() == strings as usize => {
+            v.iter().map(|&s| s.saturating_sub(1).min(n)).collect()
+        }
+        _ if n % strings == 0 => (0..strings).map(|s| s * (n / strings)).collect(),
+        // xLights' ComputeStringStartNode, in single precision like xLights.
+        _ => (0..strings)
+            .map(|s| ((s as f32 * (n as f32 / strings as f32) + 1.0) as u32 - 1).min(n))
+            .collect(),
+    }
+}
+
 impl Resolver<'_, '_, '_> {
-    /// 1-based absolute start channel of model `i`.
+    /// `(first, end)` channels of model `i` (see [`ModelChannels`]); `None` if its start
+    /// channel cannot be resolved.
+    fn extent(&mut self, i: usize) -> Option<(u32, u64)> {
+        self.resolve(i);
+        match &self.state[i] {
+            Resolve::Done(Some(c)) => Some((c.first, c.end)),
+            _ => None,
+        }
+    }
+
+    /// Resolved channels of model `i`, taking them out of the resolver.
+    fn take(&mut self, i: usize) -> Option<ModelChannels> {
+        self.resolve(i);
+        match std::mem::replace(&mut self.state[i], Resolve::Done(None)) {
+            Resolve::Done(v) => v,
+            _ => None,
+        }
+    }
+
+    /// Resolve model `i` (and everything it refers to).
     ///
     /// Resolution is iterative: xLights' default for a new model is `>Previous:1`, so
     /// real layouts contain chains thousands of models long, which must not grow the
     /// call stack.
-    fn start(&mut self, i: usize) -> Option<u32> {
+    fn resolve(&mut self, i: usize) {
         match self.state[i] {
-            Resolve::Done(v) => return v,
+            Resolve::Done(_) => return,
             Resolve::Visiting => {
                 self.warnings.push(format!(
                     "'{}': start channel refers back to itself through other models",
                     self.models[i].name
                 ));
-                return None;
+                return;
             }
             Resolve::Pending => {}
         }
         self.state[i] = Resolve::Visiting;
         let mut stack = vec![i];
         while let Some(&top) = stack.last() {
-            if let Some(dep) = self.dependency(top) {
-                if self.state[dep] == Resolve::Pending {
-                    self.state[dep] = Resolve::Visiting;
-                    stack.push(dep);
-                    continue;
-                }
+            let pending = self
+                .dependencies(top)
+                .into_iter()
+                .find(|&d| self.state[d] == Resolve::Pending);
+            if let Some(dep) = pending {
+                self.state[dep] = Resolve::Visiting;
+                stack.push(dep);
+                continue;
             }
-            let expr = self.start_expr(top);
-            let v = self.eval(top, &expr);
+            let v = self.compute(top);
             self.state[top] = Resolve::Done(v);
             stack.pop();
         }
-        match self.state[i] {
-            Resolve::Done(v) => v,
-            _ => None,
+    }
+
+    /// Model `i` has individual per-string start channels that affect its nodes.
+    fn advanced(&self, i: usize) -> bool {
+        let m = &self.models[i];
+        Attrs(m.node).int("Advanced").unwrap_or(0) != 0 && m.shape.skip.is_none()
+    }
+
+    /// Start channel expressions of model `i`: `StartChannel`, then `String1..N` for
+    /// models with individual start channels.
+    fn exprs(&self, i: usize) -> Vec<Option<&str>> {
+        let a = Attrs(self.models[i].node);
+        let mut v = vec![Some(a.str("StartChannel").unwrap_or("1"))];
+        if self.advanced(i) {
+            let strings = self.models[i].shape.strings.max(1);
+            v.extend((1..=strings).map(|s| a.str(&format!("String{s}"))));
         }
+        v
     }
 
-    fn start_expr(&self, i: usize) -> String {
-        Attrs(self.models[i].node)
-            .str("StartChannel")
-            .unwrap_or("1")
-            .to_string()
+    /// Models whose channels model `i`'s start channel expressions refer to.
+    fn dependencies(&self, i: usize) -> Vec<usize> {
+        self.exprs(i)
+            .into_iter()
+            .flatten()
+            .filter_map(|expr| {
+                let (head, _) = expr.trim().split_once(':')?;
+                let other = head.strip_prefix(['@', '<', '>'])?.trim();
+                self.by_name.get(other).copied().filter(|&j| j != i)
+            })
+            .collect()
     }
 
-    /// The model whose start channel model `i`'s start channel is relative to.
-    fn dependency(&self, i: usize) -> Option<usize> {
-        let expr = Attrs(self.models[i].node).str("StartChannel")?;
-        let (head, _) = expr.trim().split_once(':')?;
-        let other = head.strip_prefix(['@', '<', '>'])?.trim();
-        self.by_name.get(other).copied().filter(|&j| j != i)
+    /// Evaluate model `i`'s channels (its dependencies are already resolved).
+    fn compute(&mut self, i: usize) -> Option<ModelChannels> {
+        let exprs: Vec<Option<String>> = self
+            .exprs(i)
+            .into_iter()
+            .map(|e| e.map(str::to_string))
+            .collect();
+        let start = self.eval(i, exprs[0].as_deref().unwrap_or("1"))?;
+        let shape = &self.models[i].shape;
+        let contiguous = ModelChannels {
+            first: start,
+            end: start as u64 + shape.channels(),
+            runs: None,
+        };
+        if !self.advanced(i) || shape.nodes == 0 {
+            return Some(contiguous);
+        }
+        // Individual start channels (xLights `SetStringStartChannels`): string k starts
+        // at its own expression; a missing one keeps its contiguous position.
+        let n = shape.nodes;
+        let strings = shape.strings.clamp(1, n);
+        let mode = shape.string_channels;
+        let firsts = string_first_nodes(shape, strings);
+        let wanted = match mode {
+            StringChannels::FromFirst => 1,
+            _ => strings as usize,
+        };
+        let mut starts = Vec::with_capacity(wanted);
+        let mut missing = Vec::new();
+        for (k, &first_node) in firsts.iter().enumerate().take(wanted) {
+            let nominal = start.saturating_add(first_node.saturating_mul(3));
+            let v = match exprs.get(k + 1).and_then(|e| e.as_deref()) {
+                Some(e) => self.eval(i, e).unwrap_or(nominal),
+                None => {
+                    missing.push(format!("String{}", k + 1));
+                    nominal
+                }
+            };
+            starts.push(v);
+        }
+        if !missing.is_empty() {
+            self.warnings.push(format!(
+                "'{}' has individual start channels but no {}; using the contiguous position",
+                self.models[i].name,
+                missing.join(", ")
+            ));
+        }
+        let mut runs: Vec<(u32, u32, u32)> = match mode {
+            StringChannels::FromFirst => vec![(0, n, starts[0])],
+            StringChannels::FromLowest => {
+                vec![(0, n, starts.iter().copied().min().unwrap_or(start))]
+            }
+            StringChannels::PerString => (0..strings as usize)
+                .filter_map(|k| {
+                    let a = firsts[k];
+                    let b = firsts.get(k + 1).copied().unwrap_or(n).min(n);
+                    (b > a).then(|| (a, b - a, starts[k]))
+                })
+                .collect(),
+        };
+        // Merge strings that continue each other.
+        runs.dedup_by(|next, prev| {
+            let joins = prev.0 + prev.1 == next.0
+                && prev.2 as u64 + 3 * prev.1 as u64 == next.2 as u64;
+            if joins {
+                prev.1 += next.1;
+            }
+            joins
+        });
+        let first = runs.iter().map(|r| r.2).min().unwrap_or(start);
+        let end = runs
+            .iter()
+            .map(|r| r.2 as u64 + 3 * r.1 as u64)
+            .max()
+            .unwrap_or(contiguous.end);
+        let single = matches!(runs.as_slice(), [(0, c, _)] if *c == n);
+        Some(ModelChannels {
+            first,
+            end,
+            runs: (!single).then_some(runs),
+        })
     }
 
     fn eval(&mut self, self_idx: usize, expr: &str) -> Option<u32> {
@@ -211,17 +358,16 @@ impl Resolver<'_, '_, '_> {
                 if j == self_idx {
                     return fail(&mut self.warnings, "refers to itself".into());
                 }
-                let Some(s) = self.start(j) else {
+                let Some((first, end)) = self.extent(j) else {
                     return fail(
                         &mut self.warnings,
                         format!("'{other}' has no start channel"),
                     );
                 };
                 if c == '@' {
-                    (s as i64 - 1).saturating_add(ch)
+                    (first as i64 - 1).saturating_add(ch)
                 } else {
-                    let chans = self.models[j].shape.channels() as i64;
-                    (s as i64 + chans - 1).saturating_add(ch)
+                    (end.min(i64::MAX as u64) as i64 - 1).saturating_add(ch)
                 }
             }
             Some('!') => {
@@ -558,24 +704,10 @@ pub fn import_preview(
         state: vec![Resolve::Pending; models.len()],
         warnings: Vec::new(),
     };
-    let starts: Vec<Option<u32>> = (0..models.len()).map(|i| resolver.start(i)).collect();
-    // Individual per-string start channels ("Advanced").
-    let mut string_starts: Vec<Option<Vec<Option<u32>>>> = Vec::with_capacity(models.len());
-    for (i, m) in models.iter().enumerate() {
-        let a = Attrs(m.node);
-        if a.int("Advanced").unwrap_or(0) != 0 && m.shape.skip.is_none() {
-            let n = m.shape.physical_strings;
-            let v = (0..n)
-                .map(|s| match a.str(&format!("String{}", s + 1)) {
-                    Some(expr) => resolver.eval(i, expr),
-                    None => None,
-                })
-                .collect();
-            string_starts.push(Some(v));
-        } else {
-            string_starts.push(None);
-        }
+    for i in 0..models.len() {
+        resolver.resolve(i);
     }
+    let chans: Vec<Option<ModelChannels>> = (0..models.len()).map(|i| resolver.take(i)).collect();
     warnings.append(&mut resolver.warnings);
 
     // ---- props --------------------------------------------------------------------
@@ -590,6 +722,15 @@ pub fn import_preview(
     let mut any_position = false;
     for (i, m) in models.iter().enumerate() {
         let a = Attrs(m.node);
+        if a.int("Active") == Some(0) {
+            // xLights neither renders nor outputs inactive models (their channels
+            // still count for chaining).
+            warnings.push(format!(
+                "skipped '{}': it is inactive in xLights, so xLights never lights it",
+                m.name
+            ));
+            continue;
+        }
         if let Some(reason) = &m.shape.skip {
             warnings.push(format!("skipped '{}': {reason}", m.name));
             continue;
@@ -601,7 +742,7 @@ pub fn import_preview(
             ));
             continue;
         }
-        let Some(start) = starts[i] else {
+        let Some(mc) = &chans[i] else {
             continue; // warning already recorded
         };
         if m.shape.nodes == 0 {
@@ -631,8 +772,17 @@ pub fn import_preview(
             kind: m.shape.kind,
             pixel_count: m.shape.nodes,
             xlights_model: Some(m.name.clone()),
-            channel_start: start - 1,
+            channel_start: mc.first - 1,
             channels_per_pixel: 3,
+            channel_runs: mc.runs.as_ref().map(|runs| {
+                runs.iter()
+                    .map(|&(node, count, ch)| ChannelRun {
+                        prop_offset: node,
+                        channel_start: ch - 1,
+                        pixel_count: count,
+                    })
+                    .collect()
+            }),
             segments: Vec::new(),
             group_ids: Vec::new(),
             layout,
@@ -652,7 +802,7 @@ pub fn import_preview(
     for (pi, &mi) in prop_model.iter().enumerate() {
         let m = &models[mi];
         let a = Attrs(m.node);
-        let start = starts[mi].unwrap_or(1);
+        let (start, chan_end) = chans[mi].as_ref().map_or((1, 1), |c| (c.first, c.end));
         let ctrl = a
             .str("Controller")
             .filter(|c| !NO_CONTROLLER.iter().any(|n| n.eq_ignore_ascii_case(c)))
@@ -681,7 +831,7 @@ pub fn import_preview(
             .map(|c| c.name.clone())
             .unwrap_or(ctrl);
         if let Some(c) = nets.as_ref().and_then(|n| n.controller(&ctrl)) {
-            let end = start as u64 + m.shape.channels() - 1;
+            let end = chan_end.saturating_sub(1);
             if (start < c.start || end > c.end() as u64) && c.channels > 0 {
                 warnings.push(format!(
                     "'{}' (channels {start}-{end}) extends outside controller '{}' (channels {}-{})",
@@ -717,7 +867,6 @@ pub fn import_preview(
                 .map(|s| (s as f32 * (n as f32 / strings as f32) + 1.0) as u32)
                 .collect(),
         };
-        let mut non_contiguous = false;
         for s in 0..strings {
             let first = starts_1[s as usize].saturating_sub(1).min(n);
             let next = if s + 1 < strings {
@@ -736,14 +885,10 @@ pub fn import_preview(
                 continue;
             }
             let (port, sr) = port_sr(&m.conn, s);
-            let nominal = start as u64 + 3 * first as u64;
-            let start_ch = match string_starts[mi].as_ref().and_then(|v| v[s as usize]) {
-                Some(v) => {
-                    non_contiguous |= v as u64 != nominal;
-                    v as u64
-                }
-                None => nominal,
-            };
+            // Absolute channel of the string's first pixel (orders chained models).
+            let start_ch = props[pi]
+                .channel_of_pixel(first)
+                .map_or(start as u64 + 3 * first as u64, |b| b as u64 + 1);
             let entry = controllers.entry(ctrl.clone()).or_default();
             entry.0 = entry.0.max(port);
             entry.1.insert(pi);
@@ -757,12 +902,6 @@ pub fn import_preview(
                 end_nulls: m.conn.end_nulls,
                 reverse: m.conn.reverse,
             });
-        }
-        if non_contiguous {
-            warnings.push(format!(
-                "'{}' uses individual start channels that are not contiguous; its pixels are mapped as one continuous block",
-                m.name
-            ));
         }
     }
     for ((ctrl, port), mut entries) in ports {
@@ -1041,6 +1180,7 @@ pub fn apply_import(
                 e.kind = p.kind;
                 e.pixel_count = p.pixel_count;
                 e.channel_start = p.channel_start;
+                e.channel_runs = p.channel_runs.clone();
                 e.channels_per_pixel = p.channels_per_pixel;
                 e.xlights_model = p.xlights_model.clone();
                 e.matrix = p.matrix.clone();
@@ -1316,5 +1456,45 @@ mod tests {
         assert_eq!(p.props[1].segments[0].start_pixel, 10);
         assert_eq!(p.controllers[0].name, "C");
         assert_eq!(p.controllers[0].ip, None);
+    }
+
+    fn runs(p: &Prop) -> Option<Vec<(u32, u32, u32)>> {
+        p.channel_runs.as_ref().map(|r| {
+            r.iter()
+                .map(|r| (r.prop_offset, r.channel_start, r.pixel_count))
+                .collect()
+        })
+    }
+
+    #[test]
+    fn individual_start_channels_per_model_type() {
+        let xml = r#"<xrgb><models>
+          <model name="M" DisplayAs="Horiz Matrix" NumStrings="2" NodesPerString="6" StrandsPerString="2" Advanced="1" StartChannel="1" String1="1" String2="100"/>
+          <model name="Sp" DisplayAs="Spinner" NumStrings="2" FoldCount="2" NodesPerArm="3" Advanced="1" StartChannel="200" String1="300" String2="200"/>
+          <model name="P" DisplayAs="Poly Line" NodesPerString="10" PolyStrings="2" PolyNode1="1" PolyNode2="4" DropPattern="1" NumPoints="2" PointData="0,0,0,10,0,0" Advanced="1" StartChannel="500" String1="500" String2="600"/>
+          <model name="L" DisplayAs="Arches" NumArches="2" NodesPerArch="10" LayerSizes="6,4" Advanced="1" StartChannel="700" String1="710" String2="900"/>
+          <model name="Gap" DisplayAs="Single Line" NumStrings="3" NodesPerString="2" Advanced="1" StartChannel="1000" String1="1000" String3="&gt;Gap:1"/>
+          <model name="Plain" DisplayAs="Single Line" NumStrings="2" NodesPerString="2" Advanced="0" StartChannel="1100" String1="5" String2="9"/>
+        </models></xrgb>"#;
+        let p = import_preview(xml, None, &Show::default()).unwrap();
+        let get = |n: &str| p.props.iter().find(|p| p.name == n).unwrap();
+        // Matrix: string 2 (both of its strands) moves as a block.
+        assert_eq!(runs(get("M")), Some(vec![(0, 0, 6), (6, 99, 6)]));
+        // Spinner: string 1 after string 2; channelStart is the lowest.
+        let sp = get("Sp");
+        assert_eq!(sp.channel_start, 199);
+        assert_eq!(runs(sp), Some(vec![(0, 299, sp.pixel_count / 2), (sp.pixel_count / 2, 199, sp.pixel_count / 2)]));
+        // Poly line strings split at the individual start nodes.
+        assert_eq!(runs(get("P")), Some(vec![(0, 499, 3), (3, 599, 7)]));
+        // Layered arch: every node from string 1.
+        assert_eq!((get("L").channel_start, runs(get("L"))), (709, None));
+        // Missing String2 keeps its contiguous position (merged into string 1); String3
+        // referring to its own model is an unresolvable cycle and falls back too.
+        let gap = get("Gap");
+        assert_eq!((gap.channel_start, runs(gap)), (999, None));
+        assert!(p.warnings.iter().any(|w| w.contains("'Gap' has individual start channels but no String2")));
+        assert!(p.warnings.iter().any(|w| w.contains("'Gap'") && w.contains("refers to itself")));
+        // Without Advanced="1", String attributes are ignored.
+        assert_eq!((get("Plain").channel_start, runs(get("Plain"))), (1099, None));
     }
 }

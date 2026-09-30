@@ -14,7 +14,7 @@ import time
 import numpy as np
 
 from . import config
-from .display import Scaler, frame_to_rgb
+from .display import Scaler
 from .libretro import Core, find_core
 
 FRAMES = 600
@@ -52,7 +52,7 @@ def main(argv):
     t = time.perf_counter()
     for _ in range(FRAMES // 4):
         core.run()
-        img = scaler.scale(frame_to_rgb(core.frame))
+        img = scaler.scale_frame(core.frame)
         _ = np.ascontiguousarray(img).tobytes()
     emu_plus_out = (time.perf_counter() - t) / (FRAMES // 4)
     out = max(0.0, emu_plus_out - emu)

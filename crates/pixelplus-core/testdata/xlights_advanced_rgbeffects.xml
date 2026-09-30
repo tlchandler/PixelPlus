@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xrgb>
+  <models>
+    <model name="Arches" DisplayAs="Arches" Advanced="1" Angle="0" Antialias="1" Arc="180" Controller="Porch" Dir="L" Height="1.000000" LayoutGroup="Default" LightsPerNode="1" NodesPerArch="10" NumArches="3" PixelSize="2" SourceVersion="2025.12" StartChannel="!Porch:1" StartSide="B" String1="!Porch:1" String2="!Porch:301" String3="!Porch:31" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="-500.000000" WorldPosY="0.000000" WorldPosZ="0.000000" X2="300.000000" Y2="0.000000" Z2="0.000000">
+      <ControllerConnection Port="1" Protocol="WS2811"/>
+    </model>
+    <model name="Canes" DisplayAs="Candy Canes" Advanced="1" AlternateNodes="false" Angle="0" Antialias="1" CandyCaneHeight="1.000000" CandyCaneReverse="false" CandyCaneSticks="false" Controller="Porch" Dir="L" Height="1.000000" LayoutGroup="Default" LightsPerNode="1" ModelChain="&gt;Arches" NodesPerCane="8" NumCanes="2" PixelSize="2" SourceVersion="2025.12" StartChannel="&gt;Arches:1" StartSide="B" String1="&gt;Arches:1" String2="2000" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="-500.000000" WorldPosY="-200.000000" WorldPosZ="0.000000" X2="260.000000" Y2="0.000000" Z2="0.000000">
+      <ControllerConnection Port="2" Protocol="WS2811"/>
+    </model>
+    <model name="After Canes" DisplayAs="Single Line" Antialias="1" Controller="Porch" Dir="L" LayoutGroup="Default" LightsPerNode="1" ModelChain="&gt;Canes" NodesPerString="5" NumStrings="1" PixelSize="2" SourceVersion="2025.12" StartChannel="&gt;Canes:1" StartSide="B" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="0.000000" WorldPosY="-300.000000" WorldPosZ="0.000000" X2="100.000000" Y2="0.000000" Z2="0.000000">
+      <ControllerConnection Port="3" Protocol="WS2811"/>
+    </model>
+    <model name="Icicles" DisplayAs="Icicles" Advanced="1" Antialias="1" Controller="Porch" Dir="L" DropPattern="3,4,5" LayoutGroup="Default" LightsPerNode="1" NodesPerString="6" NumStrings="2" PixelSize="2" SourceVersion="2025.12" StartChannel="2500" StartSide="B" String1="2500" String2="2900" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="0.000000" WorldPosY="300.000000" WorldPosZ="0.000000" X2="100.000000" Y2="0.000000" Z2="0.000000" Height="1.000000">
+      <ControllerConnection Port="3" Protocol="WS2811"/>
+    </model>
+    <model name="Snowflake" DisplayAs="Custom" Advanced="1" Antialias="1" CustomHeight="2" CustomStrings="2" CustomWidth="2" Dir="L" LayoutGroup="Default" NodeStart1="1" NodeStart2="3" PixelSize="2" SourceVersion="2025.12" StartChannel="2800" StartSide="B" String1="2800" String2="2700" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="200.000000" WorldPosY="300.000000" WorldPosZ="0.000000" ScaleX="10.000000" ScaleY="10.000000" ScaleZ="1.000000" CustomModel="1,2;4,3"/>
+    <model name="Off Arch" DisplayAs="Arches" Active="0" Antialias="1" Arc="180" Controller="Porch" Dir="L" LayoutGroup="Default" LightsPerNode="1" NodesPerArch="5" NumArches="1" PixelSize="2" SourceVersion="2025.12" StartChannel="!Porch:2901" StartSide="B" StringType="RGB Nodes" versionNumber="8" WorldPosX="400.000000" WorldPosY="0.000000" WorldPosZ="0.000000" X2="100.000000" Y2="0.000000" Z2="0.000000">
+      <ControllerConnection Port="4" Protocol="WS2811"/>
+    </model>
+    <model name="After Off" DisplayAs="Single Line" Antialias="1" Dir="L" LayoutGroup="Default" LightsPerNode="1" ModelChain="&gt;Off Arch" NodesPerString="2" NumStrings="1" PixelSize="2" SourceVersion="2025.12" StartChannel="&gt;Off Arch:1" StartSide="B" StringType="RGB Nodes" versionNumber="8" WorldPosX="400.000000" WorldPosY="-100.000000" WorldPosZ="0.000000" X2="100.000000" Y2="0.000000" Z2="0.000000"/>
+    <model name="Tree" DisplayAs="Tree 360" Advanced="1" AlternateNodes="false" Antialias="1" Controller="Yard" Dir="L" LayoutGroup="Default" NodesPerString="10" NumStrings="4" PixelSize="2" SourceVersion="2025.12" StartChannel="#10.0.0.30:1:1" StartSide="B" StrandDir="Vertical" StrandsPerString="1" String1="#10.0.0.30:1:1" String2="!Yard:31" String3="#10.0.0.30:2:1" String4="#10.0.0.30:4:1" StringType="RGB Nodes" TreeBottomTopRatio="6.000000" TreeRotation="3.000000" TreeSpiralRotations="0.000000" TreeType="0" versionNumber="8" WorldPosX="0.000000" WorldPosY="0.000000" WorldPosZ="0.000000" ScaleX="10.000000" ScaleY="10.000000" ScaleZ="1.000000">
+      <ControllerConnection Port="1" Protocol="WS2811"/>
+    </model>
+  </models>
+  <modelGroups>
+    <modelGroup name="Everything" models="Arches,Canes,Off Arch,Tree" layout="minimalGrid" GridSize="400" LayoutGroup="Default"/>
+  </modelGroups>
+</xrgb>

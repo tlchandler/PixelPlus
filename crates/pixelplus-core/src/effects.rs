@@ -8,7 +8,8 @@
 //!
 //! let prop = Prop {
 //!     id: "arch1".into(), name: "Arch".into(), kind: PropKind::Arch, pixel_count: 50,
-//!     xlights_model: None, channel_start: 0, channels_per_pixel: 3, segments: vec![],
+//!     xlights_model: None, channel_start: 0, channels_per_pixel: 3, channel_runs: None,
+//!     segments: vec![],
 //!     group_ids: vec![], layout: None, matrix: None, color: None,
 //!     max_milliamps_per_pixel: None, notes: None,
 //! };
@@ -903,6 +904,7 @@ mod tests {
             xlights_model: None,
             channel_start: 0,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: vec![],
             group_ids: vec![],
             layout: None,

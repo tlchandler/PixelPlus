@@ -67,7 +67,7 @@
       radial-gradient(rgba(245,165,36,.06) 1px, transparent 1.2px) 0 0 / 6px 6px,
       var(--screen);
     color: var(--screen-text); border-radius: 12px;
-    border: 1px solid var(--shell-edge); padding: 12px 22px; flex: 0 0 auto;
+    border: 1px solid var(--shell-edge); padding: 12px 48px; flex: 0 0 auto;  /* room for the full-screen button */
     display: flex; flex-direction: column; justify-content: center; align-items: center;
     text-align: center; font-family: var(--mono); font-weight: 700;
     letter-spacing: .06em; box-shadow: inset 0 0 18px rgba(0,0,0,.8);
@@ -155,7 +155,6 @@
   }
   .conn { position: fixed; left: 0; right: 0; top: 0; z-index: 10; text-align: center;
     font: 600 13px/1.4 var(--font); background: var(--red); color: #fff; padding: 6px 12px; display: none; }
-  .conn.replaced { background: var(--amber); color: #1a1204; cursor: pointer; padding: 10px 12px; font-size: 15px; }
   /* Full screen: a small button in the top-right corner of the controller's frame. It sits outside
      .pad so the pad's touch handling never swallows the tap. */
   .fs { position: fixed; z-index: 5; top: max(12px, env(safe-area-inset-top));
@@ -256,6 +255,7 @@
   }
 
   function render(s) {
+    var was = phase;
     phase = s.phase;
     startWrap.className = "ssbtn" + (wantsStart() ? " start-hint" : "");
     switch (s.phase) {
@@ -277,7 +277,7 @@
       case "watching":
         setScreen("SOMEONE IS PLAYING", "Press START to get in line" + (s.remaining ? " (" + s.remaining + "s left)" : ""), false); break;
       case "yourturn":
-        buzz(200);
+        if (was !== "yourturn") buzz([200, 100, 200]);   // once, not on every countdown update
         setScreen("YOUR TURN! PRESS START", "Hurry: " + (s.timeout || 0) + " seconds", true); break;
       case "starting":
         setScreen("WORLD " + (s.level || ""), "Get ready... look at the lights!", true); break;
@@ -294,16 +294,24 @@
 
   var conn = document.getElementById("conn");
   var replaced = false;   // this player opened the page somewhere else; wait for a tap here
+  var timer = null;       // pending reconnect
+  var heard = 0;          // when the server last said anything
 
   function connect() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
     var proto = location.protocol === "https:" ? "wss://" : "ws://";
-    ws = new WebSocket(proto + location.host + "/ws");
-    ws.onopen = function () {
+    var sock = new WebSocket(proto + location.host + "/ws");
+    ws = sock;
+    sock.onopen = function () {
       retry = 500;
+      heard = Date.now();
       conn.style.display = "none";
       send({ t: "hello", id: id || "" });
     };
-    ws.onmessage = function (ev) {
+    sock.onmessage = function (ev) {
+      if (sock !== ws) return;
+      heard = Date.now();
       var m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m.t === "welcome") {
@@ -313,24 +321,53 @@
         render(m);
       }
     };
-    ws.onclose = function (ev) {
+    sock.onclose = function (ev) {
+      if (sock !== ws) return;   // an old socket we already gave up on
+      ws = null;
       releaseAll();
       if (ev.code === 4001) {
         // The same phone/browser opened the controller again (another tab, the home-screen icon).
         // Reconnecting here would kick that one out, and it would kick us back, forever.
         replaced = true;
-        conn.className = "conn replaced";
-        conn.textContent = "The controller is open in another tab or window. Tap here to use this one.";
-        conn.style.display = "block";
+        phase = "replaced";
+        startWrap.className = "ssbtn";
+        // The status panel says so (a banner on top would hide it); a tap on the pad takes over.
+        setScreen("OPEN IN ANOTHER TAB", "Tap anywhere to play from this one instead", false);
+        conn.style.display = "none";
         return;
       }
       conn.className = "conn";
       conn.textContent = "Reconnecting…";
       conn.style.display = "block";
-      setTimeout(connect, retry);
-      retry = Math.min(retry * 2, 5000);
+      if (!document.hidden) {   // a hidden page reconnects when it is shown again
+        timer = setTimeout(connect, retry);
+        retry = Math.min(retry * 2, 5000);
+      }
     };
   }
+
+  // Keepalive: the server drops a phone it hasn't heard from for a while, and phones (iOS
+  // especially) can leave a socket that looks open but is dead after sleeping. A ping every 20 s
+  // keeps it alive and shows up a dead one: no reply within 5 s means reconnect.
+  function checkAlive() {
+    if (!ws || ws.readyState !== 1 || replaced) return;
+    var asked = Date.now();
+    send({ t: "ping" });
+    setTimeout(function () {
+      if (ws && ws.readyState === 1 && heard < asked) {
+        var dead = ws;
+        ws = null;
+        dead.onclose = null;
+        try { dead.close(); } catch (e) {}
+        releaseAll();
+        conn.className = "conn";
+        conn.textContent = "Reconnecting…";
+        conn.style.display = "block";
+        connect();
+      }
+    }, 5000);
+  }
+  setInterval(checkAlive, 20000);   // also while hidden: a phone in a pocket keeps its place in line
 
   function takeOver() {
     if (!replaced) return;
@@ -339,7 +376,7 @@
     conn.textContent = "Reconnecting…";
     connect();
   }
-  conn.addEventListener("click", takeOver);
+  conn.addEventListener("click", function () { if (!ws) { retry = 500; connect(); } });
 
   // --- full screen ------------------------------------------------------------
   // Android/desktop browsers can go full screen from a tap (and Android can then lock landscape).
@@ -462,6 +499,7 @@
     var b = KEYMAP[ev.code];
     if (b === undefined) return;
     ev.preventDefault();
+    if (ev.type === "keydown" && replaced) { takeOver(); return; }
     if (ev.type === "keydown") keys |= 1 << b; else keys &= ~(1 << b);
     update();
   }
@@ -470,7 +508,16 @@
   // lifting everything when the page is hidden avoids a stuck "run right"
   function releaseAll() { pointers = {}; keys = 0; update(); }
   window.addEventListener("blur", releaseAll);
-  document.addEventListener("visibilitychange", function () { if (document.hidden) releaseAll(); });
+  function onShown() {
+    if (document.hidden || replaced) return;
+    if (!ws) { retry = 500; connect(); }   // back from the lock screen: don't wait for the backoff
+    else checkAlive();
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) releaseAll(); else onShown();
+  });
+  window.addEventListener("pageshow", onShown);   // iOS back/forward cache
+  window.addEventListener("online", onShown);
 
   connect();
 })();

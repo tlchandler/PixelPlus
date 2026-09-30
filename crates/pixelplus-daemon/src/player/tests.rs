@@ -49,6 +49,7 @@ fn prop(id: &str, n: u32, chan: u32, output: u32) -> Prop {
         xlights_model: None,
         channel_start: chan,
         channels_per_pixel: 3,
+        channel_runs: None,
         segments: vec![PropSegment {
             node_id: "n1".into(),
             output,

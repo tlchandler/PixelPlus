@@ -8,6 +8,7 @@ pub mod show;
 pub mod ws;
 // System, content & integrations workstream.
 pub mod content;
+pub mod debug;
 pub mod effectsapi;
 pub mod games;
 pub mod import;
@@ -65,6 +66,7 @@ pub fn router(state: AppState) -> Router {
         .merge(overlay::routes())
         .merge(games::routes())
         .merge(public::routes())
+        .merge(debug::routes())
         .route("/ws", get(ws::handler))
         .fallback(|| async { ApiError::not_found("That API endpoint") })
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_auth))

@@ -259,6 +259,12 @@
 				<button class="btn danger sm" onclick={remove}><Trash2 size={14} /> Delete prop</button>
 			</div>
 		{:else if tab === 'wiring'}
+			{#if draft.channelRuns?.length}
+				<p class="muted small" style="margin-bottom:12px">
+					Custom start channels from xLights: this prop's strings read their data from
+					{draft.channelRuns.length} separate places in the sequence. Re-import from xLights to change them.
+				</p>
+			{/if}
 			<WiringEditor {show} bind:prop={draft} />
 		{:else if tab === 'power'}
 			<div class="power">

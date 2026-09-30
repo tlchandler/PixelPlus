@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use crate::model::{Node, Prop, Show};
+use crate::model::{ChannelRun, Node, Prop, Show};
 
 /// Errors building a map.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -224,13 +224,10 @@ impl NodeMap {
                 let out = seg.output as usize - 1;
                 // A reversed segment keeps its physical extent even when clipped, so the
                 // first prop pixel stays on the segment's last physical pixel.
-                let (dst_pix, end) = if seg.reverse {
-                    (
-                        seg.start_pixel.saturating_add(seg.pixel_count - count),
-                        seg.start_pixel.saturating_add(seg.pixel_count),
-                    )
+                let end = if seg.reverse {
+                    seg.start_pixel.saturating_add(seg.pixel_count)
                 } else {
-                    (seg.start_pixel, seg.start_pixel.saturating_add(count))
+                    seg.start_pixel.saturating_add(count)
                 };
                 if end > MAX_OUTPUT_PIXELS {
                     warnings.push(format!(
@@ -240,10 +237,19 @@ impl NodeMap {
                     continue;
                 }
                 pixels[out] = pixels[out].max(end);
-                let src = prop
-                    .channel_start
-                    .saturating_add(seg.prop_offset.saturating_mul(3));
-                pieces.push((out, src, dst_pix, count, seg.reverse));
+                // Split the segment wherever the prop's channels are not contiguous
+                // (xLights individual start channels); pixels without channel data
+                // stay black.
+                for piece in prop.channel_pieces(seg.prop_offset, count) {
+                    let k0 = piece.prop_offset - seg.prop_offset;
+                    let dst = if seg.reverse {
+                        // Segment pixel k sits at start + pixelCount-1-k.
+                        seg.start_pixel + (seg.pixel_count - k0 - piece.pixel_count)
+                    } else {
+                        seg.start_pixel + k0
+                    };
+                    pieces.push((out, piece.channel_start, dst, piece.pixel_count, seg.reverse));
+                }
             }
         }
 
@@ -427,14 +433,47 @@ pub fn prop_pixel_location(prop: &Prop, i: u32) -> Option<PixelLocation> {
     })
 }
 
-/// The RGB bytes of `prop` inside an fseq frame (absolute channel space). Returns the
-/// available part only (shorter if the frame ends early; empty if it starts beyond).
-pub fn prop_channels<'a>(prop: &Prop, frame: &'a [u8]) -> &'a [u8] {
-    let start = (prop.channel_start as usize).min(frame.len());
-    let end = start
-        .saturating_add(prop.pixel_count as usize * BYTES_PER_PIXEL)
-        .min(frame.len());
-    &frame[start..end]
+/// Copy `prop`'s RGB bytes out of an fseq frame (absolute channel space) into `rgb`
+/// (prop pixel order, 3 bytes per pixel), following its channel runs. Pixels whose
+/// channels lie beyond the frame, or that have no channel data, are left untouched;
+/// extra `rgb` bytes are ignored. Never allocates.
+pub fn read_prop_channels(prop: &Prop, frame: &[u8], rgb: &mut [u8]) {
+    let have = rgb.len() / BYTES_PER_PIXEL;
+    for r in prop.channel_ranges() {
+        let first = r.prop_offset as usize;
+        if first >= have {
+            continue;
+        }
+        let n = (r.pixel_count as usize).min(have - first) * BYTES_PER_PIXEL;
+        let src = (r.channel_start as usize).min(frame.len());
+        let n = n.min(frame.len() - src);
+        let dst = first * BYTES_PER_PIXEL;
+        rgb[dst..dst + n].copy_from_slice(&frame[src..src + n]);
+    }
+}
+
+/// Inverse of [`read_prop_channels`]: write `rgb` (prop pixel order) into channel
+/// space, following the prop's channel runs. Bytes that would land beyond `chan` are
+/// dropped. Never allocates.
+pub fn write_prop_channels(prop: &Prop, rgb: &[u8], chan: &mut [u8]) {
+    write_channel_runs(prop.channel_ranges(), rgb, chan)
+}
+
+/// [`write_prop_channels`] over precomputed runs (e.g. a prop's
+/// [`Prop::channel_ranges`] collected once at load time). RGB props only.
+pub fn write_channel_runs(runs: impl IntoIterator<Item = ChannelRun>, rgb: &[u8], chan: &mut [u8]) {
+    let have = rgb.len() / BYTES_PER_PIXEL;
+    for r in runs {
+        let first = r.prop_offset as usize;
+        if first >= have {
+            continue;
+        }
+        let n = (r.pixel_count as usize).min(have - first) * BYTES_PER_PIXEL;
+        let dst = (r.channel_start as usize).min(chan.len());
+        let n = n.min(chan.len() - dst);
+        let src = first * BYTES_PER_PIXEL;
+        chan[dst..dst + n].copy_from_slice(&rgb[src..src + n]);
+    }
 }
 
 const NOT_HERE: u32 = u32::MAX;
@@ -654,6 +693,7 @@ mod tests {
             xlights_model: None,
             channel_start,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: segs,
             group_ids: vec![],
             layout: None,
@@ -868,11 +908,95 @@ mod tests {
     }
 
     #[test]
-    fn prop_channels_clips() {
+    fn prop_channels_clip() {
         let p = prop("a", 4, 6, vec![]);
-        assert_eq!(prop_channels(&p, &[0u8; 30]).len(), 12);
-        assert_eq!(prop_channels(&p, &[0u8; 10]).len(), 4);
-        assert!(prop_channels(&p, &[0u8; 3]).is_empty());
+        let frame: Vec<u8> = (1..=30).collect();
+        let mut rgb = [0u8; 12];
+        read_prop_channels(&p, &frame, &mut rgb);
+        assert_eq!(rgb.to_vec(), (7..=18).collect::<Vec<u8>>());
+        let mut rgb = [0u8; 12];
+        read_prop_channels(&p, &frame[..10], &mut rgb);
+        assert_eq!(rgb, [7, 8, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut rgb = [0u8; 12];
+        read_prop_channels(&p, &frame[..3], &mut rgb);
+        assert_eq!(rgb, [0; 12]);
+        let mut chan = [0u8; 10];
+        write_prop_channels(&p, &[5; 12], &mut chan);
+        assert_eq!(chan, [0, 0, 0, 0, 0, 0, 5, 5, 5, 5]);
+    }
+
+    fn with_runs(mut p: Prop, runs: &[(u32, u32, u32)]) -> Prop {
+        p.channel_runs = Some(
+            runs.iter()
+                .map(|&(prop_offset, channel_start, pixel_count)| ChannelRun {
+                    prop_offset,
+                    channel_start,
+                    pixel_count,
+                })
+                .collect(),
+        );
+        p
+    }
+
+    #[test]
+    fn channel_runs_read_and_write() {
+        // 5 pixels: 0-1 at byte 30, 2-4 at byte 0 (string 2 before string 1).
+        let p = with_runs(prop("a", 5, 30, vec![]), &[(0, 30, 2), (2, 0, 3)]);
+        assert_eq!(p.channel_of_pixel(0), Some(30));
+        assert_eq!(p.channel_of_pixel(1), Some(33));
+        assert_eq!(p.channel_of_pixel(2), Some(0));
+        assert_eq!(p.channel_of_pixel(4), Some(6));
+        assert_eq!(p.channel_of_pixel(5), None);
+        assert_eq!(p.channel_end(), 36);
+        let frame: Vec<u8> = (0..36).collect();
+        let mut rgb = [0u8; 15];
+        read_prop_channels(&p, &frame, &mut rgb);
+        assert_eq!(rgb, [30, 31, 32, 33, 34, 35, 0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut chan = [0u8; 36];
+        write_prop_channels(&p, &rgb, &mut chan);
+        assert_eq!(chan.to_vec(), [&frame[..9], &[0u8; 21][..], &frame[30..]].concat());
+        // Runs past pixelCount are clipped; a gap has no data.
+        let q = with_runs(prop("q", 4, 0, vec![]), &[(0, 0, 1), (2, 9, 5)]);
+        let r: Vec<_> = q.channel_ranges().map(|r| (r.prop_offset, r.channel_start, r.pixel_count)).collect();
+        assert_eq!(r, vec![(0, 0, 1), (2, 9, 2)]);
+        assert_eq!(q.channel_of_pixel(1), None);
+    }
+
+    #[test]
+    fn node_map_follows_channel_runs() {
+        let n = node("n1", BoardKind::Difftx);
+        // Arch-like prop: 3 strings of 4 pixels, string 2 patched far away, wired as one
+        // chain on output 1 and a reversed copy on output 2.
+        let runs = [(0, 0, 4), (4, 300, 4), (8, 12, 4)];
+        let a = with_runs(
+            prop("a", 12, 0, vec![seg("n1", 1, 0, 12, 0, false)]),
+            &runs,
+        );
+        let b = with_runs(
+            prop("b", 12, 0, vec![seg("n1", 2, 0, 12, 0, true)]),
+            &runs,
+        );
+        let map = NodeMap::build_for_node(&n, &[a.clone(), b]);
+        assert!(map.warnings.is_empty(), "{:?}", map.warnings);
+        // Frame where each pixel's bytes are its channel-pixel index.
+        let frame: Vec<u8> = (0..400u32).map(|b| (b / 3) as u8).collect();
+        let mut out = map.new_frame();
+        map.render(&frame, &mut out);
+        let px = |o: usize| -> Vec<u8> { out.output(o).chunks(3).map(|c| c[0]).collect() };
+        let expect: Vec<u8> = (0..12).map(|i| (a.channel_of_pixel(i).unwrap() / 3) as u8).collect();
+        assert_eq!(expect, vec![0, 1, 2, 3, 100, 101, 102, 103, 4, 5, 6, 7]);
+        assert_eq!(px(0), expect);
+        let mut rev = expect.clone();
+        rev.reverse();
+        assert_eq!(px(1), rev);
+        assert_eq!(map.source_len(), 312);
+        // Clipped segment: only the first 6 prop pixels wired, reversed.
+        let c = with_runs(prop("c", 12, 0, vec![seg("n1", 3, 2, 6, 0, true)]), &runs);
+        let map = NodeMap::build_for_node(&n, &[c]);
+        let mut out = map.new_frame();
+        map.render(&frame, &mut out);
+        let got: Vec<u8> = out.output(2).chunks(3).map(|c| c[0]).collect();
+        assert_eq!(got, vec![0, 0, 101, 100, 3, 2, 1, 0]);
     }
 
     /// 60 outputs × 1600 px, 16 props of 100 px per output (some reversed).

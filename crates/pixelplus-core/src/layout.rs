@@ -536,6 +536,7 @@ mod tests {
             xlights_model: None,
             channel_start: 0,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: vec![],
             group_ids: vec![],
             layout,
@@ -582,6 +583,7 @@ mod tests {
             xlights_model: None,
             channel_start: 0,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: vec![],
             group_ids: vec![],
             layout: Some(PropLayout {

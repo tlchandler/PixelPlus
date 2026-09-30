@@ -17,6 +17,7 @@ fn prop(id: &str, kind: PropKind, n: u32, x: f32, y: f32, w: f32, h: f32) -> Pro
         xlights_model: None,
         channel_start: 0,
         channels_per_pixel: 3,
+        channel_runs: None,
         segments: vec![],
         group_ids: vec![],
         layout: Some(PropLayout {

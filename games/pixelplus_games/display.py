@@ -122,6 +122,9 @@ class OverlayModel:
 
     def write(self, rgb):
         """Show an (height, width, 3) uint8 array on the matrix."""
+        if rgb.shape[:2] != (self.height, self.width):
+            # drawn for the size before a reopen(): skip it rather than garble (or overrun) the buffer
+            return
         if self.bpp == 4:
             px = np.zeros((self.height, self.width, 4), np.uint8)
             px[..., :3] = rgb
@@ -161,6 +164,25 @@ def frame_to_rgb(frame):
         return np.dstack(((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2))).astype(np.uint8)
     r, g, b = (a >> 10) & 0x1F, (a >> 5) & 0x1F, a & 0x1F
     return np.dstack(((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2))).astype(np.uint8)
+
+
+_LUTS = {}
+
+
+def _lut16(pixel_format):
+    """(65536, 3) uint8 table: 16-bit libretro pixel -> R, G, B (same maths as frame_to_rgb)."""
+    lut = _LUTS.get(pixel_format)
+    if lut is None:
+        from .libretro import PIXEL_FORMAT_RGB565
+        a = np.arange(65536, dtype=np.uint32)
+        if pixel_format == PIXEL_FORMAT_RGB565:
+            r, g, b = (a >> 11) & 0x1F, (a >> 5) & 0x3F, a & 0x1F
+            chans = ((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2))
+        else:
+            r, g, b = (a >> 10) & 0x1F, (a >> 5) & 0x1F, a & 0x1F
+            chans = ((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2))
+        lut = _LUTS[pixel_format] = np.stack(chans, axis=-1).astype(np.uint8)
+    return lut
 
 
 class Scaler:
@@ -211,6 +233,13 @@ class Scaler:
         self._n = ky * kx
         self._gain256 = int(round(self.gain * 256))
         self._key = (src_w, src_h)
+        self._flat_key = None
+
+    def resize(self, out_w, out_h):
+        """The matrix changed size: scale to the new size from the next frame on."""
+        if (out_w, out_h) != (self.out_w, self.out_h):
+            self.out_w, self.out_h = out_w, out_h
+            self._key = None
 
     def map_point(self, x, y):
         """Map a point in NES 256x240 screen space to output pixel space (floats)."""
@@ -232,10 +261,40 @@ class Scaler:
         src_h, src_w = rgb.shape[:2]
         if self._key != (src_w, src_h):
             self._prepare(src_w, src_h)
-        out = np.zeros((self.out_h, self.out_w, 3), np.uint8)
         if not self._gain256:
-            return out
-        samples = rgb[self._yy, self._xx]                     # (n, h, w, 3) uint8
+            return np.zeros((self.out_h, self.out_w, 3), np.uint8)
+        return self._finish(rgb[self._yy, self._xx])           # (n, h, w, 3) uint8
+
+    def scale_frame(self, frame):
+        """``scale(frame_to_rgb(frame))``, without converting the whole NES picture first.
+
+        Only the source pixels the output samples are gathered straight from the core's
+        buffer and converted (a lookup table for the 16-bit formats) - under half the pixels
+        of a frame, with a handful of numpy calls. This is the per-frame hot path."""
+        from .libretro import PIXEL_FORMAT_XRGB8888
+
+        if self._key != (frame.width, frame.height):
+            self._prepare(frame.width, frame.height)
+        if not self._gain256:
+            return np.zeros((self.out_h, self.out_w, 3), np.uint8)
+        if frame.pixel_format == PIXEL_FORMAT_XRGB8888:
+            stride = frame.pitch // 4
+            raw = np.frombuffer(frame.data, "<u4")[self._flat_index(stride)]
+            samples = raw.view(np.uint8).reshape(raw.shape + (4,))[..., 2::-1]  # B,G,R,X -> R,G,B
+        else:
+            stride = frame.pitch // 2
+            raw = np.frombuffer(frame.data, "<u2")[self._flat_index(stride)]
+            samples = _lut16(frame.pixel_format)[raw]
+        return self._finish(samples)
+
+    def _flat_index(self, stride):
+        if getattr(self, "_flat_key", None) != (self._key, stride):
+            self._flat = (self._yy.astype(np.intp) * stride + self._xx).astype(np.intp)
+            self._flat_key = (self._key, stride)
+        return self._flat
+
+    def _finish(self, samples):
+        out = np.zeros((self.out_h, self.out_w, 3), np.uint8)
         acc = samples.sum(axis=0, dtype=np.uint32)
         acc = (acc * self._gain256 + (self._n * 128)) // (self._n * 256)
         oy, ox, h, w = self._dst

@@ -231,7 +231,7 @@ fn read_fseq_info(path: &FsPath) -> Result<FseqInfo, String> {
 pub(crate) fn channel_warnings(props: &[Prop], channel_count: u32) -> Vec<String> {
     let beyond: Vec<&str> = props
         .iter()
-        .filter(|p| p.channel_start as u64 + p.channel_len() as u64 > channel_count as u64)
+        .filter(|p| p.channel_end() > channel_count as u64)
         .map(|p| p.name.as_str())
         .collect();
     if beyond.is_empty() {
@@ -269,10 +269,12 @@ pub fn generate_thumbnail(fseq: &FsPath, props: &[Prop], out: &FsPath) -> Result
         let rows = props.len().min(HEIGHT as usize);
         let mut groups: Vec<Vec<(usize, usize)>> = vec![vec![]; rows];
         for (i, p) in props.iter().enumerate() {
-            let s = p.channel_start as usize;
-            let e = (s + p.channel_len() as usize).min(frame_size);
-            if s < e {
-                groups[i * rows / props.len()].push((s, e));
+            for r in p.channel_ranges() {
+                let s = r.channel_start as usize;
+                let e = (s + r.pixel_count as usize * 3).min(frame_size);
+                if s < e {
+                    groups[i * rows / props.len()].push((s, e));
+                }
             }
         }
         groups
@@ -1197,6 +1199,7 @@ mod tests {
             xlights_model: None,
             channel_start: start,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: vec![],
             group_ids: vec![],
             layout: None,

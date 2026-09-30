@@ -151,15 +151,17 @@ class Menu:
     def run(self, session, controls, stop, folder):
         """Show the menu until a game is picked (returns its path) or ``stop`` is set."""
         model = session.model
-        w, h = model.width, model.height
         prev = controls.buttons  # anything already held (e.g. the exit combo) is not a press
         held_since = {}
         last_repeat = {}
         selected_since = time.monotonic()
         last_scan = 0.0
-        _, rows, _ = self._layout(w, h)
         while not stop.is_set():
             now = time.monotonic()
+            if getattr(session, "reopen", None) is not None and session.reopen.is_set():
+                session.reopen_model()
+            w, h = model.width, model.height
+            _, rows, _ = self._layout(w, h)
             if now - last_scan > 5:  # pick up ROMs added or removed while running
                 last_scan = now
                 roms = list_roms(folder)

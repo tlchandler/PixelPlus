@@ -180,13 +180,22 @@ Prop {
   kind: "arch"|"candycane"|"tree"|"matrix"|"line"|"circle"|"star"|"spinner"|"window"|"icicles"|"custom"|"other"
   pixelCount: number
   xlightsModel?: string         // source model name in xLights layout
-  channelStart: number          // 0-based byte offset into the fseq frame (internal; never shown as "channel")
+  channelStart: number          // 0-based byte offset into the fseq frame (internal; never shown as "channel");
+                                //   with channelRuns: the lowest byte offset of any run
   channelsPerPixel: 3           // 3 = RGB (only RGB supported for now)
+  channelRuns?: ChannelRun[]    // non-contiguous channels (xLights individual/"Advanced" start channels);
+                                //   absent = contiguous from channelStart. Set by the importer, read-only in the UI.
   segments: PropSegment[]       // where the pixels physically are (in order)
   groupIds: string[]
   layout?: PropLayout           // 2D preview geometry
   color?: string                // UI accent color for the prop
   maxMilliampsPerPixel?: number // default 60 (full white 12V 3-LED pixel ≈ 20mA*3)
+}
+
+ChannelRun {                    // prop pixels whose channels are contiguous in the fseq frame (one xLights string)
+  propOffset: number            // 0-based index of the run's first prop pixel
+  channelStart: number          // 0-based byte offset of that pixel in the fseq frame
+  pixelCount: number
 }
 
 PropSegment {                   // a run of consecutive prop pixels on one output
@@ -295,7 +304,13 @@ ShowSettings {
 ### 4.1 Channel mapping (internal)
 
 For each prop, pixel `i` (0-based in xLights model order) reads 3 bytes at
-`channelStart + 3*i` from the fseq frame. The segment containing `i` (by
+`channelStart + 3*i` from the fseq frame. If the prop has `channelRuns`, pixel `i` instead
+reads from the run containing it, at `run.channelStart + 3*(i - run.propOffset)`; pixels
+covered by no run have no data (black). Runs beyond `pixelCount` are clipped. Everything
+that reads prop channels (node routing, `.ppseq` slices, power estimates, the live preview,
+effects/overlays written into channel space, sequence channel-count checks) goes through
+`Prop::channel_ranges` / `Prop::channel_of_pixel`, and the `NodeMap` splits a segment into
+one precomputed copy run per channel run, so rendering stays allocation-free. The segment containing `i` (by
 `propOffset`) gives `(node, output, startPixel + (reverse ? count-1-(i-propOffset) : i-propOffset))`.
 Output colour order, brightness and gamma are applied at output time. xLights has already
 applied model-level colour order? **No**: xLights fseq data is always RGB per model; colour
@@ -314,7 +329,18 @@ User uploads `xlights_rgbeffects.xml` (and optionally `xlights_networks.xml`). T
    `!Controller:123`, `@OtherModel:1`, `>OtherModel:1`, `#universe:ch` and `#ip:universe:ch`),
    `parm1/parm2/parm3` (strings × nodes), `ControllerConnection` (`Port`, `Protocol`), `Controller` name,
    `CustomModel` data, `WorldPosX/Y`, `ScaleX/Y`, and model dimensions for the preview.
-3. Computes pixel count and absolute `channelStart` for each model.
+3. Computes pixel count and absolute `channelStart` for each model. Models with individual
+   start channels (`Advanced="1"` plus `String1`, `String2`, … — any of the start-channel forms
+   above) become `channelRuns`, following xLights' node numbering per model type: arches,
+   candy canes, matrices, trees, spheres, lines, poly lines (split at `PolyNodeN`), multi-point,
+   circles, wreaths, stars and spinners put each string at its own start channel; icicles,
+   window frames, cubes and layered arches number every node from `String1`; custom models
+   number every node from the lowest string start. `@Model:n` / `>Model:n` referring to such a
+   model use its lowest / highest channel, like xLights. Missing `StringN` attributes keep the
+   contiguous position (with a warning).
+   Inactive models (`Active="0"`) are skipped with a warning (xLights never outputs them) but
+   still count for `>`/`@` chaining. Controllers and outputs of types xLights does not know
+   are dropped (they take no channels), as xLights does, with a warning.
 4. Proposes a mapping: xLights controller name → PixelPlus node (matched by name/hostname or
    chosen by the user in the import wizard), model `ControllerConnection.Port` → output, chained
    models on the same port get consecutive `startPixel` in order of their start channel.

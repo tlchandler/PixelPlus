@@ -27,6 +27,8 @@ class AudioOut:
         self._q = queue.Queue(maxsize=12)  # ~200ms at 60 chunks/s
         self._proc = None
         self._thread = None
+        self._err_thread = None
+        self._err_tail = b""
 
     def start(self):
         cmd = ["aplay", "-q", "-D", self.device, "-t", "raw", "-f", "S16_LE", "-c", "2",
@@ -40,6 +42,22 @@ class AudioOut:
             return
         self._thread = threading.Thread(target=self._writer, name="audio", daemon=True)
         self._thread.start()
+        # aplay reports every underrun on stderr, even with -q. Nobody reading the pipe would let
+        # it fill up during a long arcade session and freeze aplay (and so the game's sound).
+        self._err_thread = threading.Thread(target=self._drain_stderr, args=(self._proc,),
+                                            name="audio-err", daemon=True)
+        self._err_thread.start()
+
+    def _drain_stderr(self, proc):
+        try:
+            for line in iter(proc.stderr.readline, b""):
+                self._err_tail = (self._err_tail + line)[-2048:]
+        except (OSError, ValueError):
+            pass
+
+    def _last_error(self):
+        lines = [l for l in self._err_tail.decode(errors="replace").splitlines() if l.strip()]
+        return lines[-1].strip() if lines else ""
 
     def _writer(self):
         proc = self._proc
@@ -49,8 +67,15 @@ class AudioOut:
                 break
             try:
                 proc.stdin.write(chunk)
+                proc.stdin.flush()  # a pipe buffer would otherwise hold ~3 frames of sound back
             except (BrokenPipeError, ValueError, OSError):
-                err = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
+                try:
+                    proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+                if self._err_thread is not None:
+                    self._err_thread.join(timeout=1)
+                err = self._last_error()
                 log.warning("aplay stopped%s", (": " + err) if err else "")
                 break
 
@@ -81,15 +106,23 @@ class AudioOut:
         self._q.put(None)
         if self._thread:
             self._thread.join(timeout=2)
+            if self._thread.is_alive():
+                # aplay stopped reading (a stuck sound card): closing stdin would wait for the
+                # blocked write forever, so end aplay first, which fails that write.
+                self._proc.kill()
+                self._thread.join(timeout=2)
         try:
             self._proc.stdin.close()
-        except OSError:
+        except (OSError, ValueError):
             pass
         try:
             self._proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             self._proc.kill()
             self._proc.wait()
+        if self._err_thread is not None:
+            self._err_thread.join(timeout=2)
+            self._err_thread = None
         if self._proc.stderr:
             self._proc.stderr.close()
         self._proc = None

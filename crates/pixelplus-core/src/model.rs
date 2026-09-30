@@ -359,9 +359,15 @@ pub struct Prop {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xlights_model: Option<String>,
     /// 0-based byte offset into the fseq frame. Internal; never shown as a "channel".
+    /// With [`Prop::channel_runs`] it is the lowest byte offset of any run.
     pub channel_start: u32,
     #[serde(default = "default_cpp")]
     pub channels_per_pixel: u8,
+    /// Non-contiguous channel layout (xLights "individual start channels"): pixel `i`
+    /// reads from the run containing it. Absent → contiguous from `channel_start`.
+    /// Pixels not covered by any run have no channel data (they stay dark).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_runs: Option<Vec<ChannelRun>>,
     #[serde(default)]
     pub segments: Vec<PropSegment>,
     #[serde(default)]
@@ -391,16 +397,113 @@ impl Prop {
             .unwrap_or(Self::DEFAULT_MA_PER_PIXEL)
     }
 
-    /// Byte length of this prop inside an fseq frame.
+    /// Byte length of this prop's data inside an fseq frame (`pixelCount ×
+    /// channelsPerPixel`; with [`Prop::channel_runs`] the bytes are spread over runs).
     pub fn channel_len(&self) -> u32 {
         self.pixel_count
             .saturating_mul(self.channels_per_pixel as u32)
+    }
+
+    /// Where this prop's pixels live in the fseq frame: its [`ChannelRun`]s (clipped to
+    /// `pixelCount`, empty runs dropped), or one run covering the whole prop from
+    /// `channelStart` when it has none. Never allocates.
+    pub fn channel_ranges(&self) -> ChannelRanges<'_> {
+        match self.channel_runs.as_deref() {
+            Some(runs) => ChannelRanges {
+                single: None,
+                runs: runs.iter(),
+                pixel_count: self.pixel_count,
+            },
+            None => ChannelRanges {
+                single: Some(ChannelRun {
+                    prop_offset: 0,
+                    channel_start: self.channel_start,
+                    pixel_count: self.pixel_count,
+                }),
+                runs: [].iter(),
+                pixel_count: self.pixel_count,
+            },
+        }
+    }
+
+    /// The parts of prop pixels `first .. first + count` that have channel data, as runs
+    /// (`prop_offset` = first prop pixel of the piece, `channel_start` = its byte offset).
+    pub fn channel_pieces(&self, first: u32, count: u32) -> impl Iterator<Item = ChannelRun> + '_ {
+        let cpp = self.channels_per_pixel as u32;
+        let end = first.saturating_add(count);
+        self.channel_ranges().filter_map(move |r| {
+            let a = r.prop_offset.max(first);
+            let b = r.prop_offset.saturating_add(r.pixel_count).min(end);
+            (a < b).then(|| ChannelRun {
+                prop_offset: a,
+                channel_start: r
+                    .channel_start
+                    .saturating_add((a - r.prop_offset).saturating_mul(cpp)),
+                pixel_count: b - a,
+            })
+        })
+    }
+
+    /// Byte offset of pixel `i` in the fseq frame; `None` if the prop has no channel
+    /// data for it.
+    pub fn channel_of_pixel(&self, i: u32) -> Option<u32> {
+        self.channel_pieces(i, 1).next().map(|r| r.channel_start)
+    }
+
+    /// One past the highest byte this prop reads from an fseq frame (0 for an empty prop).
+    pub fn channel_end(&self) -> u64 {
+        let cpp = self.channels_per_pixel as u64;
+        self.channel_ranges()
+            .map(|r| r.channel_start as u64 + r.pixel_count as u64 * cpp)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Pixels not covered by any segment (unwired).
     pub fn unwired_pixels(&self) -> u32 {
         let wired: u32 = self.segments.iter().map(|s| s.pixel_count).sum();
         self.pixel_count.saturating_sub(wired)
+    }
+}
+
+/// A run of consecutive prop pixels whose channels are contiguous in the fseq frame
+/// (one xLights string with its own start channel).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelRun {
+    /// 0-based index of the first prop pixel in the run.
+    pub prop_offset: u32,
+    /// 0-based byte offset of that pixel in the fseq frame.
+    pub channel_start: u32,
+    /// Number of pixels in the run.
+    pub pixel_count: u32,
+}
+
+/// Iterator returned by [`Prop::channel_ranges`].
+#[derive(Debug, Clone)]
+pub struct ChannelRanges<'a> {
+    single: Option<ChannelRun>,
+    runs: std::slice::Iter<'a, ChannelRun>,
+    pixel_count: u32,
+}
+
+impl Iterator for ChannelRanges<'_> {
+    type Item = ChannelRun;
+    fn next(&mut self) -> Option<ChannelRun> {
+        if let Some(r) = self.single.take() {
+            return (r.pixel_count > 0).then_some(r);
+        }
+        for r in self.runs.by_ref() {
+            let avail = self.pixel_count.saturating_sub(r.prop_offset);
+            let n = r.pixel_count.min(avail);
+            if n > 0 {
+                return Some(ChannelRun {
+                    pixel_count: n,
+                    ..*r
+                });
+            }
+        }
+        None
     }
 }
 

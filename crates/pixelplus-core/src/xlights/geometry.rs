@@ -109,6 +109,21 @@ pub(crate) enum Placement {
     None,
 }
 
+/// How a model's nodes use xLights' per-string start channels (`stringStartChan`),
+/// which differ from the contiguous layout only with individual ("Advanced") start
+/// channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringChannels {
+    /// Each string's nodes start at that string's start channel (arches, candy canes,
+    /// matrices, trees, lines, circles, stars, spinners, ...).
+    PerString,
+    /// All nodes are contiguous from string 1's start channel (icicles, window frames,
+    /// cubes, layered arches).
+    FromFirst,
+    /// All nodes are contiguous from the lowest string start channel (custom models).
+    FromLowest,
+}
+
 /// Interpretation of one xLights model.
 #[derive(Debug, Clone)]
 pub(crate) struct Shape {
@@ -125,6 +140,8 @@ pub(crate) struct Shape {
     pub physical_strings: u32,
     /// Individual start nodes (1-based) per physical string, when the model has them.
     pub string_start_nodes: Option<Vec<u32>>,
+    /// How xLights lays out node channels when strings have individual start channels.
+    pub string_channels: StringChannels,
     /// Pixel positions in channel order (local coordinates, y up). May be empty.
     pub points: Vec<[f32; 2]>,
     /// Length of the local x axis for two/three-point placement.
@@ -154,6 +171,7 @@ impl Shape {
             strings: strings.max(1),
             physical_strings: strings.max(1),
             string_start_nodes: None,
+            string_channels: StringChannels::PerString,
             points: Vec::new(),
             len_units: 1.0,
             placement: Placement::None,
@@ -233,6 +251,7 @@ pub(crate) fn shape(a: Attrs) -> Shape {
             };
             let strings = clamp_count(a.int("Strings").unwrap_or(1)).clamp(1, n.max(1));
             let mut s = Shape::new(PropKind::Other, n, strings);
+            s.string_channels = StringChannels::FromFirst;
             s.placement = Placement::Boxed {
                 render_w: 1.0,
                 render_h: 1.0,
@@ -342,6 +361,8 @@ fn arches(a: Attrs) -> Shape {
         pts.resize(per as usize, [1.0, 0.0]);
         s.points = pts;
         s.len_units = 2.0;
+        // Layered arches number every node from string 1's start channel.
+        s.string_channels = StringChannels::FromFirst;
     }
     s.physical_strings = 1;
     s.placement = Placement::ThreePoint;
@@ -980,6 +1001,7 @@ fn window(a: Attrs) -> Shape {
         return too_big();
     };
     let mut s = Shape::new(PropKind::Window, n, 1);
+    s.string_channels = StringChannels::FromFirst;
     let w = top.max(bottom) as f32 + 2.0;
     let h = side.max(1) as f32;
     let line = |k: u32, from: [f32; 2], to: [f32; 2]| -> Vec<[f32; 2]> {
@@ -1026,6 +1048,7 @@ fn icicles(a: Attrs) -> Shape {
         return too_big();
     };
     let mut s = Shape::new(PropKind::Icicles, n, strings);
+    s.string_channels = StringChannels::FromFirst;
     let pts = layout::icicle_points(n as usize, &drops);
     let width = pts.last().map(|p| p[0] + 1.0).unwrap_or(1.0);
     s.points = pts.iter().map(|p| [p[0] + 0.5, -p[1]]).collect();
@@ -1145,6 +1168,7 @@ fn custom(a: Attrs) -> Shape {
         .unwrap_or(0);
     let strings = clamp_count(a.int("CustomStrings").unwrap_or(1)).max(1);
     let mut s = Shape::new(PropKind::Custom, nodes, strings);
+    s.string_channels = StringChannels::FromLowest;
     if strings > 1 {
         // `NodeStartN`; files older than 2020 used `StringN` when the model did not
         // also have individual start channels.

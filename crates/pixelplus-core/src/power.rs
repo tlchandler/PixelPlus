@@ -253,13 +253,16 @@ fn build_plan(show: &Show) -> (Plan, Vec<String>) {
                 prop_slot[pi] = Some(props.len());
                 props.push(pi);
             }
-            taps.push(Tap {
-                src: prop.channel_start as usize + seg.prop_offset as usize * 3,
-                len: count as usize * 3,
-                out: slot,
-                prop: prop_slot[pi].expect("set above"),
-                ma_per_unit: ma as f64 / 765.0 / 256.0,
-            });
+            // One tap per contiguous channel run (xLights individual start channels).
+            for piece in prop.channel_pieces(seg.prop_offset, count) {
+                taps.push(Tap {
+                    src: piece.channel_start as usize,
+                    len: piece.pixel_count as usize * 3,
+                    out: slot,
+                    prop: prop_slot[pi].expect("set above"),
+                    ma_per_unit: ma as f64 / 765.0 / 256.0,
+                });
+            }
         }
     }
     outputs.sort_by_key(|o| (o.node, o.output));
@@ -379,10 +382,10 @@ pub fn estimate_full_white(show: &Show) -> PowerEstimate {
     let len = show
         .props
         .iter()
-        .map(|p| p.channel_start as usize + p.channel_len() as usize)
+        .map(|p| p.channel_end())
         .max()
         .unwrap_or(0)
-        .min(crate::fseq::MAX_FRAME_BYTES as usize);
+        .min(crate::fseq::MAX_FRAME_BYTES) as usize;
     let frame = vec![255u8; len];
     estimate_from_frames(show, 1, |f| {
         f(&frame);
@@ -547,6 +550,7 @@ mod tests {
             xlights_model: None,
             channel_start: start,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: vec![PropSegment {
                 node_id: "n1".into(),
                 output: out,
@@ -672,6 +676,37 @@ mod tests {
         let linear = 6.0 * 128.0 / 255.0;
         assert!(e.per_output[0].peak_amps < linear * 0.5);
         assert!((e.per_output[1].peak_amps - 3.0 * 128.0 / 255.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn channel_runs_are_sampled_where_the_data_is() {
+        // Prop "a": first 50 pixels at byte 0, last 50 at byte 600 (beyond prop "b").
+        let mut s = show();
+        s.props[0].channel_runs = Some(vec![
+            ChannelRun { prop_offset: 0, channel_start: 0, pixel_count: 50 },
+            ChannelRun { prop_offset: 50, channel_start: 600, pixel_count: 50 },
+        ]);
+        // Full white only where the second run lives: half the prop lights.
+        let mut frame = vec![0u8; 750];
+        frame[600..750].fill(255);
+        let e = estimate_from_frames(&s, 1, |f| {
+            f(&frame);
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert!((e.per_output[0].peak_amps - 3.0).abs() < 0.01, "{}", e.per_output[0].peak_amps);
+        // Bytes 150..300 (contiguous layout's second half) are ignored.
+        let mut frame = vec![0u8; 750];
+        frame[150..300].fill(255);
+        let e = estimate_from_frames(&s, 1, |f| {
+            f(&frame);
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert_eq!(e.per_output[0].peak_amps, 0.0);
+        // Full-white estimate covers the far run.
+        let e = estimate_full_white(&s);
+        assert!((e.per_output[0].peak_amps - 6.0).abs() < 0.01);
     }
 
     #[test]

@@ -49,6 +49,8 @@ pub struct Services {
     pub tools: crate::api::tools::ToolsState,
     /// Root helper jobs (`pixelplus-helper@<verb>.service`) and their progress.
     pub helpers: platform::HelperJobs,
+    /// Output tap for `GET /debug/output` (only with `PIXELPLUS_DEV` or the sim output).
+    pub debug_output: OnceLock<std::sync::Arc<crate::player::debugtap::OutputTap>>,
 }
 
 impl Services {

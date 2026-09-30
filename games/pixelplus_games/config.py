@@ -124,7 +124,7 @@ class GameConfig:
 def _int(d, key, default, lo=None, hi=None):
     try:
         v = int(float(d.get(key, default)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):   # OverflowError: "inf", 1e999
         v = default
     if lo is not None:
         v = max(lo, v)

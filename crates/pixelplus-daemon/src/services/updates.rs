@@ -80,9 +80,11 @@ pub async fn check(state: &AppState) -> UpdateInfo {
         return info;
     }
     if is_root() && !platform::helper_installed() {
-        // Development machine running as root: refresh the index (ignore failures: offline).
-        // As the service user the lists are refreshed daily by apt, and by the helper.
-        let _ = run("apt-get", &["update", "-qq"], Duration::from_secs(90)).await;
+        // Development machine running as root: refresh the index in the background
+        // (at most every few hours; ignore failures: offline) so opening Settings
+        // never waits for `apt-get update`. As the service user the lists are
+        // refreshed daily by apt, and by the helper.
+        refresh_index_in_background();
     }
     match run(
         "apt-cache",
@@ -117,6 +119,29 @@ pub async fn check(state: &AppState) -> UpdateInfo {
     info
 }
 
+/// How often a root development install refreshes the apt index.
+const INDEX_REFRESH: Duration = Duration::from_secs(6 * 3600);
+
+/// Whether the index refresh is due (`last` = previous refresh of this process).
+fn index_refresh_due(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.map_or(true, |t| now.duration_since(t) >= INDEX_REFRESH)
+}
+
+fn refresh_index_in_background() {
+    static LAST: parking_lot::Mutex<Option<std::time::Instant>> = parking_lot::Mutex::new(None);
+    let now = std::time::Instant::now();
+    {
+        let mut last = LAST.lock();
+        if !index_refresh_due(*last, now) {
+            return;
+        }
+        *last = Some(now);
+    }
+    tokio::spawn(async {
+        let _ = run("apt-get", &["update", "-qq"], Duration::from_secs(90)).await;
+    });
+}
+
 /// Start the upgrade through the root helper (it restarts pixelplusd when done).
 pub async fn apply(state: &AppState) -> ApiResult<String> {
     if in_docker() {
@@ -138,6 +163,15 @@ pub async fn apply(state: &AppState) -> ApiResult<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn index_refresh_is_throttled() {
+        use super::*;
+        let now = std::time::Instant::now();
+        assert!(index_refresh_due(None, now));
+        assert!(!index_refresh_due(Some(now), now + Duration::from_secs(60)));
+        assert!(index_refresh_due(Some(now), now + INDEX_REFRESH));
+    }
+
     use super::*;
 
     #[test]

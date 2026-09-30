@@ -285,6 +285,7 @@ pub(crate) mod tests {
             xlights_model: None,
             channel_start,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments,
             group_ids: vec![],
             layout: Some(PropLayout {

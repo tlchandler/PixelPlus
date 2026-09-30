@@ -567,6 +567,7 @@ mod tests {
             xlights_model: None,
             channel_start: start,
             channels_per_pixel: 3,
+            channel_runs: None,
             segments: segs,
             group_ids: vec![],
             layout: None,
@@ -649,6 +650,42 @@ mod tests {
             pp.frame(frames, &mut [0u8; 3]),
             Err(PpseqError::FrameOutOfRange { .. })
         ));
+    }
+
+    #[test]
+    fn slice_follows_channel_runs() {
+        use crate::model::ChannelRun;
+        // Prop "a" is two xLights strings: pixels 0..30 at byte 300, 30..50 at byte 0.
+        let mut show = show();
+        show.props[0].channel_runs = Some(vec![
+            ChannelRun { prop_offset: 0, channel_start: 300, pixel_count: 30 },
+            ChannelRun { prop_offset: 30, channel_start: 0, pixel_count: 20 },
+        ]);
+        show.props[0].channel_start = 0;
+        let map = NodeMap::build(&show, "f1").unwrap();
+        let bytes = fseq_bytes(3, 400);
+        let mut fseq = FseqFile::from_reader(Cursor::new(bytes)).unwrap();
+        let slice = write_slice_to(&mut fseq, [1; 32], &map, Cursor::new(Vec::new()))
+            .unwrap()
+            .into_inner();
+        let mut pp = PpseqFile::from_reader(Cursor::new(slice)).unwrap();
+        let mut f = pp.new_frame();
+        for frame in 0..3u32 {
+            pp.frame_into(frame, &mut f).unwrap();
+            let byte = |c: u32| (c * 3 + frame * 11) as u8;
+            let rgb = |c: u32| vec![byte(c), byte(c + 1), byte(c + 2)];
+            // Output 1: prop pixels 0..30 from byte 300.
+            for k in 0..30u32 {
+                let o = &f.output(0)[k as usize * 3..k as usize * 3 + 3];
+                assert_eq!(o, rgb(300 + 3 * k), "frame {frame} out 1 px {k}");
+            }
+            // Output 2 (reversed, from pixel 5): prop pixels 30..50 from byte 0.
+            for j in 0..20u32 {
+                let p = 5 + 19 - j;
+                let o = &f.output(1)[p as usize * 3..p as usize * 3 + 3];
+                assert_eq!(o, rgb(3 * j), "frame {frame} out 2 px {p}");
+            }
+        }
     }
 
     #[test]

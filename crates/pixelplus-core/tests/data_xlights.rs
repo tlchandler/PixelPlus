@@ -476,3 +476,144 @@ fn xlights_2025_format_imports_with_xlights_channel_math() {
     assert_eq!(g["Front Yard"], 4);
     assert_eq!(g["Everything"], 7);
 }
+
+// ---------------------------------------------------------------------------
+// Individual ("Advanced") per-string start channels, inactive models and output
+// types xLights does not know.
+// ---------------------------------------------------------------------------
+
+const RGB_ADV: &str = include_str!("../testdata/xlights_advanced_rgbeffects.xml");
+const NET_ADV: &str = include_str!("../testdata/xlights_advanced_networks.xml");
+
+/// `(prop offset, 0-based byte start, pixels)` runs of a prop, as imported.
+fn runs_of(p: &pixelplus_core::model::Prop) -> Option<Vec<(u32, u32, u32)>> {
+    p.channel_runs.as_ref().map(|r| {
+        r.iter()
+            .map(|r| (r.prop_offset, r.channel_start, r.pixel_count))
+            .collect()
+    })
+}
+
+#[test]
+fn advanced_start_channels_import_as_channel_runs() {
+    let p = import_preview(RGB_ADV, Some(NET_ADV), &Show::default()).expect("imports");
+    let props = by_name(&p);
+    let w = p.warnings.join("\n");
+
+    // Arches: `!Controller:ch` per arch, arch 2 patched far away, arch 3 right after 1.
+    let arches = props["Arches"];
+    assert_eq!((arches.pixel_count, arches.channel_start), (30, 0));
+    assert_eq!(
+        runs_of(arches),
+        Some(vec![(0, 0, 10), (10, 300, 10), (20, 30, 10)])
+    );
+    // Canes: `>Arches:1` follows the arches' *last* channel (331), cane 2 absolute.
+    let canes = props["Canes"];
+    assert_eq!(canes.channel_start, 330);
+    assert_eq!(runs_of(canes), Some(vec![(0, 330, 8), (8, 1999, 8)]));
+    // A model chained after an Advanced model starts after its highest channel.
+    assert_eq!(props["After Canes"].channel_start, 2023);
+    // Icicles number every node from string 1; custom models from the lowest string.
+    assert_eq!((props["Icicles"].channel_start, runs_of(props["Icicles"])), (2499, None));
+    assert_eq!((props["Snowflake"].channel_start, runs_of(props["Snowflake"])), (2699, None));
+    // Tree: `#ip:universe:ch`, `!Controller:ch` (contiguous with string 1, so merged),
+    // and universe 4 right after universe 2 because xLights drops the unknown output.
+    let tree = props["Tree"];
+    assert_eq!(tree.channel_start, 3000);
+    assert_eq!(
+        runs_of(tree),
+        Some(vec![(0, 3000, 20), (20, 3510, 10), (30, 4020, 10)])
+    );
+    assert_eq!(tree.segments.len(), 4);
+
+    // Inactive model: skipped, but still counts for chaining.
+    assert!(!props.contains_key("Off Arch"));
+    assert!(w.contains("skipped 'Off Arch': it is inactive"), "{w}");
+    assert_eq!(props["After Off"].channel_start, 2915);
+    assert!(!p.groups[0].prop_ids.is_empty());
+    assert!(!w.contains("unknown model 'Off Arch'"), "{w}");
+
+    // Unknown controller / output types are dropped with a warning.
+    assert!(w.contains("'Old Wireless'") && w.contains("unknown type 'Wireless'"), "{w}");
+    assert!(w.contains("'FutureProtocol'"), "{w}");
+    assert!(!w.contains("not contiguous"), "{w}");
+    assert!(!w.contains("cannot resolve"), "{w}");
+}
+
+/// Every pixel of every Advanced prop, routed through the NodeMap, the `.ppseq`
+/// slice and the prop map, carries the bytes of the channels xLights assigns it.
+#[test]
+fn advanced_start_channels_round_trip_through_mapping() {
+    let mut show = Show::default();
+    show.nodes.push(node("porch", "Porch", BoardKind::Difftx));
+    show.nodes.push(node("yard", "Yard", BoardKind::Difftxlarge));
+    let p = import_preview(RGB_ADV, Some(NET_ADV), &show).unwrap();
+    let s = apply_import(&show, &p, &BTreeMap::new());
+    let get = |n: &str| s.props.iter().find(|p| p.name == n).unwrap();
+    assert!(get("Arches").channel_runs.is_some(), "apply keeps runs");
+
+    // xLights channel (0-based byte) of each prop pixel, written out by hand.
+    let expected = |name: &str, i: u32| -> u32 {
+        match name {
+            "Arches" => match i {
+                0..=9 => 3 * i,
+                10..=19 => 300 + 3 * (i - 10),
+                _ => 30 + 3 * (i - 20),
+            },
+            "Canes" if i < 8 => 330 + 3 * i,
+            "Canes" => 1999 + 3 * (i - 8),
+            "Tree" => match i {
+                0..=19 => 3000 + 3 * i,
+                20..=29 => 3510 + 3 * (i - 20),
+                _ => 4020 + 3 * (i - 30),
+            },
+            other => get(other).channel_start + 3 * i,
+        }
+    };
+
+    let channels = 4530u32;
+    let byte = |b: u32, f: u32| ((b * 7 + f * 13) % 251) as u8;
+    let mut w = FseqWriter::new(Cursor::new(Vec::new()), FseqWriterOptions::new(channels, 25)).unwrap();
+    for f in 0..4 {
+        let frame: Vec<u8> = (0..channels).map(|b| byte(b, f)).collect();
+        w.write_frame(&frame).unwrap();
+    }
+    let bytes = w.finish().unwrap().into_inner();
+
+    let mut checked = HashMap::new();
+    for node_id in ["porch", "yard"] {
+        let nm = NodeMap::build(&s, node_id).unwrap();
+        assert!(nm.warnings.is_empty(), "{:?}", nm.warnings);
+        let pm = PropMap::build(&s, node_id).unwrap();
+        let mut fseq = FseqFile::from_reader(Cursor::new(bytes.clone())).unwrap();
+        let slice = write_slice_to(&mut fseq, [2; 32], &nm, Cursor::new(Vec::new()))
+            .unwrap()
+            .into_inner();
+        let mut pp = PpseqFile::from_reader(Cursor::new(slice)).unwrap();
+        let mut out = pp.new_frame();
+        pp.frame_into(2, &mut out).unwrap();
+        for prop in s.props.iter().filter(|p| pm.contains(&p.id)) {
+            // Prop-order readback from the output frame, as the preview does.
+            let mut rgb = vec![0u8; prop.pixel_count as usize * 3];
+            pm.read_prop(&prop.id, &out, &mut rgb);
+            for i in 0..prop.pixel_count {
+                let Some((o, px)) = pm.locate(&prop.id, i) else { continue };
+                let ch = expected(&prop.name, i);
+                let want = [byte(ch, 2), byte(ch + 1, 2), byte(ch + 2, 2)];
+                assert_eq!(
+                    &out.output(o)[px as usize * 3..px as usize * 3 + 3],
+                    want,
+                    "{} pixel {i} on {node_id}",
+                    prop.name
+                );
+                assert_eq!(&rgb[i as usize * 3..i as usize * 3 + 3], want);
+                assert_eq!(prop.channel_of_pixel(i), Some(ch));
+                *checked.entry(prop.name.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    assert_eq!(checked["Arches"], 30);
+    assert_eq!(checked["Canes"], 16);
+    assert_eq!(checked["Tree"], 40);
+    assert_eq!(checked["Icicles"], 12);
+}
