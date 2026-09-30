@@ -184,6 +184,11 @@ fn files_roundtrip_with_private_keys_0600() {
     // Damaged input is refused.
     assert!(import_ca(&other, "garbage", &c, &j).is_err());
     assert!(import_ca(&other, &k, &c, "{}").is_err());
+    // Security audit 2: another CA's key with this certificate is refused
+    // (phones trust the certificate; the key must be its key).
+    let stranger = create_ca("PixelPlus Local CA – x", "pixel-pi", now()).unwrap();
+    let e = import_ca(&other, &stranger.key.serialize_pem(), &c, &j).unwrap_err();
+    assert!(format!("{e:#}").contains("doesn't match"), "{e:#}");
     let _ = std::fs::remove_dir_all(&data);
     let _ = std::fs::remove_dir_all(&other);
 }

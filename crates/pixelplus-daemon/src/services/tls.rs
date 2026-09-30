@@ -876,7 +876,20 @@ pub fn import_ca(
         cert_pem: cert_pem.to_string(),
         meta,
     };
-    // Prove key and certificate belong together by signing a throwaway leaf.
+    // Key and certificate must belong together: the certificate carries the
+    // key's public point (signing a throwaway leaf alone proves only that the
+    // key works, not that phones' trusted certificate is its).
+    let public = ca.key.public_key_raw();
+    if public.is_empty()
+        || !ca
+            .cert_der
+            .windows(public.len())
+            .any(|w| w == public)
+    {
+        return Err(anyhow!(
+            "the certificate authority's key doesn't match its certificate"
+        ));
+    }
     issue_leaf(&ca, &["localhost".to_string()], Utc::now())?;
     let dir = tls_dir(data_dir);
     save_ca(&dir, &ca)?;
