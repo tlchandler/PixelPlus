@@ -269,7 +269,9 @@
 					<div class="eyebrow">On now</div>
 					<h2>{upcoming.name} · until {fmtTime(new Date(upcoming.end), tz)}</h2>
 					<p class="muted small">
-						Playing “{show.playlists.find((p) => p.id === upcoming.playlistId)?.name}”
+						{#if app.status && app.status.state === 'idle'}Stopped for now: press play to bring back “{show.playlists.find(
+								(p) => p.id === upcoming.playlistId
+							)?.name}”{:else}Playing “{show.playlists.find((p) => p.id === upcoming.playlistId)?.name}”{/if}
 					</p>
 				{:else if upcoming}
 					<div class="eyebrow">

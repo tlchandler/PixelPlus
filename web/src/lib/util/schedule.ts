@@ -1,5 +1,5 @@
 import type { Schedule, ScheduleEntry, ScheduleOccurrence, Weekday } from '$lib/api/types';
-import { inDateRange, resolveTimeSpec, zonedParts } from './time';
+import { fmtDate, fmtTime, inDateRange, resolveTimeSpec, zonedParts } from './time';
 
 const DOW: Weekday[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -49,6 +49,18 @@ export function expandSchedule(schedule: Schedule, from: Date, days: number): Oc
 
 export function nextShow(schedule: Schedule, now = new Date()): Occurrence | undefined {
 	return expandSchedule(schedule, now, 30).find((o) => !o.overridden && new Date(o.end) > now);
+}
+
+/** The dashboard's line under "The show is resting": when the schedule starts the show next
+ *  (nothing while the schedule is off), or that tonight's show was stopped while its window is on. */
+export function restingLine(schedule: Schedule, now: Date): string {
+	const next = schedule.enabled ? nextShow(schedule, now) : undefined;
+	const tz = schedule.location.timezone;
+	if (!next) return 'Nothing is scheduled. Press play to start any time.';
+	const start = new Date(next.start);
+	if (start <= now)
+		return `Stopped during tonight's show (on until ${fmtTime(new Date(next.end), tz)}). Press play to bring it back.`;
+	return `Starts automatically ${fmtDate(start, tz)} at ${fmtTime(start, tz)}.`;
 }
 
 export function entrySummary(e: ScheduleEntry): string {

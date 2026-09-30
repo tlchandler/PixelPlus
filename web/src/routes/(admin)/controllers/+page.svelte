@@ -368,8 +368,8 @@
 									<span class="dot"></span>
 									{#if !live.online}Offline · last seen {fmtRelative(
 											live.lastSeen
-										)}{:else if n.role === 'leader'}Online{:else if live.syncState === 'syncing'}Syncing files {live
-											.files.total - live.files.pending}/{live.files.total}{:else}In sync{/if}
+										)}{:else if live.syncState === 'syncing' && n.role !== 'leader'}Syncing files {live.files
+											.total - live.files.pending}/{live.files.total}{:else}Online{/if}
 								</span>
 								{#if live.online && n.role === 'follower'}
 									<SyncBadge node={live} />
@@ -1100,7 +1100,9 @@
 	.pnum {
 		font-weight: 600;
 		font-size: 12.5px;
-		width: 52px;
+		/* "J12 · Port 4" on the 60-port board stays on one line. */
+		min-width: 52px;
+		white-space: nowrap;
 		flex: 0 0 auto;
 	}
 	.prow .num {

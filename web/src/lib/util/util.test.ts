@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { sunTime } from './sun';
 import { outputLabel, wiringChain, jackOf, repackChain } from './boards';
-import { expandSchedule } from './schedule';
+import { expandSchedule, restingLine } from './schedule';
 import { inDateRange, resolveTimeSpec, describeTimeSpec } from './time';
 import { fmtDuration } from './format';
 import { buildDemoShow } from '$lib/mock/demo';
 import { renderEffect, DEFAULT_EFFECT_SCHEMA, defaultParams } from '$lib/effects/render';
 import { EFFECT_KINDS } from '$lib/api/types';
+import type { Schedule } from '$lib/api/types';
 
 describe('sun', () => {
 	it('computes Chicago winter sunset around 4:20 pm CST', () => {
@@ -75,6 +76,33 @@ describe('schedule', () => {
 		const winner = occ.find((o) => !o.overridden)!;
 		expect(winner.name).toBe('Christmas Eve');
 		expect(occ.some((o) => o.overridden)).toBe(true);
+	});
+	it('the resting line never names a start time that has passed', () => {
+		const schedule = {
+			enabled: true,
+			location: { lat: 40.7, lon: -74, timezone: 'America/New_York' },
+			entries: [
+				{
+					id: 'e',
+					name: 'Tonight',
+					enabled: true,
+					playlistId: 'p',
+					days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
+					start: { kind: 'clock', time: '18:45' },
+					end: { kind: 'clock', time: '20:15' },
+					priority: 0,
+					endBehavior: 'stopNow'
+				}
+			]
+		} as unknown as Schedule;
+		// 7 pm in New York: the window is on but nothing plays (stopped by hand).
+		const during = new Date('2026-09-30T23:00:00Z');
+		expect(restingLine(schedule, during)).toMatch(/^Stopped during tonight's show \(on until 8:15/);
+		expect(restingLine(schedule, new Date('2026-09-30T20:00:00Z'))).toMatch(
+			/^Starts automatically .* at 6:45/
+		);
+		// Schedule off: nothing starts by itself.
+		expect(restingLine({ ...schedule, enabled: false }, during)).toMatch(/^Nothing is scheduled/);
 	});
 	it('resolves clock times in the show time zone', () => {
 		const loc = { lat: 41.88, lon: -87.63, timezone: 'America/Chicago' };

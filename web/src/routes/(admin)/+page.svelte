@@ -11,7 +11,7 @@
 	import { BOARDS, needsPort3Warning } from '$lib/util/boards';
 	import { fmtCountdown, fmtDuration, plural } from '$lib/util/format';
 	import { fmtTime, fmtDate } from '$lib/util/time';
-	import { nextShow } from '$lib/util/schedule';
+	import { nextShow, restingLine } from '$lib/util/schedule';
 	import LayoutCanvas from '$lib/components/viz/LayoutCanvas.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
@@ -75,6 +75,8 @@
 	});
 
 	const upcoming = $derived(show ? nextShow(show.schedule, new Date(now)) : undefined);
+	/** The next show the schedule will start (none while the schedule is turned off). */
+	const scheduled = $derived(show?.schedule.enabled ? upcoming : undefined);
 	const tz = $derived(show?.schedule.location.timezone);
 	const tunit = $derived(tempUnitOf(show));
 	/** One line that answers "what's happening with my show tonight?" */
@@ -239,10 +241,7 @@
 				{:else}
 					<h2 class="song">The show is resting</h2>
 					<p class="muted small">
-						{#if upcoming}Starts automatically {fmtDate(new Date(upcoming.start), tz)} at {fmtTime(
-								new Date(upcoming.start),
-								tz
-							)}.{:else}Nothing is scheduled. Press play to start any time.{/if}
+						{show ? restingLine(show.schedule, new Date(now)) : ''}
 					</p>
 				{/if}
 			{/if}
@@ -301,17 +300,21 @@
 						{#if st?.scheduleEntry}
 							<div class="big-num">Until {fmtTime(new Date(st.scheduleEntry.endsAt), tz)}</div>
 							<div class="muted small">{st.scheduleEntry.name}</div>
-						{:else if upcoming}
-							<div class="big-num">in {fmtCountdown(new Date(upcoming.start).getTime() - now)}</div>
+						{:else if scheduled}
+							<div class="big-num">in {fmtCountdown(new Date(scheduled.start).getTime() - now)}</div>
 							<div class="muted small">
-								{upcoming.name} · {fmtDate(new Date(upcoming.start), tz)}
+								{scheduled.name} · {fmtDate(new Date(scheduled.start), tz)}
 								<span class="nowrap"
-									>{fmtTime(new Date(upcoming.start), tz)}–{fmtTime(new Date(upcoming.end), tz)}</span
+									>{fmtTime(new Date(scheduled.start), tz)}–{fmtTime(new Date(scheduled.end), tz)}</span
 								>
 							</div>
 						{:else if show}
 							<div class="big-num">Not scheduled</div>
-							<div class="muted small">Add show times on the schedule page.</div>
+							<div class="muted small">
+								{show.schedule.enabled
+									? 'Add show times on the schedule page.'
+									: 'The schedule is turned off.'}
+							</div>
 						{:else}
 							<Skeleton h={22} w="60%" />
 						{/if}

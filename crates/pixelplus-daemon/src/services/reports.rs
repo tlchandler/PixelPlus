@@ -649,7 +649,7 @@ pub fn aggregate(ctx: &ReportContext, records: &[Record]) -> NightReport {
         + nodes.iter().filter(|n| n.offline_min > 0.0).count() as u32;
     let headline = if shows.is_empty() && items_played == 0 {
         format!(
-            "No show tonight, {}",
+            "No show that night, {}",
             plural(n_problems, "problem", "problems")
         )
     } else {
@@ -1744,7 +1744,7 @@ mod tests {
             &[],
         );
         assert_eq!(quiet.status, "ok");
-        assert!(quiet.headline.starts_with("No show tonight"));
+        assert!(quiet.headline.starts_with("No show that night"));
         // DJ clips skipped because the owner turned DJ Studio off are not a
         // problem: the night stays "ok".
         let skipped = aggregate(
