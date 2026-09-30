@@ -20,7 +20,10 @@
 	let liveTimer: ReturnType<typeof setTimeout>;
 
 	$effect(() => {
-		api.effects.schema().then((s) => (schema = { ...DEFAULT_EFFECT_SCHEMA, ...s })).catch(() => {});
+		api.effects
+			.schema()
+			.then((s) => (schema = { ...DEFAULT_EFFECT_SCHEMA, ...s }))
+			.catch(() => {});
 	});
 
 	const isSaved = $derived(!!draft && !!show?.effects.some((e) => e.id === draft!.id));
@@ -33,7 +36,13 @@
 		open = true;
 	}
 	function startFrom(kind: EffectKind) {
-		draft = { id: newId(), name: `My ${EFFECT_META[kind].label.toLowerCase()}`, effect: kind, params: defaultParams(schema[kind] ?? []), target: { all: true } };
+		draft = {
+			id: newId(),
+			name: `My ${EFFECT_META[kind].label.toLowerCase()}`,
+			effect: kind,
+			params: defaultParams(schema[kind] ?? []),
+			target: { all: true }
+		};
 		open = true;
 	}
 	function changeKind(kind: EffectKind) {
@@ -53,7 +62,12 @@
 		if (!draft) return;
 		try {
 			await api.applyEffect($state.snapshot(draft) as EffectPreset);
-			if (liveId !== draft.id) toasts.push({ kind: 'info', message: `“${draft.name}” is on the display`, action: { label: 'Stop', run: stopLive } });
+			if (liveId !== draft.id)
+				toasts.push({
+					kind: 'info',
+					message: `“${draft.name}” is on the display`,
+					action: { label: 'Stop', run: stopLive }
+				});
 			liveId = draft.id;
 		} catch (e) {
 			toasts.error('Couldn’t apply the effect', (e as Error).message);
@@ -75,7 +89,10 @@
 		if (!(await confirm({ title: `Delete “${d.name}”?`, confirmLabel: 'Delete', danger: true }))) return;
 		await app.mutate(() => api.effects.remove(d.id));
 		open = false;
-		toasts.success(`Deleted ${d.name}`, { label: 'Undo', run: () => app.mutate(() => api.effects.create(d)) });
+		toasts.success(`Deleted ${d.name}`, {
+			label: 'Undo',
+			run: () => app.mutate(() => api.effects.create(d))
+		});
 	}
 	async function quickApply(p: EffectPreset) {
 		try {
@@ -95,30 +112,43 @@
 	function toggleIn(list: 'groupIds' | 'propIds', id: string) {
 		if (!draft) return;
 		const cur = draft.target[list] ?? [];
-		draft.target = { ...draft.target, all: false, [list]: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] };
+		draft.target = {
+			...draft.target,
+			all: false,
+			[list]: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+		};
 		paramsChanged();
 	}
 	function targetLabel(p: EffectPreset) {
 		if (p.target.all || (!p.target.groupIds?.length && !p.target.propIds?.length)) return 'Whole display';
-		const g = p.target.groupIds?.map((id) => show?.propGroups.find((x) => x.id === id)?.name).filter(Boolean) ?? [];
+		const g =
+			p.target.groupIds?.map((id) => show?.propGroups.find((x) => x.id === id)?.name).filter(Boolean) ?? [];
 		const n = p.target.propIds?.length ?? 0;
 		return [...g, n ? `${n} props` : ''].filter(Boolean).join(', ');
 	}
 </script>
 
 <div class="page">
-	<PageHeader title="Effects" subtitle="Ready-made looks you can put on the display right now, use as the idle look, or add to playlists.">
+	<PageHeader
+		title="Effects"
+		subtitle="Ready-made looks you can put on the display right now, use as the idle look, or add to playlists."
+	>
 		{#snippet actions()}
 			{#if live}<button class="btn" onclick={stopLive}><Square size={14} /> Stop live effect</button>{/if}
 		{/snippet}
 	</PageHeader>
 
-	<div class="section-title" style="margin-top:0"><h2>Your looks</h2><span class="faint small">{show?.effects.length ?? 0}</span></div>
+	<div class="section-title" style="margin-top:0">
+		<h2>Your looks</h2>
+		<span class="faint small">{show?.effects.length ?? 0}</span>
+	</div>
 	<div class="gallery">
 		{#each show?.effects ?? [] as p (p.id)}
 			{@const on = live && liveId === p.id}
 			<article class="card fx interactive" class:on>
-				<button class="pv" onclick={() => openPreset(p)} aria-label="Edit {p.name}"><EffectPreview kind={p.effect} params={p.params} height={130} /></button>
+				<button class="pv" onclick={() => openPreset(p)} aria-label="Edit {p.name}"
+					><EffectPreview kind={p.effect} params={p.params} height={130} /></button
+				>
 				<div class="meta">
 					<div class="grow">
 						<div class="name ellipsis">{p.name}</div>
@@ -150,15 +180,24 @@
 	{#snippet header()}
 		{#if draft}
 			<input class="title-input" bind:value={draft.name} aria-label="Look name" />
-			<div class="faint small" style="margin-left:0">{isSaved ? 'Saved look' : 'New look — not saved yet'}{isLive ? ' · live on the display' : ''}</div>
+			<div class="faint small" style="margin-left:0">
+				{isSaved ? 'Saved look' : 'New look — not saved yet'}{isLive ? ' · live on the display' : ''}
+			</div>
 		{/if}
 	{/snippet}
 	{#if draft}
 		<div class="bigpv card"><EffectPreview kind={draft.effect} params={draft.params} height={180} /></div>
-		<p class="faint tiny" style="margin:-8px 0 16px">Preview is approximate — press <strong>Try it live</strong> to see it on your props.</p>
+		<p class="faint tiny" style="margin:-8px 0 16px">
+			Preview is approximate — press <strong>Try it live</strong> to see it on your props.
+		</p>
 
-		<label class="field" style="margin-bottom:18px"><span class="label">Effect</span>
-			<select class="select" value={draft.effect} onchange={(e) => changeKind((e.target as HTMLSelectElement).value as EffectKind)}>
+		<label class="field" style="margin-bottom:18px"
+			><span class="label">Effect</span>
+			<select
+				class="select"
+				value={draft.effect}
+				onchange={(e) => changeKind((e.target as HTMLSelectElement).value as EffectKind)}
+			>
 				{#each EFFECT_KINDS as k (k)}<option value={k}>{EFFECT_META[k].label}</option>{/each}
 			</select>
 		</label>
@@ -168,32 +207,78 @@
 		<div class="field" style="margin-top:22px">
 			<span class="label">Show it on</span>
 			<div class="tmode">
-				<button type="button" class="chip" aria-pressed={targetMode() === 'all'} onclick={() => { if (draft) { draft.target = { all: true }; paramsChanged(); } }}>Whole display</button>
-				<button type="button" class="chip" aria-pressed={targetMode() === 'groups'} onclick={() => { if (draft) draft.target = { all: false, groupIds: draft.target.groupIds ?? [] }; }}>Groups</button>
-				<button type="button" class="chip" aria-pressed={targetMode() === 'props'} onclick={() => { if (draft) draft.target = { all: false, propIds: draft.target.propIds?.length ? draft.target.propIds : [show?.props[0]?.id ?? ''] }; }}>Pick props</button>
+				<button
+					type="button"
+					class="chip"
+					aria-pressed={targetMode() === 'all'}
+					onclick={() => {
+						if (draft) {
+							draft.target = { all: true };
+							paramsChanged();
+						}
+					}}>Whole display</button
+				>
+				<button
+					type="button"
+					class="chip"
+					aria-pressed={targetMode() === 'groups'}
+					onclick={() => {
+						if (draft) draft.target = { all: false, groupIds: draft.target.groupIds ?? [] };
+					}}>Groups</button
+				>
+				<button
+					type="button"
+					class="chip"
+					aria-pressed={targetMode() === 'props'}
+					onclick={() => {
+						if (draft)
+							draft.target = {
+								all: false,
+								propIds: draft.target.propIds?.length ? draft.target.propIds : [show?.props[0]?.id ?? '']
+							};
+					}}>Pick props</button
+				>
 			</div>
 			{#if targetMode() === 'groups'}
 				<div class="row wrap" style="margin-top:8px">
-					{#each show?.propGroups ?? [] as g (g.id)}<button type="button" class="chip" aria-pressed={draft.target.groupIds?.includes(g.id)} onclick={() => toggleIn('groupIds', g.id)}><span class="gd" style:background={g.color}></span>{g.name}</button>{/each}
+					{#each show?.propGroups ?? [] as g (g.id)}<button
+							type="button"
+							class="chip"
+							aria-pressed={draft.target.groupIds?.includes(g.id)}
+							onclick={() => toggleIn('groupIds', g.id)}
+							><span class="gd" style:background={g.color}></span>{g.name}</button
+						>{/each}
 				</div>
 			{:else if targetMode() === 'props'}
 				<div class="plist">
 					{#each show?.props ?? [] as p (p.id)}
-						<label class="pi"><input type="checkbox" class="check" checked={draft.target.propIds?.includes(p.id)} onchange={() => toggleIn('propIds', p.id)} /> {p.name}</label>
+						<label class="pi"
+							><input
+								type="checkbox"
+								class="check"
+								checked={draft.target.propIds?.includes(p.id)}
+								onchange={() => toggleIn('propIds', p.id)}
+							/>
+							{p.name}</label
+						>
 					{/each}
 				</div>
 			{/if}
 		</div>
 	{/if}
 	{#snippet footer()}
-		{#if isSaved}<button class="btn danger icon" onclick={remove} aria-label="Delete look"><Trash2 size={15} /></button>{/if}
+		{#if isSaved}<button class="btn danger icon" onclick={remove} aria-label="Delete look"
+				><Trash2 size={15} /></button
+			>{/if}
 		<span class="grow"></span>
 		{#if isLive}
 			<button class="btn" onclick={stopLive}><Square size={14} /> Stop</button>
 		{:else}
 			<button class="btn soft" onclick={applyLive}><Radio size={15} /> Try it live</button>
 		{/if}
-		<button class="btn primary" onclick={save}>{#if isSaved}<Save size={15} /> Save{:else}<Plus size={15} /> Save as look{/if}</button>
+		<button class="btn primary" onclick={save}
+			>{#if isSaved}<Save size={15} /> Save{:else}<Plus size={15} /> Save as look{/if}</button
+		>
 	{/snippet}
 </Drawer>
 
@@ -214,7 +299,9 @@
 	}
 	.fx.on {
 		border-color: var(--accent);
-		box-shadow: 0 0 0 1px var(--accent), 0 8px 30px rgba(245, 165, 36, 0.15);
+		box-shadow:
+			0 0 0 1px var(--accent),
+			0 8px 30px rgba(245, 165, 36, 0.15);
 	}
 	.pv {
 		display: block;

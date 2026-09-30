@@ -57,9 +57,11 @@
 			close();
 		}
 		if (e.key === 'Tab' && panel) {
-			const els = [...panel.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
-				(el) => !el.hasAttribute('disabled')
-			);
+			const els = [
+				...panel.querySelectorAll<HTMLElement>(
+					'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+				)
+			].filter((el) => !el.hasAttribute('disabled'));
 			if (!els.length) return;
 			const first = els[0],
 				last = els[els.length - 1];
@@ -95,7 +97,9 @@
 						{#if subtitle}<p class="muted small">{subtitle}</p>{/if}
 					</div>
 					{#if dismissable}
-						<button class="btn ghost icon sm modal-x" onclick={close} aria-label="Close"><X size={18} /></button>
+						<button class="btn ghost icon sm modal-x" onclick={close} aria-label="Close"
+							><X size={18} /></button
+						>
 					{/if}
 				</header>
 			{/if}

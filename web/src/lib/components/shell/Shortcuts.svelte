@@ -22,7 +22,11 @@
 		<section>
 			<h3 class="eyebrow">Go to</h3>
 			{#each NAV as n (n.href)}
-				<div class="sc"><span>{n.label}</span><span class="keys"><span class="kbd">G</span><span class="kbd">{n.key?.toUpperCase()}</span></span></div>
+				<div class="sc">
+					<span>{n.label}</span><span class="keys"
+						><span class="kbd">G</span><span class="kbd">{n.key?.toUpperCase()}</span></span
+					>
+				</div>
 			{/each}
 		</section>
 	</div>

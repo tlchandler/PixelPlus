@@ -29,7 +29,7 @@ class RecordingSys(firstboot.Sys):
 
     def output(self, argv, timeout=30):
         self.commands.append(list(argv))
-        if argv[1:3] == ["board", "detect"]:
+        if argv[1:3] == ["--json", "detect"]:
             return self.board_json
         if argv[1] == "config-txt":
             return self.fragment
@@ -171,24 +171,51 @@ class FirstbootTests(unittest.TestCase):
         firstboot.apply(RecordingSys(), allow_reboot=False)
         self.assertFalse(os.path.exists(os.path.join(self.boot, "pixelplus-errors.txt")))
 
-    def test_board_block_and_reboot_once(self):
-        s = RecordingSys(board_json='{"board":"difftxlarge","rev":"A"}', fragment="dtoverlay=pixelplus-dpi-24\ndtoverlay=i2c-rtc,ds3231\n")
+    def conf(self):
+        p = os.path.join(self.boot, "pixelplus.conf")
+        return open(p).read() if os.path.exists(p) else None
+
+    def test_board_conf_and_reboot_once(self):
+        det = '{"simulated": false, "pi": {"model": "Raspberry Pi 5"}, "board": {"board": "difftxlarge", "rev": "A", "source": "eeprom"}}'
+        frag = "[all]\ndtoverlay=pixelplus-dpi-pi5,vactive=807\ndtoverlay=i2c-rtc,ds3231\n"
+        s = RecordingSys(board_json=det, fragment=frag)
         firstboot.apply(s, allow_reboot=True)
         flat = [" ".join(c) for c in s.commands]
-        self.assertIn(f"{sys.executable} config-txt --board difftxlarge --rev A", flat)
+        self.assertIn(f"{sys.executable} config-txt --board difftxlarge", flat)
         self.assertIn("systemctl --no-block reboot", flat)
         cfg = open(os.path.join(self.boot, "config.txt")).read()
         self.assertTrue(cfg.startswith("dtparam=audio=on\n[pi5]\ndtoverlay=nospi10\n"))
-        self.assertIn(firstboot.BLOCK_BEGIN + "\n[all]\ndtoverlay=pixelplus-dpi-24\ndtoverlay=i2c-rtc,ds3231\n" + firstboot.BLOCK_END, cfg)
-        # next boot: same fragment -> no reboot
-        s2 = RecordingSys(board_json='{"board":"difftxlarge","rev":"A"}', fragment="dtoverlay=pixelplus-dpi-24\ndtoverlay=i2c-rtc,ds3231\n")
+        self.assertTrue(cfg.endswith("[all]\ninclude pixelplus.conf\n"))
+        self.assertIn("dtoverlay=pixelplus-dpi-pi5,vactive=807\n", self.conf())
+        # next boot: nothing changes, no reboot
+        s2 = RecordingSys(board_json=det, fragment=frag)
         firstboot.apply(s2, allow_reboot=True)
-        self.assertNotIn("systemctl --no-block reboot", [" ".join(c) for c in s2.commands])
+        flat2 = [" ".join(c) for c in s2.commands]
+        self.assertNotIn("systemctl --no-block reboot", flat2)
+        self.assertFalse(any("config-txt" in c for c in flat2))
         self.assertEqual(open(os.path.join(self.boot, "config.txt")).read(), cfg)
+        # the daemon (via the helper) regenerated it for longer strings: firstboot keeps it
+        open(os.path.join(self.boot, "pixelplus.conf"), "w").write("# daemon\ndtoverlay=pixelplus-dpi-pi5,vactive=1607\n")
+        firstboot.apply(RecordingSys(board_json=det, fragment=frag), allow_reboot=True)
+        self.assertIn("vactive=1607", self.conf())
+
+    def test_board_config_command_forces(self):
+        s = RecordingSys(fragment="[all]\ndtoverlay=pixelplus-dpi,vactive=1607\n")
+        s_orig = firstboot.Sys
+        firstboot.Sys = lambda dry_run=False: s  # main() builds its own Sys
+        try:
+            os.environ["PIXELPLUS_FIRSTBOOT_LOG"] = os.path.join(self.tmp, "fb.log")
+            firstboot.main(["--dry-run", "board-config", "--board", "difftx", "--pixels", "1600"])
+        finally:
+            firstboot.Sys = s_orig
+        flat = [" ".join(c) for c in s.commands]
+        self.assertIn(f"{sys.executable} config-txt --board difftx --pixels 1600", flat)
+        self.assertIn("vactive=1607", self.conf())
 
     def test_reboot_loop_guard(self):
+        boards = ["difftx", "diffsmart"]
         for i in range(firstboot.MAX_BOARD_REBOOTS + 2):
-            s = RecordingSys(board_json='{"board":"difftx"}', fragment=f"# variant {i}\n")
+            s = RecordingSys(board_json='{"board": {"board": "%s"}}' % boards[i % 2], fragment=f"# variant {i}\n")
             firstboot.apply(s, allow_reboot=True)
             rebooted = "systemctl --no-block reboot" in [" ".join(c) for c in s.commands]
             self.assertEqual(rebooted, i < firstboot.MAX_BOARD_REBOOTS, i)
@@ -197,17 +224,24 @@ class FirstbootTests(unittest.TestCase):
         self.write_txt({})
         txt = open(os.path.join(self.boot, "pixelplus.txt")).read().replace("board=auto", "board=diffsmart")
         open(os.path.join(self.boot, "pixelplus.txt"), "w").write(txt)
-        s = RecordingSys(board_json='{"board":"difftx"}')
+        s = RecordingSys(board_json='{"board": {"board": "difftx"}}')
         firstboot.apply(s, allow_reboot=False)
         flat = [" ".join(c) for c in s.commands]
         self.assertIn(f"{sys.executable} config-txt --board diffsmart", flat)
-        self.assertFalse(any("board detect" in c for c in flat))
+        self.assertFalse(any("detect" in c for c in flat))
 
-    def test_replace_block_is_stable(self):
-        base = "a=1\n"
-        once = firstboot.replace_managed_block(base, "x=1\n")
-        self.assertEqual(firstboot.replace_managed_block(once, "x=1\n"), once)
-        self.assertEqual(firstboot.replace_managed_block(once, ""), base)
+    def test_blank_eeprom_leaves_boot_config_alone(self):
+        s = RecordingSys(board_json='{"board": {"board": null, "suggested": "difftx"}}')
+        firstboot.apply(s, allow_reboot=True)
+        self.assertIsNone(self.conf())
+        self.assertNotIn("include", open(os.path.join(self.boot, "config.txt")).read())
+
+    def test_include_and_legacy_block(self):
+        legacy = "a=1\n\n" + firstboot.BLOCK_BEGIN + "\n[all]\nx=1\n" + firstboot.BLOCK_END + "\n"
+        out = firstboot.ensure_include(legacy)
+        self.assertEqual(out, firstboot.ensure_include(out))
+        self.assertNotIn("x=1", out)
+        self.assertTrue(out.endswith("[all]\ninclude pixelplus.conf\n"))
 
     def test_check_command(self):
         p = os.path.join(self.tmp, "t.txt")

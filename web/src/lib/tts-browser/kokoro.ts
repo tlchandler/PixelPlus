@@ -90,7 +90,11 @@ export function loadKokoro(onProgress?: (p: number) => void) {
 		} catch (e) {
 			if (device !== 'webgpu') throw e;
 			console.warn('Kokoro on WebGPU failed, falling back to WASM', e);
-			const tts = await mod.KokoroTTS.from_pretrained(MODEL_ID, { dtype: 'q8', device: 'wasm', progress_callback });
+			const tts = await mod.KokoroTTS.from_pretrained(MODEL_ID, {
+				dtype: 'q8',
+				device: 'wasm',
+				progress_callback
+			});
 			return { tts: tts as unknown as KokoroLike, device: 'wasm', dtype: 'q8' };
 		}
 	})();
@@ -150,7 +154,12 @@ let warnedFallback = false;
 
 export const kokoroBackend: SynthBackend = {
 	phonemize: (text, lang) => phonemize(text, lang),
-	async synthesize(phonemes: string, voice: ResolvedVoice, speed: number, text: string): Promise<Float32Array> {
+	async synthesize(
+		phonemes: string,
+		voice: ResolvedVoice,
+		speed: number,
+		text: string
+	): Promise<Float32Array> {
 		const { tts } = await loadKokoro();
 		try {
 			const style = await blendedStyle(voice.blend);

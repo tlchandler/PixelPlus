@@ -47,9 +47,11 @@ describe('eq', () => {
 	it('parses ffmpeg equalizer chains and boosts the band', () => {
 		const f = parseFfmpegEq('equalizer=f=3200:t=q:w=1.2:g=6,highpass=f=75,acompressor=threshold=-21dB', SR);
 		expect(f).toHaveLength(2);
-		const at3k = rms(applyBiquads(sine(3200, 1), [f[0]]).subarray(SR / 2)) / rms(sine(3200, 1).subarray(SR / 2));
+		const at3k =
+			rms(applyBiquads(sine(3200, 1), [f[0]]).subarray(SR / 2)) / rms(sine(3200, 1).subarray(SR / 2));
 		expect(20 * Math.log10(at3k)).toBeCloseTo(6, 0);
-		const at200 = rms(applyBiquads(sine(200, 1), [f[0]]).subarray(SR / 2)) / rms(sine(200, 1).subarray(SR / 2));
+		const at200 =
+			rms(applyBiquads(sine(200, 1), [f[0]]).subarray(SR / 2)) / rms(sine(200, 1).subarray(SR / 2));
 		expect(Math.abs(20 * Math.log10(at200))).toBeLessThan(0.5);
 		const hp = rms(applyBiquads(sine(30, 1), [f[1]]).subarray(SR / 2)) / rms(sine(30, 1).subarray(SR / 2));
 		expect(hp).toBeLessThan(0.3);

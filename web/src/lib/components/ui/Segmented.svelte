@@ -69,7 +69,9 @@
 	button.active {
 		background: var(--surface-3);
 		color: var(--text);
-		box-shadow: var(--shadow-1), 0 0 0 1px var(--border-2);
+		box-shadow:
+			var(--shadow-1),
+			0 0 0 1px var(--border-2);
 	}
 	@media (pointer: coarse) {
 		button {

@@ -60,7 +60,13 @@ function linePoints(n: number, x0: number, y0: number, x1: number, y1: number): 
 	});
 }
 
-function voice(id: string, name: string, description: string, blend: Record<string, number>, defaultEnergy = 0.4): DjVoice {
+function voice(
+	id: string,
+	name: string,
+	description: string,
+	blend: Record<string, number>,
+	defaultEnergy = 0.4
+): DjVoice {
 	return {
 		id,
 		name,
@@ -101,12 +107,60 @@ export function buildDemoShow(): Show {
 	nodes[1].outputs[1].colorOrder = 'GRB';
 
 	const receivers = [
-		{ id: 'rxfront001', name: 'Front Yard', kind: 'diffrx' as const, nodeId: MAIN, jack: 1, location: 'Behind the hedge', fuseAmps: 6 },
-		{ id: 'rxporch001', name: 'Porch', kind: 'diffrx' as const, nodeId: MAIN, jack: 2, location: 'Porch ceiling', fuseAmps: 6 },
-		{ id: 'rxroof0001', name: 'Roofline', kind: 'diffrx' as const, nodeId: MAIN, jack: 3, location: 'Attic', fuseAmps: 6 },
-		{ id: 'rxmatrix01', name: 'Matrix', kind: 'diffrx' as const, nodeId: MAIN, jack: 4, location: 'Matrix frame', fuseAmps: 6 },
-		{ id: 'rxtree0001', name: 'Mega Tree', kind: 'diffsmart-rx' as const, nodeId: MAIN, jack: 6, location: 'Tree base', fuseAmps: 6 },
-		{ id: 'rxdrive001', name: 'Driveway', kind: 'diffrx' as const, nodeId: GARAGE, jack: 1, location: 'Garage wall', fuseAmps: 6 }
+		{
+			id: 'rxfront001',
+			name: 'Front Yard',
+			kind: 'diffrx' as const,
+			nodeId: MAIN,
+			jack: 1,
+			location: 'Behind the hedge',
+			fuseAmps: 6
+		},
+		{
+			id: 'rxporch001',
+			name: 'Porch',
+			kind: 'diffrx' as const,
+			nodeId: MAIN,
+			jack: 2,
+			location: 'Porch ceiling',
+			fuseAmps: 6
+		},
+		{
+			id: 'rxroof0001',
+			name: 'Roofline',
+			kind: 'diffrx' as const,
+			nodeId: MAIN,
+			jack: 3,
+			location: 'Attic',
+			fuseAmps: 6
+		},
+		{
+			id: 'rxmatrix01',
+			name: 'Matrix',
+			kind: 'diffrx' as const,
+			nodeId: MAIN,
+			jack: 4,
+			location: 'Matrix frame',
+			fuseAmps: 6
+		},
+		{
+			id: 'rxtree0001',
+			name: 'Mega Tree',
+			kind: 'diffsmart-rx' as const,
+			nodeId: MAIN,
+			jack: 6,
+			location: 'Tree base',
+			fuseAmps: 6
+		},
+		{
+			id: 'rxdrive001',
+			name: 'Driveway',
+			kind: 'diffrx' as const,
+			nodeId: GARAGE,
+			jack: 1,
+			location: 'Garage wall',
+			fuseAmps: 6
+		}
 	];
 
 	const props: Prop[] = [];
@@ -114,7 +168,15 @@ export function buildDemoShow(): Show {
 		let off = 0;
 		for (const [nodeId, output, start, count] of segs) {
 			const c = count ?? p.pixelCount - off;
-			p.segments.push({ nodeId, output, startPixel: start, pixelCount: c, propOffset: off, reverse: false, nullPixels: 0 });
+			p.segments.push({
+				nodeId,
+				output,
+				startPixel: start,
+				pixelCount: c,
+				propOffset: off,
+				reverse: false,
+				nullPixels: 0
+			});
 			off += c;
 		}
 		props.push(p);
@@ -122,15 +184,33 @@ export function buildDemoShow(): Show {
 	};
 
 	// Mega tree + star (left)
-	add(prop('ptree00001', 'Mega Tree', 'tree', 800, { x: 50, y: 190, w: 200, h: 380, rotation: 0 }, { color: '#3fcf8e' }), [
-		[MAIN, 21, 0, 200],
-		[MAIN, 22, 0, 200],
-		[MAIN, 23, 0, 200],
-		[MAIN, 24, 0, 200]
-	]);
-	add(prop('pstar00001', 'Tree Topper Star', 'star', 60, { x: 115, y: 120, w: 70, h: 70, rotation: 0 }, { color: '#f5d547' }), [
-		[MAIN, 8, 0]
-	]);
+	add(
+		prop(
+			'ptree00001',
+			'Mega Tree',
+			'tree',
+			800,
+			{ x: 50, y: 190, w: 200, h: 380, rotation: 0 },
+			{ color: '#3fcf8e' }
+		),
+		[
+			[MAIN, 21, 0, 200],
+			[MAIN, 22, 0, 200],
+			[MAIN, 23, 0, 200],
+			[MAIN, 24, 0, 200]
+		]
+	);
+	add(
+		prop(
+			'pstar00001',
+			'Tree Topper Star',
+			'star',
+			60,
+			{ x: 115, y: 120, w: 70, h: 70, rotation: 0 },
+			{ color: '#f5d547' }
+		),
+		[[MAIN, 8, 0]]
+	);
 	// House roofline
 	add(
 		prop('proofl0001', 'Roofline Left', 'line', 150, {
@@ -154,13 +234,27 @@ export function buildDemoShow(): Show {
 		}),
 		[[MAIN, 10, 0]]
 	);
-	add(prop('peave00001', 'Roofline Eave', 'line', 200, { x: 320, y: 270, w: 560, h: 6, rotation: 0 }), [[MAIN, 11, 0]]);
-	add(prop('picicle001', 'Icicles', 'icicles', 300, { x: 320, y: 278, w: 560, h: 40, rotation: 0 }, { color: '#9fd8ff' }), [
-		[MAIN, 12, 0]
+	add(prop('peave00001', 'Roofline Eave', 'line', 200, { x: 320, y: 270, w: 560, h: 6, rotation: 0 }), [
+		[MAIN, 11, 0]
 	]);
+	add(
+		prop(
+			'picicle001',
+			'Icicles',
+			'icicles',
+			300,
+			{ x: 320, y: 278, w: 560, h: 40, rotation: 0 },
+			{ color: '#9fd8ff' }
+		),
+		[[MAIN, 12, 0]]
+	);
 	// Windows + porch
-	add(prop('pwinl00001', 'Window Left', 'window', 60, { x: 370, y: 330, w: 90, h: 80, rotation: 0 }), [[MAIN, 5, 0]]);
-	add(prop('pwinr00001', 'Window Right', 'window', 60, { x: 740, y: 330, w: 90, h: 80, rotation: 0 }), [[MAIN, 6, 0]]);
+	add(prop('pwinl00001', 'Window Left', 'window', 60, { x: 370, y: 330, w: 90, h: 80, rotation: 0 }), [
+		[MAIN, 5, 0]
+	]);
+	add(prop('pwinr00001', 'Window Right', 'window', 60, { x: 740, y: 330, w: 90, h: 80, rotation: 0 }), [
+		[MAIN, 6, 0]
+	]);
 	add(
 		prop('pcoll00001', 'Porch Column Left', 'line', 50, {
 			x: 540,
@@ -198,11 +292,18 @@ export function buildDemoShow(): Show {
 	const mw = 80,
 		mh = 40;
 	add(
-		prop('pmatrix001', 'Singing Matrix', 'matrix', mw * mh, { x: 950, y: 250, w: 220, h: 110, rotation: 0 }, {
-			matrix: { width: mw, height: mh, pixelMap: Array.from({ length: mw * mh }, (_, i) => i) },
-			color: '#a88bfa',
-			maxMilliampsPerPixel: 36
-		}),
+		prop(
+			'pmatrix001',
+			'Singing Matrix',
+			'matrix',
+			mw * mh,
+			{ x: 950, y: 250, w: 220, h: 110, rotation: 0 },
+			{
+				matrix: { width: mw, height: mh, pixelMap: Array.from({ length: mw * mh }, (_, i) => i) },
+				color: '#a88bfa',
+				maxMilliampsPerPixel: 36
+			}
+		),
 		[
 			[MAIN, 13, 0, 800],
 			[MAIN, 14, 0, 800],
@@ -221,14 +322,38 @@ export function buildDemoShow(): Show {
 		});
 		add(p, [[GARAGE, 1 + Math.floor(i / 4), (i % 4) * 25]]);
 	}
-	add(prop('pspin00001', 'Spinner', 'spinner', 144, { x: 1010, y: 90, w: 110, h: 110, rotation: 0 }, { color: '#5b9dff' }), [
-		[GARAGE, 3, 0]
-	]);
+	add(
+		prop(
+			'pspin00001',
+			'Spinner',
+			'spinner',
+			144,
+			{ x: 1010, y: 90, w: 110, h: 110, rotation: 0 },
+			{ color: '#5b9dff' }
+		),
+		[[GARAGE, 3, 0]]
+	);
 	for (let i = 0; i < 4; i++)
-		add(prop(`pmini0000${i + 1}`, `Mini Tree ${i + 1}`, 'tree', 50, { x: 40 + i * 60, y: 600, w: 44, h: 64, rotation: 0 }), [
-			[GARAGE, 4, i * 50]
-		]);
-	add(prop('psnowflak1', 'Snowflake', 'star', 40, { x: 1160, y: 110, w: 60, h: 60, rotation: 0 }, { notes: 'New this year' }));
+		add(
+			prop(`pmini0000${i + 1}`, `Mini Tree ${i + 1}`, 'tree', 50, {
+				x: 40 + i * 60,
+				y: 600,
+				w: 44,
+				h: 64,
+				rotation: 0
+			}),
+			[[GARAGE, 4, i * 50]]
+		);
+	add(
+		prop(
+			'psnowflak1',
+			'Snowflake',
+			'star',
+			40,
+			{ x: 1160, y: 110, w: 60, h: 60, rotation: 0 },
+			{ notes: 'New this year' }
+		)
+	);
 
 	// channel starts (xLights order)
 	let ch = 0;
@@ -238,21 +363,49 @@ export function buildDemoShow(): Show {
 	}
 
 	const groups = [
-		{ id: 'garches001', name: 'Arches', propIds: props.filter((p) => p.kind === 'arch').map((p) => p.id), color: '#f5a524' },
-		{ id: 'gcanes0001', name: 'Candy Canes', propIds: props.filter((p) => p.kind === 'candycane').map((p) => p.id), color: '#f2555a' },
+		{
+			id: 'garches001',
+			name: 'Arches',
+			propIds: props.filter((p) => p.kind === 'arch').map((p) => p.id),
+			color: '#f5a524'
+		},
+		{
+			id: 'gcanes0001',
+			name: 'Candy Canes',
+			propIds: props.filter((p) => p.kind === 'candycane').map((p) => p.id),
+			color: '#f2555a'
+		},
 		{
 			id: 'ghouse0001',
 			name: 'House',
-			propIds: ['proofl0001', 'proofr0001', 'peave00001', 'picicle001', 'pwinl00001', 'pwinr00001', 'pcoll00001', 'pcolr00001'],
+			propIds: [
+				'proofl0001',
+				'proofr0001',
+				'peave00001',
+				'picicle001',
+				'pwinl00001',
+				'pwinr00001',
+				'pcoll00001',
+				'pcolr00001'
+			],
 			color: '#5b9dff'
 		},
 		{
 			id: 'gtrees0001',
 			name: 'Trees',
-			propIds: ['ptree00001', 'pstar00001', ...props.filter((p) => p.name.startsWith('Mini Tree')).map((p) => p.id)],
+			propIds: [
+				'ptree00001',
+				'pstar00001',
+				...props.filter((p) => p.name.startsWith('Mini Tree')).map((p) => p.id)
+			],
 			color: '#3fcf8e'
 		},
-		{ id: 'gyard00001', name: 'Yard', propIds: props.filter((p) => ['arch', 'candycane'].includes(p.kind)).map((p) => p.id), color: '#a88bfa' }
+		{
+			id: 'gyard00001',
+			name: 'Yard',
+			propIds: props.filter((p) => ['arch', 'candycane'].includes(p.kind)).map((p) => p.id),
+			color: '#a88bfa'
+		}
 	];
 	for (const g of groups) for (const pid of g.propIds) props.find((p) => p.id === pid)?.groupIds.push(g.id);
 
@@ -287,14 +440,50 @@ export function buildDemoShow(): Show {
 		hash: (k + '9f3ab2c7d1e5').padEnd(64, '0')
 	}));
 	media.push(
-		{ id: 'mdjwelcom1', name: 'DJ — Welcome', kind: 'dj', file: 'media/dj-welcome.mp3', durationMs: 14000, loudnessLufs: -15.2, gainDb: 1.2 },
-		{ id: 'mdjradio01', name: 'DJ — Tune to 88.3', kind: 'dj', file: 'media/dj-radio.mp3', durationMs: 9000, loudnessLufs: -14.8, gainDb: 0.8 },
-		{ id: 'mbedjazz01', name: 'Jazzy music bed', kind: 'sfx', file: 'media/bed-jazz.mp3', durationMs: 60000, loudnessLufs: -20 },
-		{ id: 'msleigh001', name: 'Sleigh bells', kind: 'sfx', file: 'media/sleigh.mp3', durationMs: 4000, loudnessLufs: -18 }
+		{
+			id: 'mdjwelcom1',
+			name: 'DJ — Welcome',
+			kind: 'dj',
+			file: 'media/dj-welcome.mp3',
+			durationMs: 14000,
+			loudnessLufs: -15.2,
+			gainDb: 1.2
+		},
+		{
+			id: 'mdjradio01',
+			name: 'DJ — Tune to 88.3',
+			kind: 'dj',
+			file: 'media/dj-radio.mp3',
+			durationMs: 9000,
+			loudnessLufs: -14.8,
+			gainDb: 0.8
+		},
+		{
+			id: 'mbedjazz01',
+			name: 'Jazzy music bed',
+			kind: 'sfx',
+			file: 'media/bed-jazz.mp3',
+			durationMs: 60000,
+			loudnessLufs: -20
+		},
+		{
+			id: 'msleigh001',
+			name: 'Sleigh bells',
+			kind: 'sfx',
+			file: 'media/sleigh.mp3',
+			durationMs: 4000,
+			loudnessLufs: -18
+		}
 	);
 
 	const djVoices = [
-		voice('nick', 'Nick', 'Warm, upbeat, classic radio baritone.', { am_echo: 0.3, am_fenrir: 0.3, am_puck: 0.4 }, 0.4),
+		voice(
+			'nick',
+			'Nick',
+			'Warm, upbeat, classic radio baritone.',
+			{ am_echo: 0.3, am_fenrir: 0.3, am_puck: 0.4 },
+			0.4
+		),
 		voice('holly', 'Holly', 'Bright, friendly and energetic co-host.', { af_heart: 0.5, af_kore: 0.5 }, 0.4),
 		voice('santa', 'Santa', 'Deep and jolly. Ho ho ho.', { am_santa: 0.7, am_onyx: 0.3 }, 0.3)
 	];
@@ -308,8 +497,18 @@ export function buildDemoShow(): Show {
 			mediaId: 'mdjwelcom1',
 			musicBedMediaId: 'mbedjazz01',
 			lines: [
-				{ voice: 'nick', text: 'Good evening and welcome to the Chandler Lights show!', pauseMs: 300, energy: 1 },
-				{ voice: 'holly', text: 'Tune your radio to eighty-eight point three FM, and please keep the driveway clear.', pauseMs: 250, energy: 0.4 },
+				{
+					voice: 'nick',
+					text: 'Good evening and welcome to the Chandler Lights show!',
+					pauseMs: 300,
+					energy: 1
+				},
+				{
+					voice: 'holly',
+					text: 'Tune your radio to eighty-eight point three FM, and please keep the driveway clear.',
+					pauseMs: 250,
+					energy: 0.4
+				},
 				{ voice: 'nick', text: 'Grab some cocoa, sit back — here we go!', pauseMs: 0, energy: 1.5 }
 			]
 		},
@@ -319,7 +518,12 @@ export function buildDemoShow(): Show {
 			dynamic: true,
 			speed: 1,
 			lines: [
-				{ voice: 'holly', text: 'That was {prevSong}. It is {time}, and there are {daysUntilChristmas} days until Christmas!', pauseMs: 250, energy: 0.4 },
+				{
+					voice: 'holly',
+					text: 'That was {prevSong}. It is {time}, and there are {daysUntilChristmas} days until Christmas!',
+					pauseMs: 250,
+					energy: 0.4
+				},
 				{ voice: 'nick', text: 'Up next: {nextSong}!', pauseMs: 0, energy: 1 }
 			]
 		},
@@ -329,7 +533,14 @@ export function buildDemoShow(): Show {
 			dynamic: false,
 			speed: 1.05,
 			mediaId: 'mdjradio01',
-			lines: [{ voice: 'holly', text: 'Reminder: the music is on 88.3 FM. Please dim your headlights!', pauseMs: 0, energy: 0.4 }]
+			lines: [
+				{
+					voice: 'holly',
+					text: 'Reminder: the music is on 88.3 FM. Please dim your headlights!',
+					pauseMs: 0,
+					energy: 0.4
+				}
+			]
 		},
 		{
 			id: 'djgoodnit1',
@@ -337,13 +548,23 @@ export function buildDemoShow(): Show {
 			dynamic: false,
 			speed: 0.95,
 			lines: [
-				{ voice: 'santa', text: 'Ho ho ho! That is all for tonight. Merry Christmas to all…', pauseMs: 300, energy: 0.3 },
+				{
+					voice: 'santa',
+					text: 'Ho ho ho! That is all for tonight. Merry Christmas to all…',
+					pauseMs: 300,
+					energy: 0.3
+				},
 				{ voice: 'holly', text: 'And to all a good night!', pauseMs: 0, energy: 0.4 }
 			]
 		}
 	];
 
-	const fx = (id: string, name: string, effect: EffectPreset['effect'], params: Record<string, unknown> = {}): EffectPreset => ({
+	const fx = (
+		id: string,
+		name: string,
+		effect: EffectPreset['effect'],
+		params: Record<string, unknown> = {}
+	): EffectPreset => ({
 		id,
 		name,
 		effect,
@@ -351,13 +572,26 @@ export function buildDemoShow(): Show {
 		target: { all: true }
 	});
 	const effects = [
-		fx('ewarmwht01', 'Warm White Glow', 'twinkle', { colors: ['#ffc98a', '#ffb46b'], density: 0.6, speed: 0.5, glow: 0.3 }),
+		fx('ewarmwht01', 'Warm White Glow', 'twinkle', {
+			colors: ['#ffc98a', '#ffb46b'],
+			density: 0.6,
+			speed: 0.5,
+			glow: 0.3
+		}),
 		fx('ecandy0001', 'Candy Cane Stripes', 'candycane', {}),
 		fx('erainbow01', 'Rainbow Flow', 'rainbow', { speed: 0.3, mode: 'across' }),
 		fx('esnow00001', 'Gentle Snowfall', 'snow', {}),
 		fx('efire00001', 'Yule Fire', 'fire', {}),
-		fx('ewash00001', 'Classic Color Wash', 'colorwash', { colors: ['#ff2a2a', '#1fbf4f', '#ffd700'], speed: 0.1, spread: 0.5 }),
-		fx('ewave00001', 'Northern Lights', 'wave', { colors: ['#1ee3a0', '#5b2bff', '#0a2a6a'], speed: 0.15, wavelength: 0.8 }),
+		fx('ewash00001', 'Classic Color Wash', 'colorwash', {
+			colors: ['#ff2a2a', '#1fbf4f', '#ffd700'],
+			speed: 0.1,
+			spread: 0.5
+		}),
+		fx('ewave00001', 'Northern Lights', 'wave', {
+			colors: ['#1ee3a0', '#5b2bff', '#0a2a6a'],
+			speed: 0.15,
+			wavelength: 0.8
+		}),
 		fx('emeteor001', 'Icicle Drip', 'meteor', { colors: ['#bfe6ff'], speed: 40, tailLength: 20, count: 2 }),
 		fx('esparkle01', 'Blue Sparkle', 'sparkle', {}),
 		fx('ebreathe01', 'Red & Green Breathe', 'breathe', {})
@@ -509,7 +743,13 @@ export function buildDemoShow(): Show {
 			oled: { enabled: true },
 			security: {},
 			triggers: [
-				{ id: 'trbutton01', name: 'Mailbox button', kind: 'gpio', gpio: 17, action: { type: 'playPlaylist', ref: 'plkids0001' } },
+				{
+					id: 'trbutton01',
+					name: 'Mailbox button',
+					kind: 'gpio',
+					gpio: 17,
+					action: { type: 'playPlaylist', ref: 'plkids0001' }
+				},
 				{ id: 'trhass0001', name: 'Home Assistant "lights off"', kind: 'http', action: { type: 'stop' } }
 			],
 			games: {

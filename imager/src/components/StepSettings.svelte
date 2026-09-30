@@ -13,7 +13,13 @@
 	let advanced = $state(settings.ssh || !!settings.uiPassword);
 	let touched = $state<Record<string, boolean>>({});
 	const countries = countryOptions();
-	const zones = $derived(defaults.timezones.length ? defaults.timezones : [settings.timezone || 'UTC']);
+	const intlZones: string[] =
+		(Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? [];
+	const zones = $derived.by(() => {
+		const list = defaults.timezones.length ? defaults.timezones : intlZones;
+		const tz = settings.timezone || 'UTC';
+		return list.includes(tz) ? list : [tz, ...list];
+	});
 
 	const err = (f: keyof ImagerSettings) => (touched[f] ? errorFor(errors, f) : undefined);
 	const touch = (f: string) => () => (touched[f] = true);
@@ -113,7 +119,6 @@
 					class="option"
 					role="radio"
 					aria-checked={settings.role === 'leader'}
-					aria-pressed={settings.role === 'leader'}
 					onclick={() => (settings.role = 'leader')}
 				>
 					<div>
@@ -126,7 +131,6 @@
 					class="option"
 					role="radio"
 					aria-checked={settings.role === 'follower'}
-					aria-pressed={settings.role === 'follower'}
 					onclick={() => (settings.role = 'follower')}
 				>
 					<div>

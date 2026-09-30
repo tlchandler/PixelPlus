@@ -13,7 +13,19 @@ export default defineConfig({
 			'/api': { target: api, changeOrigin: true }
 		}
 	},
-	build: { target: 'es2020', reportCompressedSize: false, chunkSizeWarningLimit: 400 },
+	build: {
+		target: 'es2020',
+		reportCompressedSize: false,
+		chunkSizeWarningLimit: 1500,
+		rollupOptions: {
+			output: {
+				// Fewer, larger requests matter more than perfect splitting when served from a Pi.
+				manualChunks(id: string) {
+					if (id.includes('@lucide/svelte')) return 'icons';
+				}
+			}
+		}
+	},
 	test: {
 		include: ['src/**/*.test.ts'],
 		environment: 'node'

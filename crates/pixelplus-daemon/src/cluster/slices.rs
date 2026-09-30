@@ -157,10 +157,6 @@ impl SliceCache {
         }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     pub fn path_for(&self, job: &SliceJob) -> PathBuf {
         self.root
             .join(&job.node_id)

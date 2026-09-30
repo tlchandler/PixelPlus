@@ -100,8 +100,10 @@ export function parseFfmpegEq(eq: string | undefined, sr: number): Biquad[] {
 		if (name === 'equalizer') out.push(biquad('peaking', f, sr, q, g));
 		else if (name === 'highpass') out.push(biquad('highpass', f, sr, p.w || p.width ? q : 0.707));
 		else if (name === 'lowpass') out.push(biquad('lowpass', f, sr, p.w || p.width ? q : 0.707));
-		else if (name === 'bass' || name === 'lowshelf') out.push(biquad('lowshelf', num('f', 100), sr, 0.707, g));
-		else if (name === 'treble' || name === 'highshelf') out.push(biquad('highshelf', num('f', 3000), sr, 0.707, g));
+		else if (name === 'bass' || name === 'lowshelf')
+			out.push(biquad('lowshelf', num('f', 100), sr, 0.707, g));
+		else if (name === 'treble' || name === 'highshelf')
+			out.push(biquad('highshelf', num('f', 3000), sr, 0.707, g));
 	}
 	return out;
 }
@@ -216,8 +218,7 @@ export function resample(x: Float32Array, ratio: number, outLength?: number): Fl
 			y1 = at(i),
 			y2 = at(i + 1),
 			y3 = at(i + 2);
-		out[j] =
-			y1 + 0.5 * f * (y2 - y0 + f * (2 * y0 - 5 * y1 + 4 * y2 - y3 + f * (3 * (y1 - y2) + y3 - y0)));
+		out[j] = y1 + 0.5 * f * (y2 - y0 + f * (2 * y0 - 5 * y1 + 4 * y2 - y3 + f * (3 * (y1 - y2) + y3 - y0)));
 	}
 	return out;
 }
@@ -234,7 +235,8 @@ function hann(n: number): Float32Array {
  */
 export function timeStretch(x: Float32Array, factor: number, sr = 24000): Float32Array {
 	const outLen = Math.round(x.length * factor);
-	if (Math.abs(factor - 1) < 1e-4 || x.length < 64) return resample(x, x.length / Math.max(outLen, 1), outLen);
+	if (Math.abs(factor - 1) < 1e-4 || x.length < 64)
+		return resample(x, x.length / Math.max(outLen, 1), outLen);
 	const N = 2 * Math.round((0.032 * sr) / 2);
 	const Hs = N / 2;
 	const tol = Math.round(0.008 * sr);
@@ -341,7 +343,11 @@ export function quietCut(x: Float32Array, sr: number, t: number, searchS = 0.15)
 	const c = Math.round(t * sr);
 	let best = Math.min(Math.max(c, 0), x.length);
 	let bestE = Infinity;
-	for (let s = Math.max(0, c - Math.round(searchS * sr)); s + w <= Math.min(x.length, c + Math.round(searchS * sr)); s += Math.round(w / 2)) {
+	for (
+		let s = Math.max(0, c - Math.round(searchS * sr));
+		s + w <= Math.min(x.length, c + Math.round(searchS * sr));
+		s += Math.round(w / 2)
+	) {
 		let e = 0;
 		for (let i = s; i < s + w; i++) e += x[i] * x[i];
 		// prefer cuts close to t on ties

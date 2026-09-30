@@ -15,6 +15,14 @@ if ! grep -q "cpufreq.default_governor=" "${BOOT}/cmdline.txt"; then
 	sed -i '1 s/$/ cpufreq.default_governor=performance/' "${BOOT}/cmdline.txt"
 fi
 
+# --- board settings include file (filled on first boot by pixelplus-firstboot)
+if [ ! -s "${BOOT}/pixelplus.conf" ]; then
+	cat > "${BOOT}/pixelplus.conf" <<CONF
+# pixelplus.conf - PixelPlus board settings, included from config.txt.
+# Empty until the first boot detects the board (see /var/log/pixelplus-firstboot.log).
+CONF
+fi
+
 # --- the user-editable settings file
 install -m 0644 "${ROOTFS_DIR}/usr/share/pixelplus/pixelplus.txt.template" "${BOOT}/pixelplus.txt"
 

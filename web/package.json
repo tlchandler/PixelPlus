@@ -1,55 +1,56 @@
 {
-  "name": "pixelplus-web",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "description": "PixelPlus web UI (SvelteKit SPA served by pixelplusd)",
-  "scripts": {
-    "dev": "vite dev",
-    "dev:mock": "VITE_MOCK=1 vite dev",
-    "build": "vite build",
-    "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
-    "lint": "prettier --check . && eslint .",
-    "format": "prettier --write .",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "screens": "playwright test --config playwright.screens.config.ts"
-  },
-  "dependencies": {
-    "kokoro-js": "1.2.1",
-    "phonemizer": "1.2.1",
-    "@huggingface/transformers": "3.8.1"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@fontsource-variable/inter": "^5.3.0",
-    "@lucide/svelte": "^1.49.0",
-    "@playwright/test": "1.56.1",
-    "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.70.3",
-    "@sveltejs/vite-plugin-svelte": "^7.3.1",
-    "@types/node": "^22.20.4",
-    "eslint": "^10.11.0",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-svelte": "^3.23.0",
-    "globals": "^17.12.0",
-    "prettier": "^3.9.9",
-    "prettier-plugin-svelte": "^4.1.1",
-    "qrcode-generator": "^2.0.4",
-    "svelte": "^5.57.1",
-    "svelte-check": "^4.7.6",
-    "typescript": "^6.0.0",
-    "typescript-eslint": "^8.71.0",
-    "vite": "^8.3.1",
-    "vitest": "^5.0.2"
-  },
-  "pnpm": {
-    "overrides": {
-      "@huggingface/transformers": "3.8.1"
-    },
-    "onlyBuiltDependencies": []
-  },
-  "packageManager": "pnpm@10.33.0"
+	"name": "pixelplus-web",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "PixelPlus web UI (SvelteKit SPA served by pixelplusd)",
+	"scripts": {
+		"dev": "vite dev",
+		"dev:mock": "VITE_MOCK=1 vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+		"lint": "prettier --check . && eslint .",
+		"format": "prettier --write .",
+		"test": "vitest run && playwright test",
+		"test:e2e": "playwright test",
+		"screens": "node scripts/screens.mjs",
+		"test:unit": "vitest run",
+		"serve": "node scripts/serve.mjs"
+	},
+	"dependencies": {
+		"kokoro-js": "1.2.1",
+		"phonemizer": "1.2.1",
+		"@huggingface/transformers": "3.8.1"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@fontsource-variable/inter": "^5.3.0",
+		"@lucide/svelte": "^1.49.0",
+		"@playwright/test": "1.56.1",
+		"@sveltejs/adapter-static": "^3.0.10",
+		"@sveltejs/kit": "^2.70.3",
+		"@sveltejs/vite-plugin-svelte": "^7.3.1",
+		"@types/node": "^22.20.4",
+		"eslint": "^10.11.0",
+		"eslint-config-prettier": "^10.1.8",
+		"eslint-plugin-svelte": "^3.23.0",
+		"globals": "^17.12.0",
+		"prettier": "^3.9.9",
+		"prettier-plugin-svelte": "^4.1.1",
+		"qrcode-generator": "^2.0.4",
+		"svelte": "^5.57.1",
+		"svelte-check": "^4.7.6",
+		"typescript": "^6.0.0",
+		"typescript-eslint": "^8.71.0",
+		"vite": "^8.3.1",
+		"vitest": "^5.0.2"
+	},
+	"pnpm": {
+		"overrides": {
+			"@huggingface/transformers": "3.8.1"
+		},
+		"onlyBuiltDependencies": []
+	},
+	"packageManager": "pnpm@10.33.0"
 }

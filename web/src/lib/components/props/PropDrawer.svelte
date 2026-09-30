@@ -15,7 +15,11 @@
 	import FaultFinder from './FaultFinder.svelte';
 	import { Cable, Info, Zap, FlaskConical, Search, Trash2, Square, Copy } from '@lucide/svelte';
 
-	let { open = $bindable(false), propId, tab = $bindable('overview') }: { open?: boolean; propId: string | null; tab?: string } = $props();
+	let {
+		open = $bindable(false),
+		propId,
+		tab = $bindable('overview')
+	}: { open?: boolean; propId: string | null; tab?: string } = $props();
 
 	const show = $derived(app.show as Show);
 	const original = $derived(show?.props.find((p) => p.id === propId) ?? null);
@@ -38,7 +42,11 @@
 	});
 
 	$effect(() => {
-		if (open && tab === 'power' && !power) api.power().then((p) => (power = p)).catch(() => {});
+		if (open && tab === 'power' && !power)
+			api
+				.power()
+				.then((p) => (power = p))
+				.catch(() => {});
 	});
 
 	const dirty = $derived(!!draft && !!original && JSON.stringify(draft) !== JSON.stringify(original));
@@ -55,7 +63,10 @@
 				const want = d.groupIds.includes(g.id);
 				const has = g.propIds.includes(d.id);
 				if (want !== has)
-					await api.groups.update(g.id, { ...g, propIds: want ? [...g.propIds, d.id] : g.propIds.filter((x) => x !== d.id) });
+					await api.groups.update(g.id, {
+						...g,
+						propIds: want ? [...g.propIds, d.id] : g.propIds.filter((x) => x !== d.id)
+					});
 			}
 			await app.reloadShow();
 			loadedVersion = -1;
@@ -77,7 +88,15 @@
 	async function remove() {
 		if (!original) return;
 		const p = structuredClone($state.snapshot(original) as Prop);
-		if (!(await confirm({ title: `Delete ${p.name}?`, message: 'The prop and its wiring are removed. Sequences are not affected.', confirmLabel: 'Delete prop', danger: true }))) return;
+		if (
+			!(await confirm({
+				title: `Delete ${p.name}?`,
+				message: 'The prop and its wiring are removed. Sequences are not affected.',
+				confirmLabel: 'Delete prop',
+				danger: true
+			}))
+		)
+			return;
 		await app.mutate(() => api.props.remove(p.id));
 		open = false;
 		toasts.success(`Deleted ${p.name}`, { label: 'Undo', run: () => app.mutate(() => api.props.create(p)) });
@@ -86,7 +105,13 @@
 	async function duplicate() {
 		if (!original) return;
 		const p = structuredClone($state.snapshot(original) as Prop);
-		const copy = { ...p, id: undefined as unknown as string, name: `${p.name} copy`, segments: [], layout: p.layout ? { ...p.layout, x: p.layout.x + 20, y: p.layout.y + 20 } : undefined };
+		const copy = {
+			...p,
+			id: undefined as unknown as string,
+			name: `${p.name} copy`,
+			segments: [],
+			layout: p.layout ? { ...p.layout, x: p.layout.x + 20, y: p.layout.y + 20 } : undefined
+		};
 		await app.mutate(() => api.props.create(copy), { success: `Created ${copy.name}` });
 	}
 
@@ -109,7 +134,9 @@
 
 	function toggleGroup(id: string) {
 		if (!draft) return;
-		draft.groupIds = draft.groupIds.includes(id) ? draft.groupIds.filter((g) => g !== id) : [...draft.groupIds, id];
+		draft.groupIds = draft.groupIds.includes(id)
+			? draft.groupIds.filter((g) => g !== id)
+			: [...draft.groupIds, id];
 	}
 
 	const tabs = [
@@ -139,7 +166,11 @@
 				<span class="icon-tile accent"><K.icon size={20} /></span>
 				<div class="grow">
 					<h2 class="ellipsis">{draft.name}</h2>
-					<div class="faint small">{K.label} · {draft.pixelCount.toLocaleString()} pixels{draft.xlightsModel ? ` · xLights “${draft.xlightsModel}”` : ''}</div>
+					<div class="faint small">
+						{K.label} · {draft.pixelCount.toLocaleString()} pixels{draft.xlightsModel
+							? ` · xLights “${draft.xlightsModel}”`
+							: ''}
+					</div>
 				</div>
 			</div>
 		{/if}
@@ -151,34 +182,76 @@
 
 		{#if tab === 'overview'}
 			<div class="form-grid">
-				<label class="field span-2"><span class="label">Name</span><input class="input" bind:value={draft.name} /></label>
+				<label class="field span-2"
+					><span class="label">Name</span><input class="input" bind:value={draft.name} /></label
+				>
 				<label class="field">
 					<span class="label">Type</span>
 					<select class="select" bind:value={draft.kind}>
 						{#each PROP_KINDS as k (k)}<option value={k}>{KIND_META[k].label}</option>{/each}
 					</select>
 				</label>
-				<label class="field"><span class="label">Pixels</span><input class="input" type="number" min="1" bind:value={draft.pixelCount} /></label>
+				<label class="field"
+					><span class="label">Pixels</span><input
+						class="input"
+						type="number"
+						min="1"
+						bind:value={draft.pixelCount}
+					/></label
+				>
 				<div class="field span-2">
 					<span class="label">Groups</span>
 					<div class="row wrap">
 						{#each show.propGroups as g (g.id)}
-							<button type="button" class="chip" aria-pressed={draft.groupIds.includes(g.id)} onclick={() => toggleGroup(g.id)}>
-								<span class="swatch" style:background={g.color ?? 'var(--text-3)'} style="width:10px;height:10px;border-radius:3px"></span>{g.name}
+							<button
+								type="button"
+								class="chip"
+								aria-pressed={draft.groupIds.includes(g.id)}
+								onclick={() => toggleGroup(g.id)}
+							>
+								<span
+									class="swatch"
+									style:background={g.color ?? 'var(--text-3)'}
+									style="width:10px;height:10px;border-radius:3px"
+								></span>{g.name}
 							</button>
 						{/each}
-						{#if !show.propGroups.length}<span class="faint small">No groups yet — create them from the Props page.</span>{/if}
+						{#if !show.propGroups.length}<span class="faint small"
+								>No groups yet — create them from the Props page.</span
+							>{/if}
 					</div>
 				</div>
 				<label class="field">
 					<span class="label">Accent color</span>
-					<div class="row"><input type="color" value={draft.color ?? '#f5a524'} oninput={(e) => draft && (draft.color = (e.target as HTMLInputElement).value)} /><span class="faint small">Used in lists and the layout</span></div>
+					<div class="row">
+						<input
+							type="color"
+							value={draft.color ?? '#f5a524'}
+							oninput={(e) => draft && (draft.color = (e.target as HTMLInputElement).value)}
+						/><span class="faint small">Used in lists and the layout</span>
+					</div>
 				</label>
 				<label class="field">
 					<span class="label">Max current per pixel</span>
-					<div class="input-group"><input class="input" type="number" min="1" max="200" value={draft.maxMilliampsPerPixel ?? 60} oninput={(e) => draft && (draft.maxMilliampsPerPixel = Number((e.target as HTMLInputElement).value))} /><span class="suffix">mA</span></div>
+					<div class="input-group">
+						<input
+							class="input"
+							type="number"
+							min="1"
+							max="200"
+							value={draft.maxMilliampsPerPixel ?? 60}
+							oninput={(e) =>
+								draft && (draft.maxMilliampsPerPixel = Number((e.target as HTMLInputElement).value))}
+						/><span class="suffix">mA</span>
+					</div>
 				</label>
-				<label class="field span-2"><span class="label">Notes</span><textarea class="textarea" rows="2" placeholder="e.g. Replace pixel 12 after the season" bind:value={draft.notes}></textarea></label>
+				<label class="field span-2"
+					><span class="label">Notes</span><textarea
+						class="textarea"
+						rows="2"
+						placeholder="e.g. Replace pixel 12 after the season"
+						bind:value={draft.notes}></textarea></label
+				>
 			</div>
 			<div class="row danger-zone">
 				<button class="btn ghost sm" onclick={duplicate}><Copy size={14} /> Duplicate</button>
@@ -190,52 +263,103 @@
 		{:else if tab === 'power'}
 			<div class="power">
 				<div class="grid grid-2">
-					<div class="card card-pad pstat"><span class="faint small">Full white (worst case)</span><span class="big num">{fmtAmps(pw.peak)}</span><span class="faint tiny">{draft.pixelCount} px × {draft.maxMilliampsPerPixel ?? 60} mA</span></div>
-					<div class="card card-pad pstat"><span class="faint small">Typical during a show</span><span class="big num">{fmtAmps(pw.typical)}</span><span class="faint tiny">about a third of full white</span></div>
+					<div class="card card-pad pstat">
+						<span class="faint small">Full white (worst case)</span><span class="big num"
+							>{fmtAmps(pw.peak)}</span
+						><span class="faint tiny">{draft.pixelCount} px × {draft.maxMilliampsPerPixel ?? 60} mA</span>
+					</div>
+					<div class="card card-pad pstat">
+						<span class="faint small">Typical during a show</span><span class="big num"
+							>{fmtAmps(pw.typical)}</span
+						><span class="faint tiny">about a third of full white</span>
+					</div>
 				</div>
 				{#each draft.segments as seg (seg.nodeId + seg.output + seg.propOffset)}
 					{@const rx = receiverFor(show, seg.nodeId, seg.output)}
-					{@const port = power?.perReceiverPort.find((x) => x.receiverId === rx?.id && x.port === portOf(seg.output))}
+					{@const port = power?.perReceiverPort.find(
+						(x) => x.receiverId === rx?.id && x.port === portOf(seg.output)
+					)}
 					{#if rx && port}
 						{@const fuse = port.fuseAmps ?? rx.fuseAmps ?? 6}
 						{@const pct = Math.min(100, (port.peakAmps / fuse) * 100)}
 						<div class="fuse">
-							<div class="row between small"><span>{rx.name} receiver · Port {portOf(seg.output)}</span><span class="num">{port.peakAmps.toFixed(1)} A of {fuse} A fuse</span></div>
-							<div class="progress"><span style:width="{pct}%" style:background={pct > 100 || port.peakAmps > fuse ? 'var(--red)' : pct > 80 ? 'var(--accent)' : 'var(--green)'}></span></div>
-							<span class="faint tiny">Everything chained on this port at full white. {port.peakAmps > fuse ? 'Over the fuse rating — add power injection or lower brightness.' : 'Within the fuse rating.'}</span>
+							<div class="row between small">
+								<span>{rx.name} receiver · Port {portOf(seg.output)}</span><span class="num"
+									>{port.peakAmps.toFixed(1)} A of {fuse} A fuse</span
+								>
+							</div>
+							<div class="progress">
+								<span
+									style:width="{pct}%"
+									style:background={pct > 100 || port.peakAmps > fuse
+										? 'var(--red)'
+										: pct > 80
+											? 'var(--accent)'
+											: 'var(--green)'}
+								></span>
+							</div>
+							<span class="faint tiny"
+								>Everything chained on this port at full white. {port.peakAmps > fuse
+									? 'Over the fuse rating — add power injection or lower brightness.'
+									: 'Within the fuse rating.'}</span
+							>
 						</div>
 					{/if}
 				{/each}
 				{#if power?.warnings.length}
-					<div class="notice warn small"><Zap size={16} /><div>{power.warnings[0]}</div></div>
+					<div class="notice warn small">
+						<Zap size={16} />
+						<div>{power.warnings[0]}</div>
+					</div>
 				{/if}
 			</div>
 		{:else if tab === 'test'}
-			<p class="muted small" style="margin-bottom:12px">Lights only this prop so you can check it from the street. The running show is paused while testing.</p>
+			<p class="muted small" style="margin-bottom:12px">
+				Lights only this prop so you can check it from the street. The running show is paused while testing.
+			</p>
 			<div class="tests">
 				{#each tests as t (t.label)}
 					{@const key = t.mode + (t.color ?? '')}
-					<button class="test" class:on={testing === key} onclick={() => (testing === key ? stopTest() : test(t.mode, t.color, key))}>
-						{#if t.swatch}<span class="sw" style:background={t.swatch}></span>{:else}<span class="sw grad {t.mode}"></span>{/if}
+					<button
+						class="test"
+						class:on={testing === key}
+						onclick={() => (testing === key ? stopTest() : test(t.mode, t.color, key))}
+					>
+						{#if t.swatch}<span class="sw" style:background={t.swatch}></span>{:else}<span
+								class="sw grad {t.mode}"
+							></span>{/if}
 						{t.label}
 					</button>
 				{/each}
 			</div>
 			{#if testing}
-				<button class="btn block" style="margin-top:12px" onclick={stopTest}><Square size={14} /> Stop test</button>
+				<button class="btn block" style="margin-top:12px" onclick={stopTest}
+					><Square size={14} /> Stop test</button
+				>
 			{/if}
 			<div class="ff card">
 				<span class="icon-tile accent"><Search size={20} /></span>
-				<div class="grow"><strong>Find a faulty pixel</strong><div class="faint small">A few yes/no questions pinpoint the first bad pixel.</div></div>
+				<div class="grow">
+					<strong>Find a faulty pixel</strong>
+					<div class="faint small">A few yes/no questions pinpoint the first bad pixel.</div>
+				</div>
 				<button class="btn" onclick={() => (faultOpen = true)}>Start</button>
 			</div>
 		{/if}
 	{/if}
 
 	{#snippet footer()}
-		<span class="small faint grow" style="align-self:center">{dirty ? 'Unsaved changes' : 'All changes saved'}</span>
-		<button class="btn ghost" disabled={!dirty} onclick={() => original && (draft = structuredClone($state.snapshot(original) as Prop))}>Discard</button>
-		<button class="btn primary" disabled={!dirty || saving} onclick={save}>{saving ? 'Saving…' : 'Save changes'}</button>
+		<span class="small faint grow" style="align-self:center"
+			>{dirty ? 'Unsaved changes' : 'All changes saved'}</span
+		>
+		<button
+			class="btn ghost"
+			disabled={!dirty}
+			onclick={() => original && (draft = structuredClone($state.snapshot(original) as Prop))}>Discard</button
+		>
+		<button class="btn primary" disabled={!dirty || saving} onclick={save}
+			>{saving ? 'Saving…' : 'Save changes'}</button
+		>
 	{/snippet}
 </Drawer>
 
@@ -319,7 +443,13 @@
 		background: repeating-linear-gradient(90deg, #fff 0 5px, #333 5px 10px);
 	}
 	.grad.countPixels {
-		background: repeating-linear-gradient(90deg, #3b6bff 0 4px, #3fcf5e 4px 6px, #3b6bff 6px 10px, #ff3b3b 10px 12px);
+		background: repeating-linear-gradient(
+			90deg,
+			#3b6bff 0 4px,
+			#3fcf5e 4px 6px,
+			#3b6bff 6px 10px,
+			#ff3b3b 10px 12px
+		);
 	}
 	.grad.walk {
 		background: radial-gradient(circle, #fff 20%, #222 22%);

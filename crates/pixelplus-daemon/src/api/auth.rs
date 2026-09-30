@@ -31,7 +31,7 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    fn create(&self) -> String {
+    pub(crate) fn create(&self) -> String {
         use rand::RngCore;
         let mut raw = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut raw);
@@ -122,7 +122,15 @@ pub async fn require_auth(
     req: Request,
     next: Next,
 ) -> Response {
-    let path = req.uri().path();
+    // Inside `nest("/api/v1", ..)` the URI has the prefix stripped; use the
+    // original URI so the open paths below actually match.
+    let path = req
+        .extensions()
+        .get::<axum::extract::OriginalUri>()
+        .map(|u| u.0.path().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
+    let path = if path.starts_with("/api/v1/") || path == "/api/v1" { path } else { format!("/api/v1{path}") };
+    let path = path.as_str();
     let open = path.starts_with("/api/v1/auth/")
         || path.starts_with("/api/v1/public/")
         || path == "/api/v1/system"
@@ -186,8 +194,8 @@ struct PasswordBody {
     /// Required when a password is already set.
     #[serde(default)]
     current: Option<String>,
-    /// `None` or empty removes the password.
-    #[serde(default)]
+    /// `None` or empty removes the password. (The web UI sends `password`.)
+    #[serde(default, alias = "password")]
     new_password: Option<String>,
 }
 

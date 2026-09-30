@@ -1,0 +1,39 @@
+[package]
+name = "pixelplus-imager"
+description = "PixelPlus Imager - write and pre-configure PixelPlus SD cards"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+default-run = "pixelplus-imager"
+
+[[bin]]
+name = "pixelplus-imager"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pixelplus-imager-core = { path = "../core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "process", "sync"] }
+futures-util = "0.3"
+sha2 = "0.10"
+iana-time-zone = "0.1"
+sys-locale = "0.3"
+dirs = "6"
+thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lib]
+name = "pixelplus_imager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]

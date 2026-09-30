@@ -15,7 +15,14 @@ export function tzOffsetMs(d: Date, tz: string): number {
 			second: '2-digit'
 		}).formatToParts(d);
 		const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
-		const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+		const asUtc = Date.UTC(
+			get('year'),
+			get('month') - 1,
+			get('day'),
+			get('hour'),
+			get('minute'),
+			get('second')
+		);
 		return asUtc - Math.floor(d.getTime() / 1000) * 1000;
 	} catch {
 		return -d.getTimezoneOffset() * 60000;
@@ -59,19 +66,28 @@ export function fmtTime(d: Date | null | undefined, tz?: string): string {
 }
 
 export function fmtDate(d: Date, tz?: string, opts: Intl.DateTimeFormatOptions = {}): string {
-	return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz, ...opts }).format(d);
+	return new Intl.DateTimeFormat(undefined, {
+		weekday: 'short',
+		month: 'short',
+		day: 'numeric',
+		timeZone: tz,
+		...opts
+	}).format(d);
 }
 
 export function describeTimeSpec(spec: TimeSpec): string {
 	if (spec.kind === 'clock') {
 		const [hh, mm] = spec.time.split(':').map(Number);
 		const d = new Date(Date.UTC(2000, 0, 1, hh, mm));
-		return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }).format(d);
+		return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }).format(
+			d
+		);
 	}
 	const word = spec.kind === 'sunset' ? 'Sunset' : 'Sunrise';
 	if (!spec.offsetMin) return word;
 	const a = Math.abs(spec.offsetMin);
-	const amt = a >= 60 && a % 60 === 0 ? `${a / 60} h` : a > 60 ? `${Math.floor(a / 60)} h ${a % 60} min` : `${a} min`;
+	const amt =
+		a >= 60 && a % 60 === 0 ? `${a / 60} h` : a > 60 ? `${Math.floor(a / 60)} h ${a % 60} min` : `${a} min`;
 	return `${amt} ${spec.offsetMin > 0 ? 'after' : 'before'} ${word.toLowerCase()}`;
 }
 

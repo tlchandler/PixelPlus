@@ -42,12 +42,24 @@
 	let now = $state(Date.now());
 
 	$effect(() => {
-		api.health().then((h) => (health = h)).catch(() => {});
-		api.sensorHistory(60).then((h) => (history = h)).catch(() => {});
-		api.requests().then((r) => (requests = r)).catch(() => {});
+		api
+			.health()
+			.then((h) => (health = h))
+			.catch(() => {});
+		api
+			.sensorHistory(60)
+			.then((h) => (history = h))
+			.catch(() => {});
+		api
+			.requests()
+			.then((r) => (requests = r))
+			.catch(() => {});
 		const t = setInterval(() => {
 			now = Date.now();
-			api.requests().then((r) => (requests = r)).catch(() => {});
+			api
+				.requests()
+				.then((r) => (requests = r))
+				.catch(() => {});
 		}, 15000);
 		return () => clearInterval(t);
 	});
@@ -94,11 +106,17 @@
 		const lo = Math.min(...vs),
 			hi = Math.max(...vs);
 		const r = hi - lo || 1;
-		return s.map((p, i) => `${i ? 'L' : 'M'}${(i / (s.length - 1)) * 100} ${28 - ((p[1] - lo) / r) * 24}`).join(' ');
+		return s
+			.map((p, i) => `${i ? 'L' : 'M'}${(i / (s.length - 1)) * 100} ${28 - ((p[1] - lo) / r) * 24}`)
+			.join(' ');
 	}
 
 	const sensorIcon = { temperature: Thermometer, voltage: Zap, current: Activity, power: Gauge };
-	const mainSensors = $derived(app.sensors.filter((s) => ['cpu', 'volts', 'amps', 'watts'].includes(s.id)).length ? app.sensors.filter((s) => ['cpu', 'volts', 'amps', 'watts'].includes(s.id)) : app.sensors.slice(0, 4));
+	const mainSensors = $derived(
+		app.sensors.filter((s) => ['cpu', 'volts', 'amps', 'watts'].includes(s.id)).length
+			? app.sensors.filter((s) => ['cpu', 'volts', 'amps', 'watts'].includes(s.id))
+			: app.sensors.slice(0, 4)
+	);
 	const issues = $derived(health?.checks.filter((c) => c.status !== 'ok') ?? []);
 	const warnLogs = $derived(app.logs.filter((l) => l.level === 'warn' || l.level === 'error').slice(0, 3));
 	const totalPixels = $derived(show?.props.reduce((n, p) => n + p.pixelCount, 0) ?? 0);
@@ -107,10 +125,17 @@
 <div class="page">
 	<header class="hello">
 		<div class="grow">
-			<div class="eyebrow">{new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(now)}</div>
+			<div class="eyebrow">
+				{new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(now)}
+			</div>
 			<h1>{greeting}{show ? `, ${show.name}` : ''}</h1>
 			{#if show}
-				<p class="muted">{plural(show.props.length, 'prop')} · {totalPixels.toLocaleString()} pixels · {plural(show.nodes.length, 'controller')} · {plural(show.sequences.length, 'sequence')}</p>
+				<p class="muted">
+					{plural(show.props.length, 'prop')} · {totalPixels.toLocaleString()} pixels · {plural(
+						show.nodes.length,
+						'controller'
+					)} · {plural(show.sequences.length, 'sequence')}
+				</p>
 			{/if}
 		</div>
 		<a class="btn" href="/layout"><Maximize2 size={16} /> Full layout</a>
@@ -136,34 +161,56 @@
 			{#if st?.item}
 				<h2 class="song ellipsis">{st.item.name}</h2>
 				<p class="muted small ellipsis">
-					{#if st.playlist}{st.playlist.name} · item {st.playlist.index + 1} of {st.playlist.count}{:else if st.state === 'effect'}Live effect{:else}Single item{/if}
+					{#if st.playlist}{st.playlist.name} · item {st.playlist.index + 1} of {st.playlist
+							.count}{:else if st.state === 'effect'}Live effect{:else}Single item{/if}
 				</p>
 				{#if st.durationMs}
 					<div class="progress big"><span style:width="{pct}%"></span></div>
-					<div class="row between tiny faint num"><span>{fmtDuration(st.posMs)}</span><span>-{fmtDuration(st.durationMs - st.posMs)}</span></div>
+					<div class="row between tiny faint num">
+						<span>{fmtDuration(st.posMs)}</span><span>-{fmtDuration(st.durationMs - st.posMs)}</span>
+					</div>
 				{/if}
 				{#if st.nextItem}
-					<div class="next"><Music size={14} /> <span class="faint">Up next</span> <span class="ellipsis">{st.nextItem.name}</span></div>
+					<div class="next">
+						<Music size={14} /> <span class="faint">Up next</span>
+						<span class="ellipsis">{st.nextItem.name}</span>
+					</div>
 				{/if}
 			{:else}
 				<h2 class="song">The show is resting</h2>
 				<p class="muted small">
-					{#if upcoming}Starts automatically {fmtDate(new Date(upcoming.start), tz)} at {fmtTime(new Date(upcoming.start), tz)}.{:else}Nothing is scheduled. Press play to start any time.{/if}
+					{#if upcoming}Starts automatically {fmtDate(new Date(upcoming.start), tz)} at {fmtTime(
+							new Date(upcoming.start),
+							tz
+						)}.{:else}Nothing is scheduled. Press play to start any time.{/if}
 				</p>
 			{/if}
 			<div class="actions">
 				{#if st?.state === 'playing'}
 					<button class="btn lg" onclick={() => playerAct(api.pause)}><Pause size={18} /> Pause</button>
 				{:else if st?.state === 'paused'}
-					<button class="btn primary lg" onclick={() => playerAct(api.resume)}><Play size={18} /> Resume</button>
+					<button class="btn primary lg" onclick={() => playerAct(api.resume)}
+						><Play size={18} /> Resume</button
+					>
 				{:else}
-					<button class="btn primary lg" onclick={playShow}><Play size={18} fill="currentColor" /> Play show now</button>
+					<button class="btn primary lg" onclick={playShow}
+						><Play size={18} fill="currentColor" /> Play show now</button
+					>
 				{/if}
-				<button class="btn lg" disabled={!st || st.state === 'idle'} onclick={() => playerAct(() => api.stop(true))}><Square size={16} /> Stop</button>
+				<button
+					class="btn lg"
+					disabled={!st || st.state === 'idle'}
+					onclick={() => playerAct(() => api.stop(true))}><Square size={16} /> Stop</button
+				>
 			</div>
 			<div class="quick">
-				<button class="qa" class:on={st?.blackout} onclick={() => playerAct(() => api.blackout(!st?.blackout))}>
-					<Power size={16} /> {st?.blackout ? 'Lights off' : 'Blackout'}
+				<button
+					class="qa"
+					class:on={st?.blackout}
+					onclick={() => playerAct(() => api.blackout(!st?.blackout))}
+				>
+					<Power size={16} />
+					{st?.blackout ? 'Lights off' : 'Blackout'}
 				</button>
 				{#if st?.state === 'testing'}
 					<button class="qa on" onclick={() => playerAct(api.testStop)}><X size={16} /> Stop test</button>
@@ -177,7 +224,8 @@
 	<div class="grid grid-3 row2">
 		<section class="card next-card">
 			<div class="card-body">
-				<div class="row"><span class="icon-tile accent"><CalendarClock size={20} /></span>
+				<div class="row">
+					<span class="icon-tile accent"><CalendarClock size={20} /></span>
 					<div class="grow">
 						<div class="eyebrow">{st?.scheduleEntry ? 'Scheduled show' : 'Next show'}</div>
 						{#if st?.scheduleEntry}
@@ -185,7 +233,10 @@
 							<div class="muted small">{st.scheduleEntry.name}</div>
 						{:else if upcoming}
 							<div class="big-num">in {fmtCountdown(new Date(upcoming.start).getTime() - now)}</div>
-							<div class="muted small">{upcoming.name} · {fmtDate(new Date(upcoming.start), tz)} {fmtTime(new Date(upcoming.start), tz)}–{fmtTime(new Date(upcoming.end), tz)}</div>
+							<div class="muted small">
+								{upcoming.name} · {fmtDate(new Date(upcoming.start), tz)}
+								{fmtTime(new Date(upcoming.start), tz)}–{fmtTime(new Date(upcoming.end), tz)}
+							</div>
 						{:else if show}
 							<div class="big-num">Not scheduled</div>
 							<div class="muted small">Add show times on the schedule page.</div>
@@ -201,19 +252,39 @@
 		<section class="card health-card">
 			<div class="card-body">
 				<div class="row">
-					<span class="icon-tile {health ? (health.ok && !issues.length ? 'green' : issues.some((i) => i.status === 'fail') ? 'red' : 'accent') : ''}">
-						{#if !health}<Activity size={20} />{:else if health.ok && !issues.length}<CircleCheck size={20} />{:else}<TriangleAlert size={20} />{/if}
+					<span
+						class="icon-tile {health
+							? health.ok && !issues.length
+								? 'green'
+								: issues.some((i) => i.status === 'fail')
+									? 'red'
+									: 'accent'
+							: ''}"
+					>
+						{#if !health}<Activity size={20} />{:else if health.ok && !issues.length}<CircleCheck
+								size={20}
+							/>{:else}<TriangleAlert size={20} />{/if}
 					</span>
 					<div class="grow">
 						<div class="eyebrow">Pre-show check</div>
 						{#if health}
-							<div class="big-num">{issues.length ? plural(issues.length, 'thing') + ' to look at' : 'Ready for showtime'}</div>
-							<div class="muted small">{health.checks.length - issues.length} of {health.checks.length} checks passed</div>
+							<div class="big-num">
+								{issues.length ? plural(issues.length, 'thing') + ' to look at' : 'Ready for showtime'}
+							</div>
+							<div class="muted small">
+								{health.checks.length - issues.length} of {health.checks.length} checks passed
+							</div>
 						{:else}
 							<Skeleton h={22} w="70%" />
 						{/if}
 					</div>
-					<button class="btn ghost icon sm" onclick={runHealth} disabled={runningHealth} aria-label="Run health check" title="Run check now">
+					<button
+						class="btn ghost icon sm"
+						onclick={runHealth}
+						disabled={runningHealth}
+						aria-label="Run health check"
+						title="Run check now"
+					>
 						<span class:spin={runningHealth}><RefreshCw size={16} /></span>
 					</button>
 				</div>
@@ -237,8 +308,14 @@
 					<div class="grow">
 						<div class="eyebrow">Song requests</div>
 						{#if show?.settings.requests.enabled}
-							<div class="big-num">{requests.length ? plural(requests.length, 'request') + ' waiting' : 'No requests yet'}</div>
-							<div class="muted small">{requests[0] ? `Next: ${requests[0].name}${requests[0].requestedBy ? ` for ${requests[0].requestedBy}` : ''}` : 'Visitors can scan the QR code to pick a song'}</div>
+							<div class="big-num">
+								{requests.length ? plural(requests.length, 'request') + ' waiting' : 'No requests yet'}
+							</div>
+							<div class="muted small">
+								{requests[0]
+									? `Next: ${requests[0].name}${requests[0].requestedBy ? ` for ${requests[0].requestedBy}` : ''}`
+									: 'Visitors can scan the QR code to pick a song'}
+							</div>
 						{:else}
 							<div class="big-num">Off</div>
 							<div class="muted small">Let visitors pick songs from their phones.</div>
@@ -250,7 +327,11 @@
 		</section>
 	</div>
 
-	<div class="section-title"><h2>Controllers</h2><span class="grow"></span><a class="btn ghost sm" href="/controllers">Manage <ChevronRight size={14} /></a></div>
+	<div class="section-title">
+		<h2>Controllers</h2>
+		<span class="grow"></span><a class="btn ghost sm" href="/controllers">Manage <ChevronRight size={14} /></a
+		>
+	</div>
 	<div class="grid grid-3">
 		{#if !show}
 			{#each [0, 1] as i (i)}<div class="card card-pad"><Skeleton count={3} /></div>{/each}
@@ -262,18 +343,48 @@
 					<div class="row">
 						<span class="icon-tile {live?.online === false ? 'red' : 'green'}"><Cpu size={20} /></span>
 						<div class="grow">
-							<div class="row"><strong class="ellipsis">{n.name}</strong><span class="badge {n.role === 'leader' ? 'accent' : 'outline'}">{n.role === 'leader' ? 'Leader' : 'Follower'}</span></div>
-							<div class="faint small ellipsis">{BOARDS[n.board].name}{n.boardRev ? ` · rev ${n.boardRev}` : ''}</div>
+							<div class="row">
+								<strong class="ellipsis">{n.name}</strong><span
+									class="badge {n.role === 'leader' ? 'accent' : 'outline'}"
+									>{n.role === 'leader' ? 'Leader' : 'Follower'}</span
+								>
+							</div>
+							<div class="faint small ellipsis">
+								{BOARDS[n.board].name}{n.boardRev ? ` · rev ${n.boardRev}` : ''}
+							</div>
 						</div>
 					</div>
 					<div class="node-stats">
-						<div><span class="faint tiny">Status</span>
-							<span class="stat {live?.online === false ? 'bad' : live?.syncState === 'syncing' ? 'warn' : 'ok'}">
-								<span class="dot"></span>{live ? (live.online ? (live.syncState === 'syncing' ? `Syncing ${live.files.total - live.files.pending}/${live.files.total}` : n.role === 'leader' ? 'Running' : 'In sync') : 'Offline') : '—'}
+						<div>
+							<span class="faint tiny">Status</span>
+							<span
+								class="stat {live?.online === false ? 'bad' : live?.syncState === 'syncing' ? 'warn' : 'ok'}"
+							>
+								<span class="dot"></span>{live
+									? live.online
+										? live.syncState === 'syncing'
+											? `Syncing ${live.files.total - live.files.pending}/${live.files.total}`
+											: n.role === 'leader'
+												? 'Running'
+												: 'In sync'
+										: 'Offline'
+									: '—'}
 							</span>
 						</div>
-						<div><span class="faint tiny">Sync</span><span class="num">{n.role === 'leader' ? 'Clock source' : live ? `±${live.syncOffsetMs.toFixed(1)} ms` : '—'}</span></div>
-						<div><span class="faint tiny">Temp</span><span class="num">{temp ? `${temp.value.toFixed(0)} °C` : '—'}</span></div>
+						<div>
+							<span class="faint tiny">Sync</span><span class="num"
+								>{n.role === 'leader'
+									? 'Clock source'
+									: live
+										? `±${live.syncOffsetMs.toFixed(1)} ms`
+										: '—'}</span
+							>
+						</div>
+						<div>
+							<span class="faint tiny">Temp</span><span class="num"
+								>{temp ? `${temp.value.toFixed(0)} °C` : '—'}</span
+							>
+						</div>
 					</div>
 					{#if needsPort3Warning(n)}
 						<div class="mini-warn"><TriangleAlert size={13} /> Rev D: port 3 needs the 4/5-swapped lead</div>
@@ -283,7 +394,10 @@
 		{/if}
 	</div>
 
-	<div class="section-title"><h2>Power & temperature</h2><span class="faint small">Main Controller · live</span></div>
+	<div class="section-title">
+		<h2>Power & temperature</h2>
+		<span class="faint small">Main Controller · live</span>
+	</div>
 	<div class="grid grid-4">
 		{#if !app.sensors.length}
 			{#each [0, 1, 2, 3] as i (i)}<div class="card card-pad"><Skeleton count={2} /></div>{/each}
@@ -293,10 +407,22 @@
 			{@const bad = s.crit != null && (s.kind === 'voltage' ? s.value <= s.crit : s.value >= s.crit)}
 			{@const warn = s.warn != null && (s.kind === 'voltage' ? s.value <= s.warn : s.value >= s.warn)}
 			<div class="card sensor" class:warn class:bad>
-				<div class="row between"><span class="faint small">{s.label}</span><Icon size={16} class="sico" /></div>
-				<div class="sv num">{s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)}<span class="unit">{s.unit}</span></div>
+				<div class="row between">
+					<span class="faint small">{s.label}</span><Icon size={16} class="sico" />
+				</div>
+				<div class="sv num">
+					{s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)}<span class="unit"
+						>{s.unit}</span
+					>
+				</div>
 				<svg viewBox="0 0 100 30" preserveAspectRatio="none" class="spark" aria-hidden="true">
-					<path d={spark(s.id)} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+					<path
+						d={spark(s.id)}
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						vector-effect="non-scaling-stroke"
+					/>
 				</svg>
 			</div>
 		{/each}
@@ -307,7 +433,10 @@
 		<div class="card list">
 			{#each warnLogs as l (l.time + l.message)}
 				<div class="list-row">
-					<span class="icon-tile {l.level === 'error' ? 'red' : 'accent'}" style="width:32px;height:32px;border-radius:9px"><TriangleAlert size={16} /></span>
+					<span
+						class="icon-tile {l.level === 'error' ? 'red' : 'accent'}"
+						style="width:32px;height:32px;border-radius:9px"><TriangleAlert size={16} /></span
+					>
 					<div class="grow small">{l.message}</div>
 					<span class="faint tiny num">{fmtTime(new Date(l.time))}</span>
 				</div>

@@ -49,7 +49,8 @@
 		if (app.system?.boardRev) rev = app.system.boardRev;
 	});
 	$effect(() => {
-		if (app.ready && app.system && !app.system.needsSetup && !followerDone && step === 0) goto('/', { replaceState: true });
+		if (app.ready && app.system && !app.system.needsSetup && !followerDone && step === 0)
+			goto('/', { replaceState: true });
 	});
 
 	const hits = $derived(searchCities(cityQ, 6));
@@ -68,7 +69,12 @@
 	function geolocate() {
 		navigator.geolocation?.getCurrentPosition(
 			(p) => {
-				loc = { lat: +p.coords.latitude.toFixed(4), lon: +p.coords.longitude.toFixed(4), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, label: 'My location' };
+				loc = {
+					lat: +p.coords.latitude.toFixed(4),
+					lon: +p.coords.longitude.toFixed(4),
+					timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+					label: 'My location'
+				};
 			},
 			() => toasts.error('Couldn’t get your location', 'Search for a nearby town instead.')
 		);
@@ -126,36 +132,66 @@
 			<span class="grow"></span>
 			{#if step > 0 && step < 5}
 				<ol class="dots" aria-label="Progress">
-					{#each steps.slice(1, 5) as s, i (s)}<li class:on={step === i + 1} class:done={step > i + 1} aria-current={step === i + 1 ? 'step' : undefined}><span class="sr-only">{s}</span></li>{/each}
+					{#each steps.slice(1, 5) as s, i (s)}<li
+							class:on={step === i + 1}
+							class:done={step > i + 1}
+							aria-current={step === i + 1 ? 'step' : undefined}
+						>
+							<span class="sr-only">{s}</span>
+						</li>{/each}
 				</ol>
 			{/if}
 		</header>
 
 		<main class="stage">
 			{#key step}
-				<section class="panel" in:fly={{ x: 40 * dir, duration: 280, delay: 60 }} out:fly={{ x: -40 * dir, duration: 180 }}>
+				<section
+					class="panel"
+					in:fly={{ x: 40 * dir, duration: 280, delay: 60 }}
+					out:fly={{ x: -40 * dir, duration: 180 }}
+				>
 					{#if step === 0}
 						<div class="hero">
 							<div class="bigmark"><Logo size={84} /></div>
 							<h1>Welcome to PixelPlus</h1>
-							<p class="lead">Let’s get your light show running. It takes about two minutes — no universes, no channel math.</p>
+							<p class="lead">
+								Let’s get your light show running. It takes about two minutes — no universes, no channel math.
+							</p>
 							<button class="btn primary lg" onclick={next}>Get started <ArrowRight size={18} /></button>
 							<p class="faint small">{app.system?.hostname ?? 'pixelplus'} · {app.system?.ips?.[0] ?? ''}</p>
 						</div>
 					{:else if step === 1}
 						<h1>What does this controller do?</h1>
-						<p class="lead">Every show has one leader. You set everything up there; other controllers just follow along.</p>
+						<p class="lead">
+							Every show has one leader. You set everything up there; other controllers just follow along.
+						</p>
 						<div class="roles">
-							<button class="role" class:on={role === 'leader'} onclick={() => (role = 'leader')} aria-pressed={role === 'leader'}>
+							<button
+								class="role"
+								class:on={role === 'leader'}
+								onclick={() => (role = 'leader')}
+								aria-pressed={role === 'leader'}
+							>
 								<span class="ri accent"><Crown size={24} /></span>
 								<strong>Make this the show leader</strong>
-								<span class="muted small">Runs the schedule, plays the music and tells the other controllers what to do. Pick this for your first controller.</span>
+								<span class="muted small"
+									>Runs the schedule, plays the music and tells the other controllers what to do. Pick this
+									for your first controller.</span
+								>
 								{#if role === 'leader'}<span class="tick"><Check size={14} /></span>{/if}
 							</button>
-							<button class="role" class:on={role === 'follower'} onclick={() => (role = 'follower')} aria-pressed={role === 'follower'}>
+							<button
+								class="role"
+								class:on={role === 'follower'}
+								onclick={() => (role = 'follower')}
+								aria-pressed={role === 'follower'}
+							>
 								<span class="ri blue"><Radio size={24} /></span>
 								<strong>This is a follower</strong>
-								<span class="muted small">Waits to be adopted by your leader, then receives its settings and sequences automatically. Nothing else to set up here.</span>
+								<span class="muted small"
+									>Waits to be adopted by your leader, then receives its settings and sequences automatically.
+									Nothing else to set up here.</span
+								>
 								{#if role === 'follower'}<span class="tick"><Check size={14} /></span>{/if}
 							</button>
 						</div>
@@ -164,7 +200,9 @@
 							{#if role === 'leader'}
 								<button class="btn primary" onclick={next}>Continue <ArrowRight size={16} /></button>
 							{:else}
-								<button class="btn primary" onclick={() => finish('follower')} disabled={busy}>{busy ? 'Setting up…' : 'Wait to be adopted'} <ArrowRight size={16} /></button>
+								<button class="btn primary" onclick={() => finish('follower')} disabled={busy}
+									>{busy ? 'Setting up…' : 'Wait to be adopted'} <ArrowRight size={16} /></button
+								>
 							{/if}
 						</div>
 					{:else if step === 2}
@@ -174,14 +212,25 @@
 							<p class="lead">{BOARDS[board].blurb}</p>
 						{:else}
 							<h1>{detected ? 'Choose your board' : 'Which board is this?'}</h1>
-							<p class="lead">{detected ? 'Pick the board this Raspberry Pi is plugged into.' : 'We couldn’t read the board’s ID chip — it may be blank. Pick the board you have.'}</p>
+							<p class="lead">
+								{detected
+									? 'Pick the board this Raspberry Pi is plugged into.'
+									: 'We couldn’t read the board’s ID chip — it may be blank. Pick the board you have.'}
+							</p>
 						{/if}
 						<div class="boardpic"><BoardDiagram {board} {rev} compact={board !== 'difftxlarge'} /></div>
 						{#if changingBoard || !detected}
 							<div class="boards">
 								{#each boardChoices as b (b)}
-									<button class="bchoice" class:on={board === b} onclick={() => (board = b)} aria-pressed={board === b}>
-										<strong>{BOARDS[b].name}</strong><span class="faint tiny">{BOARDS[b].outputs ? `${BOARDS[b].outputs} outputs` : 'No outputs'}</span>
+									<button
+										class="bchoice"
+										class:on={board === b}
+										onclick={() => (board = b)}
+										aria-pressed={board === b}
+									>
+										<strong>{BOARDS[b].name}</strong><span class="faint tiny"
+											>{BOARDS[b].outputs ? `${BOARDS[b].outputs} outputs` : 'No outputs'}</span
+										>
 									</button>
 								{/each}
 							</div>
@@ -189,68 +238,190 @@
 						{#if board === 'difftx'}
 							<div class="revrow">
 								<span class="small">Board revision</span>
-								<div class="seg">{#each ['D', 'E'] as r (r)}<button class:on={rev === r} onclick={() => (rev = r)} aria-pressed={rev === r}>Rev {r}</button>{/each}</div>
+								<div class="seg">
+									{#each ['D', 'E'] as r (r)}<button
+											class:on={rev === r}
+											onclick={() => (rev = r)}
+											aria-pressed={rev === r}>Rev {r}</button
+										>{/each}
+								</div>
 							</div>
-							{#if rev === 'D'}<div class="notice warn small"><TriangleAlert size={16} class="ico" /><span>Rev D boards need a short patch cable with pins 4 and 5 swapped on <strong>port 3</strong>. PixelPlus will remind you where it matters.</span></div>{/if}
+							{#if rev === 'D'}<div class="notice warn small">
+									<TriangleAlert size={16} class="ico" /><span
+										>Rev D boards need a short patch cable with pins 4 and 5 swapped on <strong>port 3</strong
+										>. PixelPlus will remind you where it matters.</span
+									>
+								</div>{/if}
 						{/if}
-						{#if board === 'diffsmart'}<div class="notice info small"><Radio size={16} /><span>Set switch <strong>SW1</strong> on the board to <strong>PI</strong> so the Pi drives the outputs.</span></div>{/if}
+						{#if board === 'diffsmart'}<div class="notice info small">
+								<Radio size={16} /><span
+									>Set switch <strong>SW1</strong> on the board to <strong>PI</strong> so the Pi drives the outputs.</span
+								>
+							</div>{/if}
 						{#if !detected && (board === 'difftx' || board === 'difftxlarge' || board === 'diffsmart')}
-							<label class="chk"><input type="checkbox" class="check" bind:checked={writeEeprom} /> Save this on the board so it’s recognised automatically next time</label>
+							<label class="chk"
+								><input type="checkbox" class="check" bind:checked={writeEeprom} /> Save this on the board so it’s
+								recognised automatically next time</label
+							>
 						{/if}
 						<div class="nav">
 							<button class="btn ghost" onclick={back}><ArrowLeft size={16} /> Back</button>
-							{#if detected && !changingBoard}<button class="btn ghost" onclick={() => (changingBoard = true)}>That’s not right</button>{/if}
-							<button class="btn primary" onclick={next}>{detected && !changingBoard ? 'Looks right' : 'Continue'} <ArrowRight size={16} /></button>
+							{#if detected && !changingBoard}<button class="btn ghost" onclick={() => (changingBoard = true)}
+									>That’s not right</button
+								>{/if}
+							<button class="btn primary" onclick={next}
+								>{detected && !changingBoard ? 'Looks right' : 'Continue'} <ArrowRight size={16} /></button
+							>
 						</div>
 					{:else if step === 3}
 						<h1>Name your show</h1>
-						<p class="lead">Visitors see this name on the song request page. Your location lets the show start at sunset.</p>
+						<p class="lead">
+							Visitors see this name on the song request page. Your location lets the show start at sunset.
+						</p>
 						<div class="col" style="gap:18px;text-align:left;width:100%">
-							<label class="field"><span class="label">Show name</span><input class="input lg" placeholder="e.g. Chandler Family Lights" bind:value={showName} /></label>
+							<label class="field"
+								><span class="label">Show name</span><input
+									class="input lg"
+									placeholder="e.g. Chandler Family Lights"
+									bind:value={showName}
+								/></label
+							>
 							<div class="field">
 								<span class="label">Where is your display?</span>
 								<div class="row">
-									<div class="input-group grow"><span class="prefix"><MapPin size={16} /></span><input class="input" placeholder="Search your town or city" bind:value={cityQ} aria-label="Search town or city" /></div>
-									<button class="btn" onclick={geolocate}><LocateFixed size={16} /> <span class="hide-sm">Use my location</span></button>
+									<div class="input-group grow">
+										<span class="prefix"><MapPin size={16} /></span><input
+											class="input"
+											placeholder="Search your town or city"
+											bind:value={cityQ}
+											aria-label="Search town or city"
+										/>
+									</div>
+									<button class="btn" onclick={geolocate}
+										><LocateFixed size={16} /> <span class="hide-sm">Use my location</span></button
+									>
 								</div>
 								{#if hits.length}
 									<div class="hits">
 										{#each hits as c (c.name + c.region)}
-											<button class="hit" onclick={() => { loc = { lat: c.lat, lon: c.lon, timezone: c.tz, label: `${c.name}, ${c.region.split(',')[0]}` }; cityQ = ''; }}><strong>{c.name}</strong> <span class="faint small">{c.region}</span></button>
+											<button
+												class="hit"
+												onclick={() => {
+													loc = {
+														lat: c.lat,
+														lon: c.lon,
+														timezone: c.tz,
+														label: `${c.name}, ${c.region.split(',')[0]}`
+													};
+													cityQ = '';
+												}}><strong>{c.name}</strong> <span class="faint small">{c.region}</span></button
+											>
 										{/each}
 									</div>
 								{/if}
-								{#if loc.label}<div class="picked"><Check size={14} /> {loc.label} <span class="faint small">({loc.lat.toFixed(2)}, {loc.lon.toFixed(2)})</span></div>{/if}
+								{#if loc.label}<div class="picked">
+										<Check size={14} />
+										{loc.label} <span class="faint small">({loc.lat.toFixed(2)}, {loc.lon.toFixed(2)})</span>
+									</div>{/if}
 							</div>
-							<label class="field"><span class="label">Time zone</span><select class="select" bind:value={loc.timezone}>{#each tzs as z (z)}<option value={z}>{z.replace(/_/g, ' ')}</option>{/each}</select></label>
+							<label class="field"
+								><span class="label">Time zone</span><select class="select" bind:value={loc.timezone}
+									>{#each tzs as z (z)}<option value={z}>{z.replace(/_/g, ' ')}</option>{/each}</select
+								></label
+							>
 						</div>
 						<div class="nav">
 							<button class="btn ghost" onclick={back}><ArrowLeft size={16} /> Back</button>
-							<button class="btn primary" onclick={next} disabled={!showName.trim()}>Continue <ArrowRight size={16} /></button>
+							<button class="btn primary" onclick={next} disabled={!showName.trim()}
+								>Continue <ArrowRight size={16} /></button
+							>
 						</div>
 					{:else if step === 4}
 						<div class="ri accent big"><LockKeyhole size={28} /></div>
 						<h1>Add a password?</h1>
-						<p class="lead">Optional. Without one, anyone on your home network can open this page. The song request page for visitors is always open.</p>
+						<p class="lead">
+							Optional. Without one, anyone on your home network can open this page. The song request page for
+							visitors is always open.
+						</p>
 						<div class="col" style="gap:12px;width:100%;max-width:360px">
-							<input class="input lg" type="password" placeholder="Password" bind:value={password} autocomplete="new-password" aria-label="Password" />
-							<input class="input lg" type="password" placeholder="Repeat password" bind:value={password2} autocomplete="new-password" aria-label="Repeat password" />
-							{#if password2 && password !== password2}<span class="small" style="color:var(--red)">Passwords don’t match</span>{/if}
+							<input
+								class="input lg"
+								type="password"
+								placeholder="Password"
+								bind:value={password}
+								autocomplete="new-password"
+								aria-label="Password"
+							/>
+							<input
+								class="input lg"
+								type="password"
+								placeholder="Repeat password"
+								bind:value={password2}
+								autocomplete="new-password"
+								aria-label="Repeat password"
+							/>
+							{#if password2 && password !== password2}<span class="small" style="color:var(--red)"
+									>Passwords don’t match</span
+								>{/if}
 						</div>
 						<div class="nav">
 							<button class="btn ghost" onclick={back}><ArrowLeft size={16} /> Back</button>
-							<button class="btn ghost" onclick={() => { password = password2 = ''; finish('leader'); }} disabled={busy}>Skip</button>
-							<button class="btn primary" onclick={() => finish('leader')} disabled={busy || !password || password !== password2}>{busy ? 'Finishing…' : 'Finish setup'} <ArrowRight size={16} /></button>
+							<button
+								class="btn ghost"
+								onclick={() => {
+									password = password2 = '';
+									finish('leader');
+								}}
+								disabled={busy}>Skip</button
+							>
+							<button
+								class="btn primary"
+								onclick={() => finish('leader')}
+								disabled={busy || !password || password !== password2}
+								>{busy ? 'Finishing…' : 'Finish setup'} <ArrowRight size={16} /></button
+							>
 						</div>
 					{:else}
 						<div class="celebrate"><Sparkles size={34} /></div>
 						<h1>{showName || 'Your show'} is ready</h1>
 						<p class="lead">Here’s what to do next. You can come back to any of these at any time.</p>
 						<ol class="next">
-							<li><a href="/props"><span class="n">1</span><span class="ic"><FileUp size={18} /></span><span class="grow"><strong>Import your xLights layout</strong><span class="faint small">Brings in every prop at once</span></span><ArrowRight size={16} /></a></li>
-							<li><a href="/sequences"><span class="n">2</span><span class="ic"><Music size={18} /></span><span class="grow"><strong>Upload sequences & songs</strong><span class="faint small">Drop your .fseq files and music</span></span><ArrowRight size={16} /></a></li>
-							<li><a href="/playlists"><span class="n">3</span><span class="ic"><ListMusic size={18} /></span><span class="grow"><strong>Build a playlist</strong><span class="faint small">Your show’s running order</span></span><ArrowRight size={16} /></a></li>
-							<li><a href="/schedule"><span class="n">4</span><span class="ic"><CalendarClock size={18} /></span><span class="grow"><strong>Schedule it</strong><span class="faint small">Start at sunset every night</span></span><ArrowRight size={16} /></a></li>
+							<li>
+								<a href="/props"
+									><span class="n">1</span><span class="ic"><FileUp size={18} /></span><span class="grow"
+										><strong>Import your xLights layout</strong><span class="faint small"
+											>Brings in every prop at once</span
+										></span
+									><ArrowRight size={16} /></a
+								>
+							</li>
+							<li>
+								<a href="/sequences"
+									><span class="n">2</span><span class="ic"><Music size={18} /></span><span class="grow"
+										><strong>Upload sequences & songs</strong><span class="faint small"
+											>Drop your .fseq files and music</span
+										></span
+									><ArrowRight size={16} /></a
+								>
+							</li>
+							<li>
+								<a href="/playlists"
+									><span class="n">3</span><span class="ic"><ListMusic size={18} /></span><span class="grow"
+										><strong>Build a playlist</strong><span class="faint small"
+											>Your show’s running order</span
+										></span
+									><ArrowRight size={16} /></a
+								>
+							</li>
+							<li>
+								<a href="/schedule"
+									><span class="n">4</span><span class="ic"><CalendarClock size={18} /></span><span
+										class="grow"
+										><strong>Schedule it</strong><span class="faint small">Start at sunset every night</span
+										></span
+									><ArrowRight size={16} /></a
+								>
+							</li>
 						</ol>
 						<a class="btn primary lg" href="/">Go to dashboard</a>
 					{/if}

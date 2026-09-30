@@ -15,7 +15,12 @@ export default ts.config(
 	{
 		files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
 		languageOptions: {
-			parserOptions: { projectService: true, extraFileExtensions: ['.svelte'], parser: ts.parser, svelteConfig }
+			parserOptions: {
+				projectService: true,
+				extraFileExtensions: ['.svelte'],
+				parser: ts.parser,
+				svelteConfig
+			}
 		}
 	},
 	{
@@ -23,7 +28,8 @@ export default ts.config(
 			'@typescript-eslint/no-explicit-any': 'off',
 			'@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
 			'svelte/no-navigation-without-resolve': 'off',
-			'svelte/prefer-svelte-reactivity': 'off'
+			'svelte/prefer-svelte-reactivity': 'off',
+			'svelte/prefer-writable-derived': 'off'
 		}
 	},
 	{ ignores: ['build/', '.svelte-kit/', 'node_modules/', 'test-results/'] }

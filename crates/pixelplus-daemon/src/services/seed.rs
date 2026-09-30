@@ -2,7 +2,7 @@
 //! tlchandler/fpp-voices `voices.json`), the tested pronunciation fixes
 //! (`pronunciations.txt`), the built-in looks and a default playlist.
 
-use pixelplus_core::model::{DjVoice, Node, NodeRole, Playlist, Pronunciation, Show};
+use pixelplus_core::model::{DjVoice, Playlist, Pronunciation, Show};
 use std::collections::BTreeMap;
 
 const PRONUNCIATIONS_TXT: &str = include_str!("../../assets/pronunciations.txt");
@@ -112,51 +112,6 @@ pub fn seed_defaults(show: &mut Show) {
     }
 }
 
-/// Make sure the show has a `Node` for this leader (id = node identity id).
-/// Local fallback for the cluster module's `ensure_self_node`.
-pub fn ensure_leader_node(
-    show: &mut Show,
-    node_id: &str,
-    name: &str,
-    hostname: &str,
-    board: pixelplus_core::model::BoardKind,
-    board_rev: Option<String>,
-    pi_model: Option<String>,
-) {
-    if let Some(n) = show.nodes.iter_mut().find(|n| n.id == node_id) {
-        n.role = NodeRole::Leader;
-        n.hostname = hostname.to_string();
-        if n.board != board {
-            n.board = board;
-            n.outputs = board.default_outputs();
-        }
-        n.board_rev = board_rev;
-        n.pi_model = pi_model;
-        n.adopted = true;
-        return;
-    }
-    // Only one leader: demote any stale leader entry (e.g. a restored show from another Pi).
-    for n in show.nodes.iter_mut().filter(|n| n.role == NodeRole::Leader) {
-        n.role = NodeRole::Follower;
-    }
-    show.nodes.insert(
-        0,
-        Node {
-            id: node_id.to_string(),
-            name: name.to_string(),
-            hostname: hostname.to_string(),
-            role: NodeRole::Leader,
-            board,
-            board_rev,
-            pi_model,
-            outputs: board.default_outputs(),
-            adopted: true,
-            last_seen: None,
-            notes: None,
-        },
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,15 +136,5 @@ mod tests {
         assert_eq!(s.playlists[0].name, "Main Show");
         assert!(s.effects.iter().any(|e| e.id.starts_with("builtin-")));
         assert_eq!(s.dj_voices[0].energy["maxLift"], 9.0);
-    }
-
-    #[test]
-    fn leader_node() {
-        let mut s = Show::default();
-        ensure_leader_node(&mut s, "me", "Main", "pp", pixelplus_core::model::BoardKind::Difftx, None, None);
-        ensure_leader_node(&mut s, "me", "Main", "pp2", pixelplus_core::model::BoardKind::Difftx, None, None);
-        assert_eq!(s.nodes.len(), 1);
-        assert_eq!(s.nodes[0].outputs.len(), 4);
-        assert_eq!(s.nodes[0].hostname, "pp2");
     }
 }

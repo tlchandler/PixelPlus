@@ -3,7 +3,11 @@
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import { Plus, X } from '@lucide/svelte';
 
-	let { schema, params = $bindable(), onchange }: { schema: ParamSpec[]; params: EffectParams; onchange?: () => void } = $props();
+	let {
+		schema,
+		params = $bindable(),
+		onchange
+	}: { schema: ParamSpec[]; params: EffectParams; onchange?: () => void } = $props();
 
 	function set(k: string, v: EffectParams[string]) {
 		params = { ...params, [k]: v };
@@ -27,37 +31,91 @@
 				{@const v = val<number>(s)}
 				{@const min = s.min ?? 0}
 				{@const max = s.max ?? 1}
-				<input type="range" class="range" {min} {max} step={s.step ?? 0.01} value={v} style:--pct="{((v - min) / (max - min || 1)) * 100}%" oninput={(e) => set(s.key, Number((e.target as HTMLInputElement).value))} aria-label={s.label} />
+				<input
+					type="range"
+					class="range"
+					{min}
+					{max}
+					step={s.step ?? 0.01}
+					value={v}
+					style:--pct="{((v - min) / (max - min || 1)) * 100}%"
+					oninput={(e) => set(s.key, Number((e.target as HTMLInputElement).value))}
+					aria-label={s.label}
+				/>
 			{:else if s.kind === 'bool'}
 				<Switch checked={val<boolean>(s)} label={s.label} onchange={(v) => set(s.key, v)} />
 			{:else if s.kind === 'color'}
 				<div class="row">
-					<input type="color" value={val<string>(s)} oninput={(e) => set(s.key, (e.target as HTMLInputElement).value)} aria-label={s.label} />
+					<input
+						type="color"
+						value={val<string>(s)}
+						oninput={(e) => set(s.key, (e.target as HTMLInputElement).value)}
+						aria-label={s.label}
+					/>
 					<span class="mono faint">{val<string>(s)}</span>
 					<span class="grow"></span>
-					{#each presets.slice(0, 5) as c (c)}<button type="button" class="dot-sw" style:background={c} onclick={() => set(s.key, c)} aria-label="Use {c}"></button>{/each}
+					{#each presets.slice(0, 5) as c (c)}<button
+							type="button"
+							class="dot-sw"
+							style:background={c}
+							onclick={() => set(s.key, c)}
+							aria-label="Use {c}"
+						></button>{/each}
 				</div>
 			{:else if s.kind === 'colors'}
 				{@const list = val<string[]>(s)}
 				<div class="row wrap">
 					{#each list as c, i (i)}
 						<span class="csw">
-							<input type="color" value={c} oninput={(e) => set(s.key, list.map((x, k) => (k === i ? (e.target as HTMLInputElement).value : x)))} aria-label="{s.label} {i + 1}" />
-							{#if list.length > 1}<button type="button" class="rm" onclick={() => set(s.key, list.filter((_, k) => k !== i))} aria-label="Remove color {i + 1}"><X size={10} /></button>{/if}
+							<input
+								type="color"
+								value={c}
+								oninput={(e) =>
+									set(
+										s.key,
+										list.map((x, k) => (k === i ? (e.target as HTMLInputElement).value : x))
+									)}
+								aria-label="{s.label} {i + 1}"
+							/>
+							{#if list.length > 1}<button
+									type="button"
+									class="rm"
+									onclick={() =>
+										set(
+											s.key,
+											list.filter((_, k) => k !== i)
+										)}
+									aria-label="Remove color {i + 1}"><X size={10} /></button
+								>{/if}
 						</span>
 					{/each}
 					{#if list.length < 16}
-						<button type="button" class="addc" onclick={() => set(s.key, [...list, presets[list.length % presets.length]])} aria-label="Add color"><Plus size={14} /></button>
+						<button
+							type="button"
+							class="addc"
+							onclick={() => set(s.key, [...list, presets[list.length % presets.length]])}
+							aria-label="Add color"><Plus size={14} /></button
+						>
 					{/if}
 				</div>
 			{:else if s.kind === 'select'}
 				{@const opts = s.options ?? []}
 				{#if opts.length <= 4}
 					<div class="seg">
-						{#each opts as o (o)}<button type="button" class:on={val<string>(s) === o} aria-pressed={val<string>(s) === o} onclick={() => set(s.key, o)}>{pretty(o)}</button>{/each}
+						{#each opts as o (o)}<button
+								type="button"
+								class:on={val<string>(s) === o}
+								aria-pressed={val<string>(s) === o}
+								onclick={() => set(s.key, o)}>{pretty(o)}</button
+							>{/each}
 					</div>
 				{:else}
-					<select class="select sm" value={val<string>(s)} onchange={(e) => set(s.key, (e.target as HTMLSelectElement).value)} aria-label={s.label}>
+					<select
+						class="select sm"
+						value={val<string>(s)}
+						onchange={(e) => set(s.key, (e.target as HTMLSelectElement).value)}
+						aria-label={s.label}
+					>
 						{#each opts as o (o)}<option value={o}>{pretty(o)}</option>{/each}
 					</select>
 				{/if}

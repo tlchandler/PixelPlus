@@ -1,6 +1,7 @@
 //! `pixelplusd`: the PixelPlus show daemon.
 
 mod api;
+mod cluster;
 mod config;
 mod events;
 mod node;

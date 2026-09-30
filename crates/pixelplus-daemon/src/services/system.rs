@@ -13,8 +13,29 @@ use pixelplus_core::model::BoardKind;
 use pixelplus_hw::BoardDetection;
 use serde::Serialize;
 use std::path::Path;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
+
+/// Start the system/content/integration services: sensors, alerts, song
+/// request hand-off, pre-show health checks, daily snapshots, MQTT, OLED and
+/// trigger buttons. Call once from `services::start_all`.
+pub async fn start(state: &AppState) {
+    crate::services::logs::attach_events(state.events.clone());
+    // Probe the board off the async runtime (I2C, EEPROM).
+    let _ = tokio::task::spawn_blocking(detection).await;
+    crate::services::media::purge_trash(&state.config.data_dir);
+    crate::services::sensors::start(state);
+    crate::services::alerts::start(state);
+    crate::services::requests::start(state);
+    crate::services::health::start(state);
+    crate::services::snapshots::start(state);
+    crate::services::mqtt::start(state);
+    crate::services::oled::start(state);
+    crate::services::triggers::start(state);
+}
 
 // ---------------------------------------------------------------------------
 // Running tools
@@ -229,8 +250,11 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
         if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
             return None;
         }
-        let frsize = s.f_frsize as u64;
-        Some((s.f_bavail as u64 * frsize, s.f_blocks as u64 * frsize))
+        #[allow(clippy::useless_conversion)]
+        let frsize = u64::from(s.f_frsize);
+        #[allow(clippy::useless_conversion)]
+        let (avail, blocks) = (u64::from(s.f_bavail), u64::from(s.f_blocks));
+        Some((avail * frsize, blocks * frsize))
     }
     #[cfg(not(unix))]
     {

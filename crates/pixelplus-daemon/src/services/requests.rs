@@ -155,7 +155,7 @@ impl RequestQueue {
             };
             let is_playing = playing_id.as_deref() == Some(req.sequence_id.as_str());
             match h {
-                Handoff::Sent { at } if is_playing => *head = Some((req_id, Handoff::Playing)),
+                Handoff::Sent { .. } if is_playing => *head = Some((req_id, Handoff::Playing)),
                 Handoff::Sent { at } if now.duration_since(at) > Duration::from_secs(30 * 60) => {
                     items.retain(|r| r.id != req_id);
                     *head = None;
@@ -350,8 +350,10 @@ mod tests {
         let idle = PlayerStatus::default();
         assert_eq!(q.on_status(&idle, t).unwrap().sequence_id, "s1");
         assert!(q.on_status(&idle, t).is_none());
-        let mut playing = PlayerStatus::default();
-        playing.item = Some(ItemRef { kind: "request".into(), id: "s1".into(), name: "Jingle".into() });
+        let mut playing = PlayerStatus {
+            item: Some(ItemRef { kind: "request".into(), id: "s1".into(), name: "Jingle".into() }),
+            ..Default::default()
+        };
         assert!(q.on_status(&playing, t).is_none());
         assert_eq!(q.list().len(), 2);
         playing.item = Some(ItemRef { kind: "sequence".into(), id: "zz".into(), name: "Other".into() });

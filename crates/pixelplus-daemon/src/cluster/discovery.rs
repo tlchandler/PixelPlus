@@ -11,6 +11,8 @@ use tokio::net::UdpSocket;
 
 /// Peers not heard from for this long are forgotten.
 const PEER_EXPIRY: Duration = Duration::from_secs(300);
+/// How long an authenticated peer entry resists unauthenticated beacons.
+const MEMBER_STICKY: Duration = Duration::from_secs(10);
 
 pub(crate) fn spawn(state: &AppState, sh: &Arc<Shared>) {
     tokio::spawn(bind_and_receive(state.clone(), sh.clone(), false));
@@ -63,8 +65,9 @@ async fn bind_and_receive(state: AppState, sh: Arc<Shared>, overlay: bool) {
                 Ok(v) => v,
                 Err(e) => {
                     // ICMP errors (e.g. port unreachable after a send) surface here on
-                    // some platforms; they are harmless.
+                    // some platforms; they are harmless. Never spin on a broken socket.
                     tracing::trace!("{what} recv: {e}");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
                     continue;
                 }
             },
@@ -119,11 +122,24 @@ async fn on_packet(state: &AppState, sh: &Arc<Shared>, data: &[u8], src: SocketA
 
 fn on_beacon(state: &AppState, sh: &Arc<Shared>, b: Beacon, src: SocketAddr, authenticated: bool) {
     let now = Instant::now();
+    // Released nodes legitimately switch to unauthenticated beacons.
+    let member = state.store.get().node(&b.id).is_some_and(|n| n.adopted);
     {
         let mut peers = sh.peers.write();
         peers.retain(|_, p| now.duration_since(p.last_seen) < PEER_EXPIRY);
         if peers.len() >= 1024 && !peers.contains_key(&b.id) {
             return; // someone is flooding us with made-up ids
+        }
+        // An unauthenticated beacon must not displace a cluster member that
+        // proved its key recently (spoofing). If the member really lost its
+        // key, its authenticated beacons stop and this gives way after 10 s.
+        if !authenticated
+            && member
+            && peers
+                .get(&b.id)
+                .is_some_and(|p| p.authenticated && now.duration_since(p.last_seen) < MEMBER_STICKY)
+        {
+            return;
         }
         peers.insert(
             b.id.clone(),
@@ -149,8 +165,7 @@ fn on_beacon(state: &AppState, sh: &Arc<Shared>, b: Beacon, src: SocketAddr, aut
 /// Our beacon.
 pub(crate) fn build_beacon(state: &AppState, sh: &Shared, ips: Vec<std::net::IpAddr>) -> Beacon {
     let identity = state.identity();
-    let hw = net::hardware();
-    let (board, board_rev) = net::local_board(&identity);
+    let (board, board_rev) = net::local_board(state);
     let hostname = net::hostname();
     let show = state.store.get();
     let own_node = show.node(&identity.id);
@@ -173,7 +188,7 @@ pub(crate) fn build_beacon(state: &AppState, sh: &Shared, ips: Vec<std::net::IpA
         role: identity.role,
         board,
         board_rev,
-        pi: hw.pi_model.clone(),
+        pi: net::pi_model(),
         ver: super::VERSION.to_string(),
         http: sh.settings.http_port,
         overlay: sh.settings.overlay_port,
@@ -228,7 +243,7 @@ async fn mdns_loop(state: AppState, sh: Arc<Shared>) {
     let mut registered: Option<(String, Vec<(String, String)>)> = None;
     loop {
         let identity = state.identity();
-        let (board, _) = net::local_board(&identity);
+        let (board, _) = net::local_board(&state);
         let hostname = net::hostname();
         let role = match identity.role {
             LocalRole::Leader => "leader",

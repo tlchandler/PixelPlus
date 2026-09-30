@@ -52,12 +52,18 @@ export const BOARDS: Record<BoardKind, BoardInfo> = {
 	}
 };
 
-export const RECEIVERS: Record<ReceiverKind, { name: string; short: string; ports: number; fuse?: number }> = {
-	diffrx: { name: 'Chandler 4D/8P Differential Receiver', short: 'Differential receiver', ports: 4, fuse: 6 },
-	'diffsmart-rx': { name: 'Chandler Smart Receiver (RX mode)', short: 'Smart receiver', ports: 4, fuse: 6 },
-	'generic-4': { name: 'Generic 4-port receiver (Falcon/Kulp style)', short: '4-port receiver', ports: 4 },
-	direct: { name: 'Direct connection', short: 'Direct', ports: 1 }
-};
+export const RECEIVERS: Record<ReceiverKind, { name: string; short: string; ports: number; fuse?: number }> =
+	{
+		diffrx: {
+			name: 'Chandler 4D/8P Differential Receiver',
+			short: 'Differential receiver',
+			ports: 4,
+			fuse: 6
+		},
+		'diffsmart-rx': { name: 'Chandler Smart Receiver (RX mode)', short: 'Smart receiver', ports: 4, fuse: 6 },
+		'generic-4': { name: 'Generic 4-port receiver (Falcon/Kulp style)', short: '4-port receiver', ports: 4 },
+		direct: { name: 'Direct connection', short: 'Direct', ports: 1 }
+	};
 
 export function outputLabel(board: BoardKind, index: number): string {
 	if (board === 'difftxlarge') {
@@ -121,7 +127,11 @@ export function wiringText(show: Show, prop: Prop): string {
 }
 
 /** Props (in chain order) hanging off one node output. */
-export function propsOnOutput(show: Show, nodeId: string, output: number): { prop: Prop; seg: Prop['segments'][number] }[] {
+export function propsOnOutput(
+	show: Show,
+	nodeId: string,
+	output: number
+): { prop: Prop; seg: Prop['segments'][number] }[] {
 	const out: { prop: Prop; seg: Prop['segments'][number] }[] = [];
 	for (const p of show.props)
 		for (const s of p.segments) if (s.nodeId === nodeId && s.output === output) out.push({ prop: p, seg: s });

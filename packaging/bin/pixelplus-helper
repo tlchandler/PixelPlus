@@ -5,7 +5,10 @@
 # (allowed by /usr/share/polkit-1/rules.d/50-pixelplus.rules).
 #
 # Verbs (arguments are ':'-separated inside the instance name):
-#   config-txt:<board>[:<rev>]  write the board's config.txt block, reboot if it changed
+#   config-txt:<board>[:<pixels>]  regenerate /boot/firmware/pixelplus.conf (the board's
+#                               boot settings, included from config.txt) via
+#                               `pixelplus config-txt --board <board> [--pixels N]`.
+#                               Does NOT reboot: pixelplusd asks the user, then reboots via logind.
 #   update                      apt-get update + upgrade the pixelplus package, restart
 #   ssh-on | ssh-off            enable / disable the SSH server
 #   reapply                     re-apply /boot/firmware/pixelplus.txt now
@@ -47,14 +50,14 @@ valid_token "${verb:-}" || { verb="invalid"; fail "missing or invalid verb"; }
 case "${verb}" in
 config-txt)
     valid_token "${arg1:-}" || fail "invalid board id"
-    args=(board-config --board "${arg1}" --reboot)
+    args=(board-config --board "${arg1}")
     if [[ -n "${arg2:-}" ]]; then
-        valid_token "${arg2}" || fail "invalid board revision"
-        args+=(--rev "${arg2}")
+        [[ "${arg2}" =~ ^[0-9]{1,5}$ ]] || fail "invalid pixel count"
+        args+=(--pixels "${arg2}")
     fi
     status running "Writing board settings for ${arg1}"
     if /usr/bin/python3 "${FIRSTBOOT}" "${args[@]}"; then
-        status ok "Board settings for ${arg1} applied (the controller restarts if they changed)"
+        status ok "Board settings for ${arg1} saved; restart the controller to use them"
     else
         fail "Could not write board settings (see /var/log/pixelplus-firstboot.log)"
     fi

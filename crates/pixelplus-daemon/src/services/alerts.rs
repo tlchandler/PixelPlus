@@ -3,7 +3,8 @@
 //! 12 V supply voltage, follower offline, show failure (player error) and
 //! failed pre-show checks.
 
-use crate::events::{Event, ToastKind};
+use crate::cluster::ClusterEvent;
+use crate::events::ToastKind;
 use crate::state::AppState;
 use parking_lot::Mutex;
 use pixelplus_core::model::{AlertSettings, EmailSettings, NtfySettings};
@@ -48,6 +49,10 @@ impl AlertState {
         sent.push_back(now);
         last.insert(key.to_string(), now);
         true
+    }
+
+    pub fn was_active(&self, key: &str) -> bool {
+        self.active.lock().get(key).copied().unwrap_or(false)
     }
 
     /// Track a boolean condition; returns true on a false→true transition.
@@ -224,36 +229,50 @@ pub async fn check_sensors(state: &AppState, readings: &[super::sensors::Reading
 
 /// Watch player errors and follower status for alert rules.
 pub fn start(state: &AppState) {
-    // Follower offline: watch `nodes` events.
+    // Follower offline / sync problems: cluster events.
     let st = state.clone();
     tokio::spawn(async move {
-        let mut rx = st.events.subscribe();
+        let cluster = loop {
+            if let Some(c) = st.services.cluster.get() {
+                break c.clone();
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        };
+        let mut rx = cluster.subscribe();
         loop {
-            match rx.recv().await {
-                Ok(Event::Json { kind: "nodes", data }) => {
-                    if !st.store.get().settings.alerts.rules.follower_offline {
-                        continue;
-                    }
-                    for n in data.as_array().into_iter().flatten() {
-                        let id = n["id"].as_str().unwrap_or_default();
-                        let online = n["online"].as_bool().unwrap_or(true);
-                        let key = format!("offline:{id}");
-                        if st.services.alerts.rising(&key, !online) {
-                            let name = n["name"].as_str().unwrap_or(id).to_string();
-                            raise(
-                                &st,
-                                &key,
-                                Severity::Critical,
-                                "Controller offline",
-                                &format!("{name} stopped responding. Check its power and network connection."),
-                            )
-                            .await;
-                        }
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            };
+            if !st.store.get().settings.alerts.rules.follower_offline {
+                continue;
+            }
+            match ev {
+                ClusterEvent::NodeOffline { node_id, name, .. } => {
+                    let key = format!("offline:{node_id}");
+                    if st.services.alerts.rising(&key, true) {
+                        raise(
+                            &st,
+                            &key,
+                            Severity::Critical,
+                            "Controller offline",
+                            &format!("{name} stopped responding. Check its power and network connection."),
+                        )
+                        .await;
                     }
                 }
-                Ok(_) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(_) => break,
+                ClusterEvent::NodeOnline { node_id, name } => {
+                    let key = format!("offline:{node_id}");
+                    if st.services.alerts.was_active(&key) {
+                        st.services.alerts.rising(&key, false);
+                        st.events.toast(ToastKind::Success, format!("{name} is back online."));
+                    }
+                }
+                ClusterEvent::SyncProblem { node_id, name, message } => {
+                    let key = format!("sync:{node_id}");
+                    raise(&st, &key, Severity::Warning, &format!("{name} can't get its show files"), &message).await;
+                }
             }
         }
     });

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { measureLufs } from './dsp';
-import { DEFAULT_GAP_MS, LEAD_IN_S, renderLines, substitutePlaceholders, TAIL_S, type SynthBackend } from './render';
+import {
+	DEFAULT_GAP_MS,
+	LEAD_IN_S,
+	renderLines,
+	substitutePlaceholders,
+	TAIL_S,
+	type SynthBackend
+} from './render';
 import { blendStyleVectors, browserBlend, normalizeBlend, PRESET_VOICES, resolveVoice } from './voices';
 import { splitPhonemes, styleOffset } from './chunk';
 
@@ -41,7 +48,10 @@ describe('voices', () => {
 	});
 
 	it('drops non-English voices from browser blends', () => {
-		expect(browserBlend({ af_heart: 1, jf_alpha: 1 })).toEqual({ blend: { af_heart: 1 }, dropped: ['jf_alpha'] });
+		expect(browserBlend({ af_heart: 1, jf_alpha: 1 })).toEqual({
+			blend: { af_heart: 1 },
+			dropped: ['jf_alpha']
+		});
 		expect(browserBlend({ zf_xiaobei: 1 }).blend).toEqual({ af_heart: 1 });
 	});
 
@@ -111,6 +121,8 @@ describe('renderLines', () => {
 
 	it('refuses an empty dialog', async () => {
 		const { backend } = fakeBackend();
-		await expect(renderLines([{ voice: 'nick', text: '  ', pauseMs: 0 }], { speed: 1 }, backend)).rejects.toThrow();
+		await expect(
+			renderLines([{ voice: 'nick', text: '  ', pauseMs: 0 }], { speed: 1 }, backend)
+		).rejects.toThrow();
 	});
 });

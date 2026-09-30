@@ -19,7 +19,9 @@ describe('encodeWav', () => {
 		expect(tag(36)).toBe('data');
 		expect(v.getUint32(40, true)).toBe(10);
 		expect(buf.byteLength).toBe(54);
-		expect([0, 1, 2, 3, 4].map((i) => v.getInt16(44 + 2 * i, true))).toEqual([0, 16384, -16384, 32767, -32768]);
+		expect([0, 1, 2, 3, 4].map((i) => v.getInt16(44 + 2 * i, true))).toEqual([
+			0, 16384, -16384, 32767, -32768
+		]);
 	});
 
 	it('clips out-of-range samples and interleaves stereo', () => {

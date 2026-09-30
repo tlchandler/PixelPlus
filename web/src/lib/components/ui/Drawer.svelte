@@ -47,7 +47,9 @@
 		role="dialog"
 		aria-modal="true"
 		aria-label={title}
-		transition:fly={mobile ? { y: 500, duration: 260, easing: cubicOut, opacity: 1 } : { x: width, duration: 260, easing: cubicOut, opacity: 1 }}
+		transition:fly={mobile
+			? { y: 500, duration: 260, easing: cubicOut, opacity: 1 }
+			: { x: width, duration: 260, easing: cubicOut, opacity: 1 }}
 	>
 		<header>
 			<div class="grow">

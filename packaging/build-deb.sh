@@ -17,7 +17,8 @@
 #        cargo install cross --locked
 #      glibc of the cross image (2.31) is older than Raspberry Pi OS Bookworm (2.36)
 #      and Trixie (2.41), so the binaries run on both.
-#   2. Debian/Ubuntu cross toolchain:
+#   2. Debian/Ubuntu cross toolchain (the script sets the linker and CC_aarch64_unknown_linux_gnu
+#      that zstd-sys needs):
 #        sudo apt install gcc-aarch64-linux-gnu && rustup target add aarch64-unknown-linux-gnu
 #      Build on the OLDEST distribution you target (Bookworm) - glibc is forward compatible only.
 #   3. Native build on a Pi 4/5 (slow but simple).
@@ -100,7 +101,10 @@ if [[ -z "${BIN_DIR}" ]]; then
     elif command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 && [[ "${ARCH}" == arm64 ]]; then
         log "cargo build --target ${TRIPLE} (gcc-aarch64-linux-gnu)"
         rustup target add "${TRIPLE}" >/dev/null 2>&1 || true
+        # CC_* is needed by C dependencies (zstd-sys) built through the cc crate.
         (cd "${REPO}" && CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+            CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+            AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
             cargo "${CARGO_ARGS[@]}" --target "${TRIPLE}")
         BIN_DIR="${REPO}/target/${TRIPLE}/release"
     else
@@ -180,6 +184,16 @@ if [[ -d "${REPO}/games/pixelplus_games" ]]; then
         [[ -f "${REPO}/games/$f" ]] && inst 0644 "${REPO}/games/$f" "/usr/lib/pixelplus/games/$f"
     done
     find "${R}/usr/lib/pixelplus/games" \( -name __pycache__ -o -name tests \) -type d -prune -exec rm -rf {} +
+fi
+
+# DPI overlays (Raspberry Pi only; postinst copies them to /boot/firmware/overlays)
+if [[ "${ARCH}" == arm64 ]]; then
+    command -v dtc >/dev/null 2>&1 || die "dtc not found (sudo apt install device-tree-compiler)"
+    for dts in "${REPO}"/crates/pixelplus-output/overlays/*.dts; do
+        name="$(basename "${dts}" .dts)"
+        install -d "${R}/usr/lib/pixelplus/overlays"
+        dtc -q -@ -I dts -O dtb -o "${R}/usr/lib/pixelplus/overlays/${name}.dtbo" "${dts}"
+    done
 fi
 
 # helpers

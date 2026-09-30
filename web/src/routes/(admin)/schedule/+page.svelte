@@ -43,7 +43,10 @@
 
 	$effect(() => {
 		void show?.version;
-		api.schedulePreview(14).then((p) => (preview = p)).catch(() => (preview = []));
+		api
+			.schedulePreview(14)
+			.then((p) => (preview = p))
+			.catch(() => (preview = []));
 	});
 	$effect(() => {
 		const t = setInterval(() => (now = new Date()), 30000);
@@ -86,10 +89,13 @@
 		if (!editing || !sched) return;
 		const e = $state.snapshot(editing) as ScheduleEntry;
 		const exists = sched.entries.some((x) => x.id === e.id);
-		patch((s) => {
-			if (exists) s.entries = s.entries.map((x) => (x.id === e.id ? e : x));
-			else s.entries.push(e);
-		}, exists ? `Saved “${e.name}”` : `Added “${e.name}”`);
+		patch(
+			(s) => {
+				if (exists) s.entries = s.entries.map((x) => (x.id === e.id ? e : x));
+				else s.entries.push(e);
+			},
+			exists ? `Saved “${e.name}”` : `Added “${e.name}”`
+		);
 		editing = null;
 	}
 	async function deleteEntry(e: ScheduleEntry) {
@@ -165,7 +171,15 @@
 	}
 	const tzList = timezones();
 
-	const dayLabel: Record<Weekday, string> = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+	const dayLabel: Record<Weekday, string> = {
+		mon: 'Mon',
+		tue: 'Tue',
+		wed: 'Wed',
+		thu: 'Thu',
+		fri: 'Fri',
+		sat: 'Sat',
+		sun: 'Sun'
+	};
 	function setDays(d: Weekday[]) {
 		if (editing) editing.days = d;
 	}
@@ -173,12 +187,27 @@
 </script>
 
 <div class="page">
-	<PageHeader title="Schedule" subtitle="When the show runs. Times can follow sunset, so the show starts at dusk all season.">
+	<PageHeader
+		title="Schedule"
+		subtitle="When the show runs. Times can follow sunset, so the show starts at dusk all season."
+	>
 		{#snippet actions()}
 			{#if sched}
-				<label class="master"><Switch checked={sched.enabled} label="Schedule on" onchange={(v) => patch((s) => (s.enabled = v), v ? 'Schedule turned on' : 'Schedule paused — nothing will start automatically')} /> <span>{sched.enabled ? 'Schedule on' : 'Schedule paused'}</span></label>
+				<label class="master"
+					><Switch
+						checked={sched.enabled}
+						label="Schedule on"
+						onchange={(v) =>
+							patch(
+								(s) => (s.enabled = v),
+								v ? 'Schedule turned on' : 'Schedule paused — nothing will start automatically'
+							)}
+					/> <span>{sched.enabled ? 'Schedule on' : 'Schedule paused'}</span></label
+				>
 			{/if}
-			<button class="btn primary" onclick={newEntry} disabled={!show?.playlists.length}><Plus size={16} /> Add show time</button>
+			<button class="btn primary" onclick={newEntry} disabled={!show?.playlists.length}
+				><Plus size={16} /> Add show time</button
+			>
 		{/snippet}
 	</PageHeader>
 
@@ -195,49 +224,98 @@
 				{:else if upcoming && new Date(upcoming.start) <= now}
 					<div class="eyebrow">On now</div>
 					<h2>{upcoming.name} · until {fmtTime(new Date(upcoming.end), tz)}</h2>
-					<p class="muted small">Playing “{show.playlists.find((p) => p.id === upcoming.playlistId)?.name}”</p>
+					<p class="muted small">
+						Playing “{show.playlists.find((p) => p.id === upcoming.playlistId)?.name}”
+					</p>
 				{:else if upcoming}
-					<div class="eyebrow">Next show · in {fmtCountdown(new Date(upcoming.start).getTime() - now.getTime())}</div>
-					<h2>{fmtDate(new Date(upcoming.start), tz, { weekday: 'long', month: 'short', day: 'numeric' })} · {fmtTime(new Date(upcoming.start), tz)} – {fmtTime(new Date(upcoming.end), tz)}</h2>
-					<p class="muted small">{upcoming.name} · “{show.playlists.find((p) => p.id === upcoming.playlistId)?.name}”</p>
+					<div class="eyebrow">
+						Next show · in {fmtCountdown(new Date(upcoming.start).getTime() - now.getTime())}
+					</div>
+					<h2>
+						{fmtDate(new Date(upcoming.start), tz, { weekday: 'long', month: 'short', day: 'numeric' })} · {fmtTime(
+							new Date(upcoming.start),
+							tz
+						)} – {fmtTime(new Date(upcoming.end), tz)}
+					</h2>
+					<p class="muted small">
+						{upcoming.name} · “{show.playlists.find((p) => p.id === upcoming.playlistId)?.name}”
+					</p>
 				{:else}
 					<div class="eyebrow">Nothing coming up</div>
 					<h2>No show in the next 30 days</h2>
 					<p class="muted small">Check the dates on your show times.</p>
 				{/if}
 			</div>
-			<button class="loc" onclick={openLoc}><MapPin size={14} /> {sched.location.label ?? `${sched.location.lat.toFixed(2)}, ${sched.location.lon.toFixed(2)}`}<span class="faint"> · {tz.replace(/_/g, ' ')}</span></button>
+			<button class="loc" onclick={openLoc}
+				><MapPin size={14} />
+				{sched.location.label ?? `${sched.location.lat.toFixed(2)}, ${sched.location.lon.toFixed(2)}`}<span
+					class="faint"
+				>
+					· {tz.replace(/_/g, ' ')}</span
+				></button
+			>
 		</div>
 
 		<div class="toolbar" style="margin-top:20px">
-			<Segmented bind:value={view} label="View" options={[{ value: 'week', label: 'Week', icon: CalendarDays }, { value: 'list', label: 'Show times', icon: List }]} />
+			<Segmented
+				bind:value={view}
+				label="View"
+				options={[
+					{ value: 'week', label: 'Week', icon: CalendarDays },
+					{ value: 'list', label: 'Show times', icon: List }
+				]}
+			/>
 		</div>
 
 		<div class="cols">
 			<div class="main">
 				{#if !sched.entries.length}
-					<div class="card"><EmptyState icon={Sunset} title="No show times yet" message="Add when your show should run — for example every night from 15 minutes after sunset until 10 PM.">
-						<button class="btn primary" onclick={newEntry} disabled={!show.playlists.length}><Plus size={16} /> Add show time</button>
-					</EmptyState></div>
+					<div class="card">
+						<EmptyState
+							icon={Sunset}
+							title="No show times yet"
+							message="Add when your show should run — for example every night from 15 minutes after sunset until 10 PM."
+						>
+							<button class="btn primary" onclick={newEntry} disabled={!show.playlists.length}
+								><Plus size={16} /> Add show time</button
+							>
+						</EmptyState>
+					</div>
 				{:else if view === 'week'}
 					<div class="card weekcard">
 						<div class="wk">
 							<div class="hours">
 								{#each Array(H1 - H0 + 1) as _, i (i)}
 									{@const h = (H0 + i) % 24}
-									<span style:top="{(i / (H1 - H0)) * 100}%">{h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`}</span>
+									<span style:top="{(i / (H1 - H0)) * 100}%"
+										>{h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`}</span
+									>
 								{/each}
 							</div>
 							{#each week as d, di (d.key)}
 								<div class="day" class:today={di === 0}>
-									<div class="dh"><span class="dw">{fmtDate(d.date, 'UTC', { weekday: 'short', month: undefined, day: undefined })}</span><span class="dn num">{d.date.getUTCDate()}</span></div>
+									<div class="dh">
+										<span class="dw"
+											>{fmtDate(d.date, 'UTC', { weekday: 'short', month: undefined, day: undefined })}</span
+										><span class="dn num">{d.date.getUTCDate()}</span>
+									</div>
 									<div class="dcol">
-										{#each Array(H1 - H0) as _, i (i)}<span class="hl" style:top="{(i / (H1 - H0)) * 100}%"></span>{/each}
+										{#each Array(H1 - H0) as _, i (i)}<span class="hl" style:top="{(i / (H1 - H0)) * 100}%"
+											></span>{/each}
 										{#if di === 0 && nowPct != null}<span class="now" style:top="{nowPct}%"></span>{/if}
 										{#each d.items as o (o.entryId + o.start)}
 											{@const e = sched.entries.find((x) => x.id === o.entryId)}
-											<button class="blk" class:over={o.overridden} style="{blockStyle(o)};--c:{entryColor(o.entryId)}" onclick={() => e && (editing = structuredClone($state.snapshot(e) as ScheduleEntry))} title="{o.name}: {fmtTime(new Date(o.start), tz)}–{fmtTime(new Date(o.end), tz)}">
-												<span class="bn ellipsis">{#if (e?.priority ?? 0) > 0}<Star size={10} fill="currentColor" />{/if} {o.name}</span>
+											<button
+												class="blk"
+												class:over={o.overridden}
+												style="{blockStyle(o)};--c:{entryColor(o.entryId)}"
+												onclick={() => e && (editing = structuredClone($state.snapshot(e) as ScheduleEntry))}
+												title="{o.name}: {fmtTime(new Date(o.start), tz)}–{fmtTime(new Date(o.end), tz)}"
+											>
+												<span class="bn ellipsis"
+													>{#if (e?.priority ?? 0) > 0}<Star size={10} fill="currentColor" />{/if}
+													{o.name}</span
+												>
 												<span class="bt num">{fmtTime(new Date(o.start), tz)}</span>
 											</button>
 										{/each}
@@ -246,22 +324,49 @@
 							{/each}
 						</div>
 					</div>
-					<p class="faint tiny" style="margin-top:8px">Dashed blocks are replaced by a higher-priority show time that night.</p>
+					<p class="faint tiny" style="margin-top:8px">
+						Dashed blocks are replaced by a higher-priority show time that night.
+					</p>
 				{:else}
 					<div class="card list">
 						{#each [...sched.entries].sort((a, b) => b.priority - a.priority) as e (e.id)}
 							{@const pl = show.playlists.find((p) => p.id === e.playlistId)}
 							<div class="list-row entry" class:disabled={!e.enabled}>
 								<span class="edot" style:background={entryColor(e.id)}></span>
-								<button class="grow etext" onclick={() => (editing = structuredClone($state.snapshot(e) as ScheduleEntry))}>
-									<div class="row wrap" style="gap:8px"><strong>{e.name}</strong>
-										{#if e.priority > 0}<span class="badge accent"><Star size={11} fill="currentColor" /> Special night</span>{/if}
-										{#if e.dateRange}<span class="badge outline">{months[+e.dateRange.start.split('-')[0] - 1]} {+e.dateRange.start.split('-')[1]} – {months[+e.dateRange.end.split('-')[0] - 1]} {+e.dateRange.end.split('-')[1]}</span>{/if}
+								<button
+									class="grow etext"
+									onclick={() => (editing = structuredClone($state.snapshot(e) as ScheduleEntry))}
+								>
+									<div class="row wrap" style="gap:8px">
+										<strong>{e.name}</strong>
+										{#if e.priority > 0}<span class="badge accent"
+												><Star size={11} fill="currentColor" /> Special night</span
+											>{/if}
+										{#if e.dateRange}<span class="badge outline"
+												>{months[+e.dateRange.start.split('-')[0] - 1]}
+												{+e.dateRange.start.split('-')[1]} – {months[+e.dateRange.end.split('-')[0] - 1]}
+												{+e.dateRange.end.split('-')[1]}</span
+											>{/if}
 									</div>
-									<div class="muted small">{entrySummary(e)} · {describeTimeSpec(e.start)} → {describeTimeSpec(e.end)} · {pl?.name ?? 'Missing playlist'}</div>
+									<div class="muted small">
+										{entrySummary(e)} · {describeTimeSpec(e.start)} → {describeTimeSpec(e.end)} · {pl?.name ??
+											'Missing playlist'}
+									</div>
 								</button>
-								<Switch checked={e.enabled} label="Enable {e.name}" onchange={(v) => patch((s) => { const t = s.entries.find((x) => x.id === e.id); if (t) t.enabled = v; })} />
-								<button class="btn ghost icon sm" onclick={() => (editing = structuredClone($state.snapshot(e) as ScheduleEntry))} aria-label="Edit {e.name}"><Pencil size={14} /></button>
+								<Switch
+									checked={e.enabled}
+									label="Enable {e.name}"
+									onchange={(v) =>
+										patch((s) => {
+											const t = s.entries.find((x) => x.id === e.id);
+											if (t) t.enabled = v;
+										})}
+								/>
+								<button
+									class="btn ghost icon sm"
+									onclick={() => (editing = structuredClone($state.snapshot(e) as ScheduleEntry))}
+									aria-label="Edit {e.name}"><Pencil size={14} /></button
+								>
 							</div>
 						{/each}
 					</div>
@@ -277,10 +382,20 @@
 						{#each previewByDay as [date, occ] (date)}
 							{@const d = new Date(occ[0].start)}
 							<div class="pday">
-								<div class="pd"><span class="num">{fmtDate(d, tz, { weekday: 'short', month: 'short', day: 'numeric' })}</span></div>
+								<div class="pd">
+									<span class="num"
+										>{fmtDate(d, tz, { weekday: 'short', month: 'short', day: 'numeric' })}</span
+									>
+								</div>
 								<div class="grow col" style="gap:4px">
 									{#each occ as o (o.entryId + o.start)}
-										<div class="po"><span class="edot" style:background={entryColor(o.entryId)}></span><span class="num">{fmtTime(new Date(o.start), tz)} – {fmtTime(new Date(o.end), tz)}</span><span class="muted ellipsis">{o.name} · {show.playlists.find((p) => p.id === o.playlistId)?.name}</span></div>
+										<div class="po">
+											<span class="edot" style:background={entryColor(o.entryId)}></span><span class="num"
+												>{fmtTime(new Date(o.start), tz)} – {fmtTime(new Date(o.end), tz)}</span
+											><span class="muted ellipsis"
+												>{o.name} · {show.playlists.find((p) => p.id === o.playlistId)?.name}</span
+											>
+										</div>
 									{/each}
 								</div>
 							</div>
@@ -291,35 +406,100 @@
 
 			<aside class="side">
 				<section class="card card-pad sidecard">
-					<div class="row"><Moon size={16} /><h3>Idle look</h3></div>
+					<div class="row">
+						<Moon size={16} />
+						<h3>Idle look</h3>
+					</div>
 					<p class="faint small">Shown during show hours when nothing is playing.</p>
-					<select class="select" value={sched.idleEffectId ?? ''} onchange={(e) => patch((s) => (s.idleEffectId = (e.target as HTMLSelectElement).value || undefined), 'Idle look updated')} aria-label="Idle look">
+					<select
+						class="select"
+						value={sched.idleEffectId ?? ''}
+						onchange={(e) =>
+							patch(
+								(s) => (s.idleEffectId = (e.target as HTMLSelectElement).value || undefined),
+								'Idle look updated'
+							)}
+						aria-label="Idle look"
+					>
 						<option value="">Lights off</option>
 						{#each show.effects as fx (fx.id)}<option value={fx.id}>{fx.name}</option>{/each}
 					</select>
 					<p class="faint small" style="margin-top:6px">Outside show hours</p>
-					<select class="select" value={sched.offEffectId ?? ''} onchange={(e) => patch((s) => (s.offEffectId = (e.target as HTMLSelectElement).value || undefined), 'Updated')} aria-label="Look outside show hours">
+					<select
+						class="select"
+						value={sched.offEffectId ?? ''}
+						onchange={(e) =>
+							patch((s) => (s.offEffectId = (e.target as HTMLSelectElement).value || undefined), 'Updated')}
+						aria-label="Look outside show hours"
+					>
 						<option value="">Dark</option>
 						{#each show.effects as fx (fx.id)}<option value={fx.id}>{fx.name}</option>{/each}
 					</select>
 				</section>
 				<section class="card card-pad sidecard">
-					<div class="row"><Volume1 size={16} /><h3 class="grow">Volume curfew</h3>
-						<Switch size="sm" checked={!!sched.volumeCurfew} label="Volume curfew" onchange={(v) => patch((s) => (s.volumeCurfew = v ? { time: { kind: 'clock', time: '21:00' }, volume: 40 } : undefined), v ? 'Volume curfew on' : 'Volume curfew off')} />
+					<div class="row">
+						<Volume1 size={16} />
+						<h3 class="grow">Volume curfew</h3>
+						<Switch
+							size="sm"
+							checked={!!sched.volumeCurfew}
+							label="Volume curfew"
+							onchange={(v) =>
+								patch(
+									(s) =>
+										(s.volumeCurfew = v ? { time: { kind: 'clock', time: '21:00' }, volume: 40 } : undefined),
+									v ? 'Volume curfew on' : 'Volume curfew off'
+								)}
+						/>
 					</div>
 					<p class="faint small">Be a good neighbor: lower the volume late in the evening.</p>
 					{#if sched.volumeCurfew}
 						{@const vc = sched.volumeCurfew}
-						<label class="field"><span class="label">From</span><input class="input" type="time" value={vc.time.kind === 'clock' ? vc.time.time : '21:00'} onchange={(e) => patch((s) => s.volumeCurfew && (s.volumeCurfew.time = { kind: 'clock', time: (e.target as HTMLInputElement).value }), 'Curfew updated')} /></label>
-						<label class="field"><span class="label">Volume · {vc.volume}%</span>
-							<input type="range" class="range" min="0" max="100" step="5" value={vc.volume} style:--pct="{vc.volume}%" onchange={(e) => patch((s) => s.volumeCurfew && (s.volumeCurfew.volume = Number((e.target as HTMLInputElement).value)), 'Curfew updated')} />
+						<label class="field"
+							><span class="label">From</span><input
+								class="input"
+								type="time"
+								value={vc.time.kind === 'clock' ? vc.time.time : '21:00'}
+								onchange={(e) =>
+									patch(
+										(s) =>
+											s.volumeCurfew &&
+											(s.volumeCurfew.time = { kind: 'clock', time: (e.target as HTMLInputElement).value }),
+										'Curfew updated'
+									)}
+							/></label
+						>
+						<label class="field"
+							><span class="label">Volume · {vc.volume}%</span>
+							<input
+								type="range"
+								class="range"
+								min="0"
+								max="100"
+								step="5"
+								value={vc.volume}
+								style:--pct="{vc.volume}%"
+								onchange={(e) =>
+									patch(
+										(s) =>
+											s.volumeCurfew &&
+											(s.volumeCurfew.volume = Number((e.target as HTMLInputElement).value)),
+										'Curfew updated'
+									)}
+							/>
 						</label>
 					{/if}
 				</section>
 				<section class="card card-pad sidecard">
-					<div class="row"><Sparkles size={16} /><h3>Tips</h3></div>
+					<div class="row">
+						<Sparkles size={16} />
+						<h3>Tips</h3>
+					</div>
 					<ul class="tips">
-						<li>Use a <strong>special night</strong> (higher priority) for Christmas Eve — it wins over your regular nights.</li>
+						<li>
+							Use a <strong>special night</strong> (higher priority) for Christmas Eve — it wins over your regular
+							nights.
+						</li>
 						<li>Date ranges can wrap the new year, e.g. Nov 25 – Jan 6.</li>
 						<li>“Finish the song” lets the current song end before stopping.</li>
 					</ul>
@@ -329,39 +509,117 @@
 	{/if}
 </div>
 
-<Modal open={!!editing} title={sched?.entries.some((e) => e.id === editing?.id) ? 'Edit show time' : 'New show time'} size="lg" onclose={() => (editing = null)}>
+<Modal
+	open={!!editing}
+	title={sched?.entries.some((e) => e.id === editing?.id) ? 'Edit show time' : 'New show time'}
+	size="lg"
+	onclose={() => (editing = null)}
+>
 	{#if editing && sched && show}
 		<div class="form-grid">
-			<label class="field"><span class="label">Name</span><input class="input" bind:value={editing.name} /></label>
-			<label class="field"><span class="label">Playlist</span>
-				<select class="select" bind:value={editing.playlistId}>{#each show.playlists as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select>
+			<label class="field"
+				><span class="label">Name</span><input class="input" bind:value={editing.name} /></label
+			>
+			<label class="field"
+				><span class="label">Playlist</span>
+				<select class="select" bind:value={editing.playlistId}
+					>{#each show.playlists as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select
+				>
 			</label>
 			<div class="field span-2">
 				<span class="label">Days</span>
 				<div class="row wrap">
 					{#each WEEKDAYS as d (d)}
-						<button type="button" class="chip daychip" aria-pressed={editing.days.includes(d)} onclick={() => editing && (editing.days = editing.days.includes(d) ? editing.days.filter((x) => x !== d) : [...editing.days, d])}>{dayLabel[d]}</button>
+						<button
+							type="button"
+							class="chip daychip"
+							aria-pressed={editing.days.includes(d)}
+							onclick={() =>
+								editing &&
+								(editing.days = editing.days.includes(d)
+									? editing.days.filter((x) => x !== d)
+									: [...editing.days, d])}>{dayLabel[d]}</button
+						>
 					{/each}
 					<span class="sep"></span>
 					<button type="button" class="btn ghost sm" onclick={() => setDays([...WEEKDAYS])}>Every day</button>
-					<button type="button" class="btn ghost sm" onclick={() => setDays(['fri', 'sat'])}>Fri & Sat</button>
-					<button type="button" class="btn ghost sm" onclick={() => setDays(['sun', 'mon', 'tue', 'wed', 'thu'])}>School nights</button>
+					<button type="button" class="btn ghost sm" onclick={() => setDays(['fri', 'sat'])}>Fri & Sat</button
+					>
+					<button
+						type="button"
+						class="btn ghost sm"
+						onclick={() => setDays(['sun', 'mon', 'tue', 'wed', 'thu'])}>School nights</button
+					>
 				</div>
 			</div>
-			<div class="field"><span class="label">Starts</span><TimeSpecPicker bind:value={editing.start} location={sched.location} label="Start" /></div>
-			<div class="field"><span class="label">Ends</span><TimeSpecPicker bind:value={editing.end} location={sched.location} label="End" /></div>
+			<div class="field">
+				<span class="label">Starts</span><TimeSpecPicker
+					bind:value={editing.start}
+					location={sched.location}
+					label="Start"
+				/>
+			</div>
+			<div class="field">
+				<span class="label">Ends</span><TimeSpecPicker
+					bind:value={editing.end}
+					location={sched.location}
+					label="End"
+				/>
+			</div>
 			<div class="field span-2">
 				<span class="label">Dates</span>
 				<div class="row wrap">
-					<Switch checked={!!editing.dateRange} label="Limit to dates" onchange={(v) => editing && (editing.dateRange = v ? { start: '11-25', end: '01-06' } : undefined)} />
+					<Switch
+						checked={!!editing.dateRange}
+						label="Limit to dates"
+						onchange={(v) =>
+							editing && (editing.dateRange = v ? { start: '11-25', end: '01-06' } : undefined)}
+					/>
 					{#if editing.dateRange}
 						{@const dr = editing.dateRange}
 						<span class="small muted">From</span>
-						<select class="select sm" style="width:auto" value={dr.start.split('-')[0]} onchange={(e) => (dr.start = `${(e.target as HTMLSelectElement).value}-${dr.start.split('-')[1]}`)} aria-label="Start month">{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option>{/each}</select>
-						<input class="input sm" style="width:64px" type="number" min="1" max="31" value={+dr.start.split('-')[1]} onchange={(e) => (dr.start = `${dr.start.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)} aria-label="Start day" />
+						<select
+							class="select sm"
+							style="width:auto"
+							value={dr.start.split('-')[0]}
+							onchange={(e) =>
+								(dr.start = `${(e.target as HTMLSelectElement).value}-${dr.start.split('-')[1]}`)}
+							aria-label="Start month"
+							>{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option
+								>{/each}</select
+						>
+						<input
+							class="input sm"
+							style="width:64px"
+							type="number"
+							min="1"
+							max="31"
+							value={+dr.start.split('-')[1]}
+							onchange={(e) =>
+								(dr.start = `${dr.start.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)}
+							aria-label="Start day"
+						/>
 						<span class="small muted">to</span>
-						<select class="select sm" style="width:auto" value={dr.end.split('-')[0]} onchange={(e) => (dr.end = `${(e.target as HTMLSelectElement).value}-${dr.end.split('-')[1]}`)} aria-label="End month">{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option>{/each}</select>
-						<input class="input sm" style="width:64px" type="number" min="1" max="31" value={+dr.end.split('-')[1]} onchange={(e) => (dr.end = `${dr.end.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)} aria-label="End day" />
+						<select
+							class="select sm"
+							style="width:auto"
+							value={dr.end.split('-')[0]}
+							onchange={(e) => (dr.end = `${(e.target as HTMLSelectElement).value}-${dr.end.split('-')[1]}`)}
+							aria-label="End month"
+							>{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option
+								>{/each}</select
+						>
+						<input
+							class="input sm"
+							style="width:64px"
+							type="number"
+							min="1"
+							max="31"
+							value={+dr.end.split('-')[1]}
+							onchange={(e) =>
+								(dr.end = `${dr.end.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)}
+							aria-label="End day"
+						/>
 					{:else}
 						<span class="small faint">Runs all year on the chosen days</span>
 					{/if}
@@ -369,7 +627,16 @@
 			</div>
 			<div class="field">
 				<span class="label">Priority</span>
-				<Segmented value={editing.priority > 0 ? 'special' : 'regular'} label="Priority" onchange={(v) => editing && (editing.priority = v === 'special' ? Math.max(10, editing.priority) : 0)} options={[{ value: 'regular', label: 'Regular' }, { value: 'special', label: 'Special night', icon: Star }]} />
+				<Segmented
+					value={editing.priority > 0 ? 'special' : 'regular'}
+					label="Priority"
+					onchange={(v) =>
+						editing && (editing.priority = v === 'special' ? Math.max(10, editing.priority) : 0)}
+					options={[
+						{ value: 'regular', label: 'Regular' },
+						{ value: 'special', label: 'Special night', icon: Star }
+					]}
+				/>
 				<span class="hint">Special nights replace regular show times when they overlap.</span>
 			</div>
 			<div class="field">
@@ -384,38 +651,94 @@
 	{/if}
 	{#snippet footer()}
 		{#if editing && sched?.entries.some((e) => e.id === editing?.id)}
-			<button class="btn danger" onclick={() => editing && deleteEntry(editing)}><Trash2 size={14} /> Delete</button><span class="grow"></span>
+			<button class="btn danger" onclick={() => editing && deleteEntry(editing)}
+				><Trash2 size={14} /> Delete</button
+			><span class="grow"></span>
 		{/if}
 		<button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
-		<button class="btn primary" onclick={saveEntry} disabled={!editing?.days.length || !editing?.playlistId}>Save show time</button>
+		<button class="btn primary" onclick={saveEntry} disabled={!editing?.days.length || !editing?.playlistId}
+			>Save show time</button
+		>
 	{/snippet}
 </Modal>
 
-<Modal bind:open={locOpen} title="Show location" subtitle="Used to work out sunset and sunrise times" size="md">
+<Modal
+	bind:open={locOpen}
+	title="Show location"
+	subtitle="Used to work out sunset and sunrise times"
+	size="md"
+>
 	<div class="col" style="gap:14px">
 		<div class="row">
-			<div class="input-group grow"><span class="prefix"><MapPin size={16} /></span><input class="input" placeholder="Search for your town or city" bind:value={cityQ} aria-label="Search city" /></div>
+			<div class="input-group grow">
+				<span class="prefix"><MapPin size={16} /></span><input
+					class="input"
+					placeholder="Search for your town or city"
+					bind:value={cityQ}
+					aria-label="Search city"
+				/>
+			</div>
 			<button class="btn" onclick={geolocate}><LocateFixed size={16} /> Use my location</button>
 		</div>
 		{#if cityHits.length}
 			<div class="hits">
 				{#each cityHits as c (c.name + c.region)}
-					<button class="hit" onclick={() => { locDraft = { lat: c.lat, lon: c.lon, timezone: c.tz, label: `${c.name}, ${c.region.split(',')[0]}` }; cityQ = ''; }}>
+					<button
+						class="hit"
+						onclick={() => {
+							locDraft = {
+								lat: c.lat,
+								lon: c.lon,
+								timezone: c.tz,
+								label: `${c.name}, ${c.region.split(',')[0]}`
+							};
+							cityQ = '';
+						}}
+					>
 						<strong>{c.name}</strong> <span class="faint small">{c.region}</span>
 					</button>
 				{/each}
 			</div>
 		{/if}
 		<div class="form-grid">
-			<label class="field"><span class="label">Latitude</span><input class="input" type="number" step="0.0001" bind:value={locDraft.lat} /></label>
-			<label class="field"><span class="label">Longitude</span><input class="input" type="number" step="0.0001" bind:value={locDraft.lon} /></label>
-			<label class="field"><span class="label">Time zone</span><select class="select" bind:value={locDraft.timezone}>{#each tzList as z (z)}<option value={z}>{z.replace(/_/g, ' ')}</option>{/each}</select></label>
-			<label class="field"><span class="label">Label</span><input class="input" bind:value={locDraft.label} /></label>
+			<label class="field"
+				><span class="label">Latitude</span><input
+					class="input"
+					type="number"
+					step="0.0001"
+					bind:value={locDraft.lat}
+				/></label
+			>
+			<label class="field"
+				><span class="label">Longitude</span><input
+					class="input"
+					type="number"
+					step="0.0001"
+					bind:value={locDraft.lon}
+				/></label
+			>
+			<label class="field"
+				><span class="label">Time zone</span><select class="select" bind:value={locDraft.timezone}
+					>{#each tzList as z (z)}<option value={z}>{z.replace(/_/g, ' ')}</option>{/each}</select
+				></label
+			>
+			<label class="field"
+				><span class="label">Label</span><input class="input" bind:value={locDraft.label} /></label
+			>
 		</div>
 	</div>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (locOpen = false)}>Cancel</button>
-		<button class="btn primary" onclick={() => { patch((s) => (s.location = { ...$state.snapshot(locDraft), label: locDraft.label || undefined }), 'Location updated'); locOpen = false; }}>Save location</button>
+		<button
+			class="btn primary"
+			onclick={() => {
+				patch(
+					(s) => (s.location = { ...$state.snapshot(locDraft), label: locDraft.label || undefined }),
+					'Location updated'
+				);
+				locOpen = false;
+			}}>Save location</button
+		>
 	{/snippet}
 </Modal>
 
@@ -565,7 +888,9 @@
 		flex-direction: column;
 		gap: 1px;
 		overflow: hidden;
-		transition: transform 150ms var(--ease), box-shadow 150ms;
+		transition:
+			transform 150ms var(--ease),
+			box-shadow 150ms;
 	}
 	.blk:hover {
 		transform: scale(1.02);

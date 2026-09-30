@@ -19,15 +19,31 @@
 			<span>{short[t.href] ?? t.label}</span>
 		</a>
 	{/each}
-	<button class="tab" class:active={moreActive || more} onclick={() => (more = !more)} aria-expanded={more} aria-label="More pages">
+	<button
+		class="tab"
+		class:active={moreActive || more}
+		onclick={() => (more = !more)}
+		aria-expanded={more}
+		aria-label="More pages"
+	>
 		<Ellipsis size={22} />
 		<span>More</span>
 	</button>
 </nav>
 
 {#if more}
-	<div class="scrim" transition:fade={{ duration: 150 }} onclick={() => (more = false)} aria-hidden="true"></div>
-	<div class="sheet" transition:fly={{ y: 300, duration: 240, opacity: 1 }} role="dialog" aria-label="More pages">
+	<div
+		class="scrim"
+		transition:fade={{ duration: 150 }}
+		onclick={() => (more = false)}
+		aria-hidden="true"
+	></div>
+	<div
+		class="sheet"
+		transition:fly={{ y: 300, duration: 240, opacity: 1 }}
+		role="dialog"
+		aria-label="More pages"
+	>
 		<div class="grabber"></div>
 		<div class="grid">
 			{#each rest as t (t.href)}

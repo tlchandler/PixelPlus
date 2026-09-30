@@ -12,7 +12,9 @@ describe('pronunciations', () => {
 	});
 
 	it('is case-sensitive for entries with capitals', () => {
-		expect(apply([['LED', 'L E D']], 'LED lights; she led the way').text).toBe('L E D lights; she led the way');
+		expect(apply([['LED', 'L E D']], 'LED lights; she led the way').text).toBe(
+			'L E D lights; she led the way'
+		);
 	});
 
 	it('matches lowercase entries in any case', () => {

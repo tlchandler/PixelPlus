@@ -10,7 +10,13 @@
 <div class="toaster" aria-live="polite" aria-relevant="additions">
 	{#each toasts.items as t (t.id)}
 		{@const Icon = icons[t.kind]}
-		<div class="toast {t.kind}" role={t.kind === 'error' ? 'alert' : 'status'} in:fly={{ y: 16, duration: 220 }} out:fly={{ x: 40, duration: 180 }} animate:flip={{ duration: 200 }}>
+		<div
+			class="toast {t.kind}"
+			role={t.kind === 'error' ? 'alert' : 'status'}
+			in:fly={{ y: 16, duration: 220 }}
+			out:fly={{ x: 40, duration: 180 }}
+			animate:flip={{ duration: 200 }}
+		>
 			<span class="ico"><Icon size={18} /></span>
 			<div class="grow">
 				<div class="msg">{t.message}</div>

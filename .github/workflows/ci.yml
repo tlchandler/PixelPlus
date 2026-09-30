@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libssl-dev libdbus-1-dev
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  rust-arm64:
+    name: Rust (aarch64 cross build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+      - name: cargo build (aarch64)
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+        run: cargo build --release --locked --target aarch64-unknown-linux-gnu -p pixelplus-daemon -p pixelplus-cli
+
+  web:
+    name: Web UI (check, test, build)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+
+  python:
+    name: Python (${{ matrix.dir }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dir: image
+            deps: pytest jsonschema
+          - dir: games
+            deps: pytest -r games/requirements.txt
+          - dir: tts
+            deps: pytest -r tts/requirements.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg mtools dosfstools fdisk
+      - run: pip install ${{ matrix.deps }}
+      - name: Raspberry Pi Imager schema (for image/ os-list tests)
+        if: matrix.dir == 'image'
+        run: |
+          curl -fsSL -o /tmp/os-list-schema.json \
+            https://raw.githubusercontent.com/raspberrypi/rpi-imager/main/doc/json-schema/os-list-schema.json
+          echo "RPI_IMAGER_SCHEMA=/tmp/os-list-schema.json" >> "$GITHUB_ENV"
+      - run: python -m pytest -q ${{ matrix.dir }}/tests
+      - name: Byte-compile
+        run: python -m compileall -q ${{ matrix.dir }}
+
+  shell:
+    name: Shell, units, polkit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck -x image/build.sh image/build-in-docker.sh \
+            image/stage-pixelplus/prerun.sh image/stage-pixelplus/*/*.sh \
+            packaging/build-deb.sh packaging/apt-repo.sh packaging/bin/pixelplus-helper
+          shellcheck -s sh packaging/bin/tts-capable packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm
+          if [ -f games/install.sh ]; then shellcheck -s sh games/install.sh; fi
+      - name: bash -n
+        run: for f in image/*.sh image/stage-pixelplus/*/*.sh packaging/*.sh packaging/bin/pixelplus-helper; do bash -n "$f"; done
+      - name: systemd units
+        run: |
+          (systemd-analyze verify --man=no packaging/systemd/*.service packaging/systemd/*.path 2>&1 || true) \
+            | grep -v "is not executable" > /tmp/verify.log || true
+          if [ -s /tmp/verify.log ]; then cat /tmp/verify.log; exit 1; fi
+      - name: polkit rules
+        run: node packaging/tests/polkit-rules.test.js
+      - name: DPI overlays compile
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends device-tree-compiler
+          for f in crates/pixelplus-output/overlays/*.dts; do dtc -q -@ -I dts -O dtb -o /dev/null "$f"; done
+
+  imager-core:
+    name: Imager core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: imager
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mtools dosfstools fdisk xz-utils
+      - run: cargo clippy -p pixelplus-imager-core --all-targets -- -D warnings
+        working-directory: imager
+      - run: cargo test -p pixelplus-imager-core
+        working-directory: imager
+
+  imager-app:
+    name: Imager app (frontend + Tauri check)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: imager
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: imager/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: imager
+      - run: pnpm check && pnpm test && pnpm build
+        working-directory: imager
+      - run: cargo fmt --all --check
+        working-directory: imager
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: imager
+
+  docker:
+    name: Docker image (build only)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          build-args: VARIANT=slim
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,62 @@
+# PixelPlus show leader on a PC / NAS.
+#
+#   docker compose -f docker/docker-compose.yml up -d            # daemon only
+#   docker compose -f docker/docker-compose.yml --profile tts up -d      # + on-device DJ voices
+#   docker compose -f docker/docker-compose.yml --profile games up -d    # + games sidecar
+#
+# Open http://<this-machine>:80 (or the port you set below).
+# Host networking is required: followers are found by UDP broadcast (32320) and mDNS.
+# (Docker Desktop on macOS/Windows cannot do host networking for the LAN; run PixelPlus
+#  on a Linux host or NAS instead.)
+
+x-pixelplus: &pixelplus
+  image: ghcr.io/tlchandler/pixelplus:latest
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  network_mode: host
+  restart: unless-stopped
+  environment: &env
+    TZ: ${TZ:-Etc/UTC}                 # your time zone, e.g. America/Chicago
+    PIXELPLUS_HTTP_PORT: ${PIXELPLUS_HTTP_PORT:-80}   # change if 80 is taken (Synology: use 8080)
+    PIXELPLUS_OUTPUT: none             # a PC has no pixel outputs
+    PIXELPLUS_BOARD: virtual
+  volumes:
+    - pixelplus-data:/var/lib/pixelplus
+    - pixelplus-run:/run/pixelplus
+
+services:
+  pixelplus:
+    <<: *pixelplus
+    container_name: pixelplus
+    # Audio: uncomment to let the leader play show music through the host's sound card.
+    # devices:
+    #   - /dev/snd:/dev/snd
+    # group_add:
+    #   - audio
+    shm_size: 64m                      # overlay frame buffers (/dev/shm) shared with games
+    ipc: shareable
+
+  tts:
+    <<: *pixelplus
+    container_name: pixelplus-tts
+    profiles: ["tts"]
+    command: ["/opt/pixelplus-tts/venv/bin/python", "-m", "pixelplus_tts", "serve"]
+    healthcheck:
+      disable: true
+    depends_on: [pixelplus]
+
+  games:
+    <<: *pixelplus
+    container_name: pixelplus-games
+    profiles: ["games"]
+    working_dir: /usr/lib/pixelplus/games
+    command: ["/usr/bin/python3", "-m", "pixelplus_games"]
+    ipc: "service:pixelplus"           # same /dev/shm as the daemon (overlay buffers)
+    healthcheck:
+      disable: true
+    depends_on: [pixelplus]
+
+volumes:
+  pixelplus-data:
+  pixelplus-run:

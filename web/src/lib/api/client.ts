@@ -83,21 +83,32 @@ function xhrUpload(path: string, form: FormData, onProgress?: (p: number) => voi
 		xhr.withCredentials = true;
 		xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
 		xhr.onload = () => {
-			let body: any = undefined;
+			let body: any;
 			try {
 				body = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
 			} catch {
 				body = xhr.responseText;
 			}
 			if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-			else reject(new ApiError(xhr.status, body?.error?.code ?? 'upload_failed', body?.error?.message ?? 'Upload failed'));
+			else
+				reject(
+					new ApiError(
+						xhr.status,
+						body?.error?.code ?? 'upload_failed',
+						body?.error?.message ?? 'Upload failed'
+					)
+				);
 		};
 		xhr.onerror = () => reject(new ApiError(0, 'network', 'Network error during upload'));
 		xhr.send(form);
 	});
 }
 
-export function upload<R = unknown>(path: string, form: FormData, onProgress?: (p: number) => void): Promise<R> {
+export function upload<R = unknown>(
+	path: string,
+	form: FormData,
+	onProgress?: (p: number) => void
+): Promise<R> {
 	return uploader(path, form, onProgress) as Promise<R>;
 }
 
@@ -144,7 +155,8 @@ export const api = {
 	// ---- show
 	show: () => get<T.Show>('/show'),
 	renameShow: (name: string) => put<T.Show>('/show/name', { name }),
-	saveSettings: (s: Partial<T.ShowSettings> | Record<string, unknown>) => put<T.ShowSettings>('/show/settings', s),
+	saveSettings: (s: Partial<T.ShowSettings> | Record<string, unknown>) =>
+		put<T.ShowSettings>('/show/settings', s),
 
 	// ---- nodes
 	nodes: crud<T.Node>('/nodes'),
@@ -219,7 +231,8 @@ export const api = {
 
 	// ---- player
 	player: () => get<T.PlayerStatus>('/player'),
-	play: (what: { playlistId?: string; sequenceId?: string; djClipId?: string } = {}) => post('/player/play', what),
+	play: (what: { playlistId?: string; sequenceId?: string; djClipId?: string } = {}) =>
+		post('/player/play', what),
 	stop: (fade = false) => post('/player/stop', { fade }),
 	pause: () => post('/player/pause'),
 	resume: () => post('/player/resume'),
@@ -235,7 +248,8 @@ export const api = {
 	testStart: (req: T.TestRequest) => post('/test/start', req),
 	testStop: () => post('/test/stop'),
 	faultStart: (propId: string) => post<T.FaultStep>('/faultfinder/start', { propId }),
-	faultAnswer: (session: string, lit: boolean) => post<T.FaultStep>(`/faultfinder/${session}/answer`, { lit }),
+	faultAnswer: (session: string, lit: boolean) =>
+		post<T.FaultStep>(`/faultfinder/${session}/answer`, { lit }),
 	faultStop: () => post('/faultfinder/stop'),
 	power: (sequenceId?: string) =>
 		get<T.PowerEstimate>(`/power/estimate${sequenceId ? `?sequenceId=${sequenceId}` : ''}`),
@@ -266,7 +280,8 @@ export const api = {
 	removeRequest: (id: string) => del(`/requests/${id}`),
 
 	// ---- alerts / integrations
-	testAlert: (channel: 'email' | 'ntfy') => post<{ ok: boolean; message: string }>('/alerts/test', { channel }),
+	testAlert: (channel: 'email' | 'ntfy') =>
+		post<{ ok: boolean; message: string }>('/alerts/test', { channel }),
 	testMqtt: () => post<{ ok: boolean; message: string }>('/mqtt/test'),
 
 	// ---- games

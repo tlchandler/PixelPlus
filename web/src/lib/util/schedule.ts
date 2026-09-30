@@ -53,7 +53,8 @@ export function nextShow(schedule: Schedule, now = new Date()): Occurrence | und
 
 export function entrySummary(e: ScheduleEntry): string {
 	const all = e.days.length === 7;
-	const wk = ['mon', 'tue', 'wed', 'thu', 'fri'].every((d) => e.days.includes(d as Weekday)) && e.days.length === 5;
+	const wk =
+		['mon', 'tue', 'wed', 'thu', 'fri'].every((d) => e.days.includes(d as Weekday)) && e.days.length === 5;
 	const we = e.days.length === 2 && e.days.includes('sat') && e.days.includes('sun');
 	if (all) return 'Every day';
 	if (wk) return 'Weeknights';

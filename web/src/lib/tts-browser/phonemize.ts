@@ -86,7 +86,10 @@ export function normalizeText(text: string): string {
 }
 
 const PUNCTUATION = ';:,.!?¡¿—…"«»“”(){}[]';
-const PUNCTUATION_PATTERN = new RegExp(`(\\s*[${PUNCTUATION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}]+\\s*)+`, 'g');
+const PUNCTUATION_PATTERN = new RegExp(
+	`(\\s*[${PUNCTUATION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}]+\\s*)+`,
+	'g'
+);
 
 export function splitPunctuation(text: string): { match: boolean; text: string }[] {
 	const out: { match: boolean; text: string }[] = [];
@@ -122,7 +125,9 @@ export async function phonemize(text: string, language: 'a' | 'b' = 'a', norm = 
 	const espeakPhonemize = await loadEspeak();
 	const lang = language === 'a' ? 'en-us' : 'en';
 	const parts = await Promise.all(
-		splitPunctuation(text).map(async ({ match, text: t }) => (match ? t : (await espeakPhonemize(t, lang)).join(' ')))
+		splitPunctuation(text).map(async ({ match, text: t }) =>
+			match ? t : (await espeakPhonemize(t, lang)).join(' ')
+		)
 	);
 	return postProcess(parts.join(''), language);
 }

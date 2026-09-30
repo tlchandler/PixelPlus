@@ -54,16 +54,17 @@ impl ClockSync {
     }
 
     /// Record the leader's boot id; a different one resets the filter.
-    pub fn observe_boot(&mut self, boot: &str) {
-        if boot.is_empty() {
-            return;
+    /// Returns `true` when the leader restarted.
+    pub fn observe_boot(&mut self, boot: &str) -> bool {
+        if boot.is_empty() || self.boot.as_deref() == Some(boot) {
+            return false;
         }
-        if self.boot.as_deref() != Some(boot) {
-            if self.boot.is_some() {
-                self.samples.clear();
-            }
-            self.boot = Some(boot.to_string());
+        let restarted = self.boot.is_some();
+        if restarted {
+            self.samples.clear();
         }
+        self.boot = Some(boot.to_string());
+        restarted
     }
 
     /// Add a ping/pong exchange. Returns the accepted sample, if any.
@@ -109,11 +110,7 @@ impl ClockSync {
         self.best().map(|s| s.rtt_ms / 2.0)
     }
 
-    /// Convert a leader timestamp to the local clock.
-    pub fn to_local(&self, leader_ms: f64) -> Option<f64> {
-        self.offset_ms().map(|o| leader_ms - o)
-    }
-
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.samples.len()
     }
@@ -138,7 +135,6 @@ mod tests {
         assert_eq!(s.offset_ms, 5_000.0);
         assert_eq!(c.offset_ms(), Some(5_000.0));
         assert_eq!(c.accuracy_ms(), Some(2.0));
-        assert_eq!(c.to_local(6_000.0), Some(1_000.0));
     }
 
     #[test]

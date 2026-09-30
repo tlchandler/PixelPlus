@@ -1,7 +1,11 @@
 import type { Prop, PropKind } from '$lib/api/types';
 
 /** Normalized (0..1) pixel positions for a prop, derived from its kind when the layout has no points. */
-export function derivePoints(kind: PropKind, n: number, matrix?: { width: number; height: number }): Float32Array {
+export function derivePoints(
+	kind: PropKind,
+	n: number,
+	matrix?: { width: number; height: number }
+): Float32Array {
 	const pts = new Float32Array(n * 2);
 	const set = (i: number, x: number, y: number) => {
 		pts[i * 2] = x;
@@ -179,6 +183,12 @@ export function worldBounds(props: Prop[]): { x: number; y: number; w: number; h
 }
 
 /** Default "home" layout box for props without one (lines them up along the bottom). */
-export function fallbackLayout(index: number): { x: number; y: number; w: number; h: number; rotation: number } {
+export function fallbackLayout(index: number): {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	rotation: number;
+} {
 	return { x: 40 + (index % 10) * 110, y: 620 + Math.floor(index / 10) * 90, w: 90, h: 60, rotation: 0 };
 }

@@ -47,13 +47,22 @@
 	{#if !step}
 		<div class="intro">
 			<div class="halo"><Search size={26} /></div>
-			<p>When part of a prop flickers, shows the wrong colors or stays dark, one pixel (or the joint just before it) is usually to blame.</p>
-			<p class="muted">PixelPlus lights the prop a section at a time and asks you whether it looks right. It takes about {Math.ceil(Math.log2((prop?.pixelCount ?? 2) + 1))} questions. Stand where you can see <strong>{prop?.name}</strong>.</p>
+			<p>
+				When part of a prop flickers, shows the wrong colors or stays dark, one pixel (or the joint just
+				before it) is usually to blame.
+			</p>
+			<p class="muted">
+				PixelPlus lights the prop a section at a time and asks you whether it looks right. It takes about {Math.ceil(
+					Math.log2((prop?.pixelCount ?? 2) + 1)
+				)} questions. Stand where you can see <strong>{prop?.name}</strong>.
+			</p>
 			{#if error}<p class="err small">{error}</p>{/if}
 		</div>
 	{:else if step.done}
 		<div class="intro">
-			<div class="halo {step.result?.pixelIndex == null ? 'ok' : ''}">{#if step.result?.pixelIndex == null}<CircleCheck size={26} />{:else}<Wrench size={26} />{/if}</div>
+			<div class="halo {step.result?.pixelIndex == null ? 'ok' : ''}">
+				{#if step.result?.pixelIndex == null}<CircleCheck size={26} />{:else}<Wrench size={26} />{/if}
+			</div>
 			{#if step.result?.pixelIndex != null}
 				<div class="found">Pixel <span class="num">{step.result.pixelIndex + 1}</span></div>
 			{/if}
@@ -61,7 +70,11 @@
 		</div>
 	{:else}
 		<div class="q">
-			<div class="row between small faint"><span>Question {step.step} of about {step.totalSteps}</span><span class="num">{Math.round((step.step / step.totalSteps) * 100)}%</span></div>
+			<div class="row between small faint">
+				<span>Question {step.step} of about {step.totalSteps}</span><span class="num"
+					>{Math.round((step.step / step.totalSteps) * 100)}%</span
+				>
+			</div>
 			<div class="progress"><span style:width="{(step.step / step.totalSteps) * 100}%"></span></div>
 			<div class="strip" aria-hidden="true">
 				{#each Array(Math.min(60, prop?.pixelCount ?? 0)) as _, i (i)}
@@ -80,8 +93,12 @@
 			<button class="btn primary" onclick={close}>Done</button>
 		{:else}
 			<button class="btn ghost" onclick={close}>Stop</button>
-			<button class="btn" disabled={busy} onclick={() => answer(false)}><ThumbsDown size={16} /> No, something’s wrong</button>
-			<button class="btn primary" disabled={busy} onclick={() => answer(true)}><ThumbsUp size={16} /> Yes, all good</button>
+			<button class="btn" disabled={busy} onclick={() => answer(false)}
+				><ThumbsDown size={16} /> No, something’s wrong</button
+			>
+			<button class="btn primary" disabled={busy} onclick={() => answer(true)}
+				><ThumbsUp size={16} /> Yes, all good</button
+			>
 		{/if}
 	{/snippet}
 </Modal>

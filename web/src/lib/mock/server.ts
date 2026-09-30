@@ -29,7 +29,12 @@ import { buildDemoShow, GARAGE, MAIN } from './demo';
 import type { SocketLike } from '$lib/api/socket';
 
 type Json = any;
-type Handler = (ctx: { params: string[]; body: Json; query: URLSearchParams; form?: FormData }) => Json | Promise<Json>;
+type Handler = (ctx: {
+	params: string[];
+	body: Json;
+	query: URLSearchParams;
+	form?: FormData;
+}) => Json | Promise<Json>;
 
 class HttpError extends Error {
 	constructor(
@@ -56,7 +61,15 @@ interface PlayState {
 	effect?: EffectPreset;
 	test?: TestRequest;
 	testStarted?: number;
-	fault?: { propId: string; lo: number; hi: number; step: number; total: number; session: string; litTo: number };
+	fault?: {
+		propId: string;
+		lo: number;
+		hi: number;
+		step: number;
+		total: number;
+		session: string;
+		litTo: number;
+	};
 }
 
 export class MockServer {
@@ -123,19 +136,60 @@ export class MockServer {
 				adoptedBy: null
 			}
 		];
-		this.games = { enabled: true, running: false, arcade: false, queueLength: 0, cooldownS: 0, available: true, roms: this.roms };
+		this.games = {
+			enabled: true,
+			running: false,
+			arcade: false,
+			queueLength: 0,
+			cooldownS: 0,
+			available: true,
+			roms: this.roms
+		};
 		const now = Date.now();
 		this.snapshots = [
-			{ id: 'snap000003', label: 'Before re-import', createdAt: new Date(now - 3600e3 * 5).toISOString(), sizeBytes: 182_311, showVersion: 40 },
-			{ id: 'snap000002', label: 'Automatic — nightly', createdAt: new Date(now - 86400e3).toISOString(), sizeBytes: 179_004, showVersion: 37, auto: true },
-			{ id: 'snap000001', label: 'Show ready for opening night', createdAt: new Date(now - 86400e3 * 6).toISOString(), sizeBytes: 171_560, showVersion: 22 }
+			{
+				id: 'snap000003',
+				label: 'Before re-import',
+				createdAt: new Date(now - 3600e3 * 5).toISOString(),
+				sizeBytes: 182_311,
+				showVersion: 40
+			},
+			{
+				id: 'snap000002',
+				label: 'Automatic — nightly',
+				createdAt: new Date(now - 86400e3).toISOString(),
+				sizeBytes: 179_004,
+				showVersion: 37,
+				auto: true
+			},
+			{
+				id: 'snap000001',
+				label: 'Show ready for opening night',
+				createdAt: new Date(now - 86400e3 * 6).toISOString(),
+				sizeBytes: 171_560,
+				showVersion: 22
+			}
 		];
 		this.requests = [
-			{ id: 'rq1', sequenceId: 'sallwant00', name: 'All I Want for Christmas Is You', requestedBy: 'Emma', requestedAt: new Date(now - 120e3).toISOString() }
+			{
+				id: 'rq1',
+				sequenceId: 'sallwant00',
+				name: 'All I Want for Christmas Is You',
+				requestedBy: 'Emma',
+				requestedAt: new Date(now - 120e3).toISOString()
+			}
 		];
 		this.logs = [
-			{ level: 'warn', message: 'Garage: difftx rev D detected — port 3 needs a 4/5-swapped lead', time: new Date(now - 3600e3).toISOString() },
-			{ level: 'info', message: 'Schedule: next show "Weeknights" at sunset + 15 min', time: new Date(now - 1800e3).toISOString() }
+			{
+				level: 'warn',
+				message: 'Garage: difftx rev D detected — port 3 needs a 4/5-swapped lead',
+				time: new Date(now - 3600e3).toISOString()
+			},
+			{
+				level: 'info',
+				message: 'Schedule: next show "Weeknights" at sunset + 15 min',
+				time: new Date(now - 1800e3).toISOString()
+			}
 		];
 		this.#defineRoutes();
 		if (opts.autoplay !== false && !opts.needsSetup) this.#startPlaylist('plmain0001', 1, 38000);
@@ -155,11 +209,19 @@ export class MockServer {
 			const out = await this.handle(method, path, body ?? {}, url.searchParams, form);
 			if (out instanceof Response) return out;
 			if (out === undefined) return new Response(null, { status: 204 });
-			if (typeof out === 'string') return new Response(out, { status: 200, headers: { 'content-type': 'text/plain' } });
-			if (out instanceof Blob) return new Response(out, { status: 200, headers: { 'content-type': out.type } });
-			return new Response(JSON.stringify(out), { status: 200, headers: { 'content-type': 'application/json' } });
+			if (typeof out === 'string')
+				return new Response(out, { status: 200, headers: { 'content-type': 'text/plain' } });
+			if (out instanceof Blob)
+				return new Response(out, { status: 200, headers: { 'content-type': out.type } });
+			return new Response(JSON.stringify(out), {
+				status: 200,
+				headers: { 'content-type': 'application/json' }
+			});
 		} catch (e) {
-			const err = e instanceof HttpError ? e : new HttpError(500, 'internal', e instanceof Error ? e.message : String(e));
+			const err =
+				e instanceof HttpError
+					? e
+					: new HttpError(500, 'internal', e instanceof Error ? e.message : String(e));
 			return new Response(JSON.stringify({ error: { code: err.code, message: err.message } }), {
 				status: err.status,
 				headers: { 'content-type': 'application/json' }
@@ -178,7 +240,8 @@ export class MockServer {
 		const res = await this.fetch('/api/v1' + path, { method, body: form });
 		const text = await res.text();
 		const data = text ? JSON.parse(text) : undefined;
-		if (!res.ok) throw Object.assign(new Error(data?.error?.message ?? 'Upload failed'), { status: res.status });
+		if (!res.ok)
+			throw Object.assign(new Error(data?.error?.message ?? 'Upload failed'), { status: res.status });
 		return data;
 	};
 
@@ -325,7 +388,8 @@ export class MockServer {
 			latest: '0.9.2',
 			available: true,
 			channel: 'stable',
-			notes: '• Faster sequence slicing for followers\n• Fault finder now supports reversed segments\n• Fixes a crash when a follower disconnects mid-song'
+			notes:
+				'• Faster sequence slicing for followers\n• Fault finder now supports reversed segments\n• Fixes a crash when a follower disconnects mid-song'
 		}));
 		r('POST', '/system/update', async () => {
 			await sleep(1500);
@@ -335,7 +399,8 @@ export class MockServer {
 
 		// auth
 		r('POST', '/auth/login', ({ body }) => {
-			if (this.password && body.password !== this.password) throw new HttpError(401, 'bad_password', 'That password is not right');
+			if (this.password && body.password !== this.password)
+				throw new HttpError(401, 'bad_password', 'That password is not right');
 			this.loggedIn = true;
 			return { ok: true };
 		});
@@ -445,7 +510,14 @@ export class MockServer {
 			if (!c) throw new HttpError(404, 'not_found', 'Clip not found');
 			await sleep(1600);
 			const words = c.lines.reduce((n, l) => n + l.text.split(/\s+/).length, 0);
-			const m: Media = { id: newId(), name: `DJ — ${c.name}`, kind: 'dj', file: `media/${c.id}.mp3`, durationMs: Math.round(words * 380 / c.speed) + 800, loudnessLufs: -15 };
+			const m: Media = {
+				id: newId(),
+				name: `DJ — ${c.name}`,
+				kind: 'dj',
+				file: `media/${c.id}.mp3`,
+				durationMs: Math.round((words * 380) / c.speed) + 800,
+				loudnessLufs: -15
+			};
 			this.show.media.push(m);
 			c.mediaId = m.id;
 			this.#bump();
@@ -454,7 +526,14 @@ export class MockServer {
 		r('POST', '/dj-clips/([^/]+)/upload', ({ params }) => {
 			const c = this.show.djClips.find((x) => x.id === params[0]);
 			if (!c) throw new HttpError(404, 'not_found', 'Clip not found');
-			const m: Media = { id: newId(), name: `DJ — ${c.name}`, kind: 'dj', file: `media/${c.id}.wav`, durationMs: 9000, loudnessLufs: -15.5 };
+			const m: Media = {
+				id: newId(),
+				name: `DJ — ${c.name}`,
+				kind: 'dj',
+				file: `media/${c.id}.wav`,
+				durationMs: 9000,
+				loudnessLufs: -15.5
+			};
 			this.show.media.push(m);
 			c.mediaId = m.id;
 			this.#bump();
@@ -466,7 +545,9 @@ export class MockServer {
 		r('POST', '/import/xlights', async ({ form }) => {
 			await sleep(900);
 			const f = form?.get('rgbeffects');
-			const base = this.show.props.slice(0, 3).map((p) => ({ ...clone(p), id: newId(), name: `${p.name} (imported)` }));
+			const base = this.show.props
+				.slice(0, 3)
+				.map((p) => ({ ...clone(p), id: newId(), name: `${p.name} (imported)` }));
 			return {
 				props: base,
 				controllers: [
@@ -495,7 +576,9 @@ export class MockServer {
 				const m = this.#addMedia(audio, 'song');
 				mediaId = m.id;
 			} else {
-				const guess = this.show.media.find((m) => m.kind === 'song' && m.name.toLowerCase() === name.toLowerCase());
+				const guess = this.show.media.find(
+					(m) => m.kind === 'song' && m.name.toLowerCase() === name.toLowerCase()
+				);
 				mediaId = guess?.id;
 			}
 			const s = {
@@ -531,7 +614,11 @@ export class MockServer {
 				return +Math.min(1, Math.max(0.05, env * (0.6 + 0.4 * noise))).toFixed(3);
 			});
 		});
-		r('GET', '/media/([^/]+)/file', () => new Response(silentWav(1.5), { headers: { 'content-type': 'audio/wav' } }));
+		r(
+			'GET',
+			'/media/([^/]+)/file',
+			() => new Response(silentWav(1.5), { headers: { 'content-type': 'audio/wav' } })
+		);
 		this.#crud('/media', 'media');
 
 		// schedule
@@ -545,7 +632,14 @@ export class MockServer {
 			const days = Number(query.get('days') ?? 14);
 			return expandSchedule(this.show.schedule, new Date(), days)
 				.filter((o) => !o.overridden)
-				.map(({ date, start, end, entryId, playlistId, name }) => ({ date, start, end, entryId, playlistId, name }));
+				.map(({ date, start, end, entryId, playlistId, name }) => ({
+					date,
+					start,
+					end,
+					entryId,
+					playlistId,
+					name
+				}));
 		});
 
 		// player
@@ -553,7 +647,8 @@ export class MockServer {
 		r('POST', '/player/play', ({ body }) => {
 			this.blackout = false;
 			if (body.playlistId) this.#startPlaylist(body.playlistId);
-			else if (body.sequenceId) this.#startSingle({ id: 'single', type: 'sequence', sequenceId: body.sequenceId });
+			else if (body.sequenceId)
+				this.#startSingle({ id: 'single', type: 'sequence', sequenceId: body.sequenceId });
 			else if (body.djClipId) this.#startSingle({ id: 'single', type: 'dj', djClipId: body.djClipId });
 			else if (this.play.state === 'paused') this.#resume();
 			else this.#startPlaylist(this.show.playlists[0]?.id);
@@ -610,11 +705,18 @@ export class MockServer {
 
 		// tests
 		r('POST', '/test/start', ({ body }) => {
-			this.play = { ...this.play, state: 'testing', test: body, testStarted: Date.now() };
+			this.#enterTest({
+				state: 'testing',
+				queue: [],
+				index: 0,
+				startedAt: Date.now(),
+				test: body,
+				testStarted: Date.now()
+			});
 			this.#pushStatus();
 		});
 		r('POST', '/test/stop', () => {
-			if (this.play.state === 'testing') this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
+			if (this.play.state === 'testing') this.#exitTest();
 			this.#pushStatus();
 		});
 		r('POST', '/faultfinder/start', ({ body }) => {
@@ -622,13 +724,13 @@ export class MockServer {
 			if (!p) throw new HttpError(404, 'not_found', 'Prop not found');
 			const total = Math.ceil(Math.log2(p.pixelCount + 1)) + 1;
 			const session = `ff${++this.#faultSessions}`;
-			this.play = {
+			this.#enterTest({
 				state: 'testing',
 				queue: [],
 				index: 0,
 				startedAt: Date.now(),
 				fault: { propId: p.id, lo: 0, hi: p.pixelCount + 1, step: 1, total, session, litTo: p.pixelCount }
-			};
+			});
 			return this.#faultStep();
 		});
 		r('POST', '/faultfinder/([^/]+)/answer', ({ body }) => {
@@ -640,7 +742,7 @@ export class MockServer {
 			return this.#faultStep();
 		});
 		r('POST', '/faultfinder/stop', () => {
-			this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
+			this.#exitTest();
 		});
 		r('GET', '/power/estimate', () => this.#power());
 		r('GET', '/health', () => this.#health());
@@ -652,13 +754,24 @@ export class MockServer {
 		// snapshots
 		r('GET', '/snapshots', () => this.snapshots);
 		r('POST', '/snapshots', ({ body }) => {
-			const s = { id: newId(), label: body.label || 'Manual snapshot', createdAt: new Date().toISOString(), sizeBytes: 180_000 + Math.round(Math.random() * 9000), showVersion: this.show.version };
+			const s = {
+				id: newId(),
+				label: body.label || 'Manual snapshot',
+				createdAt: new Date().toISOString(),
+				sizeBytes: 180_000 + Math.round(Math.random() * 9000),
+				showVersion: this.show.version
+			};
 			this.snapshots.unshift(s);
 			return s;
 		});
 		r('POST', '/snapshots/import', ({ form }) => {
 			const f = form?.get('file') as File;
-			const s = { id: newId(), label: `Imported: ${f?.name ?? 'backup'}`, createdAt: new Date().toISOString(), sizeBytes: f?.size ?? 0 };
+			const s = {
+				id: newId(),
+				label: `Imported: ${f?.name ?? 'backup'}`,
+				createdAt: new Date().toISOString(),
+				sizeBytes: f?.size ?? 0
+			};
 			this.snapshots.unshift(s);
 			return s;
 		});
@@ -668,7 +781,11 @@ export class MockServer {
 			this.#bump();
 			this.toast('success', `Restored “${s?.label}”`);
 		});
-		r('GET', '/snapshots/([^/]+)/download', () => new Response(new Blob(['demo snapshot']), { headers: { 'content-type': 'application/zstd' } }));
+		r(
+			'GET',
+			'/snapshots/([^/]+)/download',
+			() => new Response(new Blob(['demo snapshot']), { headers: { 'content-type': 'application/zstd' } })
+		);
 		r('DELETE', '/snapshots/([^/]+)', ({ params }) => {
 			this.snapshots = this.snapshots.filter((s) => s.id !== params[0]);
 		});
@@ -677,10 +794,18 @@ export class MockServer {
 		r('GET', '/tts/status', () => ({
 			mode: 'device',
 			available: true,
-			voices: KOKORO_VOICES.map((v) => ({ id: v.id, name: v.name, language: v.accent === 'US' ? 'en-us' : 'en-gb', gender: v.gender }))
+			voices: KOKORO_VOICES.map((v) => ({
+				id: v.id,
+				name: v.name,
+				language: v.accent === 'US' ? 'en-us' : 'en-gb',
+				gender: v.gender
+			}))
 		}));
 		r('POST', '/tts/render', async ({ body }) => {
-			const words = (body.lines ?? []).reduce((n: number, l: any) => n + String(l.text).split(/\s+/).length, 0);
+			const words = (body.lines ?? []).reduce(
+				(n: number, l: any) => n + String(l.text).split(/\s+/).length,
+				0
+			);
 			await sleep(700 + words * 25);
 			return new Blob([toneWav(Math.min(6, 0.8 + words * 0.25))], { type: 'audio/wav' });
 		});
@@ -696,19 +821,34 @@ export class MockServer {
 				showName: this.show.name,
 				maxQueue: rs.maxQueue,
 				songs: this.show.sequences.map((s) => ({ sequenceId: s.id, name: s.name, durationMs: s.durationMs })),
-				queue: this.requests.map((q) => ({ id: q.id, sequenceId: q.sequenceId, name: q.name, requestedBy: q.requestedBy })),
-				nowPlaying: st.item && st.state === 'playing' ? { name: st.item.name, posMs: st.posMs, durationMs: st.durationMs } : null
+				queue: this.requests.map((q) => ({
+					id: q.id,
+					sequenceId: q.sequenceId,
+					name: q.name,
+					requestedBy: q.requestedBy
+				})),
+				nowPlaying:
+					st.item && st.state === 'playing'
+						? { name: st.item.name, posMs: st.posMs, durationMs: st.durationMs }
+						: null
 			};
 		});
 		r('POST', '/public/requests', ({ body }) => {
 			const rs = this.show.settings.requests;
 			if (!rs.enabled) throw new HttpError(403, 'requests_closed', 'Song requests are closed right now');
-			if (this.requests.length >= rs.maxQueue) throw new HttpError(429, 'queue_full', 'The request line is full — try again in a few minutes');
+			if (this.requests.length >= rs.maxQueue)
+				throw new HttpError(429, 'queue_full', 'The request line is full — try again in a few minutes');
 			if (this.requests.some((q) => q.sequenceId === body.sequenceId))
 				throw new HttpError(409, 'already_queued', 'That song is already in the line-up!');
 			const s = this.show.sequences.find((x) => x.id === body.sequenceId);
 			if (!s) throw new HttpError(404, 'not_found', 'Song not found');
-			const q = { id: newId(), sequenceId: s.id, name: s.name, requestedBy: body.name || undefined, requestedAt: new Date().toISOString() };
+			const q = {
+				id: newId(),
+				sequenceId: s.id,
+				name: s.name,
+				requestedBy: body.name || undefined,
+				requestedAt: new Date().toISOString()
+			};
 			this.requests.push(q);
 			this.toast('info', `New song request: ${s.name}${q.requestedBy ? ` (from ${q.requestedBy})` : ''}`);
 			return { ok: true, position: this.requests.length };
@@ -726,11 +866,19 @@ export class MockServer {
 		r('POST', '/mqtt/test', async () => {
 			await sleep(700);
 			const m = this.show.settings.mqtt;
-			return { ok: m.enabled, message: m.enabled ? `Connected to ${m.host}:${m.port}` : 'MQTT is turned off' };
+			return {
+				ok: m.enabled,
+				message: m.enabled ? `Connected to ${m.host}:${m.port}` : 'MQTT is turned off'
+			};
 		});
 
 		// games
-		r('GET', '/games/status', () => ({ ...this.games, enabled: this.show.settings.games.enabled, arcade: this.show.settings.games.arcadeMode, roms: this.roms }));
+		r('GET', '/games/status', () => ({
+			...this.games,
+			enabled: this.show.settings.games.enabled,
+			arcade: this.show.settings.games.arcadeMode,
+			roms: this.roms
+		}));
 		r('POST', '/games/invite', () => this.toast('info', 'Invite is flashing on the matrix'));
 		r('POST', '/games/stop', () => {
 			this.games.running = false;
@@ -738,10 +886,17 @@ export class MockServer {
 		});
 		r('POST', '/games/test-pattern', ({ body }) => {
 			const p = this.show.props.find((x) => x.id === body.propId);
-			this.play = { ...this.play, state: 'testing', test: { mode: 'countPixels', target: { propIds: [body.propId] } }, testStarted: Date.now() };
+			this.#enterTest({
+				state: 'testing',
+				queue: [],
+				index: 0,
+				startedAt: Date.now(),
+				test: { mode: 'countPixels', target: { propIds: [body.propId] } },
+				testStarted: Date.now()
+			});
 			this.toast('info', `Test pattern on ${p?.name}: blue border, red top-left, green top-right`);
 			setTimeout(() => {
-				if (this.play.state === 'testing') this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
+				if (this.play.state === 'testing') this.#exitTest();
 			}, 8000);
 		});
 		r('GET', '/games/roms', () => this.roms);
@@ -790,13 +945,16 @@ export class MockServer {
 				done: true,
 				result:
 					idx >= prop.pixelCount
-						? { pixelIndex: null, message: `All ${prop.pixelCount} pixels on ${prop.name} light correctly. The problem may be in the power or data lead before the first pixel.` }
+						? {
+								pixelIndex: null,
+								message: `All ${prop.pixelCount} pixels on ${prop.name} light correctly. The problem may be in the power or data lead before the first pixel.`
+							}
 						: {
 								pixelIndex: idx,
 								message: `Pixel ${idx + 1} is the first one that misbehaves. Check the connection between pixel ${idx} and pixel ${idx + 1} — or replace pixel ${idx + 1}.`
 							}
 			};
-			this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
+			this.#exitTest();
 			return done;
 		}
 		const mid = f.step === 1 ? prop.pixelCount : Math.ceil((f.lo + f.hi) / 2);
@@ -828,7 +986,13 @@ export class MockServer {
 		const perReceiverPort = this.show.receivers.flatMap((rx) =>
 			[1, 2, 3, 4].map((port) => {
 				const out = perOutput.find((o) => o.nodeId === rx.nodeId && o.output === (rx.jack - 1) * 4 + port);
-				return { receiverId: rx.id, port, peakAmps: out?.peakAmps ?? 0, avgAmps: out?.avgAmps ?? 0, fuseAmps: rx.fuseAmps };
+				return {
+					receiverId: rx.id,
+					port,
+					peakAmps: out?.peakAmps ?? 0,
+					avgAmps: out?.avgAmps ?? 0,
+					fuseAmps: rx.fuseAmps
+				};
 			})
 		);
 		const warnings = perReceiverPort
@@ -843,7 +1007,12 @@ export class MockServer {
 	#health(): HealthReport {
 		const unwired = this.show.props.filter((p) => !p.segments.length);
 		const checks: HealthReport['checks'] = [
-			{ id: 'followers', label: 'Controllers online', status: 'ok', detail: `${this.show.nodes.length} of ${this.show.nodes.length} online and in sync` },
+			{
+				id: 'followers',
+				label: 'Controllers online',
+				status: 'ok',
+				detail: `${this.show.nodes.length} of ${this.show.nodes.length} online and in sync`
+			},
 			{ id: 'files', label: 'Sequences on followers', status: 'ok', detail: 'All sequences delivered' },
 			{ id: 'audio', label: 'Audio output', status: 'ok', detail: 'Headphone jack, volume 72%' },
 			{ id: 'temp', label: 'Temperatures', status: 'ok', detail: 'Highest 51 °C (Main Controller CPU)' },
@@ -852,9 +1021,16 @@ export class MockServer {
 				id: 'wiring',
 				label: 'Prop wiring',
 				status: unwired.length ? 'warn' : 'ok',
-				detail: unwired.length ? `${unwired.map((p) => p.name).join(', ')} not wired to any port` : 'Every prop has a port'
+				detail: unwired.length
+					? `${unwired.map((p) => p.name).join(', ')} not wired to any port`
+					: 'Every prop has a port'
 			},
-			{ id: 'port3', label: 'Garage transmitter', status: 'warn', detail: 'Rev D board: make sure port 3 uses the 4/5-swapped lead' },
+			{
+				id: 'port3',
+				label: 'Garage transmitter',
+				status: 'warn',
+				detail: 'Rev D board: make sure port 3 uses the 4/5-swapped lead'
+			},
 			{ id: 'schedule', label: 'Schedule', status: 'ok', detail: 'Next show tonight at sunset' }
 		];
 		return { ok: !checks.some((c) => c.status === 'fail'), ranAt: new Date().toISOString(), checks };
@@ -866,13 +1042,74 @@ export class MockServer {
 		const amps = this.blackout ? 0.4 : playing ? 9.5 + 3.5 * Math.abs(Math.sin(t / 3)) + Math.random() : 1.1;
 		const volts = 12.18 - amps * 0.018 + Math.random() * 0.03;
 		return [
-			{ id: 'cpu', label: 'Main Controller CPU', kind: 'temperature', value: +(49 + 3 * Math.sin(t / 40) + Math.random()).toFixed(1), unit: '°C', warn: 70, crit: 80, nodeId: MAIN },
-			{ id: 'board1', label: 'Transmitter board', kind: 'temperature', value: +(33 + Math.sin(t / 60) + Math.random() * 0.4).toFixed(1), unit: '°C', warn: 60, crit: 75, nodeId: MAIN },
-			{ id: 'board2', label: 'Driver bank', kind: 'temperature', value: +(36 + Math.sin(t / 50) + Math.random() * 0.4).toFixed(1), unit: '°C', warn: 60, crit: 75, nodeId: MAIN },
-			{ id: 'volts', label: '12 V supply', kind: 'voltage', value: +volts.toFixed(2), unit: 'V', warn: 11.4, crit: 11, nodeId: MAIN },
-			{ id: 'amps', label: '12 V current', kind: 'current', value: +amps.toFixed(2), unit: 'A', warn: 18, crit: 20, nodeId: MAIN },
-			{ id: 'watts', label: 'Power', kind: 'power', value: +(amps * volts).toFixed(0), unit: 'W', nodeId: MAIN },
-			{ id: 'gcpu', label: 'Garage CPU', kind: 'temperature', value: +(56 + 2 * Math.sin(t / 30) + Math.random()).toFixed(1), unit: '°C', warn: 70, crit: 80, nodeId: GARAGE }
+			{
+				id: 'cpu',
+				label: 'Main Controller CPU',
+				kind: 'temperature',
+				value: +(49 + 3 * Math.sin(t / 40) + Math.random()).toFixed(1),
+				unit: '°C',
+				warn: 70,
+				crit: 80,
+				nodeId: MAIN
+			},
+			{
+				id: 'board1',
+				label: 'Transmitter board',
+				kind: 'temperature',
+				value: +(33 + Math.sin(t / 60) + Math.random() * 0.4).toFixed(1),
+				unit: '°C',
+				warn: 60,
+				crit: 75,
+				nodeId: MAIN
+			},
+			{
+				id: 'board2',
+				label: 'Driver bank',
+				kind: 'temperature',
+				value: +(36 + Math.sin(t / 50) + Math.random() * 0.4).toFixed(1),
+				unit: '°C',
+				warn: 60,
+				crit: 75,
+				nodeId: MAIN
+			},
+			{
+				id: 'volts',
+				label: '12 V supply',
+				kind: 'voltage',
+				value: +volts.toFixed(2),
+				unit: 'V',
+				warn: 11.4,
+				crit: 11,
+				nodeId: MAIN
+			},
+			{
+				id: 'amps',
+				label: '12 V current',
+				kind: 'current',
+				value: +amps.toFixed(2),
+				unit: 'A',
+				warn: 18,
+				crit: 20,
+				nodeId: MAIN
+			},
+			{
+				id: 'watts',
+				label: 'Power',
+				kind: 'power',
+				value: +(amps * volts).toFixed(0),
+				unit: 'W',
+				nodeId: MAIN
+			},
+			{
+				id: 'gcpu',
+				label: 'Garage CPU',
+				kind: 'temperature',
+				value: +(56 + 2 * Math.sin(t / 30) + Math.random()).toFixed(1),
+				unit: '°C',
+				warn: 70,
+				crit: 80,
+				nodeId: GARAGE
+			}
 		];
 	}
 
@@ -886,11 +1123,37 @@ export class MockServer {
 			board: n.board,
 			syncOffsetMs: n.role === 'leader' ? 0 : +(0.4 + Math.random() * 1.6).toFixed(1),
 			syncState: i > 1 && Date.now() - this.started < 20000 ? 'syncing' : 'synced',
-			files: { pending: i > 1 && Date.now() - this.started < 20000 ? 3 : 0, total: this.show.sequences.length }
+			files: {
+				pending: i > 1 && Date.now() - this.started < 20000 ? 3 : 0,
+				total: this.show.sequences.length
+			}
 		}));
 	}
 
 	// ------------------------------------------------------------------ playback
+	#saved: { play: PlayState; at: number } | null = null;
+
+	/** Tests pause the show; remember where it was so it resumes afterwards (like the daemon). */
+	#enterTest(next: PlayState) {
+		if (this.play.state !== 'testing') this.#saved = { play: this.play, at: Date.now() };
+		this.play = next;
+	}
+
+	#exitTest() {
+		const s = this.#saved;
+		this.#saved = null;
+		if (!s || (s.play.state !== 'playing' && s.play.state !== 'paused' && s.play.state !== 'effect')) {
+			this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
+			return;
+		}
+		const dt = Date.now() - s.at;
+		this.play = {
+			...s.play,
+			startedAt: s.play.startedAt + dt,
+			pausedAt: s.play.pausedAt ? s.play.pausedAt + dt : undefined
+		};
+	}
+
 	#itemDuration(it?: PlaylistItem): number {
 		if (!it) return 0;
 		switch (it.type) {
@@ -932,7 +1195,14 @@ export class MockServer {
 		const pl = this.show.playlists.find((p) => p.id === id);
 		if (!pl) throw new HttpError(404, 'not_found', 'Playlist not found');
 		const queue = [...pl.intro, ...(pl.shuffle ? shuffle(pl.items) : pl.items), ...pl.outro];
-		this.play = { state: 'playing', playlistId: pl.id, queue, index: Math.min(index, queue.length - 1), startedAt: Date.now() - posMs };
+		this.#log('info', `Playlist "${pl.name}" started`);
+		this.play = {
+			state: 'playing',
+			playlistId: pl.id,
+			queue,
+			index: Math.min(index, queue.length - 1),
+			startedAt: Date.now() - posMs
+		};
 	}
 	#startSingle(it: PlaylistItem) {
 		this.play = { state: 'playing', queue: [it], index: 0, startedAt: Date.now(), single: it };
@@ -955,7 +1225,8 @@ export class MockServer {
 		let i = p.index + dir;
 		const pl = this.show.playlists.find((x) => x.id === p.playlistId);
 		if (i >= p.queue.length) {
-			if (pl?.repeat) i = pl.intro.length; // loop items (skip intro)
+			if (pl?.repeat)
+				i = pl.intro.length; // loop items (skip intro)
 			else {
 				this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
 				return;
@@ -990,13 +1261,24 @@ export class MockServer {
 			nextShow: ns && !active ? { name: ns.name, startsAt: ns.start } : undefined,
 			scheduleEntry: ns && active ? { id: ns.entryId, name: ns.name, endsAt: ns.end } : undefined
 		};
-		if (p.state === 'effect' && p.effect) return { ...base, item: { type: 'effect', id: p.effect.id, name: p.effect.name }, posMs: Date.now() - p.startedAt };
-		if (p.state === 'testing') return { ...base, item: { type: 'test', id: 'test', name: p.fault ? 'Fault finder' : 'Test pattern' } };
+		if (p.state === 'effect' && p.effect)
+			return {
+				...base,
+				item: { type: 'effect', id: p.effect.id, name: p.effect.name },
+				posMs: Date.now() - p.startedAt
+			};
+		if (p.state === 'testing')
+			return { ...base, item: { type: 'test', id: 'test', name: p.fault ? 'Fault finder' : 'Test pattern' } };
 		if (!it || p.state === 'idle') return base;
 		return {
 			...base,
-			playlist: pl && !p.single ? { id: pl.id, name: pl.name, index: p.index, count: p.queue.length } : undefined,
-			item: { type: it.type, id: (it as any).sequenceId ?? (it as any).djClipId ?? (it as any).effectId ?? it.id, name: this.itemName(it) },
+			playlist:
+				pl && !p.single ? { id: pl.id, name: pl.name, index: p.index, count: p.queue.length } : undefined,
+			item: {
+				type: it.type,
+				id: (it as any).sequenceId ?? (it as any).djClipId ?? (it as any).effectId ?? it.id,
+				name: this.itemName(it)
+			},
 			posMs: Math.max(0, Math.min(this.#posMs(), this.#itemDuration(it))),
 			durationMs: this.#itemDuration(it),
 			nextItem: nx && !p.single ? { type: nx.type, id: nx.id, name: this.itemName(nx) } : undefined
@@ -1021,8 +1303,13 @@ export class MockServer {
 						else this.#advance(1);
 					}
 				}
-				if (this.play.state === 'testing' && this.play.test && this.play.testStarted && Date.now() - this.play.testStarted > 60000)
-					this.play = { state: 'idle', queue: [], index: 0, startedAt: 0 };
+				if (
+					this.play.state === 'testing' &&
+					this.play.test &&
+					this.play.testStarted &&
+					Date.now() - this.play.testStarted > 60000
+				)
+					this.#exitTest();
 				if (this.games.cooldownS > 0 && tick % 4 === 0) this.games.cooldownS--;
 				const idle = this.play.state === 'idle';
 				if (!idle || tick % 8 === 0) this.#pushStatus();
@@ -1079,14 +1366,19 @@ export class MockServer {
 			const c = this.#coords.get(prop.id)!;
 			if (p.state === 'testing') this.#renderTest(prop, rgb, off, t);
 			else if (p.state === 'effect' && p.effect) {
-				if (targets(this.show, p.effect.target, prop)) renderEffect(p.effect.effect, p.effect.params, t, n, rgb, off, { ...c, seed: 3 });
+				if (targets(this.show, p.effect.target, prop))
+					renderEffect(p.effect.effect, p.effect.params, t, n, rgb, off, { ...c, seed: 3 });
 			} else if ((p.state === 'playing' || p.state === 'paused') && it) {
 				const tt = p.state === 'paused' ? (p.pausedAt! - this.started) / 1000 : t;
 				if (it.type === 'sequence') this.#renderSequence(it.sequenceId, prop, rgb, off, tt, this.#posMs(), c);
 				else if (it.type === 'effect') {
 					const fx = this.show.effects.find((e) => e.id === it.effectId);
 					if (fx) renderEffect(fx.effect, fx.params, tt, n, rgb, off, { ...c, seed: 5 });
-				} else if (idleFx) renderEffect(idleFx.effect, { ...idleFx.params, brightness: 35 }, tt, n, rgb, off, { ...c, seed: 1 });
+				} else if (idleFx)
+					renderEffect(idleFx.effect, { ...idleFx.params, brightness: 35 }, tt, n, rgb, off, {
+						...c,
+						seed: 1
+					});
 			} else if (idleFx && this.show.schedule.enabled) {
 				renderEffect(idleFx.effect, { ...idleFx.params, brightness: 30 }, t, n, rgb, off, { ...c, seed: 1 });
 			}
@@ -1114,22 +1406,37 @@ export class MockServer {
 			tg.all ||
 			tg.propIds?.includes(prop.id) ||
 			tg.groupIds?.some((g) => prop.groupIds.includes(g)) ||
-			(tg.nodeId && prop.segments.some((s) => s.nodeId === tg.nodeId && (tg.output == null || s.output === tg.output)));
+			(tg.nodeId &&
+				prop.segments.some((s) => s.nodeId === tg.nodeId && (tg.output == null || s.output === tg.output)));
 		if (!hit) return;
 		const [r, g, b] = hexRgb(req.color ?? '#ffffff');
 		for (let i = 0; i < n; i++) {
 			let c: [number, number, number] = [r, g, b];
-			if (req.mode === 'rgbCycle') c = [[255, 0, 0], [0, 255, 0], [0, 0, 255]][Math.floor(t) % 3] as any;
+			if (req.mode === 'rgbCycle')
+				c = [
+					[255, 0, 0],
+					[0, 255, 0],
+					[0, 0, 255]
+				][Math.floor(t) % 3] as any;
 			else if (req.mode === 'chase') c = (i + Math.floor(t * 10)) % 6 < 2 ? [r, g, b] : [0, 0, 0];
 			else if (req.mode === 'walk') c = i === Math.floor(t * 8) % n ? [255, 255, 255] : [0, 0, 0];
-			else if (req.mode === 'countPixels') c = i % 10 === 9 ? [255, 40, 40] : i % 5 === 4 ? [40, 255, 40] : [40, 40, 255];
+			else if (req.mode === 'countPixels')
+				c = i % 10 === 9 ? [255, 40, 40] : i % 5 === 4 ? [40, 255, 40] : [40, 40, 255];
 			rgb[off + i * 3] = c[0];
 			rgb[off + i * 3 + 1] = c[1];
 			rgb[off + i * 3 + 2] = c[2];
 		}
 	}
 
-	#renderSequence(seqId: string, prop: Prop, rgb: Uint8Array, off: number, t: number, posMs: number, c: { xs: Float32Array; ys: Float32Array }) {
+	#renderSequence(
+		seqId: string,
+		prop: Prop,
+		rgb: Uint8Array,
+		off: number,
+		t: number,
+		posMs: number,
+		c: { xs: Float32Array; ys: Float32Array }
+	) {
 		let h = 0;
 		for (const ch of seqId) h = (h * 31 + ch.charCodeAt(0)) | 0;
 		const section = Math.floor(posMs / 7000);
@@ -1150,7 +1457,10 @@ export class MockServer {
 			this.#renderMatrix(prop, rgb, off, t, posMs, h);
 			return;
 		}
-		renderEffect(kind, { ...params, brightness: 100 * beat }, t, prop.pixelCount, rgb, off, { ...c, seed: h });
+		renderEffect(kind, { ...params, brightness: 100 * beat }, t, prop.pixelCount, rgb, off, {
+			...c,
+			seed: h
+		});
 	}
 
 	#renderMatrix(prop: Prop, rgb: Uint8Array, off: number, t: number, posMs: number, h: number) {
@@ -1164,7 +1474,9 @@ export class MockServer {
 				const b = Math.floor(x / bw);
 				const lvl =
 					0.25 +
-					0.6 * Math.abs(Math.sin(posMs / (260 + b * 17) + b * 1.7 + h)) * (0.6 + 0.4 * Math.abs(Math.sin(posMs / 900 + b)));
+					0.6 *
+						Math.abs(Math.sin(posMs / (260 + b * 17) + b * 1.7 + h)) *
+						(0.6 + 0.4 * Math.abs(Math.sin(posMs / 900 + b)));
 				const top = hh - lvl * hh;
 				const j = off + pi * 3;
 				if (y >= top && x % bw < bw - 1) {
@@ -1185,7 +1497,12 @@ export class MockServer {
 function targets(show: Show, t: EffectPreset['target'], p: Prop): boolean {
 	if (!t || t.all) return true;
 	if (t.propIds?.includes(p.id)) return true;
-	if (t.groupIds?.some((g) => p.groupIds.includes(g) || show.propGroups.find((x) => x.id === g)?.propIds.includes(p.id))) return true;
+	if (
+		t.groupIds?.some(
+			(g) => p.groupIds.includes(g) || show.propGroups.find((x) => x.id === g)?.propIds.includes(p.id)
+		)
+	)
+		return true;
 	return !t.propIds?.length && !t.groupIds?.length;
 }
 
@@ -1271,7 +1588,11 @@ function demoLogLines(): LogLine[] {
 		['warn', 'warn', 'Garage CPU at 61 °C'],
 		['info', 'info', 'Snapshot "Automatic — nightly" saved (179 KB)']
 	];
-	return lines.map(([, level, message], i) => ({ level, message, time: new Date(now - (i + 2) * 3600e3).toISOString() }));
+	return lines.map(([, level, message], i) => ({
+		level,
+		message,
+		time: new Date(now - (i + 2) * 3600e3).toISOString()
+	}));
 }
 
 export class MockSocket implements SocketLike {

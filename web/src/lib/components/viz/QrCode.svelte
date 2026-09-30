@@ -1,7 +1,12 @@
 <script lang="ts">
 	import qrcode from 'qrcode-generator';
 
-	let { text, size = 160, fg = '#000', bg = '#fff' }: { text: string; size?: number; fg?: string; bg?: string } = $props();
+	let {
+		text,
+		size = 160,
+		fg = '#000',
+		bg = '#fff'
+	}: { text: string; size?: number; fg?: string; bg?: string } = $props();
 
 	const model = $derived.by(() => {
 		const q = qrcode(0, 'M');
@@ -14,7 +19,14 @@
 	});
 </script>
 
-<svg width={size} height={size} viewBox="-2 -2 {model.n + 4} {model.n + 4}" role="img" aria-label="QR code for {text}" shape-rendering="crispEdges">
+<svg
+	width={size}
+	height={size}
+	viewBox="-2 -2 {model.n + 4} {model.n + 4}"
+	role="img"
+	aria-label="QR code for {text}"
+	shape-rendering="crispEdges"
+>
 	<rect x="-2" y="-2" width={model.n + 4} height={model.n + 4} fill={bg} rx="1.5" />
 	<path d={model.d} fill={fg} />
 </svg>

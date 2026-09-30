@@ -50,12 +50,14 @@
 
 	$effect(() => {
 		if (!show) return;
-		if (!selectedId || !show.playlists.some((p) => p.id === selectedId)) selectedId = show.playlists[0]?.id ?? null;
+		if (!selectedId || !show.playlists.some((p) => p.id === selectedId))
+			selectedId = show.playlists[0]?.id ?? null;
 	});
 	$effect(() => {
 		const p = show?.playlists.find((x) => x.id === selectedId);
 		untrack(() => {
-			if (p && (draft?.id !== p.id || saveState === 'saved')) draft = structuredClone($state.snapshot(p) as Playlist);
+			if (p && (draft?.id !== p.id || saveState === 'saved'))
+				draft = structuredClone($state.snapshot(p) as Playlist);
 			if (!p) draft = null;
 		});
 	});
@@ -79,34 +81,75 @@
 		}
 	}
 
-	function itemInfo(it: PlaylistItem, s: Show): { name: string; sub: string; ms: number; icon: typeof Music; tone: string } {
+	function itemInfo(
+		it: PlaylistItem,
+		s: Show
+	): { name: string; sub: string; ms: number; icon: typeof Music; tone: string } {
 		switch (it.type) {
 			case 'sequence': {
 				const q = s.sequences.find((x) => x.id === it.sequenceId);
 				const m = s.media.find((x) => x.id === q?.mediaId);
-				return { name: q?.name ?? 'Missing sequence', sub: m ? 'Sequence + audio' : 'Sequence', ms: q?.durationMs ?? 0, icon: Music, tone: 'accent' };
+				return {
+					name: q?.name ?? 'Missing sequence',
+					sub: m ? 'Sequence + audio' : 'Sequence',
+					ms: q?.durationMs ?? 0,
+					icon: Music,
+					tone: 'accent'
+				};
 			}
 			case 'dj': {
 				const c = s.djClips.find((x) => x.id === it.djClipId);
 				const m = s.media.find((x) => x.id === c?.mediaId);
-				return { name: c?.name ?? 'Missing clip', sub: c?.dynamic ? 'DJ · live text' : 'DJ clip', ms: m?.durationMs ?? 10000, icon: Mic, tone: 'purple' };
+				return {
+					name: c?.name ?? 'Missing clip',
+					sub: c?.dynamic ? 'DJ · live text' : 'DJ clip',
+					ms: m?.durationMs ?? 10000,
+					icon: Mic,
+					tone: 'purple'
+				};
 			}
 			case 'effect': {
 				const e = s.effects.find((x) => x.id === it.effectId);
-				return { name: e?.name ?? 'Missing effect', sub: 'Effect', ms: it.durationMs, icon: WandSparkles, tone: 'blue' };
+				return {
+					name: e?.name ?? 'Missing effect',
+					sub: 'Effect',
+					ms: it.durationMs,
+					icon: WandSparkles,
+					tone: 'blue'
+				};
 			}
 			case 'media': {
 				const m = s.media.find((x) => x.id === it.mediaId);
-				return { name: m?.name ?? 'Missing audio', sub: 'Audio only', ms: m?.durationMs ?? 0, icon: AudioLines, tone: 'green' };
+				return {
+					name: m?.name ?? 'Missing audio',
+					sub: 'Audio only',
+					ms: m?.durationMs ?? 0,
+					icon: AudioLines,
+					tone: 'green'
+				};
 			}
 			case 'pause':
 				return { name: 'Pause', sub: 'Dark and quiet', ms: it.durationMs, icon: Clock, tone: '' };
 			case 'command':
-				return { name: commandLabel(it.command), sub: 'Command', ms: 0, icon: it.command.startsWith('games') ? Gamepad2 : Terminal, tone: '' };
+				return {
+					name: commandLabel(it.command),
+					sub: 'Command',
+					ms: 0,
+					icon: it.command.startsWith('games') ? Gamepad2 : Terminal,
+					tone: ''
+				};
 		}
 	}
 	function commandLabel(c: string) {
-		return ({ 'games.invite': 'Show game invite', 'games.stop': 'Stop game', 'overlay.text': 'Scroll a message' } as Record<string, string>)[c] ?? c;
+		return (
+			(
+				{
+					'games.invite': 'Show game invite',
+					'games.stop': 'Stop game',
+					'overlay.text': 'Scroll a message'
+				} as Record<string, string>
+			)[c] ?? c
+		);
 	}
 
 	function total(p: Playlist | null) {
@@ -120,7 +163,11 @@
 		draft[section] = [...draft[section], item];
 		queueSave();
 		addOpen = false;
-		toasts.push({ kind: 'success', message: `Added to ${section === 'items' ? 'the playlist' : section}`, timeout: 1800 });
+		toasts.push({
+			kind: 'success',
+			message: `Added to ${section === 'items' ? 'the playlist' : section}`,
+			timeout: 1800
+		});
 	}
 	function removeItem(section: Section, i: number) {
 		if (!draft) return;
@@ -149,23 +196,49 @@
 	}
 
 	async function createPlaylist() {
-		const p = await app.mutate(() => api.playlists.create({ name: 'New playlist', items: [], intro: [], outro: [], shuffle: false, repeat: true, crossfadeMs: 0 }));
+		const p = await app.mutate(() =>
+			api.playlists.create({
+				name: 'New playlist',
+				items: [],
+				intro: [],
+				outro: [],
+				shuffle: false,
+				repeat: true,
+				crossfadeMs: 0
+			})
+		);
 		if (p) selectedId = p.id;
 	}
 	async function duplicate() {
 		if (!draft) return;
 		const d = $state.snapshot(draft) as Playlist;
-		const p = await app.mutate(() => api.playlists.create({ ...d, id: undefined as unknown as string, name: `${d.name} copy` }), { success: 'Playlist duplicated' });
+		const p = await app.mutate(
+			() => api.playlists.create({ ...d, id: undefined as unknown as string, name: `${d.name} copy` }),
+			{ success: 'Playlist duplicated' }
+		);
 		if (p) selectedId = p.id;
 	}
 	async function remove() {
 		if (!draft) return;
 		const d = structuredClone($state.snapshot(draft) as Playlist);
 		const used = show?.schedule.entries.filter((e) => e.playlistId === d.id) ?? [];
-		if (!(await confirm({ title: `Delete “${d.name}”?`, message: used.length ? `It’s used by ${used.length} schedule ${used.length === 1 ? 'entry' : 'entries'}, which will stop working.` : undefined, confirmLabel: 'Delete playlist', danger: true }))) return;
+		if (
+			!(await confirm({
+				title: `Delete “${d.name}”?`,
+				message: used.length
+					? `It’s used by ${used.length} schedule ${used.length === 1 ? 'entry' : 'entries'}, which will stop working.`
+					: undefined,
+				confirmLabel: 'Delete playlist',
+				danger: true
+			}))
+		)
+			return;
 		await app.mutate(() => api.playlists.remove(d.id));
 		selectedId = null;
-		toasts.success(`Deleted ${d.name}`, { label: 'Undo', run: () => app.mutate(() => api.playlists.create(d)) });
+		toasts.success(`Deleted ${d.name}`, {
+			label: 'Undo',
+			run: () => app.mutate(() => api.playlists.create(d))
+		});
 	}
 
 	function libDrag(e: DragEvent, it: Omit<PlaylistItem, 'id'>) {
@@ -185,19 +258,71 @@
 		const f = (n: string) => !libQ || n.toLowerCase().includes(libQ.toLowerCase());
 		switch (libTab) {
 			case 'sequence':
-				return show.sequences.filter((s) => f(s.name)).map((s) => ({ key: s.id, name: s.name, sub: fmtDuration(s.durationMs), item: { type: 'sequence', sequenceId: s.id } as Omit<PlaylistItem, 'id'> }));
+				return show.sequences
+					.filter((s) => f(s.name))
+					.map((s) => ({
+						key: s.id,
+						name: s.name,
+						sub: fmtDuration(s.durationMs),
+						item: { type: 'sequence', sequenceId: s.id } as Omit<PlaylistItem, 'id'>
+					}));
 			case 'dj':
-				return show.djClips.filter((s) => f(s.name)).map((s) => ({ key: s.id, name: s.name, sub: s.dynamic ? 'Live text' : `${s.lines.length} lines`, item: { type: 'dj', djClipId: s.id } as Omit<PlaylistItem, 'id'> }));
+				return show.djClips
+					.filter((s) => f(s.name))
+					.map((s) => ({
+						key: s.id,
+						name: s.name,
+						sub: s.dynamic ? 'Live text' : `${s.lines.length} lines`,
+						item: { type: 'dj', djClipId: s.id } as Omit<PlaylistItem, 'id'>
+					}));
 			case 'effect':
-				return show.effects.filter((s) => f(s.name)).map((s) => ({ key: s.id, name: s.name, sub: '30 s', item: { type: 'effect', effectId: s.id, durationMs: 30000 } as Omit<PlaylistItem, 'id'> }));
+				return show.effects
+					.filter((s) => f(s.name))
+					.map((s) => ({
+						key: s.id,
+						name: s.name,
+						sub: '30 s',
+						item: { type: 'effect', effectId: s.id, durationMs: 30000 } as Omit<PlaylistItem, 'id'>
+					}));
 			case 'media':
-				return show.media.filter((s) => f(s.name)).map((s) => ({ key: s.id, name: s.name, sub: fmtDuration(s.durationMs), item: { type: 'media', mediaId: s.id } as Omit<PlaylistItem, 'id'> }));
+				return show.media
+					.filter((s) => f(s.name))
+					.map((s) => ({
+						key: s.id,
+						name: s.name,
+						sub: fmtDuration(s.durationMs),
+						item: { type: 'media', mediaId: s.id } as Omit<PlaylistItem, 'id'>
+					}));
 			default:
 				return [
-					{ key: 'pause', name: 'Pause', sub: '10 s of darkness', item: { type: 'pause', durationMs: 10000 } as Omit<PlaylistItem, 'id'> },
-					{ key: 'inv', name: 'Show game invite', sub: 'Flash the game URL / QR on the matrix', item: { type: 'command', command: 'games.invite', args: {} } as Omit<PlaylistItem, 'id'> },
-					{ key: 'stop', name: 'Stop game', sub: 'End any game in progress', item: { type: 'command', command: 'games.stop', args: {} } as Omit<PlaylistItem, 'id'> },
-					{ key: 'text', name: 'Scroll a message', sub: 'Text on the matrix', item: { type: 'command', command: 'overlay.text', args: { text: 'Merry Christmas!', color: '#ff2a2a' } } as Omit<PlaylistItem, 'id'> }
+					{
+						key: 'pause',
+						name: 'Pause',
+						sub: '10 s of darkness',
+						item: { type: 'pause', durationMs: 10000 } as Omit<PlaylistItem, 'id'>
+					},
+					{
+						key: 'inv',
+						name: 'Show game invite',
+						sub: 'Flash the game URL / QR on the matrix',
+						item: { type: 'command', command: 'games.invite', args: {} } as Omit<PlaylistItem, 'id'>
+					},
+					{
+						key: 'stop',
+						name: 'Stop game',
+						sub: 'End any game in progress',
+						item: { type: 'command', command: 'games.stop', args: {} } as Omit<PlaylistItem, 'id'>
+					},
+					{
+						key: 'text',
+						name: 'Scroll a message',
+						sub: 'Text on the matrix',
+						item: {
+							type: 'command',
+							command: 'overlay.text',
+							args: { text: 'Merry Christmas!', color: '#ff2a2a' }
+						} as Omit<PlaylistItem, 'id'>
+					}
 				];
 		}
 	});
@@ -212,14 +337,42 @@
 {#snippet libraryPanel()}
 	<div class="lib">
 		<div class="lib-tabs">
-			<Segmented bind:value={libTab} size="sm" label="Library" options={[{ value: 'sequence', label: 'Songs' }, { value: 'dj', label: 'DJ' }, { value: 'effect', label: 'Effects' }, { value: 'media', label: 'Audio' }, { value: 'more', label: 'More' }]} />
+			<Segmented
+				bind:value={libTab}
+				size="sm"
+				label="Library"
+				options={[
+					{ value: 'sequence', label: 'Songs' },
+					{ value: 'dj', label: 'DJ' },
+					{ value: 'effect', label: 'Effects' },
+					{ value: 'media', label: 'Audio' },
+					{ value: 'more', label: 'More' }
+				]}
+			/>
 		</div>
-		<div class="input-group"><span class="prefix"><Search size={15} /></span><input class="input sm" placeholder="Search library" bind:value={libQ} aria-label="Search library" /></div>
-		<div class="lib-target faint tiny">Adding to <strong>{sectionMeta.find((s) => s.id === target)?.title}</strong> · click a section to change</div>
+		<div class="input-group">
+			<span class="prefix"><Search size={15} /></span><input
+				class="input sm"
+				placeholder="Search library"
+				bind:value={libQ}
+				aria-label="Search library"
+			/>
+		</div>
+		<div class="lib-target faint tiny">
+			Adding to <strong>{sectionMeta.find((s) => s.id === target)?.title}</strong> · click a section to change
+		</div>
 		<div class="lib-list">
 			{#each library as l (l.key)}
-				<button class="lib-item" draggable="true" ondragstart={(e) => libDrag(e, l.item)} onclick={() => add(l.item)}>
-					<div class="grow"><div class="ellipsis small"><strong>{l.name}</strong></div><div class="faint tiny ellipsis">{l.sub}</div></div>
+				<button
+					class="lib-item"
+					draggable="true"
+					ondragstart={(e) => libDrag(e, l.item)}
+					onclick={() => add(l.item)}
+				>
+					<div class="grow">
+						<div class="ellipsis small"><strong>{l.name}</strong></div>
+						<div class="faint tiny ellipsis">{l.sub}</div>
+					</div>
 					<Plus size={16} />
 				</button>
 			{:else}
@@ -230,7 +383,10 @@
 {/snippet}
 
 <div class="page">
-	<PageHeader title="Playlists" subtitle="Mix songs, DJ breaks, effects and pauses. Changes save automatically.">
+	<PageHeader
+		title="Playlists"
+		subtitle="Mix songs, DJ breaks, effects and pauses. Changes save automatically."
+	>
 		{#snippet actions()}
 			<button class="btn primary" onclick={createPlaylist}><Plus size={16} /> New playlist</button>
 		{/snippet}
@@ -239,9 +395,15 @@
 	{#if !show}
 		<div class="card card-pad"><Skeleton count={8} h={36} /></div>
 	{:else if !show.playlists.length}
-		<div class="card"><EmptyState icon={ListMusic} title="No playlists yet" message="A playlist is your show’s running order. Start one and add your sequences.">
-			<button class="btn primary" onclick={createPlaylist}><Plus size={16} /> Create a playlist</button>
-		</EmptyState></div>
+		<div class="card">
+			<EmptyState
+				icon={ListMusic}
+				title="No playlists yet"
+				message="A playlist is your show’s running order. Start one and add your sequences."
+			>
+				<button class="btn primary" onclick={createPlaylist}><Plus size={16} /> Create a playlist</button>
+			</EmptyState>
+		</div>
 	{:else}
 		<div class="layout">
 			<nav class="pls" aria-label="Playlists">
@@ -249,7 +411,11 @@
 					{@const n = p.items.length + p.intro.length + p.outro.length}
 					<button class="pl" class:on={p.id === selectedId} onclick={() => (selectedId = p.id)}>
 						<span class="plicon"><ListMusic size={18} /></span>
-						<span class="grow"><span class="ellipsis plname">{p.name}</span><span class="faint tiny">{plural(n, 'item')} · {fmtDuration(total(p), { long: true })}</span></span>
+						<span class="grow"
+							><span class="ellipsis plname">{p.name}</span><span class="faint tiny"
+								>{plural(n, 'item')} · {fmtDuration(total(p), { long: true })}</span
+							></span
+						>
 						{#if p.shuffle}<Shuffle size={13} class="faint" />{/if}
 						{#if p.repeat}<Repeat size={13} class="faint" />{/if}
 					</button>
@@ -259,22 +425,59 @@
 			{#if draft}
 				<section class="builder card">
 					<header class="bhead">
-						<input class="title-input" bind:value={draft.name} oninput={queueSave} aria-label="Playlist name" />
+						<input
+							class="title-input"
+							bind:value={draft.name}
+							oninput={queueSave}
+							aria-label="Playlist name"
+						/>
 						<span class="save faint tiny">
-							{#if saveState === 'saving'}<LoaderCircle size={12} class="spin" /> Saving{:else if saveState === 'dirty'}Unsaved{:else}<Check size={12} /> Saved{/if}
+							{#if saveState === 'saving'}<LoaderCircle size={12} class="spin" /> Saving{:else if saveState === 'dirty'}Unsaved{:else}<Check
+									size={12}
+								/> Saved{/if}
 						</span>
 						<span class="grow"></span>
-						<button class="btn primary sm" onclick={() => playerAct(() => api.play({ playlistId: draft!.id }))}><Play size={14} fill="currentColor" /> Play now</button>
-						<button class="btn ghost icon sm" onclick={duplicate} aria-label="Duplicate playlist"><Copy size={15} /></button>
-						<button class="btn ghost icon sm" onclick={remove} aria-label="Delete playlist"><Trash2 size={15} /></button>
+						<button
+							class="btn primary sm"
+							onclick={() => playerAct(() => api.play({ playlistId: draft!.id }))}
+							><Play size={14} fill="currentColor" /> Play now</button
+						>
+						<button class="btn ghost icon sm" onclick={duplicate} aria-label="Duplicate playlist"
+							><Copy size={15} /></button
+						>
+						<button class="btn ghost icon sm" onclick={remove} aria-label="Delete playlist"
+							><Trash2 size={15} /></button
+						>
 					</header>
 					<div class="opts">
-						<label class="opt"><Switch bind:checked={draft.shuffle} label="Shuffle" size="sm" onchange={queueSave} /><Shuffle size={14} /> Shuffle</label>
-						<label class="opt"><Switch bind:checked={draft.repeat} label="Repeat" size="sm" onchange={queueSave} /><Repeat size={14} /> Repeat</label>
+						<label class="opt"
+							><Switch bind:checked={draft.shuffle} label="Shuffle" size="sm" onchange={queueSave} /><Shuffle
+								size={14}
+							/> Shuffle</label
+						>
+						<label class="opt"
+							><Switch bind:checked={draft.repeat} label="Repeat" size="sm" onchange={queueSave} /><Repeat
+								size={14}
+							/> Repeat</label
+						>
 						<div class="opt xf">
 							<span class="small">Crossfade</span>
-							<input type="range" class="range" min="0" max="5000" step="250" bind:value={draft.crossfadeMs} oninput={queueSave} style:--pct="{(draft.crossfadeMs / 5000) * 100}%" aria-label="Crossfade" />
-							<span class="num small faint" style="width:44px">{draft.crossfadeMs ? `${(draft.crossfadeMs / 1000).toFixed(draft.crossfadeMs % 1000 ? 2 : 0)} s` : 'Off'}</span>
+							<input
+								type="range"
+								class="range"
+								min="0"
+								max="5000"
+								step="250"
+								bind:value={draft.crossfadeMs}
+								oninput={queueSave}
+								style:--pct="{(draft.crossfadeMs / 5000) * 100}%"
+								aria-label="Crossfade"
+							/>
+							<span class="num small faint" style="width:44px"
+								>{draft.crossfadeMs
+									? `${(draft.crossfadeMs / 1000).toFixed(draft.crossfadeMs % 1000 ? 2 : 0)} s`
+									: 'Off'}</span
+							>
 						</div>
 						<span class="grow"></span>
 						<span class="total num"><Clock size={14} /> {fmtDuration(total(draft), { long: true })}</span>
@@ -288,39 +491,79 @@
 							class:over={dragOver === sec.id}
 							role="group"
 							aria-label={sec.title}
-							ondragover={(e) => { if (e.dataTransfer?.types.includes('application/x-pixelplus-item')) { e.preventDefault(); dragOver = sec.id; } }}
+							ondragover={(e) => {
+								if (e.dataTransfer?.types.includes('application/x-pixelplus-item')) {
+									e.preventDefault();
+									dragOver = sec.id;
+								}
+							}}
 							ondragleave={() => (dragOver = null)}
 							ondrop={(e) => sectionDrop(e, sec.id)}
 						>
 							<button class="shead" onclick={() => (target = sec.id)}>
-								<span class="stitle">{sec.title}</span><span class="faint tiny">{sec.hint}</span><span class="grow"></span>
-								{#if list.length}<span class="faint tiny num">{fmtDuration(list.reduce((n, it) => n + itemInfo(it, show).ms, 0))}</span>{/if}
+								<span class="stitle">{sec.title}</span><span class="faint tiny">{sec.hint}</span><span
+									class="grow"
+								></span>
+								{#if list.length}<span class="faint tiny num"
+										>{fmtDuration(list.reduce((n, it) => n + itemInfo(it, show).ms, 0))}</span
+									>{/if}
 							</button>
 							<ol use:sortable={{ onsort: (f, t) => reorder(sec.id, f, t) }}>
 								{#each list as it, i (it.id)}
 									{@const info = itemInfo(it, show)}
 									<li class="item" data-sort-index={i}>
-										<button class="drag-handle" aria-label="Move {info.name} (use arrow keys)"><GripVertical size={16} /></button>
+										<button class="drag-handle" aria-label="Move {info.name} (use arrow keys)"
+											><GripVertical size={16} /></button
+										>
 										<span class="num idx faint">{i + 1}</span>
 										<span class="iicon {info.tone}"><info.icon size={16} /></span>
-										<span class="grow iname"><span class="ellipsis">{info.name}</span><span class="faint tiny">{info.sub}</span></span>
+										<span class="grow iname"
+											><span class="ellipsis">{info.name}</span><span class="faint tiny">{info.sub}</span
+											></span
+										>
 										{#if it.type === 'effect' || it.type === 'pause'}
-											<label class="dur"><input class="input sm num" type="number" min="1" value={Math.round(it.durationMs / 1000)} onchange={(e) => { (it as any).durationMs = Number((e.target as HTMLInputElement).value) * 1000; queueSave(); }} aria-label="Duration in seconds" /><span class="faint tiny">s</span></label>
+											<label class="dur"
+												><input
+													class="input sm num"
+													type="number"
+													min="1"
+													value={Math.round(it.durationMs / 1000)}
+													onchange={(e) => {
+														(it as any).durationMs = Number((e.target as HTMLInputElement).value) * 1000;
+														queueSave();
+													}}
+													aria-label="Duration in seconds"
+												/><span class="faint tiny">s</span></label
+											>
 										{:else if info.ms}
 											<span class="faint small num">{fmtDuration(info.ms)}</span>
 										{/if}
-										<button class="btn ghost icon sm" onclick={() => removeItem(sec.id, i)} aria-label="Remove {info.name}"><X size={15} /></button>
+										<button
+											class="btn ghost icon sm"
+											onclick={() => removeItem(sec.id, i)}
+											aria-label="Remove {info.name}"><X size={15} /></button
+										>
 									</li>
 								{/each}
 							</ol>
 							{#if !list.length}
-								<button class="dropzone" onclick={() => { target = sec.id; addOpen = true; }}>
-									{sec.id === 'items' ? 'Add songs, DJ clips and effects' : `Optional — add a ${sec.id === 'intro' ? 'welcome message' : 'goodnight message'}`}
+								<button
+									class="dropzone"
+									onclick={() => {
+										target = sec.id;
+										addOpen = true;
+									}}
+								>
+									{sec.id === 'items'
+										? 'Add songs, DJ clips and effects'
+										: `Optional — add a ${sec.id === 'intro' ? 'welcome message' : 'goodnight message'}`}
 								</button>
 							{/if}
 						</div>
 					{/each}
-					<div class="mobile-add"><button class="btn block" onclick={() => (addOpen = true)}><Plus size={16} /> Add items</button></div>
+					<div class="mobile-add">
+						<button class="btn block" onclick={() => (addOpen = true)}><Plus size={16} /> Add items</button>
+					</div>
 				</section>
 				<aside class="library card">{@render libraryPanel()}</aside>
 			{/if}

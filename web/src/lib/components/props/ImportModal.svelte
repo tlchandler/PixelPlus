@@ -19,7 +19,9 @@
 		busy = true;
 		try {
 			preview = await api.importXlights(rgb, net ?? undefined);
-			map = Object.fromEntries(preview.controllers.map((c) => [c.name, c.suggestedNodeId ?? app.show?.nodes[0]?.id ?? '']));
+			map = Object.fromEntries(
+				preview.controllers.map((c) => [c.name, c.suggestedNodeId ?? app.show?.nodes[0]?.id ?? ''])
+			);
 		} catch (e) {
 			toasts.error('Could not read the layout', (e as Error).message);
 		} finally {
@@ -46,7 +48,13 @@
 	}
 </script>
 
-<Modal bind:open title="Import from xLights" subtitle="Bring in your props straight from your xLights layout" size="lg" onclose={reset}>
+<Modal
+	bind:open
+	title="Import from xLights"
+	subtitle="Bring in your props straight from your xLights layout"
+	size="lg"
+	onclose={reset}
+>
 	{#if !preview}
 		<div class="grid grid-2">
 			<label class="drop" class:has={rgb}>
@@ -63,17 +71,26 @@
 			</label>
 		</div>
 		<div class="tip">
-			<strong>Tip:</strong> Both files are in your xLights show folder. In xLights, set up each PixelPlus controller as
-			<em>PixelPlus / Generic</em> with protocol <em>DDP</em> and “Auto size” — you never need to type a universe or channel.
+			<strong>Tip:</strong> Both files are in your xLights show folder. In xLights, set up each PixelPlus
+			controller as
+			<em>PixelPlus / Generic</em> with protocol <em>DDP</em> and “Auto size” — you never need to type a universe
+			or channel.
 		</div>
 	{:else}
 		<h3 class="eyebrow">Match controllers</h3>
 		<div class="maps">
 			{#each preview.controllers as c (c.name)}
 				<div class="map">
-					<span class="grow"><strong>{c.name}</strong> <span class="faint small">· {c.ports} ports in xLights</span></span>
+					<span class="grow"
+						><strong>{c.name}</strong> <span class="faint small">· {c.ports} ports in xLights</span></span
+					>
 					<ArrowRight size={16} class="faint" />
-					<select class="select sm" style="max-width:220px" bind:value={map[c.name]} aria-label="PixelPlus controller for {c.name}">
+					<select
+						class="select sm"
+						style="max-width:220px"
+						bind:value={map[c.name]}
+						aria-label="PixelPlus controller for {c.name}"
+					>
 						{#each app.show?.nodes ?? [] as n (n.id)}<option value={n.id}>{n.name}</option>{/each}
 					</select>
 				</div>
@@ -82,7 +99,9 @@
 		<h3 class="eyebrow" style="margin-top:20px">{preview.props.length} props to add or update</h3>
 		<div class="props">
 			{#each preview.props as p (p.id)}
-				<div class="prow"><span class="grow ellipsis">{p.name}</span><span class="faint small num">{p.pixelCount} px</span></div>
+				<div class="prow">
+					<span class="grow ellipsis">{p.name}</span><span class="faint small num">{p.pixelCount} px</span>
+				</div>
 			{/each}
 		</div>
 		{#each preview.warnings as w (w)}
@@ -92,9 +111,13 @@
 	{#snippet footer()}
 		<button class="btn ghost" onclick={reset}>Cancel</button>
 		{#if !preview}
-			<button class="btn primary" disabled={!rgb || busy} onclick={analyze}>{busy ? 'Reading layout…' : 'Continue'}</button>
+			<button class="btn primary" disabled={!rgb || busy} onclick={analyze}
+				>{busy ? 'Reading layout…' : 'Continue'}</button
+			>
 		{:else}
-			<button class="btn primary" disabled={busy} onclick={apply}>{busy ? 'Importing…' : `Import ${preview.props.length} props`}</button>
+			<button class="btn primary" disabled={busy} onclick={apply}
+				>{busy ? 'Importing…' : `Import ${preview.props.length} props`}</button
+			>
 		{/if}
 	{/snippet}
 </Modal>

@@ -119,7 +119,8 @@ pub fn validate(cfg: &NetworkConfig) -> ApiResult<()> {
             return Err(ApiError::bad_request("A Wi-Fi password needs 8 to 63 characters."));
         }
     }
-    if !w.country.is_empty() && !(w.country.len() == 2 && w.country.chars().all(|c| c.is_ascii_alphabetic())) {
+    let country_ok = w.country.is_empty() || (w.country.len() == 2 && w.country.chars().all(|c| c.is_ascii_alphabetic()));
+    if !country_ok {
         return Err(ApiError::bad_request("Pick your Wi-Fi country (a two-letter code like US or GB)."));
     }
     let e = &cfg.ethernet;

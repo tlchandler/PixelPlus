@@ -371,6 +371,13 @@ pub async fn save_clip_audio(
     Ok(clip)
 }
 
+/// Ask the sidecar to load its model now (call ~1 minute before a dynamic
+/// clip is due; a Pi 4 needs a while to load it). Errors are ignored.
+pub async fn warmup(state: &AppState) {
+    let url = format!("{}/warmup", state.config.tts_url.trim_end_matches('/'));
+    let _ = client().post(&url).timeout(Duration::from_secs(60)).send().await;
+}
+
 /// Render a dynamic clip for showtime with live placeholder values. The
 /// file is written to `media/live-<clipId>.mp3` (not added to the show).
 /// For the player: call shortly before the clip is due; on error, fall back
@@ -402,7 +409,7 @@ mod tests {
         ];
         let ctx = DynamicContext { next_song: Some("Feliz Navidad".into()), ..Default::default() };
         let b = render_body(&show, &lines, 1.0, &ctx, "mp3");
-        assert_eq!(b["lines"][0]["voice"]["blend"]["am_puck"], 0.4);
+        assert!((b["lines"][0]["voice"]["blend"]["am_puck"].as_f64().unwrap() - 0.4).abs() < 1e-6);
         assert_eq!(b["lines"][0]["text"], "Welcome to Chandler Lights!");
         assert_eq!(b["lines"][1]["voice"], "af_sky");
         assert_eq!(b["lines"][1]["text"], "Up next: Feliz Navidad");

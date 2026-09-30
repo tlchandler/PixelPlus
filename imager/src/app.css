@@ -190,7 +190,8 @@ label.field {
 	background: var(--surface-hover);
 }
 
-.option[aria-pressed='true'] {
+.option[aria-pressed='true'],
+.option[aria-checked='true'] {
 	border-color: var(--accent-line);
 	background: var(--accent-soft);
 }

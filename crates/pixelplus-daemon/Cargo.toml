@@ -49,3 +49,12 @@ tokio-util = { version = "0.7", features = ["io"] }
 sha2 = "0.10"
 if-addrs = "0.15"
 mdns-sd = "0.21"
+# --- playback engine workstream
+cpal = { version = "0.15", optional = true }
+rubato = "0.16"
+
+[features]
+default = ["audio"]
+# ALSA audio output through cpal (needs libasound2-dev to build). Without it the
+# player runs lights-only on its monotonic clock.
+audio = ["dep:cpal"]

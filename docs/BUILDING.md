@@ -1,0 +1,327 @@
+# Building PixelPlus
+
+Developer guide for the daemon, web UI, Debian package, SD-card image, Docker image and
+PixelPlus Imager. Architecture and contracts: [ARCHITECTURE.md](ARCHITECTURE.md).
+End-user installation: [INSTALL.md](INSTALL.md).
+
+```
+crates/        Rust workspace: pixelplusd (daemon), pixelplus (CLI), core/output/hw libs
+web/           SvelteKit SPA -> web/build (served by pixelplusd from /usr/share/pixelplus/web)
+tts/, games/   Python sidecars
+packaging/     Debian package: build-deb.sh, systemd units, polkit, avahi, udev, ...
+image/         pi-gen stage, pixelplus.txt, first-boot applier, setup hotspot, Imager JSON
+imager/        PixelPlus Imager (Tauri 2 + Svelte) with a GUI-free core crate
+docker/        Dockerfile + docker-compose.yml for a PC/NAS leader
+.github/       CI and release workflows
+```
+
+## Prerequisites
+
+| For | Needs |
+|---|---|
+| Rust | rustup, stable toolchain (MSRV 1.80) |
+| Web / Imager UI | Node 22, pnpm 10 (`corepack enable`) |
+| Python parts | Python 3.11+ (`pip install pytest jsonschema` for tests) |
+| arm64 .deb on x86 | `gcc-aarch64-linux-gnu` + `rustup target add aarch64-unknown-linux-gnu`, or `cross` |
+| .deb | `dpkg-deb`, `device-tree-compiler` (arm64: DPI overlays) |
+| SD image | Docker with `--privileged`, ~25 GB disk; on x86: `qemu-user-static binfmt-support` |
+| Imager app | Tauri 2 prerequisites: Linux `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev`; macOS Xcode CLT; Windows WebView2 + MSVC |
+
+## Daemon + web UI (development)
+
+```sh
+cargo build                                    # workspace
+cd web && pnpm install && pnpm dev             # UI on :5173, proxies /api to PIXELPLUS_API
+PIXELPLUS_DATA_DIR=./data-dev PIXELPLUS_HTTP_PORT=8080 PIXELPLUS_OUTPUT=sim cargo run -p pixelplus-daemon
+```
+
+Environment variables read by `pixelplusd`: `PIXELPLUS_DATA_DIR` (/var/lib/pixelplus),
+`PIXELPLUS_WEB_DIR` (/usr/share/pixelplus/web), `PIXELPLUS_HTTP_PORT` (80),
+`PIXELPLUS_HTTP_BIND`, `PIXELPLUS_CLUSTER_PORT` (32320), `PIXELPLUS_OUTPUT`
+(dpi|sim|none|auto), `PIXELPLUS_TTS_URL`, `PIXELPLUS_GAMES_SOCKET`, `PIXELPLUS_DEV`.
+On the Pi they come from `pixelplusd.service` and optional overrides in `/etc/default/pixelplus`.
+
+## Debian package
+
+```sh
+packaging/build-deb.sh --arch amd64                # native
+packaging/build-deb.sh --arch arm64                # cross (see below)
+packaging/build-deb.sh --arch arm64 --bin-dir target/aarch64-unknown-linux-gnu/release --web-dir web/build
+```
+
+Output: `dist/pixelplus_<version>_<arch>.deb`. The version is the workspace version, plus
+`~git<date>.<sha>` for untagged commits.
+
+**Cross-compiling for arm64** – the script picks, in order: `cross` (Docker-based;
+old glibc, so binaries run on Bookworm and Trixie), or the Debian/Ubuntu cross gcc. For
+the latter it sets `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER` and
+`CC_aarch64_unknown_linux_gnu`/`AR_…` (needed by `zstd-sys`). Build on the *oldest*
+distribution you target (Ubuntu 22.04 / Debian Bookworm) because glibc is only forward
+compatible.
+
+### Package layout
+
+| Path | What |
+|---|---|
+| `/usr/bin/pixelplusd`, `/usr/bin/pixelplus` | daemon, CLI |
+| `/usr/share/pixelplus/web/` | web UI |
+| `/usr/lib/pixelplus/firstboot/` | `pixelplus.txt` applier (`firstboot.py`, `pptxt.py`, `nmconn.py`); `/usr/sbin/pixelplus-firstboot` |
+| `/usr/lib/pixelplus/netwatch/` | Wi-Fi watchdog + setup hotspot + captive portal |
+| `/usr/lib/pixelplus/games/` | games sidecar (Python, system interpreter) |
+| `/usr/lib/pixelplus/overlays/*.dtbo` | DPI overlays (arm64); postinst copies them to `/boot/firmware/overlays/` |
+| `/usr/lib/pixelplus/pixelplus-helper` | root helper (see below) |
+| `/usr/lib/pixelplus/tts-capable` | `ExecCondition` for the TTS sidecar (Pi 4/5 ≥ 2 GB, amd64) |
+| `/usr/share/pixelplus/pixelplus.txt.template` | the commented `pixelplus.txt` |
+| `/usr/lib/systemd/system/` | `pixelplusd`, `pixelplus-tts`, `pixelplus-games`, `pixelplus-firstboot`, `pixelplus-reapply.{path,service}`, `pixelplus-netwatch`, `pixelplus-helper@` |
+| `/usr/share/polkit-1/rules.d/50-pixelplus.rules` | what the `pixelplus` user may do |
+| `/etc/avahi/services/pixelplus.service` | `_pixelplus._tcp` + `_http._tcp` on port 80 |
+| `/usr/lib/sysctl.d`, `/usr/lib/udev/rules.d`, `/usr/lib/tmpfiles.d`, `/etc/logrotate.d` | UDP buffers, device groups, `/run/pixelplus`, log rotation |
+| `/usr/share/pixelplus/appliance/` | NetworkManager configs, linked into `/etc` only on appliances |
+
+### Security model (decided)
+
+`pixelplusd` runs as the **unprivileged system user `pixelplus`** with supplementary
+groups `video render i2c gpio spi audio netdev dialout` and only two capabilities:
+`CAP_NET_BIND_SERVICE` (port 80) and `CAP_SYS_NICE` (the output thread switches itself
+to `SCHED_FIFO`; `LimitRTPRIO=95`, `LimitMEMLOCK=infinity`). It is sandboxed
+(`NoNewPrivileges`, `ProtectSystem=full`, `ProtectHome`, `PrivateTmp`). Privileged
+operations go through system services, authorised by polkit for that user only:
+
+| Operation | How |
+|---|---|
+| Wi-Fi scan/connect, Ethernet settings | NetworkManager D-Bus (`org.freedesktop.NetworkManager.*`) |
+| Reboot / power off | logind (`org.freedesktop.login1.reboot`, `power-off`) |
+| Hostname, time zone, NTP | hostnamed / timedated |
+| Start/stop/restart `pixelplus-{tts,games,netwatch}`; restart `pixelplusd` | systemd `manage-units` |
+| Board boot config, updates, SSH on/off, re-apply `pixelplus.txt` | `systemctl start --no-block pixelplus-helper@<verb>.service` (root oneshot, whitelisted verbs) |
+
+Helper verbs (`packaging/bin/pixelplus-helper`), arguments `:`-separated in the instance name:
+
+* `config-txt:<board>[:<pixels>]` – regenerate `/boot/firmware/pixelplus.conf` via
+  `pixelplus config-txt --board <board> [--pixels N]`. **No reboot**; the daemon asks the user
+  and then reboots via logind.
+* `update` – `apt-get update` + upgrade `pixelplus` (postinst restarts the daemon).
+* `ssh-on`, `ssh-off`, `reapply`.
+
+Each writes `/run/pixelplus/helper-<verb>.json`
+(`{"verb","state":"running|ok|failed","message","updatedAt"}`) for the UI to poll.
+
+### apt repository (optional)
+
+```sh
+packaging/apt-repo.sh --repo ./apt --key <GPG-KEYID> dist/*.deb
+```
+
+creates `apt/dists/stable/main/binary-{arm64,amd64}/Packages`, signed `Release`/`InRelease`
+and `pixelplus-archive-keyring.gpg`. Host it on GitHub Pages or any HTTPS server; see the
+script header for the client `sources.list` line.
+
+## SD-card image (pi-gen)
+
+```sh
+packaging/build-deb.sh --arch arm64
+image/build-in-docker.sh --deb dist/pixelplus_<ver>_arm64.deb                      # Trixie
+image/build-in-docker.sh --deb dist/pixelplus_<ver>_arm64.deb --release bookworm
+```
+
+`image/build.sh` clones [pi-gen](https://github.com/RPi-Distro/pi-gen) at a **pinned tag**
+(`2026-09-15-raspios-trixie-arm64` / `…-bookworm-arm64`), copies `image/stage-pixelplus`
+into it, writes the pi-gen `config`, and builds `stage0 stage1 stage2 stage-pixelplus`
+(= Raspberry Pi OS Lite + PixelPlus; stage2's own export is skipped). `--docker` (what
+`build-in-docker.sh` does) runs pi-gen's `build-docker.sh`, which needs a **privileged**
+container (loop devices, binfmt_misc); on x86 hosts qemu-user-static must be installed.
+The release workflow builds on GitHub's native `ubuntu-24.04-arm` runners. Other options:
+`--no-tts`, `--no-tts-models`, `--version`, `--out`, `--continue`, `--pigen-ref`.
+
+Output in `image/deploy/`: `pixelplus-<ver>-<release>-arm64.img.xz`, `.sha256`, `.info`,
+and `os-list-<release>.json` (Raspberry Pi Imager fragment). The release workflow merges
+the fragments into `pixelplus-imager.json`:
+
+```sh
+python3 image/rpi-imager/make-os-list.py --merge image/deploy/os-list-*.json --out pixelplus-imager.json
+```
+
+### What the stage does
+
+* **00-packages**: NetworkManager, dnsmasq-base, nftables, iw, rfkill, avahi, alsa-utils,
+  ffmpeg, i2c-tools, raspi-utils (`pinctrl`), python3-venv/numpy/qrcode, libretro-nestopia,
+  polkitd, logrotate.
+* **01-pixelplus**: creates `/etc/pixelplus/appliance` (marker that enables the first-boot
+  and hotspot services), installs the `.deb`.
+* **02-system**: `config.txt` base block (i2c on, UART off, no splash, camera/display
+  auto-detect off, **`include pixelplus.conf`** at the end; `vc4-kms-v3d` stays on),
+  `cpufreq.default_governor=performance` on the kernel command line (build time only),
+  `pixelplus.txt` template and an empty `pixelplus.conf` on the boot partition,
+  `i2c-dev` module, volatile journald (32 MB), zram-only swap (`rpi-swap` on Trixie,
+  `zram-tools` on Bookworm), Wi-Fi radio enabled, apt timers / wait-online /
+  `raspi-config.service` disabled, console banner with the URL, user `pi` **locked**.
+* **03-tts** (optional): `/opt/pixelplus-tts/venv` from `tts/` (binary wheels only) and
+  the int8 Kokoro model in `/var/lib/pixelplus/tts/models`.
+
+Image defaults: hostname `pixelplus`, locale `en_US.UTF-8`, time zone UTC, SSH off, user
+`pi` with a random locked password (unlocked by `ssh_password=`/`ssh_key=` or replaced by a
+Raspberry Pi Imager user), cloud-init kept on Trixie.
+
+### Board boot configuration
+
+The Pi's firmware reads `config.txt` → `include pixelplus.conf`. `pixelplus.conf` holds
+the output of `pixelplus config-txt --board <id> [--pixels N]` (DPI overlay with the
+right geometry, `gpio=…=op,dl`, RTC overlay, Pi 5 USB current…). It is written:
+
+1. on first boot by `pixelplus-firstboot` after `pixelplus --json detect` identified the
+   board (or `board=` in `pixelplus.txt`), followed by **one automatic reboot** (loop
+   guard: at most 3 consecutive reboots). It is regenerated at boot only if missing, if the
+   board changed, or if the card moved to a different Pi model;
+2. whenever the daemon needs a different geometry (longest string) or the user picks a
+   board in the wizard: `pixelplus-helper@config-txt:<board>:<pixels>`, then a user-confirmed
+   reboot.
+
+Older images that wrote a managed block into `config.txt` are migrated automatically.
+
+### First boot / `pixelplus.txt` (image/firstboot)
+
+`pixelplus-firstboot.service` (every boot, before `pixelplusd`, after NetworkManager and
+cloud-init's local/network stages) and `pixelplus-reapply.path` (when the file is saved
+while running) run `firstboot.py apply`:
+
+1. Parse + validate (`pptxt.py`); problems go to `pixelplus-errors.txt` on the boot partition.
+2. If the file's SHA-256 changed since the last run: apply only changed values –
+   country (`raspi-config nonint do_wifi_country`), hostname (`hostnamectl`, `/etc/hosts`,
+   cloud-init `preserve_hostname`), time zone, Wi-Fi profiles as NetworkManager keyfiles
+   (`pixelplus-wifi`, `pixelplus-wifi2`, `pixelplus-ethernet`; secrets never on a command
+   line), SSH (`raspi-config nonint do_ssh`), login password/key for uid 1000.
+3. Role, UI password and board go to **`/var/lib/pixelplus/provision.json`** (0600,
+   owner `pixelplus`) for the daemon; hotspot settings to `/etc/pixelplus/netwatch.json`.
+4. Applied secrets are blanked in `pixelplus.txt` (comment `# [applied <date>] …`), and
+   the new digest is stored in `/var/lib/pixelplus-system/state.json`.
+5. Wi-Fi radio unblocked; board boot configuration as above.
+
+Logs: `/var/log/pixelplus-firstboot.log` and `journalctl -u pixelplus-firstboot`.
+Validate a file on your PC: `python3 image/firstboot/firstboot.py check pixelplus.txt`.
+
+**Raspberry Pi Imager compatibility.** Current Raspberry Pi OS uses two customisation
+formats: Bookworm images use `firstrun.sh` (Imager adds
+`systemd.run=/boot/firmware/firstrun.sh … systemd.unit=kernel-command-line.target` to
+`cmdline.txt`; the script runs in its own boot and reboots), Trixie images use cloud-init
+(`user-data`, `network-config`, `meta-data` on the boot partition, `init_format:
+cloudinit-rpi`). PixelPlus keeps both mechanisms intact: it never edits `cmdline.txt` at
+runtime, keeps cloud-init and `userconf-pi`, orders its first-boot unit after them, and
+treats empty `pixelplus.txt` values as "leave alone", so Imager's hostname, Wi-Fi (a
+netplan-generated NetworkManager profile, which the hotspot logic counts as a known
+network), user and SSH survive. The os_list entries advertise `cloudinit-rpi` (Trixie)
+and `systemd` (Bookworm) so Imager uses the right format.
+
+### Setup hotspot (image/netwatch)
+
+`pixelplus-netwatch.service` (root, standalone Python, stdlib only):
+
+* **Boot:** online (any Ethernet/Wi-Fi device connected) → nothing to do. Otherwise, after
+  `hotspot_timeout` (75 s; 25 s when no Wi-Fi profile exists at all) and with no Ethernet
+  → hotspot. **Runtime:** offline for 5 min → hotspot.
+* **Hotspot:** NetworkManager AP profile `pixelplus-hotspot`, SSID `PixelPlus-XXXX` (last 4
+  hex digits of the Wi-Fi MAC), WPA2 `pixelplus` by default (or open), 2.4 GHz channel 6,
+  `ipv4.method=shared` at 10.42.0.1/24. NM's dnsmasq gets
+  `/etc/NetworkManager/dnsmasq-shared.d/pixelplus-portal.conf`: every DNS name → 10.42.0.1
+  and DHCP option 114 (RFC 8910 captive-portal URL). An nftables table redirects TCP 80
+  from the hotspot interface to the portal on 10.42.0.1:8099 and rejects 443 (so phones
+  fall back to HTTP probes quickly); pixelplusd keeps port 80 everywhere else.
+* **Portal** (`portal.py` + `portal/index.html`): Apple/Android/Windows/Firefox probe URLs
+  and foreign hosts get a 302 to `http://10.42.0.1/`; API `GET /api/status`,
+  `GET /api/scan[?rescan=1]` (scan cached before the AP starts – most Pi radios can't scan
+  in AP mode), `POST /api/connect {ssid,password,hidden,country}`, `POST /api/stay`.
+* **Connect:** reply first, then drop the AP, write profile `pixelplus-portal-<ssid>`
+  (WPA3-only networks get `key-mgmt=sae`), `nmcli connection up` (45 s). Failure →
+  profile removed, hotspot back with the error shown on the page.
+* **Retry:** every 5 min while no phone is associated, stop the AP for ~45 s to let
+  NetworkManager rejoin known networks (router came back after a power cut).
+* **Ethernet** plugged in → hotspot off.
+* Status for the daemon/UI: `/run/pixelplus/netwatch.json`
+  (`{state, hotspotSsid, hotspotSecured, portalUrl, lastError, lastJoined, updatedAt}`).
+
+Try the portal page on your PC with fake data:
+
+```sh
+python3 image/netwatch/netwatch.py --portal-only 127.0.0.1:8099   # open http://127.0.0.1:8099
+```
+
+### Testing
+
+```sh
+python3 -m pytest image/tests          # parser, scrubbing, keyfiles, firstboot (sandboxed), portal, state machine, os_list
+RPI_IMAGER_SCHEMA=/path/to/rpi-imager/doc/json-schema/os-list-schema.json python3 -m pytest image/tests/test_os_list.py
+shellcheck image/*.sh image/stage-pixelplus/*/*.sh packaging/*.sh packaging/bin/*
+node packaging/tests/polkit-rules.test.js
+systemd-analyze verify packaging/systemd/*
+```
+
+Nothing in `image/` can boot a real Pi in CI. Before a release, flash the image and check:
+first boot with only `pixelplus.txt` Wi-Fi; with Raspberry Pi Imager 2 customisation
+(Trixie and Bookworm images); no network → hotspot → portal on iPhone and Android →
+join; wrong password → hotspot returns with the error; Ethernet only; board detection +
+single reboot on each board; `pixelplus.txt` edit while running.
+
+## Docker image
+
+```sh
+docker build -f docker/Dockerfile -t pixelplus .                          # full: + TTS venv + games
+docker build -f docker/Dockerfile --build-arg VARIANT=slim -t pixelplus:slim .
+docker compose -f docker/docker-compose.yml up -d
+```
+
+Multi-stage: `node:22` builds `web/`, `rust:1-bookworm` builds `pixelplusd` + `pixelplus`,
+the runtime is `debian:bookworm-slim` with ffmpeg/alsa, user `pixelplus` (uid 1000,
+`cap_net_bind_service` file capability for port 80), `tini` as PID 1,
+`PIXELPLUS_OUTPUT=none`, `PIXELPLUS_BOARD=virtual`, volume `/var/lib/pixelplus`, and a
+healthcheck on `/api/v1/system` (200 or 401 = alive). The compose file uses host networking
+(UDP broadcast + mDNS) and runs TTS/games as optional profiles from the same image
+(`games` shares the daemon's IPC namespace for the `/dev/shm` overlay buffers).
+`docker/Dockerfile.dockerignore` keeps the build context small. Multi-arch
+(amd64 + arm64) images are pushed to `ghcr.io/<owner>/pixelplus` by the release workflow.
+
+## PixelPlus Imager
+
+```sh
+cd imager
+pnpm install
+pnpm dev                    # UI only, in a browser, with a mock backend (nothing is written)
+pnpm tauri dev              # the real app
+pnpm tauri build            # installers for this OS (src-tauri/target/release/bundle/)
+cargo test -p pixelplus-imager-core     # core logic, no GUI deps
+```
+
+* `imager/core` (`pixelplus-imager-core`, no Tauri): settings validation + rendering into
+  the image's own `pixelplus.txt` (golden file shared with the Python parser:
+  `image/tests/fixtures/imager-rendered.txt`; regenerate with `UPDATE_GOLDEN=1`),
+  MBR + FAT32 access via the `fatfs` crate (no mounting), streaming `.img.xz`
+  decompression (`lzma-rs`, pure Rust), SHA-256 read-back verification, safe drive
+  listing (Linux `lsblk`, macOS `diskutil`, Windows `Get-Disk`; never system/boot disks,
+  never >1 TB unless `PIXELPLUS_IMAGER_ALLOW_LARGE=1`), per-OS raw device access, GitHub
+  release + Raspberry Pi Imager JSON parsing. It also builds `pixelplus-imager-cli`
+  (`list`, `customize IMAGE.img SETTINGS.json`, `write JOB.json`).
+* **Order of operations:** stream-write the image → flush caches and verify by reading back
+  → write `pixelplus.txt` into the FAT boot partition *on the card* through the same raw
+  handle (sector-aligned adapter) → sync/eject. (Injecting after verification keeps the
+  verification comparable to the published image checksum.)
+* **Privileges:** the app re-runs itself as a helper (`pixelplus-imager --helper write
+  JOB.json --progress FILE`) with admin rights: Linux `pkexec` (the AppImage file itself
+  via `$APPIMAGE`, since root cannot read the user's FUSE mount; the .deb/.rpm ship a
+  polkit action for a clear prompt), macOS `osascript … with administrator privileges`
+  (writes `/dev/rdiskN`), Windows `requireAdministrator` manifest (the app starts elevated;
+  volumes are locked and dismounted before `\\.\PhysicalDriveN` is written). The job file
+  (contains the Wi-Fi password) is 0600 in a private temp dir and deleted by the helper as
+  soon as it is read; progress is a JSON-lines file; cancel = create `<progress>.cancel`.
+* Releases: `tauri-apps/tauri-action` builds Windows (.msi/NSIS), macOS (universal .dmg)
+  and Linux (.AppImage/.deb/.rpm). Unsigned builds work but trigger SmartScreen /
+  Gatekeeper warnings; add Apple/Windows signing secrets to the release workflow for
+  public releases.
+
+## CI
+
+`.github/workflows/ci.yml`: Rust fmt/clippy/test + aarch64 cross build; web check/test/build;
+Python tests for `image/`, `games/`, `tts/`; shellcheck, `systemd-analyze verify`, polkit
+rule test, overlay compile; Imager core tests on Linux/macOS/Windows and the Tauri app
+check; Docker build.
+
+`.github/workflows/release.yml` (tag `v*`): `.deb` for amd64/arm64, SD images (Trixie,
+Bookworm) on native arm64 runners, `pixelplus-imager.json`, multi-arch Docker image to
+GHCR, Imager installers, all attached to a draft GitHub release.

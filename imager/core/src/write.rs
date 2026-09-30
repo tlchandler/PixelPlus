@@ -16,6 +16,8 @@ pub const CHUNK: usize = 4 << 20;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
+    /// Downloading the image (GUI only).
+    Download,
     Prepare,
     Write,
     Verify,

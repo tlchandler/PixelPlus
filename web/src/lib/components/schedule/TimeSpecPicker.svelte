@@ -4,7 +4,11 @@
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import { Clock, Sunset, Sunrise } from '@lucide/svelte';
 
-	let { value = $bindable(), location, label }: { value: TimeSpec; location: Location; label: string } = $props();
+	let {
+		value = $bindable(),
+		location,
+		label
+	}: { value: TimeSpec; location: Location; label: string } = $props();
 
 	let kind = $state(value.kind);
 	let clock = $state(value.kind === 'clock' ? value.time : '18:00');
@@ -12,7 +16,8 @@
 	let dir = $state<'after' | 'before'>(value.kind !== 'clock' && value.offsetMin < 0 ? 'before' : 'after');
 
 	function emit() {
-		value = kind === 'clock' ? { kind, time: clock } : { kind, offsetMin: dir === 'before' ? -offset : offset };
+		value =
+			kind === 'clock' ? { kind, time: clock } : { kind, offsetMin: dir === 'before' ? -offset : offset };
 	}
 
 	const today = $derived.by(() => {
@@ -38,7 +43,16 @@
 	{:else}
 		<div class="row">
 			<div class="input-group" style="width:110px">
-				<input class="input num" type="number" min="0" max="240" step="5" bind:value={offset} oninput={emit} aria-label="Minutes" />
+				<input
+					class="input num"
+					type="number"
+					min="0"
+					max="240"
+					step="5"
+					bind:value={offset}
+					oninput={emit}
+					aria-label="Minutes"
+				/>
 				<span class="suffix">min</span>
 			</div>
 			<select class="select" style="width:auto" bind:value={dir} onchange={emit} aria-label="Before or after">

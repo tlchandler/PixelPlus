@@ -3,7 +3,6 @@
 
 use pixelplus_core::model::BoardKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::OnceLock;
 
 /// Non-loopback IPv4 addresses and their subnet broadcast addresses.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -82,68 +81,14 @@ pub fn title_case(s: &str) -> String {
         .join(" ")
 }
 
-/// What this machine is.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Hardware {
-    pub board: BoardKind,
-    pub board_rev: Option<String>,
-    pub pi_model: Option<String>,
+/// Board as chosen in the setup wizard or detected (shared with `GET /system`).
+pub fn local_board(state: &crate::state::AppState) -> (BoardKind, Option<String>) {
+    crate::services::system::effective_board(state)
 }
 
-static HARDWARE: OnceLock<Hardware> = OnceLock::new();
-
-/// Detected hardware (EEPROM + I²C probe on a Pi; `virtual` elsewhere).
-/// The first call may block briefly (I²C); later calls are free.
-pub fn hardware() -> &'static Hardware {
-    HARDWARE.get_or_init(detect)
-}
-
-fn detect() -> Hardware {
-    let pi = pixelplus_hw::board::read_pi_info();
-    let pi_model = pi.as_ref().map(|p| p.model.clone());
-    if pi.is_none() {
-        return Hardware {
-            board: BoardKind::Virtual,
-            board_rev: None,
-            pi_model,
-        };
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(mut bus) = pixelplus_hw::LinuxI2c::open(1) {
-            let mut eeprom = pixelplus_hw::eeprom::SysfsEeprom::open(1, 0x50).ok();
-            let det = pixelplus_hw::board::detect(
-                &mut bus,
-                eeprom.as_mut().map(|e| e as &mut dyn pixelplus_hw::EepromStore),
-            );
-            if let Some(board) = det.board.or(det.suggested) {
-                return Hardware {
-                    board,
-                    board_rev: det.rev,
-                    pi_model,
-                };
-            }
-        }
-    }
-    Hardware {
-        board: BoardKind::BarePi,
-        board_rev: None,
-        pi_model,
-    }
-}
-
-/// Board as configured (wizard) or detected.
-pub fn local_board(identity: &crate::node::NodeIdentity) -> (BoardKind, Option<String>) {
-    match identity.board {
-        Some(b) => (b, identity.board_rev.clone().or_else(|| {
-            let hw = hardware();
-            (hw.board == b).then(|| hw.board_rev.clone()).flatten()
-        })),
-        None => {
-            let hw = hardware();
-            (hw.board, hw.board_rev.clone())
-        }
-    }
+/// Raspberry Pi model string, if running on a Pi (cached detection).
+pub fn pi_model() -> Option<String> {
+    crate::services::system::detection().1.map(|p| p.model)
 }
 
 #[cfg(test)]

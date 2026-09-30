@@ -80,11 +80,19 @@ export function sortable(node: HTMLElement, opts: SortableOpts) {
 		if (e.key === 'ArrowUp' && i > 0) {
 			e.preventDefault();
 			o.onsort(i, i - 1);
-			requestAnimationFrame(() => (node.querySelector(`[data-sort-index="${i - 1}"] ${o.handle ?? '.drag-handle'}`) as HTMLElement)?.focus());
+			requestAnimationFrame(() =>
+				(
+					node.querySelector(`[data-sort-index="${i - 1}"] ${o.handle ?? '.drag-handle'}`) as HTMLElement
+				)?.focus()
+			);
 		} else if (e.key === 'ArrowDown' && i < n - 1) {
 			e.preventDefault();
 			o.onsort(i, i + 1);
-			requestAnimationFrame(() => (node.querySelector(`[data-sort-index="${i + 1}"] ${o.handle ?? '.drag-handle'}`) as HTMLElement)?.focus());
+			requestAnimationFrame(() =>
+				(
+					node.querySelector(`[data-sort-index="${i + 1}"] ${o.handle ?? '.drag-handle'}`) as HTMLElement
+				)?.focus()
+			);
 		}
 	}
 

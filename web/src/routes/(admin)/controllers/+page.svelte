@@ -62,7 +62,12 @@
 		scanning = true;
 		try {
 			discovered = await api.discovered();
-			if (manual) toasts.info(discovered.length ? `Found ${discovered.length} new controller${discovered.length > 1 ? 's' : ''}` : 'No new controllers on the network');
+			if (manual)
+				toasts.info(
+					discovered.length
+						? `Found ${discovered.length} new controller${discovered.length > 1 ? 's' : ''}`
+						: 'No new controllers on the network'
+				);
 		} catch {
 			/* ignore */
 		} finally {
@@ -85,7 +90,11 @@
 	}
 
 	function jacksOf(n: Node): { jack: number | null; outputs: number[] }[] {
-		if (n.board === 'difftxlarge') return Array.from({ length: 15 }, (_, j) => ({ jack: j + 1, outputs: [1, 2, 3, 4].map((p) => j * 4 + p) }));
+		if (n.board === 'difftxlarge')
+			return Array.from({ length: 15 }, (_, j) => ({
+				jack: j + 1,
+				outputs: [1, 2, 3, 4].map((p) => j * 4 + p)
+			}));
 		if (n.board === 'difftx') return [{ jack: 1, outputs: [1, 2, 3, 4] }];
 		if (n.board === 'diffsmart') return [{ jack: null, outputs: [1, 2, 3, 4] }];
 		return [];
@@ -141,27 +150,57 @@
 		rxModal = false;
 	}
 	async function deleteReceiver(r: Receiver) {
-		if (!(await confirm({ title: `Remove ${r.name} receiver?`, message: 'Props stay wired to the same ports; they just won’t show the receiver name.', confirmLabel: 'Remove', danger: true }))) return;
+		if (
+			!(await confirm({
+				title: `Remove ${r.name} receiver?`,
+				message: 'Props stay wired to the same ports; they just won’t show the receiver name.',
+				confirmLabel: 'Remove',
+				danger: true
+			}))
+		)
+			return;
 		const copy = structuredClone($state.snapshot(r) as Receiver);
 		await app.mutate(() => api.receivers.remove(r.id));
 		rxModal = false;
-		toasts.success(`Removed ${r.name}`, { label: 'Undo', run: () => app.mutate(() => api.receivers.create(copy)) });
+		toasts.success(`Removed ${r.name}`, {
+			label: 'Undo',
+			run: () => app.mutate(() => api.receivers.create(copy))
+		});
 	}
 	async function doRename(e: SubmitEvent) {
 		e.preventDefault();
 		if (!renameNode) return;
-		await app.mutate(() => api.nodes.update(renameNode!.id, { name: renameValue.trim() }), { success: 'Renamed' });
+		await app.mutate(() => api.nodes.update(renameNode!.id, { name: renameValue.trim() }), {
+			success: 'Renamed'
+		});
 		renameNode = null;
 	}
 	async function removeNode(n: Node) {
-		if (!(await confirm({ title: `Release ${n.name}?`, message: 'It stops following this show and goes back to “waiting to be adopted”. Props wired to it stay in your show but won’t light.', confirmLabel: 'Release controller', danger: true }))) return;
+		if (
+			!(await confirm({
+				title: `Release ${n.name}?`,
+				message:
+					'It stops following this show and goes back to “waiting to be adopted”. Props wired to it stay in your show but won’t light.',
+				confirmLabel: 'Release controller',
+				danger: true
+			}))
+		)
+			return;
 		await app.mutate(() => api.nodes.remove(n.id), { success: `${n.name} released` });
 	}
 	async function identify(n: Node) {
 		await api.identifyNode(n.id).catch((e) => toasts.error('Identify failed', e.message));
 	}
 	async function writeEeprom() {
-		if (!(await confirm({ title: 'Write board EEPROM?', message: `This stores “${BOARDS[eepromBoard].name} rev ${eepromRev}” on the board’s memory chip. Only do this if the board was detected wrongly.`, confirmLabel: 'Write EEPROM', danger: true }))) return;
+		if (
+			!(await confirm({
+				title: 'Write board EEPROM?',
+				message: `This stores “${BOARDS[eepromBoard].name} rev ${eepromRev}” on the board’s memory chip. Only do this if the board was detected wrongly.`,
+				confirmLabel: 'Write EEPROM',
+				danger: true
+			}))
+		)
+			return;
 		try {
 			await api.writeEeprom(eepromBoard, eepromRev);
 			toasts.success('EEPROM written — reboot to apply');
@@ -175,9 +214,14 @@
 </script>
 
 <div class="page">
-	<PageHeader title="Controllers" subtitle="Set everything up here on the leader — followers receive their settings and sequences automatically.">
+	<PageHeader
+		title="Controllers"
+		subtitle="Set everything up here on the leader — followers receive their settings and sequences automatically."
+	>
 		{#snippet actions()}
-			<button class="btn" onclick={() => scan(true)} disabled={scanning}><span class:spin={scanning} class="ic"><RefreshCw size={16} /></span> Scan network</button>
+			<button class="btn" onclick={() => scan(true)} disabled={scanning}
+				><span class:spin={scanning} class="ic"><RefreshCw size={16} /></span> Scan network</button
+			>
 		{/snippet}
 	</PageHeader>
 
@@ -187,7 +231,9 @@
 				<span class="radar"><Radar size={20} /></span>
 				<div class="grow">
 					<h2>New controllers found</h2>
-					<p class="muted small">These PixelPlus controllers are on your network and waiting to join a show.</p>
+					<p class="muted small">
+						These PixelPlus controllers are on your network and waiting to join a show.
+					</p>
 				</div>
 			</div>
 			{#each discovered as d (d.id)}
@@ -195,9 +241,18 @@
 					<div class="mini-board"><BoardDiagram board={d.board} compact /></div>
 					<div class="grow">
 						<strong>{d.name}</strong>
-						<div class="faint small">{BOARDS[d.board]?.name ?? d.board}{d.boardRev ? ` · rev ${d.boardRev}` : ''} · {d.ip ?? 'unknown address'}{d.pi ? ` · ${d.pi.replace(' Rev 1.0', '')}` : ''}</div>
+						<div class="faint small">
+							{BOARDS[d.board]?.name ?? d.board}{d.boardRev ? ` · rev ${d.boardRev}` : ''} · {d.ip ??
+								'unknown address'}{d.pi ? ` · ${d.pi.replace(' Rev 1.0', '')}` : ''}
+						</div>
 					</div>
-					<button class="btn primary" onclick={() => { adopting = d; adoptName = ''; }}><Plus size={16} /> Adopt</button>
+					<button
+						class="btn primary"
+						onclick={() => {
+							adopting = d;
+							adoptName = '';
+						}}><Plus size={16} /> Adopt</button
+					>
 				</div>
 			{/each}
 		</section>
@@ -211,45 +266,101 @@
 			{@const usage = nodeUsage(show, n)}
 			{@const grp = currentJack(n)}
 			{@const rx = rxOn(n, grp?.jack ?? null)}
-			{@const sensors = app.sensors.filter((s) => (s.nodeId ?? show.nodes.find((x) => x.role === 'leader')?.id) === n.id)}
+			{@const sensors = app.sensors.filter(
+				(s) => (s.nodeId ?? show.nodes.find((x) => x.role === 'leader')?.id) === n.id
+			)}
 			<section class="node card" id={n.id}>
 				<header class="nhead">
 					<span class="icon-tile {n.role === 'leader' ? 'accent' : 'blue'}"><Cpu size={20} /></span>
 					<div class="grow">
 						<div class="row wrap">
 							<h2>{n.name}</h2>
-							<span class="badge {n.role === 'leader' ? 'accent' : 'blue'}">{n.role === 'leader' ? 'Leader' : 'Follower'}</span>
+							<span class="badge {n.role === 'leader' ? 'accent' : 'blue'}"
+								>{n.role === 'leader' ? 'Leader' : 'Follower'}</span
+							>
 							{#if live}
-								<span class="badge {live.online ? (live.syncState === 'syncing' ? 'accent' : 'green') : 'red'}">
+								<span
+									class="badge {live.online ? (live.syncState === 'syncing' ? 'accent' : 'green') : 'red'}"
+								>
 									<span class="dot"></span>
-									{#if !live.online}Offline · last seen {fmtRelative(live.lastSeen)}{:else if n.role === 'leader'}Online{:else if live.syncState === 'syncing'}Syncing files {live.files.total - live.files.pending}/{live.files.total}{:else}In sync · ±{live.syncOffsetMs.toFixed(1)} ms{/if}
+									{#if !live.online}Offline · last seen {fmtRelative(
+											live.lastSeen
+										)}{:else if n.role === 'leader'}Online{:else if live.syncState === 'syncing'}Syncing files {live
+											.files.total - live.files.pending}/{live.files.total}{:else}In sync · ±{live.syncOffsetMs.toFixed(
+											1
+										)} ms{/if}
 								</span>
 							{/if}
 						</div>
-						<div class="faint small">{BOARDS[n.board].name}{n.boardRev ? ` · rev ${n.boardRev}` : ''} · {n.hostname}.local{n.piModel ? ` · ${n.piModel.replace(/ Rev [\d.]+$/, '')}` : ''}</div>
+						<div class="faint small">
+							{BOARDS[n.board].name}{n.boardRev ? ` · rev ${n.boardRev}` : ''} · {n.hostname}.local{n.piModel
+								? ` · ${n.piModel.replace(/ Rev [\d.]+$/, '')}`
+								: ''}
+						</div>
 					</div>
 					<div class="nact">
-						<button class="btn sm" onclick={() => identify(n)} title="Blink the status light so you can find this controller"><Lightbulb size={14} /> Identify</button>
-						<button class="btn sm ghost icon" onclick={() => { renameNode = n; renameValue = n.name; }} aria-label="Rename {n.name}"><Pencil size={14} /></button>
-						{#if n.role === 'follower'}<button class="btn sm ghost icon" onclick={() => removeNode(n)} aria-label="Release {n.name}"><Trash2 size={14} /></button>{/if}
+						<button
+							class="btn sm"
+							onclick={() => identify(n)}
+							title="Blink the status light so you can find this controller"
+							><Lightbulb size={14} /> Identify</button
+						>
+						<button
+							class="btn sm ghost icon"
+							onclick={() => {
+								renameNode = n;
+								renameValue = n.name;
+							}}
+							aria-label="Rename {n.name}"><Pencil size={14} /></button
+						>
+						{#if n.role === 'follower'}<button
+								class="btn sm ghost icon"
+								onclick={() => removeNode(n)}
+								aria-label="Release {n.name}"><Trash2 size={14} /></button
+							>{/if}
 					</div>
 				</header>
 
 				{#if needsPort3Warning(n)}
-					<div class="notice warn nwarn"><TriangleAlert size={18} class="ico" /><div><strong>Rev D board — port 3 needs a special lead.</strong> This board’s port 3 pair is reversed. Use a short patch cable with <strong>pins 4 and 5 swapped</strong> at one end (blue and white/blue) for anything on port 3. Rev E boards don’t need this.</div></div>
+					<div class="notice warn nwarn">
+						<TriangleAlert size={18} class="ico" />
+						<div>
+							<strong>Rev D board — port 3 needs a special lead.</strong> This board’s port 3 pair is
+							reversed. Use a short patch cable with <strong>pins 4 and 5 swapped</strong> at one end (blue and
+							white/blue) for anything on port 3. Rev E boards don’t need this.
+						</div>
+					</div>
 				{/if}
 				{#if n.board === 'diffsmart'}
-					<div class="notice info nwarn"><Info size={18} /><div>Make sure switch <strong>SW1</strong> on the Smart Receiver is set to <strong>PI</strong>. In RX mode the board ignores PixelPlus and acts as a plain receiver.</div></div>
+					<div class="notice info nwarn">
+						<Info size={18} />
+						<div>
+							Make sure switch <strong>SW1</strong> on the Smart Receiver is set to <strong>PI</strong>. In RX
+							mode the board ignores PixelPlus and acts as a plain receiver.
+						</div>
+					</div>
 				{/if}
 
 				{#if n.outputs.length}
 					<div class="nbody">
 						<div class="diagram">
-							<BoardDiagram board={n.board} rev={n.boardRev} portPixels={portPixels(n)} receivers={rxNames(n)} selectedJack={grp?.jack ?? null} onjack={(j) => (selJack = { ...selJack, [n.id]: j })} warnPort3={needsPort3Warning(n)} />
+							<BoardDiagram
+								board={n.board}
+								rev={n.boardRev}
+								portPixels={portPixels(n)}
+								receivers={rxNames(n)}
+								selectedJack={grp?.jack ?? null}
+								onjack={(j) => (selJack = { ...selJack, [n.id]: j })}
+								warnPort3={needsPort3Warning(n)}
+							/>
 							<div class="legend">
-								<span><i class="lg on"></i> In use</span><span><i class="lg"></i> Free</span><span><i class="lg bad"></i> Over {MAX_PIXELS_PER_OUTPUT} px</span>
+								<span><i class="lg on"></i> In use</span><span><i class="lg"></i> Free</span><span
+									><i class="lg bad"></i> Over {MAX_PIXELS_PER_OUTPUT} px</span
+								>
 								<span class="grow"></span>
-								<span class="num">{usage.used} of {n.outputs.length} outputs · {usage.pixels.toLocaleString()} px</span>
+								<span class="num"
+									>{usage.used} of {n.outputs.length} outputs · {usage.pixels.toLocaleString()} px</span
+								>
 							</div>
 						</div>
 
@@ -257,18 +368,32 @@
 							<div class="jack">
 								<div class="jhead">
 									<div class="grow">
-										<div class="eyebrow">{grp.jack != null && n.board === 'difftxlarge' ? `Jack J${grp.jack}` : n.board === 'diffsmart' ? 'Outputs' : 'Network jack'}</div>
+										<div class="eyebrow">
+											{grp.jack != null && n.board === 'difftxlarge'
+												? `Jack J${grp.jack}`
+												: n.board === 'diffsmart'
+													? 'Outputs'
+													: 'Network jack'}
+										</div>
 										{#if rx}
 											<div class="rxname"><Radio size={15} /> {rx.name} receiver</div>
-											<div class="faint tiny">{RECEIVERS[rx.kind].name}{rx.location ? ` · ${rx.location}` : ''}{rx.fuseAmps ? ` · ${rx.fuseAmps} A fuses` : ''}</div>
+											<div class="faint tiny">
+												{RECEIVERS[rx.kind].name}{rx.location ? ` · ${rx.location}` : ''}{rx.fuseAmps
+													? ` · ${rx.fuseAmps} A fuses`
+													: ''}
+											</div>
 										{:else if grp.jack != null}
 											<div class="rxname faint">No receiver</div>
 										{/if}
 									</div>
 									{#if rx}
-										<button class="btn sm ghost" onclick={() => editReceiver(rx)}><Pencil size={14} /> Edit</button>
+										<button class="btn sm ghost" onclick={() => editReceiver(rx)}
+											><Pencil size={14} /> Edit</button
+										>
 									{:else if grp.jack != null}
-										<button class="btn sm" onclick={() => newReceiver(n, grp.jack!)}><Plus size={14} /> Add receiver</button>
+										<button class="btn sm" onclick={() => newReceiver(n, grp.jack!)}
+											><Plus size={14} /> Add receiver</button
+										>
 									{/if}
 								</div>
 								<div class="ports">
@@ -279,36 +404,94 @@
 										{@const key = n.id + ':' + oi}
 										{#if o}
 											<div class="port" class:empty={!px} class:off={!o.enabled}>
-												<button class="prow" onclick={() => (editOut = editOut === key ? null : key)} aria-expanded={editOut === key}>
+												<button
+													class="prow"
+													onclick={() => (editOut = editOut === key ? null : key)}
+													aria-expanded={editOut === key}
+												>
 													<span class="pnum">{rx ? `Port ${k + 1}` : outputLabel(n.board, oi)}</span>
 													<span class="grow pprops ellipsis">
-														{#if chain.length}{chain.map((c) => c.prop.name).join(' → ')}{:else}<span class="faint">Nothing plugged in</span>{/if}
+														{#if chain.length}{chain.map((c) => c.prop.name).join(' → ')}{:else}<span
+																class="faint">Nothing plugged in</span
+															>{/if}
 													</span>
-													{#if needsPort3Warning(n) && k === 2}<TriangleAlert size={14} class="warn-ic" />{/if}
-													<span class="num small {px > MAX_PIXELS_PER_OUTPUT ? 'bad' : 'faint'}">{px ? `${px} px` : ''}</span>
-													<span class="faint tiny co">{o.colorOrder}{o.brightness < 100 ? ` · ${o.brightness}%` : ''}</span>
+													{#if needsPort3Warning(n) && k === 2}<TriangleAlert
+															size={14}
+															class="warn-ic"
+														/>{/if}
+													<span class="num small {px > MAX_PIXELS_PER_OUTPUT ? 'bad' : 'faint'}"
+														>{px ? `${px} px` : ''}</span
+													>
+													<span class="faint tiny co"
+														>{o.colorOrder}{o.brightness < 100 ? ` · ${o.brightness}%` : ''}</span
+													>
 													<ChevronDown size={15} class="chev {editOut === key ? 'open' : ''}" />
 												</button>
 												{#if editOut === key}
 													<div class="oedit" transition:slide={{ duration: 160 }}>
-														<label class="field"><span class="label">Color order</span>
-															<select class="select sm" value={o.colorOrder} onchange={(e) => saveOutput(n, o, { colorOrder: (e.target as HTMLSelectElement).value as OutputConfig['colorOrder'] })}>
+														<label class="field"
+															><span class="label">Color order</span>
+															<select
+																class="select sm"
+																value={o.colorOrder}
+																onchange={(e) =>
+																	saveOutput(n, o, {
+																		colorOrder: (e.target as HTMLSelectElement)
+																			.value as OutputConfig['colorOrder']
+																	})}
+															>
 																{#each COLOR_ORDERS as c (c)}<option value={c}>{c}</option>{/each}
 															</select>
 														</label>
-														<label class="field"><span class="label">Brightness · {o.brightness}%</span>
-															<input type="range" class="range" min="5" max="100" step="5" value={o.brightness} style:--pct="{o.brightness}%" onchange={(e) => saveOutput(n, o, { brightness: Number((e.target as HTMLInputElement).value) })} />
+														<label class="field"
+															><span class="label">Brightness · {o.brightness}%</span>
+															<input
+																type="range"
+																class="range"
+																min="5"
+																max="100"
+																step="5"
+																value={o.brightness}
+																style:--pct="{o.brightness}%"
+																onchange={(e) =>
+																	saveOutput(n, o, {
+																		brightness: Number((e.target as HTMLInputElement).value)
+																	})}
+															/>
 														</label>
-														<label class="field"><span class="label">Gamma</span>
-															<select class="select sm" value={String(o.gamma)} onchange={(e) => saveOutput(n, o, { gamma: Number((e.target as HTMLSelectElement).value) })}>
-																<option value="1">None</option><option value="1.8">Soft 1.8</option><option value="2.2">Standard 2.2</option><option value="2.8">Strong 2.8</option>
+														<label class="field"
+															><span class="label">Gamma</span>
+															<select
+																class="select sm"
+																value={String(o.gamma)}
+																onchange={(e) =>
+																	saveOutput(n, o, { gamma: Number((e.target as HTMLSelectElement).value) })}
+															>
+																<option value="1">None</option><option value="1.8">Soft 1.8</option><option
+																	value="2.2">Standard 2.2</option
+																><option value="2.8">Strong 2.8</option>
 															</select>
 														</label>
-														<div class="field"><span class="label">Enabled</span><div class="row" style="height:32px"><Switch size="sm" checked={o.enabled} label="Output enabled" onchange={(v) => saveOutput(n, o, { enabled: v })} /></div></div>
+														<div class="field">
+															<span class="label">Enabled</span>
+															<div class="row" style="height:32px">
+																<Switch
+																	size="sm"
+																	checked={o.enabled}
+																	label="Output enabled"
+																	onchange={(v) => saveOutput(n, o, { enabled: v })}
+																/>
+															</div>
+														</div>
 														{#if chain.length}
 															<div class="ochain">
 																{#each chain as c (c.prop.id + c.seg.propOffset)}
-																	<a href="/props#{c.prop.id}" class="ochip">{c.prop.name} <span class="faint num">{c.seg.startPixel + 1}–{c.seg.startPixel + c.seg.pixelCount}</span></a>
+																	<a href="/props#{c.prop.id}" class="ochip"
+																		>{c.prop.name}
+																		<span class="faint num"
+																			>{c.seg.startPixel + 1}–{c.seg.startPixel + c.seg.pixelCount}</span
+																		></a
+																	>
 																{/each}
 															</div>
 														{/if}
@@ -322,24 +505,37 @@
 						{/if}
 					</div>
 				{:else}
-					<div class="card-body faint small">This controller has no pixel outputs. It runs the show, schedule and audio and drives the followers.</div>
+					<div class="card-body faint small">
+						This controller has no pixel outputs. It runs the show, schedule and audio and drives the
+						followers.
+					</div>
 				{/if}
 
 				{#if sensors.length}
 					<div class="sensors">
 						{#each sensors as s (s.id)}
 							{@const Icon = sensorIcon[s.kind]}
-							<div class="sensor"><Icon size={14} /><span class="faint small">{s.label.replace(n.name + ' ', '')}</span><strong class="num">{s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)} {s.unit}</strong></div>
+							<div class="sensor">
+								<Icon size={14} /><span class="faint small">{s.label.replace(n.name + ' ', '')}</span><strong
+									class="num"
+									>{s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)} {s.unit}</strong
+								>
+							</div>
 						{/each}
 					</div>
 				{/if}
 			</section>
 		{/each}
 
-		<div class="section-title"><h2>Receivers</h2><span class="grow"></span></div>
+		<div class="section-title">
+			<h2>Receivers</h2>
+			<span class="grow"></span>
+		</div>
 		<div class="card">
 			{#if !show.receivers.length}
-				<div class="card-body faint small">No receivers yet. Click a jack on a controller above to add the receiver plugged into it.</div>
+				<div class="card-body faint small">
+					No receivers yet. Click a jack on a controller above to add the receiver plugged into it.
+				</div>
 			{/if}
 			{#each show.receivers as r (r.id)}
 				{@const n = show.nodes.find((x) => x.id === r.nodeId)}
@@ -347,9 +543,16 @@
 					<span class="icon-tile"><Radio size={18} /></span>
 					<div class="grow">
 						<strong>{r.name}</strong>
-						<div class="faint small">{RECEIVERS[r.kind].short} · {n?.name ?? 'Unknown'}{n?.board === 'difftxlarge' ? ` › J${r.jack}` : ''}{r.location ? ` · ${r.location}` : ''}</div>
+						<div class="faint small">
+							{RECEIVERS[r.kind].short} · {n?.name ?? 'Unknown'}{n?.board === 'difftxlarge'
+								? ` › J${r.jack}`
+								: ''}{r.location ? ` · ${r.location}` : ''}
+						</div>
 					</div>
-					<span class="faint small num">{[1, 2, 3, 4].filter((p) => pixelsOnOutput(show, r.nodeId, (r.jack - 1) * 4 + p)).length}/4 ports used</span>
+					<span class="faint small num"
+						>{[1, 2, 3, 4].filter((p) => pixelsOnOutput(show, r.nodeId, (r.jack - 1) * 4 + p)).length}/4 ports
+						used</span
+					>
 					<Pencil size={14} class="faint" />
 				</button>
 			{/each}
@@ -358,52 +561,116 @@
 		<details class="adv card">
 			<summary><Settings2 size={16} /> Advanced · board identity (EEPROM)</summary>
 			<div class="card-body">
-				<p class="muted small">PixelPlus reads the board type from a small memory chip on the board. If a board was detected wrongly (or is blank), you can write the right type here. You rarely need this.</p>
-				<button class="btn sm" style="margin-top:12px" onclick={() => (eepromOpen = true)}><HardDrive size={14} /> Write board EEPROM…</button>
+				<p class="muted small">
+					PixelPlus reads the board type from a small memory chip on the board. If a board was detected
+					wrongly (or is blank), you can write the right type here. You rarely need this.
+				</p>
+				<button class="btn sm" style="margin-top:12px" onclick={() => (eepromOpen = true)}
+					><HardDrive size={14} /> Write board EEPROM…</button
+				>
 			</div>
 		</details>
 	{/if}
 </div>
 
-<Modal open={!!adopting} title="Adopt {adopting?.name}" subtitle="It will join this show and receive its settings and sequences automatically." size="sm" onclose={() => (adopting = null)}>
-	<label class="field"><span class="label">Give it a friendly name</span><input class="input" placeholder="e.g. Back Yard" bind:value={adoptName} /></label>
-	<div class="notice success small" style="margin-top:14px"><CircleCheck size={16} /><span>After adopting, wire props to its ports from the Props page. There’s nothing to set up on the controller itself.</span></div>
+<Modal
+	open={!!adopting}
+	title="Adopt {adopting?.name}"
+	subtitle="It will join this show and receive its settings and sequences automatically."
+	size="sm"
+	onclose={() => (adopting = null)}
+>
+	<label class="field"
+		><span class="label">Give it a friendly name</span><input
+			class="input"
+			placeholder="e.g. Back Yard"
+			bind:value={adoptName}
+		/></label
+	>
+	<div class="notice success small" style="margin-top:14px">
+		<CircleCheck size={16} /><span
+			>After adopting, wire props to its ports from the Props page. There’s nothing to set up on the
+			controller itself.</span
+		>
+	</div>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (adopting = null)}>Cancel</button>
-		<button class="btn primary" onclick={adopt} disabled={adoptBusy}>{adoptBusy ? 'Adopting…' : 'Adopt controller'}</button>
+		<button class="btn primary" onclick={adopt} disabled={adoptBusy}
+			>{adoptBusy ? 'Adopting…' : 'Adopt controller'}</button
+		>
 	{/snippet}
 </Modal>
 
 <Modal bind:open={rxModal} title={rxDraft.id ? `Edit ${rxDraft.name}` : 'Add a receiver'} size="sm">
 	<form id="rxform" class="col" style="gap:14px" onsubmit={saveReceiver}>
-		<label class="field"><span class="label">Name</span><input class="input" placeholder="e.g. Front Yard" bind:value={rxDraft.name} required /></label>
-		<label class="field"><span class="label">Type</span>
-			<select class="select" bind:value={rxDraft.kind} onchange={() => (rxDraft.fuseAmps = RECEIVERS[rxDraft.kind as ReceiverKind].fuse)}>
-				{#each Object.entries(RECEIVERS).filter(([k]) => k !== 'direct') as [k, v] (k)}<option value={k}>{v.name}</option>{/each}
+		<label class="field"
+			><span class="label">Name</span><input
+				class="input"
+				placeholder="e.g. Front Yard"
+				bind:value={rxDraft.name}
+				required
+			/></label
+		>
+		<label class="field"
+			><span class="label">Type</span>
+			<select
+				class="select"
+				bind:value={rxDraft.kind}
+				onchange={() => (rxDraft.fuseAmps = RECEIVERS[rxDraft.kind as ReceiverKind].fuse)}
+			>
+				{#each Object.entries(RECEIVERS).filter(([k]) => k !== 'direct') as [k, v] (k)}<option value={k}
+						>{v.name}</option
+					>{/each}
 			</select>
 		</label>
 		<div class="form-grid">
-			<label class="field"><span class="label">Controller</span>
-				<select class="select" bind:value={rxDraft.nodeId}>{#each show?.nodes.filter((x) => x.board === 'difftx' || x.board === 'difftxlarge') ?? [] as n (n.id)}<option value={n.id}>{n.name}</option>{/each}</select>
+			<label class="field"
+				><span class="label">Controller</span>
+				<select class="select" bind:value={rxDraft.nodeId}
+					>{#each show?.nodes.filter((x) => x.board === 'difftx' || x.board === 'difftxlarge') ?? [] as n (n.id)}<option
+							value={n.id}>{n.name}</option
+						>{/each}</select
+				>
 			</label>
-			<label class="field"><span class="label">Jack</span>
+			<label class="field"
+				><span class="label">Jack</span>
 				<select class="select" bind:value={rxDraft.jack}>
-					{#each Array(show?.nodes.find((x) => x.id === rxDraft.nodeId)?.board === 'difftxlarge' ? 15 : 1) as _, j (j)}<option value={j + 1}>J{j + 1}</option>{/each}
+					{#each Array(show?.nodes.find((x) => x.id === rxDraft.nodeId)?.board === 'difftxlarge' ? 15 : 1) as _, j (j)}<option
+							value={j + 1}>J{j + 1}</option
+						>{/each}
 				</select>
 			</label>
 		</div>
-		<label class="field"><span class="label">Where is it?</span><input class="input" placeholder="e.g. Behind the hedge" bind:value={rxDraft.location} /></label>
-		<label class="field"><span class="label">Fuse per port</span><div class="input-group"><input class="input" type="number" min="1" step="0.5" bind:value={rxDraft.fuseAmps} /><span class="suffix">A</span></div><span class="hint">Used to warn you when a port could draw too much power.</span></label>
+		<label class="field"
+			><span class="label">Where is it?</span><input
+				class="input"
+				placeholder="e.g. Behind the hedge"
+				bind:value={rxDraft.location}
+			/></label
+		>
+		<label class="field"
+			><span class="label">Fuse per port</span>
+			<div class="input-group">
+				<input class="input" type="number" min="1" step="0.5" bind:value={rxDraft.fuseAmps} /><span
+					class="suffix">A</span
+				>
+			</div>
+			<span class="hint">Used to warn you when a port could draw too much power.</span></label
+		>
 	</form>
 	{#snippet footer()}
-		{#if rxDraft.id}<button class="btn danger" onclick={() => deleteReceiver(rxDraft as Receiver)}><Trash2 size={14} /></button><span class="grow"></span>{/if}
+		{#if rxDraft.id}<button class="btn danger" onclick={() => deleteReceiver(rxDraft as Receiver)}
+				><Trash2 size={14} /></button
+			><span class="grow"></span>{/if}
 		<button class="btn ghost" onclick={() => (rxModal = false)}>Cancel</button>
 		<button class="btn primary" type="submit" form="rxform">{rxDraft.id ? 'Save' : 'Add receiver'}</button>
 	{/snippet}
 </Modal>
 
 <Modal open={!!renameNode} title="Rename controller" size="sm" onclose={() => (renameNode = null)}>
-	<form id="rename" onsubmit={doRename}><input class="input" bind:value={renameValue} aria-label="Controller name" /></form>
+	<form id="rename" onsubmit={doRename}>
+		<input class="input" bind:value={renameValue} aria-label="Controller name" />
+	</form>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (renameNode = null)}>Cancel</button>
 		<button class="btn primary" type="submit" form="rename" disabled={!renameValue.trim()}>Save</button>
@@ -412,11 +679,22 @@
 
 <Modal bind:open={eepromOpen} title="Write board EEPROM" size="sm">
 	<div class="col" style="gap:14px">
-		<label class="field"><span class="label">Board</span>
-			<select class="select" bind:value={eepromBoard}>{#each ['difftx', 'difftxlarge', 'diffsmart'] as b (b)}<option value={b}>{BOARDS[b as BoardKind].name}</option>{/each}</select>
+		<label class="field"
+			><span class="label">Board</span>
+			<select class="select" bind:value={eepromBoard}
+				>{#each ['difftx', 'difftxlarge', 'diffsmart'] as b (b)}<option value={b}
+						>{BOARDS[b as BoardKind].name}</option
+					>{/each}</select
+			>
 		</label>
-		<label class="field"><span class="label">Revision</span><input class="input" bind:value={eepromRev} maxlength="4" /></label>
-		<div class="notice warn small"><TriangleAlert size={16} class="ico" /><span>Writes to the leader’s board. The board must have its write-protect jumper removed.</span></div>
+		<label class="field"
+			><span class="label">Revision</span><input class="input" bind:value={eepromRev} maxlength="4" /></label
+		>
+		<div class="notice warn small">
+			<TriangleAlert size={16} class="ico" /><span
+				>Writes to the leader’s board. The board must have its write-protect jumper removed.</span
+			>
+		</div>
 	</div>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (eepromOpen = false)}>Cancel</button>
@@ -574,6 +852,9 @@
 		font-size: 12.5px;
 		width: 52px;
 		flex: 0 0 auto;
+	}
+	.prow .num {
+		white-space: nowrap;
 	}
 	.pprops {
 		font-size: 13px;

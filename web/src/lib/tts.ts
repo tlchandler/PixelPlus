@@ -18,7 +18,12 @@ export async function renderWhere(show: Show): Promise<'device' | 'browser'> {
 }
 
 /** Render lines to audio (for auditions and previews). */
-export async function renderSpeech(show: Show, lines: DjLine[], speed: number, onProgress?: (p: number) => void): Promise<Blob> {
+export async function renderSpeech(
+	show: Show,
+	lines: DjLine[],
+	speed: number,
+	onProgress?: (p: number) => void
+): Promise<Blob> {
 	const where = await renderWhere(show);
 	if (where === 'device') {
 		onProgress?.(0.2);

@@ -44,7 +44,8 @@ export function wavBlob(channels: Float32Array | Float32Array[], sampleRate: num
 /** Parse a 16-bit PCM WAV (used by tests and for round-trips). */
 export function decodeWav(buf: ArrayBuffer): { sampleRate: number; channels: Float32Array[] } {
 	const v = new DataView(buf);
-	const tag = (o: number) => String.fromCharCode(v.getUint8(o), v.getUint8(o + 1), v.getUint8(o + 2), v.getUint8(o + 3));
+	const tag = (o: number) =>
+		String.fromCharCode(v.getUint8(o), v.getUint8(o + 1), v.getUint8(o + 2), v.getUint8(o + 3));
 	if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') throw new Error('not a WAV file');
 	let o = 12;
 	let nch = 0,

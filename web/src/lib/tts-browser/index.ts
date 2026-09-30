@@ -21,13 +21,15 @@ export { encodeWav } from './wav';
 
 // WebAssembly SIMD probe (onnxruntime-web needs SIMD); bytes from wasm-feature-detect.
 const SIMD_PROBE = new Uint8Array([
-	0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11
+	0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98,
+	11
 ]);
 
 /** True when this browser can run Kokoro (WebAssembly with SIMD, fetch; WebGPU optional). */
 export async function isBrowserTtsSupported(): Promise<boolean> {
 	try {
-		if (typeof window === 'undefined' || typeof WebAssembly !== 'object' || typeof fetch !== 'function') return false;
+		if (typeof window === 'undefined' || typeof WebAssembly !== 'object' || typeof fetch !== 'function')
+			return false;
 		return WebAssembly.validate(SIMD_PROBE);
 	} catch {
 		return false;
@@ -72,7 +74,11 @@ export async function renderDialog(
 		if (dropped.length) console.warn(`line ${i + 1}: ${dropped.join(', ')} not available in the browser`);
 		return { ...l, voice: { ...v, blend, energy: v.energy as Record<string, number> } };
 	});
-	const res = await renderLines(prepared, { ...opts, onProgress: (p) => report(0.3 + 0.7 * p) }, kokoroBackend);
+	const res = await renderLines(
+		prepared,
+		{ ...opts, onProgress: (p) => report(0.3 + 0.7 * p) },
+		kokoroBackend
+	);
 	for (const w of res.warnings) console.warn(w);
 	console.debug(`[tts-browser] rendered ${(res.samples.length / res.sampleRate).toFixed(1)} s on ${device}`);
 	report(1);

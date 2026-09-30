@@ -1,6 +1,11 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	let { title, subtitle, actions, eyebrow }: { title: string; subtitle?: string; actions?: Snippet; eyebrow?: Snippet } = $props();
+	let {
+		title,
+		subtitle,
+		actions,
+		eyebrow
+	}: { title: string; subtitle?: string; actions?: Snippet; eyebrow?: Snippet } = $props();
 </script>
 
 <header class="ph">

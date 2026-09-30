@@ -39,7 +39,9 @@
 		border-radius: 99px;
 		background: var(--surface-3);
 		border: 1px solid var(--border-2);
-		transition: background 200ms var(--ease), border-color 200ms var(--ease);
+		transition:
+			background 200ms var(--ease),
+			border-color 200ms var(--ease);
 		flex: 0 0 auto;
 	}
 	.switch.sm {

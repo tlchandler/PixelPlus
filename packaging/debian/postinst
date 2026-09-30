@@ -32,6 +32,14 @@ configure)
         chmod 0600 /var/lib/pixelplus/provision.json
     fi
 
+    # DPI pixel-engine overlays (arm64 packages only): the firmware loads them from the
+    # boot partition, so copy them there (dpkg cannot own files on the FAT partition).
+    if [ -d /usr/lib/pixelplus/overlays ] && [ -d /boot/firmware/overlays ]; then
+        for f in /usr/lib/pixelplus/overlays/*.dtbo; do
+            [ -e "$f" ] && install -m 0644 "$f" /boot/firmware/overlays/
+        done
+    fi
+
     # PixelPlus SD-card images ("appliances") get the hotspot/NetworkManager tweaks.
     if [ -e /etc/pixelplus/appliance ]; then
         install -d /etc/NetworkManager/dnsmasq-shared.d /etc/NetworkManager/conf.d

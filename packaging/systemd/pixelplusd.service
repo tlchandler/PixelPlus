@@ -16,6 +16,9 @@ Environment=PIXELPLUS_TTS_URL=http://127.0.0.1:7081
 Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock
 EnvironmentFile=-/etc/default/pixelplus
 ExecStart=/usr/bin/pixelplusd
+# Park the pixel pins low (WS281x idle) whenever the daemon is not running, even after
+# a crash. The DPI overlay claims no pins; pixelplusd muxes them itself on start.
+ExecStopPost=-/usr/bin/pixelplus pins release
 Restart=always
 RestartSec=2
 TimeoutStopSec=15

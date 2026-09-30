@@ -45,7 +45,12 @@ export function planLine(
 }
 
 /** Energy over time for a hype line (lead-in at base, build into punchline, ease back for a tail). */
-export function energyCurve(phonemes: [string, string, string], duration: number, base: number, energy: number): Curve {
+export function energyCurve(
+	phonemes: [string, string, string],
+	duration: number,
+	base: number,
+	energy: number
+): Curve {
 	const total = phonemes.filter(Boolean).join(' ').length;
 	const t0 = (duration * phonemes[0].length) / total;
 	const t1 = phonemes[2] ? (duration * (phonemes[0].length + phonemes[1].length + 1)) / total : duration;

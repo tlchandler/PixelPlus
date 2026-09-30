@@ -79,7 +79,10 @@
 	function blackout() {
 		const on = !st?.blackout;
 		act(() => api.blackout(on));
-		toasts.push({ kind: on ? 'warning' : 'info', message: on ? 'Blackout — all lights off' : 'Lights restored' });
+		toasts.push({
+			kind: on ? 'warning' : 'info',
+			message: on ? 'Blackout — all lights off' : 'Lights restored'
+		});
 	}
 </script>
 
@@ -96,7 +99,8 @@
 			<div class="s ellipsis">
 				{#if st?.playlist}
 					<ListMusic size={12} />
-					{st.playlist.name} · {st.playlist.index + 1}/{st.playlist.count}{#if st.nextItem}&nbsp;· Next: {st.nextItem.name}{/if}
+					{st.playlist.name} · {st.playlist.index + 1}/{st.playlist.count}{#if st.nextItem}&nbsp;· Next: {st
+							.nextItem.name}{/if}
 				{:else if st?.state === 'effect'}
 					Live effect
 				{:else if st?.state === 'testing'}
@@ -111,12 +115,21 @@
 
 {#snippet controls(big = false)}
 	<div class="ctl" class:big>
-		<button class="cb" onclick={() => act(api.previous)} disabled={!active} aria-label="Previous"><SkipBack size={big ? 22 : 18} /></button>
+		<button class="cb" onclick={() => act(api.previous)} disabled={!active} aria-label="Previous"
+			><SkipBack size={big ? 22 : 18} /></button
+		>
 		<button class="cb main" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
-			{#if playing}<Pause size={big ? 26 : 20} fill="currentColor" />{:else}<Play size={big ? 26 : 20} fill="currentColor" />{/if}
+			{#if playing}<Pause size={big ? 26 : 20} fill="currentColor" />{:else}<Play
+					size={big ? 26 : 20}
+					fill="currentColor"
+				/>{/if}
 		</button>
-		<button class="cb" onclick={() => act(() => api.stop())} disabled={!active} aria-label="Stop"><Square size={big ? 20 : 16} fill="currentColor" /></button>
-		<button class="cb" onclick={() => act(api.next)} disabled={!active} aria-label="Next"><SkipForward size={big ? 22 : 18} /></button>
+		<button class="cb" onclick={() => act(() => api.stop())} disabled={!active} aria-label="Stop"
+			><Square size={big ? 20 : 16} fill="currentColor" /></button
+		>
+		<button class="cb" onclick={() => act(api.next)} disabled={!active} aria-label="Next"
+			><SkipForward size={big ? 22 : 18} /></button
+		>
 	</div>
 {/snippet}
 
@@ -146,16 +159,47 @@
 
 {#snippet levels()}
 	<div class="lv">
-		<button class="icon-ghost" onclick={() => { volume = volume ? 0 : 70; onVol(); }} aria-label={volume ? 'Mute' : 'Unmute'}>
+		<button
+			class="icon-ghost"
+			onclick={() => {
+				volume = volume ? 0 : 70;
+				onVol();
+			}}
+			aria-label={volume ? 'Mute' : 'Unmute'}
+		>
 			{#if volume}<Volume2 size={17} />{:else}<VolumeX size={17} />{/if}
 		</button>
-		<input type="range" class="range" min="0" max="100" bind:value={volume} oninput={onVol} style:--pct="{volume}%" aria-label="Volume" />
+		<input
+			type="range"
+			class="range"
+			min="0"
+			max="100"
+			bind:value={volume}
+			oninput={onVol}
+			style:--pct="{volume}%"
+			aria-label="Volume"
+		/>
 	</div>
 	<div class="lv">
 		<span class="icon-ghost" aria-hidden="true"><SunMedium size={17} /></span>
-		<input type="range" class="range" min="0" max="100" bind:value={brightness} oninput={onBri} style:--pct="{brightness}%" aria-label="Brightness" />
+		<input
+			type="range"
+			class="range"
+			min="0"
+			max="100"
+			bind:value={brightness}
+			oninput={onBri}
+			style:--pct="{brightness}%"
+			aria-label="Brightness"
+		/>
 	</div>
-	<button class="bo" class:on={st?.blackout} onclick={blackout} aria-pressed={!!st?.blackout} title="Blackout (B)">
+	<button
+		class="bo"
+		class:on={st?.blackout}
+		onclick={blackout}
+		aria-pressed={!!st?.blackout}
+		title="Blackout (B)"
+	>
 		<Power size={15} /> <span>Blackout</span>
 	</button>
 {/snippet}
@@ -163,7 +207,9 @@
 <div class="transport" role="region" aria-label="Player">
 	<div class="line" style:width="{pct}%"></div>
 	<div class="left">
-		<button class="np-btn" onclick={() => (expanded = true)} aria-label="Open player">{@render title()}</button>
+		<button class="np-btn" onclick={() => (expanded = true)} aria-label="Open player"
+			>{@render title()}</button
+		>
 	</div>
 	<div class="center">
 		{@render controls()}
@@ -174,14 +220,23 @@
 		<button class="cb main sm" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
 			{#if playing}<Pause size={18} fill="currentColor" />{:else}<Play size={18} fill="currentColor" />{/if}
 		</button>
-		<button class="cb" onclick={() => act(api.next)} disabled={!active} aria-label="Next"><SkipForward size={18} /></button>
+		<button class="cb" onclick={() => act(api.next)} disabled={!active} aria-label="Next"
+			><SkipForward size={18} /></button
+		>
 	</div>
 </div>
 
 {#if expanded}
-	<div class="scrim" transition:fade={{ duration: 150 }} onclick={() => (expanded = false)} aria-hidden="true"></div>
+	<div
+		class="scrim"
+		transition:fade={{ duration: 150 }}
+		onclick={() => (expanded = false)}
+		aria-hidden="true"
+	></div>
 	<div class="sheet" role="dialog" aria-label="Player" transition:fly={{ y: 400, duration: 260, opacity: 1 }}>
-		<button class="collapse" onclick={() => (expanded = false)} aria-label="Close player"><ChevronDown size={22} /></button>
+		<button class="collapse" onclick={() => (expanded = false)} aria-label="Close player"
+			><ChevronDown size={22} /></button
+		>
 		<div class="big-art" class:live={playing}><ItemIcon size={44} strokeWidth={1.5} /></div>
 		<div class="sheet-title">{@render title()}</div>
 		{@render progress()}
@@ -210,6 +265,9 @@
 	}
 	.line {
 		display: none;
+	}
+	.left {
+		min-width: 0;
 	}
 	.np-btn {
 		display: block;

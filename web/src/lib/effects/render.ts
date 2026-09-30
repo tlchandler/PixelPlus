@@ -127,7 +127,8 @@ export function renderEffect(
 			const spread = num(params, 'spread', 1);
 			const sat = num(params, 'saturation', 1);
 			const across = params.mode === 'across';
-			for (let i = 0; i < n; i++) put(i, hsv((across ? pos(i) : along(i)) * spread - t * num(params, 'speed', 0.25) * rev, sat, 1));
+			for (let i = 0; i < n; i++)
+				put(i, hsv((across ? pos(i) : along(i)) * spread - t * num(params, 'speed', 0.25) * rev, sat, 1));
 			break;
 		}
 		case 'colorwash': {
@@ -166,7 +167,11 @@ export function renderEffect(
 				const flick = hash(i, Math.floor(t * 18 * speed) + seed);
 				const h = Math.max(0, Math.min(1, (height * 1.2 - y) * (0.55 + 0.45 * flick)));
 				const hot = Math.max(0, h - 0.55) * 2;
-				put(i, [Math.min(255, base[0] * h + 255 * hot * 0.4), Math.min(255, base[1] * h * h + 200 * hot * 0.5), Math.min(255, base[2] * h + 120 * hot * 0.3)]);
+				put(i, [
+					Math.min(255, base[0] * h + 255 * hot * 0.4),
+					Math.min(255, base[1] * h * h + 200 * hot * 0.5),
+					Math.min(255, base[2] * h + 120 * hot * 0.3)
+				]);
 			}
 			break;
 		}
@@ -231,7 +236,11 @@ export function renderEffect(
 					const headRaw = (t * speed + (m * span) / count + hash(m, seed) * 7) % span;
 					const head = rev > 0 ? headRaw : n - headRaw;
 					const d = rev > 0 ? head - i : i - head;
-					if (d >= 0 && d < tail) k = Math.max(k, Math.pow(1 - d / tail, 2) * (sparkle ? 0.6 + 0.4 * hash(i, Math.floor(t * 20)) : 1));
+					if (d >= 0 && d < tail)
+						k = Math.max(
+							k,
+							Math.pow(1 - d / tail, 2) * (sparkle ? 0.6 + 0.4 * hash(i, Math.floor(t * 20)) : 1)
+						);
 				}
 				put(i, cols[0], k);
 			}
@@ -265,9 +274,30 @@ export function renderEffect(
 }
 
 const P = {
-	color: (key: string, label: string, d: string, help?: string): ParamSpec => ({ key, label, kind: 'color', default: d, help }),
-	colors: (key: string, label: string, d: string[], help?: string): ParamSpec => ({ key, label, kind: 'colors', default: d, help }),
-	num: (key: string, label: string, min: number, max: number, step: number, d: number, unit?: string, help?: string): ParamSpec => ({
+	color: (key: string, label: string, d: string, help?: string): ParamSpec => ({
+		key,
+		label,
+		kind: 'color',
+		default: d,
+		help
+	}),
+	colors: (key: string, label: string, d: string[], help?: string): ParamSpec => ({
+		key,
+		label,
+		kind: 'colors',
+		default: d,
+		help
+	}),
+	num: (
+		key: string,
+		label: string,
+		min: number,
+		max: number,
+		step: number,
+		d: number,
+		unit?: string,
+		help?: string
+	): ParamSpec => ({
 		key,
 		label,
 		kind: 'number',
@@ -279,10 +309,23 @@ const P = {
 		help
 	}),
 	bool: (key: string, label: string, d: boolean): ParamSpec => ({ key, label, kind: 'bool', default: d }),
-	sel: (key: string, label: string, options: string[], d: string, help?: string): ParamSpec => ({ key, label, kind: 'select', options, default: d, help })
+	sel: (key: string, label: string, options: string[], d: string, help?: string): ParamSpec => ({
+		key,
+		label,
+		kind: 'select',
+		options,
+		default: d,
+		help
+	})
 };
 const BRIGHT = P.num('brightness', 'Brightness', 0, 100, 1, 100, '%', 'Overall brightness of this look.');
-const DIR = P.sel('direction', 'Direction', ['forward', 'reverse'], 'forward', "Which way along the prop's pixels the pattern moves.");
+const DIR = P.sel(
+	'direction',
+	'Direction',
+	['forward', 'reverse'],
+	'forward',
+	"Which way along the prop's pixels the pattern moves."
+);
 
 /**
  * Fallback copy of the daemon's parameter schema (GET /effects/schema is authoritative),
@@ -311,14 +354,29 @@ export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
 		P.num('speed', 'Speed', 0, 5, 0.05, 0.25, 'cycles/s'),
 		P.num('spread', 'Rainbows across', 0.1, 10, 0.1, 1),
 		P.num('saturation', 'Saturation', 0, 1, 0.01, 1),
-		P.sel('mode', 'Spread', ['along', 'across'], 'along', "Along each prop's pixels, or across the whole display."),
+		P.sel(
+			'mode',
+			'Spread',
+			['along', 'across'],
+			'along',
+			"Along each prop's pixels, or across the whole display."
+		),
 		DIR,
 		BRIGHT
 	],
 	colorwash: [
 		P.colors('colors', 'Colors', ['#ff0000', '#00c000', '#0040ff']),
 		P.num('speed', 'Speed', 0, 2, 0.01, 0.05, 'cycles/s', 'Trips through the whole colour list per second.'),
-		P.num('spread', 'Spread', 0, 2, 0.05, 0, undefined, '0 = every prop the same colour; higher staggers colours across the display.'),
+		P.num(
+			'spread',
+			'Spread',
+			0,
+			2,
+			0.05,
+			0,
+			undefined,
+			'0 = every prop the same colour; higher staggers colours across the display.'
+		),
 		BRIGHT
 	],
 	candycane: [
@@ -353,9 +411,24 @@ export const DEFAULT_EFFECT_SCHEMA: EffectSchema = {
 	wave: [
 		P.colors('colors', 'Colors', ['#0020ff', '#00c8ff', '#ffffff']),
 		P.num('speed', 'Speed', 0, 5, 0.05, 0.3, 'waves/s'),
-		P.num('wavelength', 'Wave length', 0.05, 4, 0.05, 0.5, undefined, 'Length of one wave as a share of the display (or prop).'),
+		P.num(
+			'wavelength',
+			'Wave length',
+			0.05,
+			4,
+			0.05,
+			0.5,
+			undefined,
+			'Length of one wave as a share of the display (or prop).'
+		),
 		P.sel('direction', 'Direction', ['right', 'left', 'up', 'down', 'out', 'in'], 'right'),
-		P.sel('mode', 'Spread', ['across', 'along'], 'across', "Across the whole display, or along each prop's pixels."),
+		P.sel(
+			'mode',
+			'Spread',
+			['across', 'along'],
+			'across',
+			"Across the whole display, or along each prop's pixels."
+		),
 		BRIGHT
 	],
 	meteor: [

@@ -35,7 +35,13 @@
 		<div class="demo" title="Running against the in-browser demo backend">
 			<FlaskConical size={14} /> <span class="grow">Demo show</span>
 			{#if !app.mockAuto}
-				<button class="exit" onclick={() => { exitMock(); location.href = '/'; }}>Exit</button>
+				<button
+					class="exit"
+					onclick={() => {
+						exitMock();
+						location.href = '/';
+					}}>Exit</button
+				>
 			{/if}
 		</div>
 	{/if}
@@ -64,10 +70,20 @@
 			</a>
 		{/each}
 		<div class="tools">
-			<button class="btn ghost icon sm" onclick={() => theme.toggle()} aria-label="Switch to {theme.current === 'dark' ? 'light' : 'dark'} theme" title="Toggle theme">
+			<button
+				class="btn ghost icon sm"
+				onclick={() => theme.toggle()}
+				aria-label="Switch to {theme.current === 'dark' ? 'light' : 'dark'} theme"
+				title="Toggle theme"
+			>
 				{#if theme.current === 'dark'}<Sun size={16} />{:else}<Moon size={16} />{/if}
 			</button>
-			<button class="btn ghost icon sm" onclick={onshortcuts} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+			<button
+				class="btn ghost icon sm"
+				onclick={onshortcuts}
+				aria-label="Keyboard shortcuts"
+				title="Keyboard shortcuts (?)"
+			>
 				<Keyboard size={16} />
 			</button>
 			<span class="ver faint tiny">v{app.system?.version ?? '—'}</span>

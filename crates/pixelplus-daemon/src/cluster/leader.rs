@@ -65,9 +65,9 @@ pub async fn ensure_self_node(state: &AppState) -> anyhow::Result<()> {
     if identity.role != LocalRole::Leader {
         return Ok(());
     }
-    let (board, board_rev) = net::local_board(&identity);
+    let (board, board_rev) = net::local_board(state);
     let hostname = net::hostname();
-    let pi_model = net::hardware().pi_model.clone();
+    let pi_model = net::pi_model();
     let desired = |n: &Node| {
         n.role == NodeRole::Leader
             && n.adopted
@@ -174,7 +174,7 @@ pub fn ensure_cluster_key(state: &AppState) -> anyhow::Result<String> {
     rand::thread_rng().fill_bytes(&mut raw);
     let key = pixelplus_core::fseq::to_hex(&raw);
     let id = state.set_identity(|i| {
-        if i.cluster_key.as_deref().is_none_or(str::is_empty) {
+        if i.cluster_key.as_deref().map_or(true, str::is_empty) {
             i.cluster_key = Some(key.clone());
         }
     })?;
@@ -210,7 +210,7 @@ fn rfc3339(t: chrono::DateTime<chrono::Utc>) -> String {
 
 fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus {
     let identity = state.identity();
-    let (board, _) = net::local_board(&identity);
+    let (board, _) = net::local_board(state);
     let hostname = net::hostname();
     let follower = identity.role == LocalRole::Follower;
     let report = follower.then(|| super::follower::report(state, sh));
@@ -233,7 +233,7 @@ fn self_status(state: &AppState, sh: &Shared, node: Option<&Node>) -> NodeStatus
         files: report.as_ref().map(|r| r.files).unwrap_or_default(),
         ip: net::interfaces().ips.first().map(|i| i.to_string()),
         version: Some(super::VERSION.to_string()),
-        pi_model: net::hardware().pi_model.clone(),
+        pi_model: net::pi_model(),
         hostname,
         problem: report.and_then(|r| r.problem),
     }
@@ -658,7 +658,7 @@ pub(crate) async fn send_command(sh: &Shared, node_id: Option<&str>, mut cmd: Cl
         show.nodes
             .iter()
             .filter(|n| n.role == NodeRole::Follower && n.adopted)
-            .filter(|n| node_id.is_none_or(|id| id == n.id))
+            .filter(|n| node_id.map_or(true, |id| id == n.id))
             .map(|n| {
                 let p = member(peers.get(&n.id), &identity.id)
                     .filter(|p| p.last_seen.elapsed() < sh.settings.offline_after)
@@ -693,6 +693,7 @@ pub(crate) async fn send_command(sh: &Shared, node_id: Option<&str>, mut cmd: Cl
     futures::future::join_all(calls).await
 }
 
+#[allow(dead_code)] // called through ClusterHandle by the player engine
 pub(crate) fn forward_overlay(sh: &Shared, prop_id: &str, rgb: &[u8]) -> usize {
     let Some(state) = sh.app() else { return 0 };
     let identity = state.identity();
@@ -845,7 +846,7 @@ async fn check_health(state: &AppState, sh: &Arc<Shared>) {
             match peer.beacon.adopted_by.as_deref() {
                 // It lost its settings (reset, new SD card with the same id…): adopt it again.
                 None if peer.beacon.role != LocalRole::Leader => {
-                    if h.last_readopt.is_none_or(|t| t.elapsed() > READOPT_EVERY) {
+                    if h.last_readopt.map_or(true, |t| t.elapsed() > READOPT_EVERY) {
                         h.last_readopt = Some(Instant::now());
                         readopt.push(peer.clone());
                     }

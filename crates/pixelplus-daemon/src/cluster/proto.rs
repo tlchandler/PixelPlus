@@ -143,6 +143,7 @@ pub struct Pong {
 }
 
 /// Every JSON datagram on the cluster port.
+#[allow(clippy::large_enum_variant)] // short-lived, one per datagram
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "t", rename_all = "lowercase")]
 pub enum Msg {
@@ -274,6 +275,7 @@ pub struct OverlayFrame {
 }
 
 /// Encode an overlay frame (always authenticated).
+#[allow(dead_code)] // used by `ClusterHandle::forward_overlay`
 pub fn encode_overlay(prop_id: &str, frame_no: u32, rgb: &[u8], key: &str) -> Result<Vec<u8>, ProtoError> {
     let id = prop_id.as_bytes();
     if id.is_empty() || id.len() > 255 {

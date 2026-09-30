@@ -230,6 +230,7 @@ pub fn standalone_show(node: Node, current: &Show) -> Show {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 pub(crate) mod tests {
     use super::*;
 

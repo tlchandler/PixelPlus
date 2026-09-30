@@ -67,14 +67,28 @@
 {/snippet}
 
 {#if board === 'difftxlarge'}
-	<svg viewBox="0 0 1300 560" class="board large" role="img" aria-label="60-port transmitter board diagram with 15 jacks">
+	<svg
+		viewBox="0 0 1300 560"
+		class="board large"
+		role="img"
+		aria-label="60-port transmitter board diagram with 15 jacks"
+	>
 		<defs>
 			<linearGradient id="pcb-{uid}" x1="0" y1="0" x2="0" y2="1">
 				<stop offset="0" stop-color="#153524" />
 				<stop offset="1" stop-color="#0e2519" />
 			</linearGradient>
 		</defs>
-		<rect x="4" y="4" width="1292" height="552" rx="18" fill="url(#pcb-{uid})" stroke="#2c5a40" stroke-width="2" />
+		<rect
+			x="4"
+			y="4"
+			width="1292"
+			height="552"
+			rx="18"
+			fill="url(#pcb-{uid})"
+			stroke="#2c5a40"
+			stroke-width="2"
+		/>
 		{#each [[24, 24], [1276, 24], [24, 536], [1276, 536], [650, 536]] as [cx, cy] (cx + '-' + cy)}
 			<circle {cx} {cy} r="9" fill="#0a1a11" stroke="#3d7355" stroke-width="2" />
 		{/each}
@@ -85,13 +99,28 @@
 			{/each}
 		</g>
 		<!-- Pi footprint -->
-		<rect x="50" y="46" width="340" height="190" rx="10" fill="none" stroke="#6fa587" stroke-dasharray="6 6" opacity=".6" />
+		<rect
+			x="50"
+			y="46"
+			width="340"
+			height="190"
+			rx="10"
+			fill="none"
+			stroke="#6fa587"
+			stroke-dasharray="6 6"
+			opacity=".6"
+		/>
 		<text x="220" y="136" class="silk" text-anchor="middle">RASPBERRY PI 3B+ / 4 / 5</text>
 		<text x="220" y="164" class="silk small" text-anchor="middle">face up on standoffs</text>
 		<rect x="450" y="210" width="210" height="28" rx="3" fill="#0b0b0d" stroke="#333" />
 		{#each Array(20) as _, i (i)}<circle cx={462 + i * 9.6} cy="224" r="2.4" fill="#c9a24a" />{/each}
 		<!-- chips -->
-		{#each [720, 800, 880] as x (x)}<rect {x} y="90" width="48" height="36" rx="3" fill="#111" /><text x={x + 24} y="146" class="silk small" text-anchor="middle">LATCH</text>{/each}
+		{#each [720, 800, 880] as x (x)}<rect {x} y="90" width="48" height="36" rx="3" fill="#111" /><text
+				x={x + 24}
+				y="146"
+				class="silk small"
+				text-anchor="middle">LATCH</text
+			>{/each}
 		<!-- OLED -->
 		<rect x="1040" y="120" width="130" height="80" rx="6" fill="#050608" stroke="#3a3f46" />
 		<rect x="1050" y="130" width="110" height="52" rx="2" fill="#0b1a2a" />
@@ -101,34 +130,63 @@
 		<rect x="1150" y="30" width="96" height="44" rx="4" fill="#1b4fd6" />
 		<circle cx="1176" cy="52" r="10" fill="#c7ccd6" /><circle cx="1220" cy="52" r="10" fill="#c7ccd6" />
 		<text x="1198" y="94" class="silk" text-anchor="middle">12V IN</text>
-		<rect x="940" y="40" width="70" height="26" rx="3" fill="#2a2a2a" /><text x="975" y="84" class="silk small" text-anchor="middle">FUSE 5A</text>
-		<circle cx="880" cy="200" r="22" fill="#9aa3ad" stroke="#666" /><text x="880" y="240" class="silk small" text-anchor="middle">RTC</text>
-		<text x="760" y="215" class="silk title" text-anchor="middle">difftxlarge{rev ? ` rev ${rev}` : ''}</text>
-		<text x="760" y="248" class="silk small" text-anchor="middle">60 outputs · 15 × RJ45 differential</text>
+		<rect x="940" y="40" width="70" height="26" rx="3" fill="#2a2a2a" /><text
+			x="975"
+			y="84"
+			class="silk small"
+			text-anchor="middle">FUSE 5A</text
+		>
+		<circle cx="985" cy="176" r="20" fill="#9aa3ad" stroke="#666" /><text
+			x="985"
+			y="218"
+			class="silk small"
+			text-anchor="middle">RTC</text
+		>
+		<text x="1090" y="290" class="silk title" text-anchor="middle">difftxlarge{rev ? ` rev ${rev}` : ''}</text
+		>
+		<text x="1090" y="316" class="silk small" text-anchor="middle">60 outputs · 15 × RJ45 differential</text>
 		<!-- jacks -->
 		{#each Array(15) as _, i (i)}
 			{@render rj45(64 + i * 80, 380, i + 1)}
 			{#if receivers[i + 1] && !compact}
-				<text x={92 + i * 80} y="478" class="rx" text-anchor="middle">{receivers[i + 1].length > 8 ? receivers[i + 1].slice(0, 7) + '…' : receivers[i + 1]}</text>
+				<text x={92 + i * 80} y="478" class="rx" text-anchor="middle"
+					>{receivers[i + 1].length > 8 ? receivers[i + 1].slice(0, 7) + '…' : receivers[i + 1]}</text
+				>
 			{/if}
 		{/each}
-		<text x="650" y="516" class="silk small" text-anchor="middle">BANK 1: J1–J5 · BANK 2: J6–J10 · BANK 3: J11–J15</text>
+		<text x="650" y="516" class="silk small" text-anchor="middle"
+			>BANK 1: J1–J5 · BANK 2: J6–J10 · BANK 3: J11–J15</text
+		>
 	</svg>
 {:else if board === 'difftx'}
-	<svg viewBox="0 0 520 250" class="board" role="img" aria-label="PixelPlus pHAT board diagram">
+	<svg viewBox="0 0 520 250" class="board compact-board" role="img" aria-label="PixelPlus pHAT board diagram">
 		<defs>
 			<linearGradient id="pcb2-{uid}" x1="0" y1="0" x2="0" y2="1">
 				<stop offset="0" stop-color="#153524" />
 				<stop offset="1" stop-color="#0e2519" />
 			</linearGradient>
 		</defs>
-		<rect x="4" y="4" width="512" height="236" rx="26" fill="url(#pcb2-{uid})" stroke="#2c5a40" stroke-width="2" />
+		<rect
+			x="4"
+			y="4"
+			width="512"
+			height="236"
+			rx="26"
+			fill="url(#pcb2-{uid})"
+			stroke="#2c5a40"
+			stroke-width="2"
+		/>
 		{#each [[34, 34], [486, 34], [34, 210], [486, 210]] as [cx, cy] (cx + '-' + cy)}
 			<circle {cx} {cy} r="13" fill="#0a1a11" stroke="#c9a24a" stroke-width="3" />
 		{/each}
 		<rect x="72" y="18" width="376" height="36" rx="3" fill="#0b0b0d" />
 		{#each Array(20) as _, i (i)}
-			<circle cx={84 + i * 18.6} cy="28" r="3" fill="#c9a24a" /><circle cx={84 + i * 18.6} cy="44" r="3" fill="#c9a24a" />
+			<circle cx={84 + i * 18.6} cy="28" r="3" fill="#c9a24a" /><circle
+				cx={84 + i * 18.6}
+				cy="44"
+				r="3"
+				fill="#c9a24a"
+			/>
 		{/each}
 		<rect x="60" y="150" width="84" height="56" rx="4" fill="#1b4fd6" />
 		<circle cx="82" cy="178" r="11" fill="#c7ccd6" /><circle cx="122" cy="178" r="11" fill="#c7ccd6" />
@@ -139,15 +197,34 @@
 		{@render rj45(360, 110, 1, 110, 'Ports 1–4')}
 	</svg>
 {:else if board === 'diffsmart'}
-	<svg viewBox="0 0 560 300" class="board" role="img" aria-label="Smart receiver board diagram">
+	<svg viewBox="0 0 560 300" class="board compact-board" role="img" aria-label="Smart receiver board diagram">
 		<defs>
 			<linearGradient id="pcb3-{uid}" x1="0" y1="0" x2="0" y2="1">
 				<stop offset="0" stop-color="#153524" />
 				<stop offset="1" stop-color="#0e2519" />
 			</linearGradient>
 		</defs>
-		<rect x="4" y="4" width="552" height="292" rx="16" fill="url(#pcb3-{uid})" stroke="#2c5a40" stroke-width="2" />
-		<rect x="40" y="30" width="200" height="120" rx="8" fill="none" stroke="#6fa587" stroke-dasharray="6 6" opacity=".6" />
+		<rect
+			x="4"
+			y="4"
+			width="552"
+			height="292"
+			rx="16"
+			fill="url(#pcb3-{uid})"
+			stroke="#2c5a40"
+			stroke-width="2"
+		/>
+		<rect
+			x="40"
+			y="30"
+			width="200"
+			height="120"
+			rx="8"
+			fill="none"
+			stroke="#6fa587"
+			stroke-dasharray="6 6"
+			opacity=".6"
+		/>
 		<text x="140" y="95" class="silk" text-anchor="middle">PI ZERO 2 W</text>
 		<rect x="290" y="40" width="70" height="40" rx="4" fill="#1a1a1a" stroke="#555" />
 		<rect x="296" y="46" width="28" height="28" rx="3" fill="#F5A524" />
@@ -156,18 +233,26 @@
 		<text x="460" y="112" class="silk small" text-anchor="middle">12V IN</text>
 		{#each [1, 2, 3, 4] as o (o)}
 			<g transform="translate({60 + (o - 1) * 118} 190)">
-				<rect width="96" height="50" rx="4" fill={px(o) > 0 ? '#F5A524' : '#2f7a4a'} opacity={px(o) > 0 ? 1 : 0.85} />
+				<rect
+					width="96"
+					height="50"
+					rx="4"
+					fill={px(o) > 0 ? '#F5A524' : '#2f7a4a'}
+					opacity={px(o) > 0 ? 1 : 0.85}
+				/>
 				{#each [0, 1, 2] as k (k)}<circle cx={20 + k * 28} cy="25" r="9" fill="#c7ccd6" />{/each}
 				<text x="48" y="72" class="lbl" text-anchor="middle">Out {o}</text>
 			</g>
 		{/each}
 	</svg>
 {:else}
-	<svg viewBox="0 0 400 240" class="board" role="img" aria-label="Raspberry Pi">
+	<svg viewBox="0 0 400 240" class="board compact-board" role="img" aria-label="Raspberry Pi">
 		<rect x="40" y="30" width="320" height="180" rx="16" fill="#153524" stroke="#2c5a40" stroke-width="2" />
 		<rect x="70" y="50" width="240" height="22" rx="3" fill="#0b0b0d" />
 		<rect x="170" y="110" width="60" height="60" rx="4" fill="#191919" />
-		<text x="200" y="198" class="silk" text-anchor="middle">{board === 'virtual' ? 'VIRTUAL LEADER' : 'RASPBERRY PI'}</text>
+		<text x="200" y="198" class="silk" text-anchor="middle"
+			>{board === 'virtual' ? 'VIRTUAL LEADER' : 'RASPBERRY PI'}</text
+		>
 	</svg>
 {/if}
 
@@ -177,6 +262,10 @@
 		height: auto;
 		display: block;
 		filter: drop-shadow(0 12px 30px rgba(0, 0, 0, 0.35));
+	}
+	.compact-board {
+		max-width: 460px;
+		margin: 0 auto;
 	}
 	.silk {
 		fill: #d8e8dd;
@@ -269,7 +358,7 @@
 		filter: drop-shadow(0 0 4px #ff5a5a);
 	}
 	.led.warn {
-		stroke: #F5A524;
+		stroke: #f5a524;
 		stroke-width: 2;
 	}
 </style>

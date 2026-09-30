@@ -73,7 +73,12 @@
 		if (!show) return [];
 		const needle = q.trim().toLowerCase();
 		return show.props.filter((p) => {
-			if (needle && !p.name.toLowerCase().includes(needle) && !KIND_META[p.kind].label.toLowerCase().includes(needle)) return false;
+			if (
+				needle &&
+				!p.name.toLowerCase().includes(needle) &&
+				!KIND_META[p.kind].label.toLowerCase().includes(needle)
+			)
+				return false;
 			if (group === 'unwired' && p.segments.length) return false;
 			if (group !== 'all' && group !== 'unwired' && !p.groupIds.includes(group)) return false;
 			if (nodeF && !p.segments.some((s) => s.nodeId === nodeF)) return false;
@@ -142,9 +147,19 @@
 		e.preventDefault();
 		if (!gName.trim()) return;
 		const ids = [...selected];
-		const g = await app.mutate(() => api.groups.create({ name: gName.trim(), color: gColor, propIds: ids }), { success: `Created group ${gName.trim()}` });
+		const g = await app.mutate(() => api.groups.create({ name: gName.trim(), color: gColor, propIds: ids }), {
+			success: `Created group ${gName.trim()}`
+		});
 		if (g && ids.length)
-			await app.mutate(() => api.props.bulk(ids.map((id) => ({ op: 'update' as const, id, patch: { groupIds: [...(show!.props.find((p) => p.id === id)?.groupIds ?? []), g.id] } }))));
+			await app.mutate(() =>
+				api.props.bulk(
+					ids.map((id) => ({
+						op: 'update' as const,
+						id,
+						patch: { groupIds: [...(show!.props.find((p) => p.id === id)?.groupIds ?? []), g.id] }
+					}))
+				)
+			);
 		gName = '';
 		groupOpen = false;
 	}
@@ -157,7 +172,9 @@
 	async function applyBulk(e: SubmitEvent) {
 		e.preventDefault();
 		if (!show) return;
-		const before = show.props.filter((p) => selected.has(p.id)).map((p) => structuredClone($state.snapshot(p) as Prop));
+		const before = show.props
+			.filter((p) => selected.has(p.id))
+			.map((p) => structuredClone($state.snapshot(p) as Prop));
 		const ops = before.map((p) => {
 			const patch: Partial<Prop> = {};
 			if (bulkKind) patch.kind = bulkKind;
@@ -173,13 +190,17 @@
 			for (const gid of [bulkAddGroup, bulkRemoveGroup].filter(Boolean)) {
 				const g = show!.propGroups.find((x) => x.id === gid)!;
 				const set = new Set(g.propIds);
-				for (const p of before) gid === bulkAddGroup ? set.add(p.id) : set.delete(p.id);
+				for (const p of before) {
+					if (gid === bulkAddGroup) set.add(p.id);
+					else set.delete(p.id);
+				}
 				await api.groups.update(g.id, { ...g, propIds: [...set] });
 			}
 		});
 		toasts.success(`Updated ${before.length} props`, {
 			label: 'Undo',
-			run: () => app.mutate(() => api.props.bulk(before.map((p) => ({ op: 'update' as const, id: p.id, patch: p }))))
+			run: () =>
+				app.mutate(() => api.props.bulk(before.map((p) => ({ op: 'update' as const, id: p.id, patch: p }))))
 		});
 		bulkOpen = false;
 		bulkKind = '';
@@ -188,8 +209,18 @@
 	}
 	async function bulkDelete() {
 		if (!show) return;
-		const doomed = show.props.filter((p) => selected.has(p.id)).map((p) => structuredClone($state.snapshot(p) as Prop));
-		if (!(await confirm({ title: `Delete ${doomed.length} props?`, message: 'Their wiring is removed too. Sequences are not affected.', confirmLabel: 'Delete', danger: true }))) return;
+		const doomed = show.props
+			.filter((p) => selected.has(p.id))
+			.map((p) => structuredClone($state.snapshot(p) as Prop));
+		if (
+			!(await confirm({
+				title: `Delete ${doomed.length} props?`,
+				message: 'Their wiring is removed too. Sequences are not affected.',
+				confirmLabel: 'Delete',
+				danger: true
+			}))
+		)
+			return;
 		await app.mutate(() => api.props.bulk(doomed.map((p) => ({ op: 'delete' as const, id: p.id }))));
 		selected = new Set();
 		toasts.success(`Deleted ${doomed.length} props`, {
@@ -202,12 +233,20 @@
 	}
 	async function bulkTest() {
 		await api.testStart({ mode: 'rgbCycle', target: { propIds: [...selected] } }).catch(() => {});
-		toasts.push({ kind: 'info', message: `Testing ${selected.size} props`, action: { label: 'Stop', run: () => api.testStop().then(() => {}) } });
+		toasts.push({
+			kind: 'info',
+			message: `Testing ${selected.size} props`,
+			action: { label: 'Stop', run: () => api.testStop().then(() => {}) }
+		});
 	}
 
 	async function reorder(from: number, to: number) {
 		if (!show) return;
-		const ids = moveItem(show.props.map((p) => p.id), from, to);
+		const ids = moveItem(
+			show.props.map((p) => p.id),
+			from,
+			to
+		);
 		app.updateShow((s) => {
 			const m = new Map(s.props.map((p) => [p.id, p]));
 			s.props = ids.map((id) => m.get(id)!);
@@ -222,9 +261,15 @@
 </script>
 
 <div class="page">
-	<PageHeader title="Props" subtitle={show ? `${show.props.length} props · ${show.props.reduce((n, p) => n + p.pixelCount, 0).toLocaleString()} pixels` : 'Everything in your display'}>
+	<PageHeader
+		title="Props"
+		subtitle={show
+			? `${show.props.length} props · ${show.props.reduce((n, p) => n + p.pixelCount, 0).toLocaleString()} pixels`
+			: 'Everything in your display'}
+	>
 		{#snippet actions()}
-			<button class="btn" onclick={() => (importOpen = true)}><FileUp size={16} /> Import from xLights</button>
+			<button class="btn" onclick={() => (importOpen = true)}><FileUp size={16} /> Import from xLights</button
+			>
 			<button class="btn primary" onclick={() => (addOpen = true)}><Plus size={16} /> Add prop</button>
 		{/snippet}
 	</PageHeader>
@@ -244,37 +289,82 @@
 			{#each show?.receivers ?? [] as r (r.id)}<option value={r.id}>{r.name}</option>{/each}
 		</select>
 		<span class="grow"></span>
-		<Segmented bind:value={view} label="View" options={[{ value: 'grid', label: 'Grid', icon: LayoutGrid }, { value: 'list', label: 'List', icon: List }]} />
+		<Segmented
+			bind:value={view}
+			label="View"
+			options={[
+				{ value: 'grid', label: 'Grid', icon: LayoutGrid },
+				{ value: 'list', label: 'List', icon: List }
+			]}
+		/>
 	</div>
 
 	<div class="chips">
 		<button class="chip" aria-pressed={group === 'all'} onclick={() => (group = 'all')}>All</button>
 		{#each show?.propGroups ?? [] as g (g.id)}
-			<button class="chip" aria-pressed={group === g.id} onclick={() => (group = group === g.id ? 'all' : g.id)}>
-				<span class="gdot" style:background={g.color ?? 'var(--text-3)'}></span>{g.name}<span class="faint num">{g.propIds.length}</span>
+			<button
+				class="chip"
+				aria-pressed={group === g.id}
+				onclick={() => (group = group === g.id ? 'all' : g.id)}
+			>
+				<span class="gdot" style:background={g.color ?? 'var(--text-3)'}></span>{g.name}<span
+					class="faint num">{g.propIds.length}</span
+				>
 			</button>
 		{/each}
 		{#if unwiredCount}
-			<button class="chip warnchip" aria-pressed={group === 'unwired'} onclick={() => (group = group === 'unwired' ? 'all' : 'unwired')}>
+			<button
+				class="chip warnchip"
+				aria-pressed={group === 'unwired'}
+				onclick={() => (group = group === 'unwired' ? 'all' : 'unwired')}
+			>
 				<TriangleAlert size={13} /> Not wired <span class="num">{unwiredCount}</span>
 			</button>
 		{/if}
-		<button class="chip ghostchip" onclick={() => (groupOpen = true)}><FolderPlus size={14} /> New group</button>
+		<button class="chip ghostchip" onclick={() => (groupOpen = true)}
+			><FolderPlus size={14} /> New group</button
+		>
 	</div>
 
 	{#if !show}
-		<div class="pgrid">{#each Array(8) as _, i (i)}<div class="card"><div class="skeleton" style="height:120px;border-radius:14px 14px 0 0"></div><div class="card-pad"><Skeleton count={2} /></div></div>{/each}</div>
+		<div class="pgrid">
+			{#each Array(8) as _, i (i)}<div class="card">
+					<div class="skeleton" style="height:120px;border-radius:14px 14px 0 0"></div>
+					<div class="card-pad"><Skeleton count={2} /></div>
+				</div>{/each}
+		</div>
 	{:else if !show.props.length}
 		<div class="card">
-			<EmptyState icon={Shapes} title="No props yet" message="Import your xLights layout to bring in every prop at once, or add them one at a time.">
-				<button class="btn primary" onclick={() => (importOpen = true)}><FileUp size={16} /> Import from xLights</button>
+			<EmptyState
+				icon={Shapes}
+				title="No props yet"
+				message="Import your xLights layout to bring in every prop at once, or add them one at a time."
+			>
+				<button class="btn primary" onclick={() => (importOpen = true)}
+					><FileUp size={16} /> Import from xLights</button
+				>
 				<button class="btn" onclick={() => (addOpen = true)}><Plus size={16} /> Add a prop</button>
 			</EmptyState>
 		</div>
 	{:else if !filtered.length}
-		<div class="card"><EmptyState icon={Search} title="No props match" message="Try a different search or clear the filters." compact>
-			<button class="btn" onclick={() => { q = ''; group = 'all'; nodeF = ''; rxF = ''; }}>Clear filters</button>
-		</EmptyState></div>
+		<div class="card">
+			<EmptyState
+				icon={Search}
+				title="No props match"
+				message="Try a different search or clear the filters."
+				compact
+			>
+				<button
+					class="btn"
+					onclick={() => {
+						q = '';
+						group = 'all';
+						nodeF = '';
+						rxF = '';
+					}}>Clear filters</button
+				>
+			</EmptyState>
+		</div>
 	{:else if view === 'grid'}
 		<div class="pgrid">
 			{#each filtered as p (p.id)}
@@ -285,7 +375,13 @@
 						<PropPreview prop={p} height={116} />
 					</button>
 					<label class="pick" class:show={selected.size > 0}>
-						<input type="checkbox" class="check" checked={sel} onchange={() => toggle(p.id)} aria-label="Select {p.name}" />
+						<input
+							type="checkbox"
+							class="check"
+							checked={sel}
+							onchange={() => toggle(p.id)}
+							aria-label="Select {p.name}"
+						/>
 					</label>
 					<button class="meta" onclick={() => openProp(p.id)}>
 						<div class="row">
@@ -305,7 +401,13 @@
 	{:else}
 		<div class="card">
 			<div class="lhead">
-				<input type="checkbox" class="check" checked={selected.size === filtered.length && filtered.length > 0} onchange={selectAll} aria-label="Select all" />
+				<input
+					type="checkbox"
+					class="check"
+					checked={selected.size === filtered.length && filtered.length > 0}
+					onchange={selectAll}
+					aria-label="Select all"
+				/>
 				<span class="grow">Prop</span>
 				<span class="c-type">Type</span>
 				<span class="c-px">Pixels</span>
@@ -317,22 +419,41 @@
 				{#each filtered as p, i (p.id)}
 					{@const K = KIND_META[p.kind]}
 					<div class="lrow" data-sort-index={i} class:sel={selected.has(p.id)}>
-						{#if !filtering}<button class="drag-handle" aria-label="Reorder {p.name}"><GripVertical size={15} /></button>{/if}
-						<input type="checkbox" class="check" checked={selected.has(p.id)} onchange={() => toggle(p.id)} aria-label="Select {p.name}" />
+						{#if !filtering}<button class="drag-handle" aria-label="Reorder {p.name}"
+								><GripVertical size={15} /></button
+							>{/if}
+						<input
+							type="checkbox"
+							class="check"
+							checked={selected.has(p.id)}
+							onchange={() => toggle(p.id)}
+							aria-label="Select {p.name}"
+						/>
 						<button class="grow lname" onclick={() => openProp(p.id)}>
-							<span class="swatch" style:background={p.color ?? show.propGroups.find((g) => p.groupIds.includes(g.id))?.color ?? 'var(--text-3)'}></span>
+							<span
+								class="swatch"
+								style:background={p.color ??
+									show.propGroups.find((g) => p.groupIds.includes(g.id))?.color ??
+									'var(--text-3)'}
+							></span>
 							<span class="ellipsis">{p.name}</span>
 						</button>
 						<span class="c-type muted small"><K.icon size={14} /> {K.label}</span>
 						<span class="c-px num small">{p.pixelCount.toLocaleString()}</span>
-						<span class="c-wire small ellipsis {p.segments.length ? 'muted' : 'warn-t'}">{p.segments.length ? shortChain(p) : 'Not wired'}</span>
+						<span class="c-wire small ellipsis {p.segments.length ? 'muted' : 'warn-t'}"
+							>{p.segments.length ? shortChain(p) : 'Not wired'}</span
+						>
 						<span class="c-pw num small faint">{propPower(p).peak.toFixed(1)} A</span>
-						<button class="btn ghost icon sm" onclick={() => openProp(p.id)} aria-label="Edit {p.name}"><Pencil size={14} /></button>
+						<button class="btn ghost icon sm" onclick={() => openProp(p.id)} aria-label="Edit {p.name}"
+							><Pencil size={14} /></button
+						>
 					</div>
 				{/each}
 			</div>
 		</div>
-		{#if filtering}<p class="faint tiny" style="margin-top:8px">Clear filters to drag props into a new order.</p>{/if}
+		{#if filtering}<p class="faint tiny" style="margin-top:8px">
+				Clear filters to drag props into a new order.
+			</p>{/if}
 	{/if}
 </div>
 
@@ -344,7 +465,9 @@
 		<button class="btn sm ghost" onclick={() => (groupOpen = true)}><FolderPlus size={14} /> Group</button>
 		<button class="btn sm ghost" onclick={bulkTest}><FlaskConical size={14} /> Test</button>
 		<button class="btn sm ghost del" onclick={bulkDelete}><Trash2 size={14} /> Delete</button>
-		<button class="btn sm ghost icon" onclick={() => (selected = new Set())} aria-label="Clear selection"><X size={15} /></button>
+		<button class="btn sm ghost icon" onclick={() => (selected = new Set())} aria-label="Clear selection"
+			><X size={15} /></button
+		>
 	</div>
 {/if}
 
@@ -353,27 +476,63 @@
 
 <Modal bind:open={addOpen} title="Add a prop" size="sm">
 	<form id="addprop" class="col" style="gap:14px" onsubmit={addProp}>
-		<label class="field"><span class="label">Name</span><input class="input" placeholder="e.g. Left Arch" bind:value={newName} required /></label>
+		<label class="field"
+			><span class="label">Name</span><input
+				class="input"
+				placeholder="e.g. Left Arch"
+				bind:value={newName}
+				required
+			/></label
+		>
 		<div class="field">
 			<span class="label">Type</span>
 			<div class="kinds">
 				{#each PROP_KINDS as k (k)}
 					{@const K = KIND_META[k]}
-					<button type="button" class="kind" class:on={newKind === k} onclick={() => (newKind = k)} aria-pressed={newKind === k}><K.icon size={18} /><span>{K.label}</span></button>
+					<button
+						type="button"
+						class="kind"
+						class:on={newKind === k}
+						onclick={() => (newKind = k)}
+						aria-pressed={newKind === k}><K.icon size={18} /><span>{K.label}</span></button
+					>
 				{/each}
 			</div>
 		</div>
-		<label class="field"><span class="label">Pixels</span><input class="input" type="number" min="1" bind:value={newPixels} /></label>
+		<label class="field"
+			><span class="label">Pixels</span><input
+				class="input"
+				type="number"
+				min="1"
+				bind:value={newPixels}
+			/></label
+		>
 	</form>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (addOpen = false)}>Cancel</button>
-		<button class="btn primary" type="submit" form="addprop" disabled={!newName.trim()}>Add and wire it <ChevronRight size={16} /></button>
+		<button class="btn primary" type="submit" form="addprop" disabled={!newName.trim()}
+			>Add and wire it <ChevronRight size={16} /></button
+		>
 	{/snippet}
 </Modal>
 
-<Modal bind:open={groupOpen} title="New group" subtitle={selected.size ? `With the ${selected.size} selected props` : 'Groups make it easy to target effects and tests'} size="sm">
+<Modal
+	bind:open={groupOpen}
+	title="New group"
+	subtitle={selected.size
+		? `With the ${selected.size} selected props`
+		: 'Groups make it easy to target effects and tests'}
+	size="sm"
+>
 	<form id="addgroup" class="col" style="gap:14px" onsubmit={addGroup}>
-		<label class="field"><span class="label">Name</span><input class="input" placeholder="e.g. Driveway" bind:value={gName} required /></label>
+		<label class="field"
+			><span class="label">Name</span><input
+				class="input"
+				placeholder="e.g. Driveway"
+				bind:value={gName}
+				required
+			/></label
+		>
 		<label class="field"><span class="label">Color</span><input type="color" bind:value={gColor} /></label>
 	</form>
 	{#snippet footer()}
@@ -382,18 +541,45 @@
 	{/snippet}
 </Modal>
 
-<Modal bind:open={bulkOpen} title="Edit {selected.size} props" subtitle="Only the fields you change are applied" size="sm">
+<Modal
+	bind:open={bulkOpen}
+	title="Edit {selected.size} props"
+	subtitle="Only the fields you change are applied"
+	size="sm"
+>
 	<form id="bulk" class="col" style="gap:14px" onsubmit={applyBulk}>
-		<label class="field"><span class="label">Type</span>
-			<select class="select" bind:value={bulkKind}><option value="">Keep as is</option>{#each PROP_KINDS as k (k)}<option value={k}>{KIND_META[k].label}</option>{/each}</select>
+		<label class="field"
+			><span class="label">Type</span>
+			<select class="select" bind:value={bulkKind}
+				><option value="">Keep as is</option>{#each PROP_KINDS as k (k)}<option value={k}
+						>{KIND_META[k].label}</option
+					>{/each}</select
+			>
 		</label>
-		<label class="field"><span class="label">Add to group</span>
-			<select class="select" bind:value={bulkAddGroup}><option value="">—</option>{#each show?.propGroups ?? [] as g (g.id)}<option value={g.id}>{g.name}</option>{/each}</select>
+		<label class="field"
+			><span class="label">Add to group</span>
+			<select class="select" bind:value={bulkAddGroup}
+				><option value="">—</option>{#each show?.propGroups ?? [] as g (g.id)}<option value={g.id}
+						>{g.name}</option
+					>{/each}</select
+			>
 		</label>
-		<label class="field"><span class="label">Remove from group</span>
-			<select class="select" bind:value={bulkRemoveGroup}><option value="">—</option>{#each show?.propGroups ?? [] as g (g.id)}<option value={g.id}>{g.name}</option>{/each}</select>
+		<label class="field"
+			><span class="label">Remove from group</span>
+			<select class="select" bind:value={bulkRemoveGroup}
+				><option value="">—</option>{#each show?.propGroups ?? [] as g (g.id)}<option value={g.id}
+						>{g.name}</option
+					>{/each}</select
+			>
 		</label>
-		<label class="field"><span class="label">Max current per pixel (mA)</span><input class="input" type="number" placeholder="Keep as is" bind:value={bulkMa} /></label>
+		<label class="field"
+			><span class="label">Max current per pixel (mA)</span><input
+				class="input"
+				type="number"
+				placeholder="Keep as is"
+				bind:value={bulkMa}
+			/></label
+		>
 	</form>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (bulkOpen = false)}>Cancel</button>

@@ -90,8 +90,13 @@
 			{#if app.mock && app.mockAuto && !bannerHidden}
 				<div class="banner">
 					<FlaskConical size={15} />
-					<span class="grow">Couldn’t reach pixelplusd, so you’re looking at the <strong>demo show</strong>. Changes stay in this browser tab.</span>
-					<button class="btn ghost icon sm" aria-label="Hide" onclick={() => (bannerHidden = true)}><X size={15} /></button>
+					<span class="grow"
+						>Couldn’t reach pixelplusd, so you’re looking at the <strong>demo show</strong>. Changes stay in
+						this browser tab.</span
+					>
+					<button class="btn ghost icon sm" aria-label="Hide" onclick={() => (bannerHidden = true)}
+						><X size={15} /></button
+					>
 				</div>
 			{/if}
 			{#key page.url.pathname}

@@ -30,10 +30,19 @@
 		<p class="muted">Enter the password for this PixelPlus show.</p>
 		<div class="input-group">
 			<span class="prefix"><LockKeyhole size={16} /></span>
-			<input class="input" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" bind:value={password} />
+			<input
+				class="input"
+				type="password"
+				autocomplete="current-password"
+				placeholder="Password"
+				aria-label="Password"
+				bind:value={password}
+			/>
 		</div>
 		{#if error}<p class="err small">{error}</p>{/if}
-		<button class="btn primary lg block" disabled={busy || !password}>{busy ? 'Signing in…' : 'Sign in'}</button>
+		<button class="btn primary lg block" disabled={busy || !password}
+			>{busy ? 'Signing in…' : 'Sign in'}</button
+		>
 	</form>
 </div>
 

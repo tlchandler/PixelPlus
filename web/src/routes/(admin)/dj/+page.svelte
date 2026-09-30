@@ -65,7 +65,8 @@
 	$effect(() => {
 		const c = show?.djClips.find((x) => x.id === clipId);
 		untrack(() => {
-			if (c && (draft?.id !== c.id || saveState === 'saved')) draft = structuredClone($state.snapshot(c) as DjClip);
+			if (c && (draft?.id !== c.id || saveState === 'saved'))
+				draft = structuredClone($state.snapshot(c) as DjClip);
 			if (!c) draft = null;
 		});
 	});
@@ -95,7 +96,14 @@
 
 	async function newClip() {
 		const v = show?.djVoices[0]?.id ?? 'af_heart';
-		const c = await app.mutate(() => api.djClips.create({ name: 'New DJ clip', dynamic: false, speed: 1, lines: [{ voice: v, text: '', pauseMs: 300, energy: 0.4 }] }));
+		const c = await app.mutate(() =>
+			api.djClips.create({
+				name: 'New DJ clip',
+				dynamic: false,
+				speed: 1,
+				lines: [{ voice: v, text: '', pauseMs: 300, energy: 0.4 }]
+			})
+		);
 		if (c) {
 			clipId = c.id;
 			tab = 'clips';
@@ -106,12 +114,24 @@
 		const d = structuredClone($state.snapshot(draft) as DjClip);
 		if (!(await confirm({ title: `Delete “${d.name}”?`, confirmLabel: 'Delete', danger: true }))) return;
 		await app.mutate(() => api.djClips.remove(d.id));
-		toasts.success(`Deleted ${d.name}`, { label: 'Undo', run: () => app.mutate(() => api.djClips.create(d)) });
+		toasts.success(`Deleted ${d.name}`, {
+			label: 'Undo',
+			run: () => app.mutate(() => api.djClips.create(d))
+		});
 	}
 	async function duplicateClip() {
 		if (!draft) return;
 		const d = $state.snapshot(draft) as DjClip;
-		const c = await app.mutate(() => api.djClips.create({ ...d, id: undefined as unknown as string, name: `${d.name} copy`, mediaId: undefined }), { success: 'Clip duplicated' });
+		const c = await app.mutate(
+			() =>
+				api.djClips.create({
+					...d,
+					id: undefined as unknown as string,
+					name: `${d.name} copy`,
+					mediaId: undefined
+				}),
+			{ success: 'Clip duplicated' }
+		);
 		if (c) clipId = c.id;
 	}
 
@@ -143,13 +163,16 @@
 				el.setSelectionRange(s + token.length, s + token.length);
 			});
 		} else if (draft.lines.length) {
-			draft.lines[draft.lines.length - 1].text += (draft.lines[draft.lines.length - 1].text ? ' ' : '') + token;
+			draft.lines[draft.lines.length - 1].text +=
+				(draft.lines[draft.lines.length - 1].text ? ' ' : '') + token;
 			queueSave();
 		}
 	}
 
 	function voiceName(id: string) {
-		return show?.djVoices.find((v) => v.id === id)?.name ?? KOKORO_VOICES.find((v) => v.id === id)?.name ?? id;
+		return (
+			show?.djVoices.find((v) => v.id === id)?.name ?? KOKORO_VOICES.find((v) => v.id === id)?.name ?? id
+		);
 	}
 	function voiceHue(id: string) {
 		let h = 0;
@@ -169,7 +192,11 @@
 		}
 		auditioning = key;
 		try {
-			const blob = await renderSpeech(show, lines.map((l) => ({ ...l, text: sampleText(l.text, show) })), speed);
+			const blob = await renderSpeech(
+				show,
+				lines.map((l) => ({ ...l, text: sampleText(l.text, show) })),
+				speed
+			);
 			if (auditioning !== key) return;
 			stopPlay = playBlob(blob, () => {
 				stopPlay = null;
@@ -194,7 +221,12 @@
 				clearInterval(tick);
 			} else {
 				renderMsg = 'Rendering in this browser (first time downloads the voice model)…';
-				const blob = await renderSpeech(show, draft.lines.map((l) => ({ ...l, text: draft!.dynamic ? sampleText(l.text, show) : l.text })), draft.speed, (p) => (rendering = p * 0.85));
+				const blob = await renderSpeech(
+					show,
+					draft.lines.map((l) => ({ ...l, text: draft!.dynamic ? sampleText(l.text, show) : l.text })),
+					draft.speed,
+					(p) => (rendering = p * 0.85)
+				);
 				renderMsg = 'Uploading…';
 				await api.djClips.upload(id, blob, (p) => (rendering = 0.85 + p * 0.15));
 			}
@@ -227,12 +259,28 @@
 	async function addToPlaylist() {
 		const pl = show?.playlists.find((p) => p.id === plTarget);
 		if (!pl || !draft) return;
-		await app.mutate(() => api.playlists.update(pl.id, { ...pl, items: [...pl.items, { id: newId(), type: 'dj', djClipId: draft!.id }] }), { success: `Added to ${pl.name}` });
+		await app.mutate(
+			() =>
+				api.playlists.update(pl.id, {
+					...pl,
+					items: [...pl.items, { id: newId(), type: 'dj', djClipId: draft!.id }]
+				}),
+			{ success: `Added to ${pl.name}` }
+		);
 		addToPl = false;
 	}
 
 	function newVoice() {
-		editVoice = { id: newId(), name: 'New voice', description: '', blend: { af_heart: 0.5, af_bella: 0.5 }, speed: 1, lang: 'en-us', defaultEnergy: 0.4, energy: {} };
+		editVoice = {
+			id: newId(),
+			name: 'New voice',
+			description: '',
+			blend: { af_heart: 0.5, af_bella: 0.5 },
+			speed: 1,
+			lang: 'en-us',
+			defaultEnergy: 0.4,
+			energy: {}
+		};
 	}
 
 	async function saveWords() {
@@ -242,13 +290,30 @@
 
 	const wordsDirty = $derived(JSON.stringify(words) !== JSON.stringify(show?.pronunciations ?? []));
 	const media = $derived(show?.media.find((m) => m.id === draft?.mediaId));
-	const estSec = $derived(draft ? Math.round(draft.lines.reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length * 0.38 + l.pauseMs / 1000, 0) / (draft.speed || 1)) : 0);
+	const estSec = $derived(
+		draft
+			? Math.round(
+					draft.lines.reduce(
+						(n, l) => n + l.text.split(/\s+/).filter(Boolean).length * 0.38 + l.pauseMs / 1000,
+						0
+					) / (draft.speed || 1)
+				)
+			: 0
+	);
 </script>
 
 <div class="page">
-	<PageHeader title="DJ Studio" subtitle="Write radio-style announcements between songs, voiced by your own DJs.">
+	<PageHeader
+		title="DJ Studio"
+		subtitle="Write radio-style announcements between songs, voiced by your own DJs."
+	>
 		{#snippet actions()}
-			<span class="where badge {where === 'device' ? 'green' : 'blue'}" title={where === 'device' ? 'Voices render on this controller' : 'Voices render in your browser, then upload'}>
+			<span
+				class="where badge {where === 'device' ? 'green' : 'blue'}"
+				title={where === 'device'
+					? 'Voices render on this controller'
+					: 'Voices render in your browser, then upload'}
+			>
 				{#if where === 'device'}<Cpu size={12} /> Renders on controller{:else}<Globe size={12} /> Renders in browser{/if}
 			</span>
 			<button class="btn primary" onclick={newClip}><Plus size={16} /> New clip</button>
@@ -256,7 +321,15 @@
 	</PageHeader>
 
 	<div class="toolbar">
-		<Segmented bind:value={tab} label="Studio sections" options={[{ value: 'clips', label: 'Clips', icon: Mic }, { value: 'voices', label: 'Voices', icon: Users }, { value: 'words', label: 'Pronunciation', icon: BookA }]} />
+		<Segmented
+			bind:value={tab}
+			label="Studio sections"
+			options={[
+				{ value: 'clips', label: 'Clips', icon: Mic },
+				{ value: 'voices', label: 'Voices', icon: Users },
+				{ value: 'words', label: 'Pronunciation', icon: BookA }
+			]}
+		/>
 	</div>
 
 	{#if !show}
@@ -267,56 +340,126 @@
 				<article class="card vcard">
 					<div class="vart" style:--h={voiceHue(v.id)}>
 						<span class="initial">{v.name[0]}</span>
-						<div class="wave" class:on={auditioning === 'v:' + v.id}>{#each Array(18) as _, i (i)}<i style:animation-delay="{-i * 70}ms"></i>{/each}</div>
+						<div class="wave" class:on={auditioning === 'v:' + v.id}>
+							{#each Array(18) as _, i (i)}<i style:animation-delay="{-i * 70}ms"></i>{/each}
+						</div>
 					</div>
 					<div class="vbody">
-						<div class="row"><h3 class="grow">{v.name}</h3><span class="badge outline">{v.lang === 'en-gb' ? 'British' : 'American'}</span></div>
+						<div class="row">
+							<h3 class="grow">{v.name}</h3>
+							<span class="badge outline">{v.lang === 'en-gb' ? 'British' : 'American'}</span>
+						</div>
 						<p class="muted small">{v.description || 'Custom voice'}</p>
 						<div class="mix">
-							{#each Object.entries(v.blend) as [id, w] (id)}<span class="mixchip">{KOKORO_VOICES.find((x) => x.id === id)?.name ?? id} <b class="num">{Math.round(w * 100)}%</b></span>{/each}
+							{#each Object.entries(v.blend) as [id, w] (id)}<span class="mixchip"
+									>{KOKORO_VOICES.find((x) => x.id === id)?.name ?? id}
+									<b class="num">{Math.round(w * 100)}%</b></span
+								>{/each}
 						</div>
 						<div class="row" style="margin-top:auto">
-							<button class="btn soft sm grow" onclick={() => audition('v:' + v.id, [{ voice: v.id, text: `Hi, I'm ${v.name}! Welcome to ${show!.name}. Grab some cocoa and enjoy the show!`, pauseMs: 0, energy: v.defaultEnergy }], v.speed)}>
-								{#if auditioning === 'v:' + v.id && !stopPlay}<LoaderCircle size={14} class="spin" /> Rendering{:else if auditioning === 'v:' + v.id}<Square size={13} /> Stop{:else}<Play size={14} /> Audition{/if}
+							<button
+								class="btn soft sm grow"
+								onclick={() =>
+									audition(
+										'v:' + v.id,
+										[
+											{
+												voice: v.id,
+												text: `Hi, I'm ${v.name}! Welcome to ${show!.name}. Grab some cocoa and enjoy the show!`,
+												pauseMs: 0,
+												energy: v.defaultEnergy
+											}
+										],
+										v.speed
+									)}
+							>
+								{#if auditioning === 'v:' + v.id && !stopPlay}<LoaderCircle size={14} class="spin" /> Rendering{:else if auditioning === 'v:' + v.id}<Square
+										size={13}
+									/> Stop{:else}<Play size={14} /> Audition{/if}
 							</button>
-							<button class="btn sm" onclick={() => (editVoice = structuredClone($state.snapshot(v) as DjVoice))}><Pencil size={14} /> Edit</button>
+							<button
+								class="btn sm"
+								onclick={() => (editVoice = structuredClone($state.snapshot(v) as DjVoice))}
+								><Pencil size={14} /> Edit</button
+							>
 						</div>
 					</div>
 				</article>
 			{/each}
-			<button class="card vnew" onclick={newVoice}><span class="icon-tile accent"><Plus size={20} /></span><strong>Create a voice</strong><span class="faint small">Blend Kokoro voices into a new DJ</span></button>
+			<button class="card vnew" onclick={newVoice}
+				><span class="icon-tile accent"><Plus size={20} /></span><strong>Create a voice</strong><span
+					class="faint small">Blend Kokoro voices into a new DJ</span
+				></button
+			>
 		</div>
 	{:else if tab === 'words'}
 		<div class="card wordscard">
-			<div class="card-head"><BookA size={18} /><h2 class="grow">Pronunciation dictionary</h2><button class="btn primary sm" disabled={!wordsDirty} onclick={saveWords}><Check size={14} /> Save</button></div>
+			<div class="card-head">
+				<BookA size={18} />
+				<h2 class="grow">Pronunciation dictionary</h2>
+				<button class="btn primary sm" disabled={!wordsDirty} onclick={saveWords}
+					><Check size={14} /> Save</button
+				>
+			</div>
 			<div class="card-body">
-				<p class="muted small" style="margin-bottom:14px">Teach the DJs how to say names and words. Write it how it sounds (<em>Chand-ler</em>) or use IPA between slashes (<em>/noʊˈɛl/</em>). Whole words only.</p>
+				<p class="muted small" style="margin-bottom:14px">
+					Teach the DJs how to say names and words. Write it how it sounds (<em>Chand-ler</em>) or use IPA
+					between slashes (<em>/noʊˈɛl/</em>). Whole words only.
+				</p>
 				<div class="words">
 					{#each words as w, i (i)}
 						<div class="wrow">
 							<input class="input" placeholder="Word" bind:value={w.word} aria-label="Word" />
 							<span class="faint">→</span>
 							<input class="input" placeholder="Say it like" bind:value={w.say} aria-label="Pronunciation" />
-							<button class="btn ghost icon sm" onclick={() => audition('w:' + i, [{ voice: show!.djVoices[0]?.id ?? 'af_heart', text: `${w.word}.`, pauseMs: 0 }])} aria-label="Hear {w.word}" disabled={!w.word}>
-								{#if auditioning === 'w:' + i}<LoaderCircle size={14} class="spin" />{:else}<Play size={14} />{/if}
+							<button
+								class="btn ghost icon sm"
+								onclick={() =>
+									audition('w:' + i, [
+										{ voice: show!.djVoices[0]?.id ?? 'af_heart', text: `${w.word}.`, pauseMs: 0 }
+									])}
+								aria-label="Hear {w.word}"
+								disabled={!w.word}
+							>
+								{#if auditioning === 'w:' + i}<LoaderCircle size={14} class="spin" />{:else}<Play
+										size={14}
+									/>{/if}
 							</button>
-							<button class="btn ghost icon sm" onclick={() => (words = words.filter((_, k) => k !== i))} aria-label="Remove"><Trash2 size={14} /></button>
+							<button
+								class="btn ghost icon sm"
+								onclick={() => (words = words.filter((_, k) => k !== i))}
+								aria-label="Remove"><Trash2 size={14} /></button
+							>
 						</div>
 					{/each}
 				</div>
-				<button class="btn sm" style="margin-top:12px" onclick={() => (words = [...words, { word: '', say: '' }])}><Plus size={14} /> Add word</button>
+				<button
+					class="btn sm"
+					style="margin-top:12px"
+					onclick={() => (words = [...words, { word: '', say: '' }])}><Plus size={14} /> Add word</button
+				>
 			</div>
 		</div>
 	{:else if !show.djClips.length}
-		<div class="card"><EmptyState icon={Mic} title="No DJ clips yet" message="Welcome messages, radio-station reminders, “up next” announcements — they make a show feel like a real event.">
-			<button class="btn primary" onclick={newClip}><Plus size={16} /> Write your first clip</button>
-		</EmptyState></div>
+		<div class="card">
+			<EmptyState
+				icon={Mic}
+				title="No DJ clips yet"
+				message="Welcome messages, radio-station reminders, “up next” announcements — they make a show feel like a real event."
+			>
+				<button class="btn primary" onclick={newClip}><Plus size={16} /> Write your first clip</button>
+			</EmptyState>
+		</div>
 	{:else}
 		<div class="studio">
 			<nav class="clips">
 				{#each show.djClips as c (c.id)}
 					<button class="clip" class:on={c.id === clipId} onclick={() => (clipId = c.id)}>
-						<span class="grow"><span class="ellipsis cname">{c.name}</span><span class="faint tiny">{c.lines.length} line{c.lines.length === 1 ? '' : 's'}{c.dynamic ? ' · live text' : ''}</span></span>
+						<span class="grow"
+							><span class="ellipsis cname">{c.name}</span><span class="faint tiny"
+								>{c.lines.length} line{c.lines.length === 1 ? '' : 's'}{c.dynamic ? ' · live text' : ''}</span
+							></span
+						>
 						{#if c.mediaId}<span class="rdot" title="Rendered"></span>{/if}
 					</button>
 				{/each}
@@ -326,79 +469,216 @@
 				<section class="editor card">
 					<header class="ehead">
 						<input class="title-input" bind:value={draft.name} oninput={queueSave} aria-label="Clip name" />
-						<span class="faint tiny save">{saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : 'Saved'}</span>
+						<span class="faint tiny save"
+							>{saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : 'Saved'}</span
+						>
 						<span class="grow"></span>
-						<button class="btn ghost icon sm" onclick={duplicateClip} aria-label="Duplicate clip"><Copy size={15} /></button>
-						<button class="btn ghost icon sm" onclick={removeClip} aria-label="Delete clip"><Trash2 size={15} /></button>
+						<button class="btn ghost icon sm" onclick={duplicateClip} aria-label="Duplicate clip"
+							><Copy size={15} /></button
+						>
+						<button class="btn ghost icon sm" onclick={removeClip} aria-label="Delete clip"
+							><Trash2 size={15} /></button
+						>
 					</header>
 
 					<div class="ph">
 						<span class="faint tiny"><Braces size={12} /> Insert live info:</span>
-						{#each DJ_PLACEHOLDERS as p (p)}<button class="pchip" onmousedown={(e) => e.preventDefault()} onclick={() => insertPlaceholder(p)}>{`{${p}}`}</button>{/each}
+						{#each DJ_PLACEHOLDERS as p (p)}<button
+								class="pchip"
+								onmousedown={(e) => e.preventDefault()}
+								onclick={() => insertPlaceholder(p)}>{`{${p}}`}</button
+							>{/each}
 					</div>
 
-					<ol class="lines" use:sortable={{ onsort: (f, t) => { if (draft) { draft.lines = moveItem(draft.lines, f, t); queueSave(); } } }}>
+					<ol
+						class="lines"
+						use:sortable={{
+							onsort: (f, t) => {
+								if (draft) {
+									draft.lines = moveItem(draft.lines, f, t);
+									queueSave();
+								}
+							}
+						}}
+					>
 						{#each draft.lines as line, i (i)}
 							<li class="line" data-sort-index={i}>
 								<button class="drag-handle" aria-label="Move line {i + 1}"><GripVertical size={16} /></button>
 								<div class="who" style:--h={voiceHue(line.voice)}>
 									<span class="av">{voiceName(line.voice)[0]}</span>
-									<select class="select sm" bind:value={line.voice} onchange={queueSave} aria-label="Voice for line {i + 1}">
-										<optgroup label="Your DJs">{#each show.djVoices as v (v.id)}<option value={v.id}>{v.name}</option>{/each}</optgroup>
-										<optgroup label="Base voices">{#each KOKORO_VOICES as v (v.id)}<option value={v.id}>{v.name}</option>{/each}</optgroup>
+									<select
+										class="select sm"
+										bind:value={line.voice}
+										onchange={queueSave}
+										aria-label="Voice for line {i + 1}"
+									>
+										<optgroup label="Your DJs"
+											>{#each show.djVoices as v (v.id)}<option value={v.id}>{v.name}</option
+												>{/each}</optgroup
+										>
+										<optgroup label="Base voices"
+											>{#each KOKORO_VOICES as v (v.id)}<option value={v.id}>{v.name}</option
+												>{/each}</optgroup
+										>
 									</select>
 								</div>
 								<div class="grow ltext">
-									<textarea class="textarea" rows="2" placeholder="What should they say?" bind:value={line.text} oninput={queueSave} onfocus={(e) => (focused = { i, el: e.currentTarget })} aria-label="Line {i + 1} text"></textarea>
+									<textarea
+										class="textarea"
+										rows="2"
+										placeholder="What should they say?"
+										bind:value={line.text}
+										oninput={queueSave}
+										onfocus={(e) => (focused = { i, el: e.currentTarget })}
+										aria-label="Line {i + 1} text"></textarea>
 									<div class="lopts">
 										<div class="energy" role="radiogroup" aria-label="Energy">
 											{#each ENERGY_LEVELS as l (l.value)}
-												<button type="button" role="radio" aria-checked={(line.energy ?? 0.4) === l.value} class="en en{String(l.value).replace('.', '')}" class:on={(line.energy ?? 0.4) === l.value} onclick={() => { line.energy = l.value; queueSave(); }}>{l.label}</button>
+												<button
+													type="button"
+													role="radio"
+													aria-checked={(line.energy ?? 0.4) === l.value}
+													class="en en{String(l.value).replace('.', '')}"
+													class:on={(line.energy ?? 0.4) === l.value}
+													onclick={() => {
+														line.energy = l.value;
+														queueSave();
+													}}>{l.label}</button
+												>
 											{/each}
 										</div>
-										<label class="pause"><span class="faint tiny">pause after</span><input class="input sm num" type="number" min="0" max="5000" step="50" bind:value={line.pauseMs} oninput={queueSave} aria-label="Pause after line in ms" /><span class="faint tiny">ms</span></label>
+										<label class="pause"
+											><span class="faint tiny">pause after</span><input
+												class="input sm num"
+												type="number"
+												min="0"
+												max="5000"
+												step="50"
+												bind:value={line.pauseMs}
+												oninput={queueSave}
+												aria-label="Pause after line in ms"
+											/><span class="faint tiny">ms</span></label
+										>
 										<span class="grow"></span>
-										<button class="btn ghost icon sm" onclick={() => audition('l:' + i, [line], draft?.speed)} aria-label="Hear line {i + 1}" disabled={!line.text.trim()}>
-											{#if auditioning === 'l:' + i && !stopPlay}<LoaderCircle size={14} class="spin" />{:else if auditioning === 'l:' + i}<Square size={13} />{:else}<Play size={14} />{/if}
+										<button
+											class="btn ghost icon sm"
+											onclick={() => audition('l:' + i, [line], draft?.speed)}
+											aria-label="Hear line {i + 1}"
+											disabled={!line.text.trim()}
+										>
+											{#if auditioning === 'l:' + i && !stopPlay}<LoaderCircle
+													size={14}
+													class="spin"
+												/>{:else if auditioning === 'l:' + i}<Square size={13} />{:else}<Play
+													size={14}
+												/>{/if}
 										</button>
-										<button class="btn ghost icon sm" onclick={() => removeLine(i)} aria-label="Remove line {i + 1}" disabled={draft.lines.length < 2}><Trash2 size={14} /></button>
+										<button
+											class="btn ghost icon sm"
+											onclick={() => removeLine(i)}
+											aria-label="Remove line {i + 1}"
+											disabled={draft.lines.length < 2}><Trash2 size={14} /></button
+										>
 									</div>
 								</div>
 							</li>
 						{/each}
 					</ol>
-					<div class="addline"><button class="btn sm" onclick={addLine}><Plus size={14} /> Add line</button><span class="faint tiny">Tip: wrap a word in *asterisks* to make it the punchline.</span></div>
+					<div class="addline">
+						<button class="btn sm" onclick={addLine}><Plus size={14} /> Add line</button><span
+							class="faint tiny">Tip: wrap a word in *asterisks* to make it the punchline.</span
+						>
+					</div>
 
 					<div class="clipopts">
-						<label class="field"><span class="label">Speed · {draft.speed.toFixed(2)}×</span>
-							<input type="range" class="range" min="0.5" max="2" step="0.05" bind:value={draft.speed} oninput={queueSave} style:--pct="{((draft.speed - 0.5) / 1.5) * 100}%" />
+						<label class="field"
+							><span class="label">Speed · {draft.speed.toFixed(2)}×</span>
+							<input
+								type="range"
+								class="range"
+								min="0.5"
+								max="2"
+								step="0.05"
+								bind:value={draft.speed}
+								oninput={queueSave}
+								style:--pct="{((draft.speed - 0.5) / 1.5) * 100}%"
+							/>
 						</label>
-						<label class="field"><span class="label"><Music2 size={12} /> Music bed</span>
-							<select class="select" value={draft.musicBedMediaId ?? ''} onchange={(e) => { if (draft) { draft.musicBedMediaId = (e.target as HTMLSelectElement).value || undefined; queueSave(); } }}>
+						<label class="field"
+							><span class="label"><Music2 size={12} /> Music bed</span>
+							<select
+								class="select"
+								value={draft.musicBedMediaId ?? ''}
+								onchange={(e) => {
+									if (draft) {
+										draft.musicBedMediaId = (e.target as HTMLSelectElement).value || undefined;
+										queueSave();
+									}
+								}}
+							>
 								<option value="">None</option>
-								{#each show.media.filter((m) => m.kind !== 'dj') as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
+								{#each show.media.filter((m) => m.kind !== 'dj') as m (m.id)}<option value={m.id}
+										>{m.name}</option
+									>{/each}
 							</select>
 							<span class="hint">Plays quietly underneath the voices.</span>
 						</label>
-						<div class="field"><span class="label">Live text</span>
-							<div class="row" style="height:40px"><Switch checked={draft.dynamic} label="Re-render at showtime" onchange={(v) => { if (draft) { draft.dynamic = v; queueSave(); } }} /><span class="small muted">{draft.dynamic ? 'Re-rendered at showtime' : 'Rendered once'}</span></div>
+						<div class="field">
+							<span class="label">Live text</span>
+							<div class="row" style="height:40px">
+								<Switch
+									checked={draft.dynamic}
+									label="Re-render at showtime"
+									onchange={(v) => {
+										if (draft) {
+											draft.dynamic = v;
+											queueSave();
+										}
+									}}
+								/><span class="small muted"
+									>{draft.dynamic ? 'Re-rendered at showtime' : 'Rendered once'}</span
+								>
+							</div>
 						</div>
 					</div>
 					{#if draft.dynamic && where === 'browser'}
-						<div class="notice info small" style="margin:0 20px 16px"><Globe size={16} /><span>Live placeholders are filled in at showtime on a Pi 4/5 or Docker leader. On this controller they’ll use the values at render time.</span></div>
+						<div class="notice info small" style="margin:0 20px 16px">
+							<Globe size={16} /><span
+								>Live placeholders are filled in at showtime on a Pi 4/5 or Docker leader. On this controller
+								they’ll use the values at render time.</span
+							>
+						</div>
 					{/if}
 
 					<footer class="rfoot">
 						{#if rendering != null}
-							<div class="grow col" style="gap:6px"><span class="small muted">{renderMsg}</span><div class="progress"><span style:width="{rendering * 100}%"></span></div></div>
+							<div class="grow col" style="gap:6px">
+								<span class="small muted">{renderMsg}</span>
+								<div class="progress"><span style:width="{rendering * 100}%"></span></div>
+							</div>
 						{:else}
 							<div class="grow small">
-								{#if media}<span class="ok"><Check size={14} /> Rendered · {fmtDuration(media.durationMs)}</span>{:else}<span class="faint">Not rendered yet · about {estSec} s</span>{/if}
+								{#if media}<span class="ok"
+										><Check size={14} /> Rendered · {fmtDuration(media.durationMs)}</span
+									>{:else}<span class="faint">Not rendered yet · about {estSec} s</span>{/if}
 							</div>
 						{/if}
-						{#if media}<button class="btn" onclick={previewRendered}>{#if stopPlay && !auditioning}<Square size={14} /> Stop{:else}<Play size={15} /> Preview{/if}</button>{/if}
-						<button class="btn" onclick={() => { plTarget = show?.playlists[0]?.id ?? ''; addToPl = true; }}><ListPlus size={15} /> Add to playlist</button>
-						<button class="btn primary" onclick={renderClip} disabled={rendering != null || !draft.lines.some((l) => l.text.trim())}><Wand2 size={15} /> {media ? 'Re-render' : 'Render'}</button>
+						{#if media}<button class="btn" onclick={previewRendered}
+								>{#if stopPlay && !auditioning}<Square size={14} /> Stop{:else}<Play size={15} /> Preview{/if}</button
+							>{/if}
+						<button
+							class="btn"
+							onclick={() => {
+								plTarget = show?.playlists[0]?.id ?? '';
+								addToPl = true;
+							}}><ListPlus size={15} /> Add to playlist</button
+						>
+						<button
+							class="btn primary"
+							onclick={renderClip}
+							disabled={rendering != null || !draft.lines.some((l) => l.text.trim())}
+							><Wand2 size={15} /> {media ? 'Re-render' : 'Render'}</button
+						>
 					</footer>
 				</section>
 			{/if}
@@ -409,8 +689,11 @@
 <VoiceEditor bind:voice={editVoice} />
 
 <Modal bind:open={addToPl} title="Add “{draft?.name}” to a playlist" size="sm">
-	<label class="field"><span class="label">Playlist</span>
-		<select class="select" bind:value={plTarget}>{#each show?.playlists ?? [] as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select>
+	<label class="field"
+		><span class="label">Playlist</span>
+		<select class="select" bind:value={plTarget}
+			>{#each show?.playlists ?? [] as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select
+		>
 		<span class="hint">It’s added at the end — drag it into place on the Playlists page.</span>
 	</label>
 	{#snippet footer()}
@@ -448,7 +731,10 @@
 		position: relative;
 		display: grid;
 		place-items: center;
-		background: radial-gradient(circle at 30% 20%, hsl(var(--h) 80% 60% / 0.55), transparent 60%), radial-gradient(circle at 80% 90%, hsl(calc(var(--h) + 60) 80% 55% / 0.45), transparent 60%), var(--surface-2);
+		background:
+			radial-gradient(circle at 30% 20%, hsl(var(--h) 80% 60% / 0.55), transparent 60%),
+			radial-gradient(circle at 80% 90%, hsl(calc(var(--h) + 60) 80% 55% / 0.45), transparent 60%),
+			var(--surface-2);
 	}
 	.initial {
 		width: 64px;
@@ -460,7 +746,9 @@
 		font-weight: 700;
 		color: #fff;
 		background: hsl(var(--h) 55% 40%);
-		box-shadow: 0 8px 24px hsl(var(--h) 60% 30% / 0.5), inset 0 0 0 2px rgba(255, 255, 255, 0.2);
+		box-shadow:
+			0 8px 24px hsl(var(--h) 60% 30% / 0.5),
+			inset 0 0 0 2px rgba(255, 255, 255, 0.2);
 	}
 	.wave {
 		position: absolute;

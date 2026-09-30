@@ -6,7 +6,13 @@
 		message,
 		children,
 		compact = false
-	}: { icon?: Component<any>; title: string; message?: string; children?: Snippet; compact?: boolean } = $props();
+	}: {
+		icon?: Component<any>;
+		title: string;
+		message?: string;
+		children?: Snippet;
+		compact?: boolean;
+	} = $props();
 </script>
 
 <div class="empty" class:compact>

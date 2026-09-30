@@ -40,7 +40,8 @@ class AppState {
 			this.mock = mode.mock;
 			this.mockAuto = mode.auto;
 			await this.loadSystem();
-			if (!this.system?.needsSetup && !this.needsLogin && this.system?.role !== 'follower') await this.reloadShow();
+			if (!this.system?.needsSetup && !this.needsLogin && this.system?.role !== 'follower')
+				await this.reloadShow();
 			this.connect();
 		} catch (e) {
 			if (e instanceof ApiError && e.status === 401) this.needsLogin = true;
@@ -90,7 +91,10 @@ class AppState {
 	}
 
 	/** Run a mutation; on success refresh the show, on failure toast and refresh. */
-	async mutate<R>(fn: () => Promise<R>, opts: { success?: string; error?: string } = {}): Promise<R | undefined> {
+	async mutate<R>(
+		fn: () => Promise<R>,
+		opts: { success?: string; error?: string } = {}
+	): Promise<R | undefined> {
 		try {
 			const r = await fn();
 			if (opts.success) toasts.success(opts.success);
@@ -119,7 +123,8 @@ class AppState {
 		ws.onopen = () => {
 			this.connection = 'open';
 			this.#retry = 0;
-			if (this.#previewSubs.size) ws.send(JSON.stringify({ type: 'subscribePreview', fps: this.#previewFps }));
+			if (this.#previewSubs.size)
+				ws.send(JSON.stringify({ type: 'subscribePreview', fps: this.#previewFps }));
 			// We may have missed show changes while disconnected.
 			if (this.show) this.reloadShow().catch(() => {});
 		};
@@ -158,7 +163,11 @@ class AppState {
 				this.status = msg.data;
 				break;
 			case 'show':
-				if (this.show && msg.data?.version !== this.show.version && msg.data?.version !== this.#pendingVersion) {
+				if (
+					this.show &&
+					msg.data?.version !== this.show.version &&
+					msg.data?.version !== this.#pendingVersion
+				) {
 					this.#pendingVersion = msg.data.version;
 					this.reloadShow().catch(() => {});
 				}

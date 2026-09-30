@@ -7,11 +7,13 @@
 //! * [`drives`]    - safe removable-drive listing (Linux / macOS / Windows)
 //! * [`device`]    - raw device open/unmount/lock per OS
 //! * [`job`]       - the privileged write job the helper runs
+//! * [`helper`]    - the elevated helper protocol (job file, progress file, cancel file)
 //! * [`release`]   - GitHub releases / Raspberry Pi Imager repository JSON parsing
 
 pub mod device;
 pub mod disk;
 pub mod drives;
+pub mod helper;
 pub mod job;
 pub mod release;
 pub mod settings;

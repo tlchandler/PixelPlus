@@ -7,7 +7,17 @@
 	import LayoutCanvas from '$lib/components/viz/LayoutCanvas.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
-	import { Eye, Move, ZoomIn, ZoomOut, Scan, Search, Tag, PanelRightClose, PanelRightOpen } from '@lucide/svelte';
+	import {
+		Eye,
+		Move,
+		ZoomIn,
+		ZoomOut,
+		Scan,
+		Search,
+		Tag,
+		PanelRightClose,
+		PanelRightOpen
+	} from '@lucide/svelte';
 
 	const show = $derived(app.show);
 	let mode = $state<'live' | 'edit'>('live');
@@ -18,7 +28,9 @@
 	let canvasRef: LayoutCanvas | undefined = $state();
 
 	const sel = $derived(show?.props.find((p) => p.id === selected) ?? null);
-	const list = $derived(show?.props.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase())) ?? []);
+	const list = $derived(
+		show?.props.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase())) ?? []
+	);
 
 	async function saveLayout(id: string, patch: Partial<PropLayout>) {
 		const p = show?.props.find((x) => x.id === id);
@@ -35,7 +47,9 @@
 				kind: 'success',
 				message: `Moved ${p.name}`,
 				timeout: 3000,
-				action: before ? { label: 'Undo', run: () => app.mutate(() => api.props.update(id, { layout: before })) } : undefined
+				action: before
+					? { label: 'Undo', run: () => app.mutate(() => api.props.update(id, { layout: before })) }
+					: undefined
 			});
 		} catch (e) {
 			toasts.error('Could not save position', (e as Error).message);
@@ -47,15 +61,35 @@
 <div class="wrap">
 	<div class="bar">
 		<h1>Layout</h1>
-		<Segmented bind:value={mode} label="Mode" options={[{ value: 'live', label: 'Live', icon: Eye }, { value: 'edit', label: 'Arrange', icon: Move }]} />
-		<label class="lbl"><Switch bind:checked={labels} label="Show names" size="sm" /> <Tag size={14} /> <span class="hide-sm">Names</span></label>
+		<Segmented
+			bind:value={mode}
+			label="Mode"
+			options={[
+				{ value: 'live', label: 'Live', icon: Eye },
+				{ value: 'edit', label: 'Arrange', icon: Move }
+			]}
+		/>
+		<label class="lbl"
+			><Switch bind:checked={labels} label="Show names" size="sm" />
+			<Tag size={14} /> <span class="hide-sm">Names</span></label
+		>
 		<span class="grow"></span>
 		<div class="zoom">
-			<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1 / 1.3)} aria-label="Zoom out"><ZoomOut size={16} /></button>
-			<button class="btn ghost icon sm" onclick={() => canvasRef?.fit()} aria-label="Fit to screen"><Scan size={16} /></button>
-			<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1.3)} aria-label="Zoom in"><ZoomIn size={16} /></button>
+			<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1 / 1.3)} aria-label="Zoom out"
+				><ZoomOut size={16} /></button
+			>
+			<button class="btn ghost icon sm" onclick={() => canvasRef?.fit()} aria-label="Fit to screen"
+				><Scan size={16} /></button
+			>
+			<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1.3)} aria-label="Zoom in"
+				><ZoomIn size={16} /></button
+			>
 		</div>
-		<button class="btn ghost icon sm hide-sm" onclick={() => (panel = !panel)} aria-label={panel ? 'Hide prop list' : 'Show prop list'}>
+		<button
+			class="btn ghost icon sm hide-sm"
+			onclick={() => (panel = !panel)}
+			aria-label={panel ? 'Hide prop list' : 'Show prop list'}
+		>
 			{#if panel}<PanelRightClose size={16} />{:else}<PanelRightOpen size={16} />{/if}
 		</button>
 	</div>
@@ -63,10 +97,19 @@
 	<div class="body">
 		<div class="stage">
 			{#if show}
-				<LayoutCanvas bind:this={canvasRef} props={show.props} edit={mode === 'edit'} {labels} bind:selected onmove={(id, pos) => saveLayout(id, pos)} />
+				<LayoutCanvas
+					bind:this={canvasRef}
+					props={show.props}
+					edit={mode === 'edit'}
+					{labels}
+					bind:selected
+					onmove={(id, pos) => saveLayout(id, pos)}
+				/>
 			{/if}
 			{#if mode === 'edit'}
-				<div class="hint">Drag props to arrange them. Hold <span class="kbd">Shift</span> for fine moves. Scroll or pinch to zoom.</div>
+				<div class="hint">
+					Drag props to arrange them. Hold <span class="kbd">Shift</span> for fine moves. Scroll or pinch to zoom.
+				</div>
 			{/if}
 		</div>
 
@@ -75,13 +118,25 @@
 				{#if sel}
 					{@const K = KIND_META[sel.kind]}
 					<div class="selcard">
-						<div class="row"><span class="icon-tile accent"><K.icon size={18} /></span><div class="grow"><strong class="ellipsis">{sel.name}</strong><div class="faint small">{sel.pixelCount} pixels</div></div></div>
+						<div class="row">
+							<span class="icon-tile accent"><K.icon size={18} /></span>
+							<div class="grow">
+								<strong class="ellipsis">{sel.name}</strong>
+								<div class="faint small">{sel.pixelCount} pixels</div>
+							</div>
+						</div>
 						{#if mode === 'edit' && sel.layout}
 							<div class="xy">
 								{#each [['x', 'X'], ['y', 'Y'], ['w', 'Width'], ['h', 'Height'], ['rotation', 'Rotate°']] as [k, label] (k)}
 									<label class="field">
 										<span class="label">{label}</span>
-										<input class="input sm" type="number" value={Math.round((sel.layout as any)[k])} onchange={(e) => saveLayout(sel.id, { [k]: Number((e.target as HTMLInputElement).value) })} />
+										<input
+											class="input sm"
+											type="number"
+											value={Math.round((sel.layout as any)[k])}
+											onchange={(e) =>
+												saveLayout(sel.id, { [k]: Number((e.target as HTMLInputElement).value) })}
+										/>
 									</label>
 								{/each}
 							</div>
@@ -89,12 +144,26 @@
 						<a class="btn sm block" href="/props#{sel.id}">Open prop</a>
 					</div>
 				{/if}
-				<div class="input-group"><span class="prefix"><Search size={15} /></span><input class="input sm" placeholder="Find a prop" bind:value={q} data-search aria-label="Find a prop" /></div>
+				<div class="input-group">
+					<span class="prefix"><Search size={15} /></span><input
+						class="input sm"
+						placeholder="Find a prop"
+						bind:value={q}
+						data-search
+						aria-label="Find a prop"
+					/>
+				</div>
 				<div class="plist">
 					{#each list as p (p.id)}
 						{@const K = KIND_META[p.kind]}
-						<button class="pitem" class:on={selected === p.id} onclick={() => (selected = selected === p.id ? null : p.id)}>
-							<K.icon size={15} /><span class="grow ellipsis">{p.name}</span><span class="faint tiny num">{p.pixelCount}</span>
+						<button
+							class="pitem"
+							class:on={selected === p.id}
+							onclick={() => (selected = selected === p.id ? null : p.id)}
+						>
+							<K.icon size={15} /><span class="grow ellipsis">{p.name}</span><span class="faint tiny num"
+								>{p.pixelCount}</span
+							>
 						</button>
 					{/each}
 				</div>

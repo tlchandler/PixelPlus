@@ -7,7 +7,9 @@ class Theme {
 	set(t: 'dark' | 'light') {
 		this.current = t;
 		document.documentElement.dataset.theme = t;
-		document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t === 'dark' ? '#0a0b0e' : '#f5f5f3');
+		document
+			.querySelector('meta[name="theme-color"]')
+			?.setAttribute('content', t === 'dark' ? '#0a0b0e' : '#f5f5f3');
 		try {
 			localStorage.setItem('pp-theme', t);
 		} catch {

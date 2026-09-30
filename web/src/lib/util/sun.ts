@@ -38,7 +38,8 @@ export function sunTime(
 		0.002697 * Math.cos(3 * gamma) +
 		0.00148 * Math.sin(3 * gamma);
 	const zenith = 90.833 * rad;
-	const cosH = Math.cos(zenith) / (Math.cos(lat * rad) * Math.cos(decl)) - Math.tan(lat * rad) * Math.tan(decl);
+	const cosH =
+		Math.cos(zenith) / (Math.cos(lat * rad) * Math.cos(decl)) - Math.tan(lat * rad) * Math.tan(decl);
 	if (cosH < -1 || cosH > 1) return null;
 	const ha = Math.acos(cosH) / rad;
 	const minutes = kind === 'sunrise' ? 720 - 4 * (lon + ha) - eqtime : 720 - 4 * (lon - ha) - eqtime;

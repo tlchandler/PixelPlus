@@ -1,0 +1,217 @@
+name: Release
+
+# Push a tag like v1.2.3 (or run manually with a version) to build everything and
+# publish a GitHub release:
+#   pixelplus_<ver>_arm64.deb, pixelplus_<ver>_amd64.deb
+#   pixelplus-<ver>-trixie-arm64.img.xz (+ bookworm), .sha256
+#   pixelplus-imager.json   <- Raspberry Pi Imager repository (custom URL:
+#       https://github.com/<owner>/PixelPlus/releases/latest/download/pixelplus-imager.json)
+#   PixelPlus Imager installers (Windows .msi/.exe, macOS .dmg, Linux .AppImage/.deb/.rpm)
+#   ghcr.io/<owner>/pixelplus:<ver> and :latest (linux/amd64 + linux/arm64)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the leading v (e.g. 1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  VERSION: ${{ inputs.version || github.ref_name }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  meta:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        run: |
+          v="${VERSION#v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+  deb:
+    name: .deb (${{ matrix.arch }})
+    needs: meta
+    runs-on: ubuntu-22.04   # oldest glibc we support building on (binaries run on Bookworm+)
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: deb-${{ matrix.arch }}
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu device-tree-compiler pkg-config libasound2-dev libssl-dev libdbus-1-dev
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: packaging/build-deb.sh --arch ${{ matrix.arch }} --version ${{ needs.meta.outputs.version }} --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: dist/*.deb
+
+  image:
+    name: SD image (${{ matrix.release }})
+    needs: [meta, deb]
+    # Native arm64 runner: pi-gen chroots without qemu (~3x faster). pi-gen needs a
+    # privileged container with loop devices, which GitHub-hosted runners allow.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [trixie, bookworm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb-arm64
+          path: dist
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+      - name: Build image (pi-gen in Docker)
+        env:
+          PIXELPLUS_IMAGE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.meta.outputs.tag }}
+        run: |
+          image/build-in-docker.sh --release ${{ matrix.release }} \
+            --deb dist/pixelplus_${{ needs.meta.outputs.version }}_arm64.deb \
+            --version ${{ needs.meta.outputs.version }} --out deploy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.release }}
+          path: |
+            deploy/*.img.xz
+            deploy/*.sha256
+            deploy/*.info
+            deploy/os-list-*.json
+          compression-level: 0
+
+  docker:
+    name: Docker image
+    needs: meta
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/pixelplus" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.img.outputs.name }}:${{ needs.meta.outputs.version }}
+            ${{ steps.img.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  imager:
+    name: PixelPlus Imager (${{ matrix.platform }})
+    needs: [meta, release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: imager
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: imager/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: imager
+      - name: Set version
+        shell: bash
+        run: |
+          v='${{ needs.meta.outputs.version }}'
+          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$v\"/" imager/src-tauri/tauri.conf.json
+      # Code signing (optional): set APPLE_* / TAURI_SIGNING_* / WINDOWS certificate secrets;
+      # unsigned builds work but show OS warnings (see docs/BUILDING.md).
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: imager
+          tauriScript: pnpm tauri
+          releaseId: ${{ needs.release.outputs.id }}
+          args: ${{ matrix.args }}
+
+  release:
+    name: GitHub release
+    needs: [meta, deb, image]
+    runs-on: ubuntu-24.04
+    outputs:
+      id: ${{ steps.rel.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Raspberry Pi Imager repository JSON
+        run: |
+          python3 image/rpi-imager/make-os-list.py --merge artifacts/image-*/os-list-*.json \
+            --out artifacts/pixelplus-imager.json
+      - id: rel
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: PixelPlus ${{ needs.meta.outputs.version }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/deb-*/*.deb
+            artifacts/image-*/*.img.xz
+            artifacts/image-*/*.sha256
+            artifacts/pixelplus-imager.json

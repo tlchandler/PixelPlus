@@ -259,7 +259,7 @@ pub fn parse_ffmpeg_loudness(stderr: &str) -> Option<f32> {
     summary.lines().find_map(|l| {
         let l = l.trim();
         let rest = l.strip_prefix("I:")?;
-        rest.trim().split_whitespace().next()?.parse::<f32>().ok().filter(|v| v.is_finite())
+        rest.split_whitespace().next()?.parse::<f32>().ok().filter(|v| v.is_finite())
     })
 }
 
@@ -274,7 +274,7 @@ pub fn parse_ffmpeg_duration(stderr: &str) -> Option<u64> {
     Some(((h * 3600.0 + m * 60.0 + s) * 1000.0).round() as u64)
 }
 
-/// Transcode `src` to MP3 (192 kbit/s) with ffmpeg. `Ok(None)` when ffmpeg is missing.
+/// Transcode `src` to MP3 (44.1 kHz stereo, 192 kbit/s) with ffmpeg. `Ok(None)` when ffmpeg is missing.
 pub async fn transcode_mp3(src: &Path, dst: &Path) -> Result<Option<()>, String> {
     if !super::system::have("ffmpeg") {
         return Ok(None);
@@ -283,7 +283,7 @@ pub async fn transcode_mp3(src: &Path, dst: &Path) -> Result<Option<()>, String>
     let d = dst.to_string_lossy().to_string();
     let out = super::system::run(
         "ffmpeg",
-        &["-hide_banner", "-loglevel", "error", "-y", "-i", &s, "-codec:a", "libmp3lame", "-b:a", "192k", &d],
+        &["-hide_banner", "-loglevel", "error", "-y", "-i", &s, "-ar", "44100", "-ac", "2", "-codec:a", "libmp3lame", "-b:a", "192k", &d],
         Duration::from_secs(300),
     )
     .await?;

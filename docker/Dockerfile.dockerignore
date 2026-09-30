@@ -1,0 +1,13 @@
+# Used automatically by BuildKit for docker/Dockerfile (context = repository root).
+**/target
+**/node_modules
+web/build
+web/.svelte-kit
+imager
+image/work
+image/deploy
+dist
+boardtempinfo
+**/__pycache__
+**/.venv
+.git

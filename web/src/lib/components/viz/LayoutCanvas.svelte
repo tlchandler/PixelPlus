@@ -115,7 +115,8 @@
 				ctx.translate(-(box.x + box.w / 2), -(box.y + box.h / 2));
 			}
 			const dot = p.matrix ? Math.max(1, (box.w / p.matrix.width) * 0.8) : dotBase;
-			if (off != null && rgb.length >= off + p.pixelCount * 3) drawPixels(ctx, pts, rgb, off, p.pixelCount, box, dot, !p.matrix);
+			if (off != null && rgb.length >= off + p.pixelCount * 3)
+				drawPixels(ctx, pts, rgb, off, p.pixelCount, box, dot, !p.matrix);
 			else {
 				ctx.fillStyle = 'rgba(255,255,255,0.12)';
 				for (let i = 0; i < p.pixelCount; i += p.pixelCount > 1000 ? 3 : 1)
@@ -128,7 +129,12 @@
 				ctx.strokeStyle = isSel ? '#F5A524' : isHi ? 'rgba(245,165,36,0.6)' : 'rgba(255,255,255,0.16)';
 				ctx.setLineDash(isSel || isHi ? [] : [4, 4]);
 				ctx.lineWidth = isSel ? 1.5 : 1;
-				ctx.strokeRect(Math.round(box.x) - 4.5, Math.round(box.y) - 4.5, Math.round(box.w) + 9, Math.round(box.h) + 9);
+				ctx.strokeRect(
+					Math.round(box.x) - 4.5,
+					Math.round(box.y) - 4.5,
+					Math.round(box.w) + 9,
+					Math.round(box.h) + 9
+				);
 				ctx.setLineDash([]);
 			}
 			if (labels || isSel || isHi || edit) {
@@ -172,7 +178,15 @@
 
 	// ---------------------------------------------------------------- interaction
 	const pointers = new Map<number, { x: number; y: number }>();
-	let drag: { mode: 'pan' | 'move'; id?: string; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null = null;
+	let drag: {
+		mode: 'pan' | 'move';
+		id?: string;
+		sx: number;
+		sy: number;
+		ox: number;
+		oy: number;
+		moved: boolean;
+	} | null = null;
 	let pinch: { d: number; s: number } | null = null;
 
 	function hit(px: number, py: number): string | null {
@@ -208,7 +222,8 @@
 			const l = layoutOf(props.find((x) => x.id === id)!);
 			drag = { mode: 'move', id, sx: p.x, sy: p.y, ox: l.x, oy: l.y, moved: false };
 			selected = id;
-		} else drag = { mode: 'pan', sx: p.x, sy: p.y, ox: view.x, oy: view.y, moved: false, id: id ?? undefined };
+		} else
+			drag = { mode: 'pan', sx: p.x, sy: p.y, ox: view.x, oy: view.y, moved: false, id: id ?? undefined };
 	}
 
 	function move(e: PointerEvent) {
@@ -268,7 +283,8 @@
 	$effect(() => {
 		for (const p of props) {
 			const m = moved.get(p.id);
-			if (m && p.layout && Math.abs(p.layout.x - m.x) < 0.5 && Math.abs(p.layout.y - m.y) < 0.5) moved.delete(p.id);
+			if (m && p.layout && Math.abs(p.layout.x - m.x) < 0.5 && Math.abs(p.layout.y - m.y) < 0.5)
+				moved.delete(p.id);
 		}
 	});
 </script>
@@ -287,8 +303,9 @@
 		}
 	}}
 	onwheel={wheel}
-	aria-label="Live display preview. Drag to pan, scroll or pinch to zoom{edit ? ', drag a prop to move it' : ''}."
-
+	aria-label="Live display preview. Drag to pan, scroll or pinch to zoom{edit
+		? ', drag a prop to move it'
+		: ''}."
 ></canvas>
 
 <style>

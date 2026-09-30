@@ -145,7 +145,14 @@ export const PRESET_VOICES: readonly PresetVoice[] = [
 		energy: { pitch: 2, range: 1.5, speed: 1.1, stretch: 1.05, boost: 3, lift: 2.5, ceiling: 3, maxLift: 8 }
 	}
 ];
-const ALIASES: Record<string, string> = { male: 'nick', m: 'nick', he: 'nick', female: 'holly', f: 'holly', she: 'holly' };
+const ALIASES: Record<string, string> = {
+	male: 'nick',
+	m: 'nick',
+	he: 'nick',
+	female: 'holly',
+	f: 'holly',
+	she: 'holly'
+};
 
 /** Drop non-positive weights and scale the rest to sum to 1. */
 export function normalizeBlend(blend: Record<string, number>): Record<string, number> {
@@ -166,7 +173,10 @@ export function normalizeBlend(blend: Record<string, number>): Record<string, nu
  * Keep only voices kokoro-js can load in the browser (English). Non-English parts are dropped
  * and the rest renormalized; if nothing is left the blend falls back to af_heart.
  */
-export function browserBlend(blend: Record<string, number>): { blend: Record<string, number>; dropped: string[] } {
+export function browserBlend(blend: Record<string, number>): {
+	blend: Record<string, number>;
+	dropped: string[];
+} {
 	const norm = normalizeBlend(blend);
 	const dropped = Object.keys(norm).filter((k) => !BROWSER_IDS.has(k));
 	const kept = Object.fromEntries(Object.entries(norm).filter(([k]) => BROWSER_IDS.has(k)));

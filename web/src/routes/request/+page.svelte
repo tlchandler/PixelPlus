@@ -58,7 +58,9 @@
 		}
 	}
 
-	const songs = $derived(data?.songs.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase())) ?? []);
+	const songs = $derived(
+		data?.songs.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase())) ?? []
+	);
 	const queued = $derived(new Set(data?.queue.map((x) => x.sequenceId) ?? []));
 	const full = $derived(!!data && data.queue.length >= data.maxQueue);
 </script>
@@ -69,7 +71,14 @@
 </svelte:head>
 
 <div class="req">
-	<div class="snow" aria-hidden="true">{#each Array(28) as _, i (i)}<i style:left="{(i * 37) % 100}%" style:animation-delay="{-(i * 1.3) % 12}s" style:animation-duration="{9 + (i % 5) * 2}s" style:opacity={0.3 + (i % 4) * 0.15}></i>{/each}</div>
+	<div class="snow" aria-hidden="true">
+		{#each Array(28) as _, i (i)}<i
+				style:left="{(i * 37) % 100}%"
+				style:animation-delay="{-(i * 1.3) % 12}s"
+				style:animation-duration="{9 + (i % 5) * 2}s"
+				style:opacity={0.3 + (i % 4) * 0.15}
+			></i>{/each}
+	</div>
 
 	<header>
 		<div class="star"><Sparkles size={22} /></div>
@@ -79,9 +88,15 @@
 	</header>
 
 	{#if !ready || (!data && !error)}
-		<div class="loading" aria-busy="true">{#each Array(5) as _, i (i)}<div class="sk"></div>{/each}</div>
+		<div class="loading" aria-busy="true">
+			{#each Array(5) as _, i (i)}<div class="sk"></div>{/each}
+		</div>
 	{:else if data && !data.enabled}
-		<div class="closed"><Clock size={26} /><h2>Requests are closed right now</h2><p>Come back during the show — and enjoy the lights!</p></div>
+		<div class="closed">
+			<Clock size={26} />
+			<h2>Requests are closed right now</h2>
+			<p>Come back during the show — and enjoy the lights!</p>
+		</div>
 	{:else if data}
 		{#if data.nowPlaying}
 			<div class="now">
@@ -99,7 +114,11 @@
 				<h2>Up next</h2>
 				<ol>
 					{#each data.queue as item, i (item.id)}
-						<li in:fly={{ y: 8 }}><span class="pos">{i + 1}</span><span class="grow">{item.name}</span>{#if item.requestedBy}<span class="by">for {item.requestedBy}</span>{/if}</li>
+						<li in:fly={{ y: 8 }}>
+							<span class="pos">{i + 1}</span><span class="grow">{item.name}</span>{#if item.requestedBy}<span
+									class="by">for {item.requestedBy}</span
+								>{/if}
+						</li>
 					{/each}
 				</ol>
 			</section>
@@ -111,16 +130,35 @@
 				{#if full}<span class="full">Line-up is full — try again soon</span>{/if}
 			</div>
 			<div class="fields">
-				<label class="search"><Search size={18} /><input placeholder="Search songs" bind:value={q} aria-label="Search songs" /></label>
-				<input class="name" placeholder="Your first name (optional)" bind:value={name} maxlength="20" aria-label="Your first name" />
+				<label class="search"
+					><Search size={18} /><input
+						placeholder="Search songs"
+						bind:value={q}
+						aria-label="Search songs"
+					/></label
+				>
+				<input
+					class="name"
+					placeholder="Your first name (optional)"
+					bind:value={name}
+					maxlength="20"
+					aria-label="Your first name"
+				/>
 			</div>
 			<ul class="songs">
 				{#each songs as s (s.sequenceId)}
 					{@const isQ = queued.has(s.sequenceId)}
 					<li>
 						<span class="note"><Music size={18} /></span>
-						<span class="grow"><strong>{s.name}</strong><span class="dur">{fmtDuration(s.durationMs)}</span></span>
-						<button class="go" class:done={isQ} disabled={isQ || full || sending != null} onclick={() => request(s.sequenceId, s.name)}>
+						<span class="grow"
+							><strong>{s.name}</strong><span class="dur">{fmtDuration(s.durationMs)}</span></span
+						>
+						<button
+							class="go"
+							class:done={isQ}
+							disabled={isQ || full || sending != null}
+							onclick={() => request(s.sequenceId, s.name)}
+						>
 							{#if isQ}<Check size={16} /> Queued{:else if sending === s.sequenceId}…{:else}Request{/if}
 						</button>
 					</li>
@@ -140,7 +178,9 @@
 		<div class="sheet" transition:fly={{ y: 300, duration: 300 }} role="dialog" aria-label="Request sent">
 			<div class="burst"><Check size={34} /></div>
 			<h2>You’re on the list!</h2>
-			<p><strong>{sent.name}</strong> is number {sent.position} in line. Keep watching — it’s coming up soon.</p>
+			<p>
+				<strong>{sent.name}</strong> is number {sent.position} in line. Keep watching — it’s coming up soon.
+			</p>
 			<button class="ok" onclick={() => (sent = null)}>Merry Christmas!</button>
 		</div>
 	{/if}
@@ -156,7 +196,10 @@
 		--green: #3ddc97;
 		min-height: 100dvh;
 		color: #f4f1ea;
-		background: radial-gradient(ellipse at 50% -10%, rgba(255, 200, 90, 0.18), transparent 50%), radial-gradient(ellipse at 100% 100%, rgba(255, 90, 95, 0.12), transparent 50%), linear-gradient(180deg, #0b1026, #0a0d1c 60%, #0b0a14);
+		background:
+			radial-gradient(ellipse at 50% -10%, rgba(255, 200, 90, 0.18), transparent 50%),
+			radial-gradient(ellipse at 100% 100%, rgba(255, 90, 95, 0.12), transparent 50%),
+			linear-gradient(180deg, #0b1026, #0a0d1c 60%, #0b0a14);
 		padding: 0 16px calc(40px + env(safe-area-inset-bottom));
 		position: relative;
 		overflow-x: hidden;

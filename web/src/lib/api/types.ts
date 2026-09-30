@@ -679,7 +679,14 @@ export interface UpdateInfo {
 export interface ImportPreview {
 	/** In the preview, `segments[].nodeId` holds the xLights controller name until applied. */
 	props: Prop[];
-	controllers: { name: string; suggestedNodeId?: Id; ip?: string; protocol?: string; ports: number; propCount?: number }[];
+	controllers: {
+		name: string;
+		suggestedNodeId?: Id;
+		ip?: string;
+		protocol?: string;
+		ports: number;
+		propCount?: number;
+	}[];
 	groups?: PropGroup[];
 	warnings: string[];
 }

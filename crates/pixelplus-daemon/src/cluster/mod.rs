@@ -268,8 +268,13 @@ impl Peer {
 pub(crate) struct FollowerRuntime {
     pub manifest_version: u64,
     pub files: FileProgress,
+    /// Manifest / download problem.
     pub problem: Option<String>,
+    /// The leader plays something we do not have.
+    pub missing: Option<String>,
     pub syncing: bool,
+    /// Show version the leader last announced.
+    pub leader_show_version: u64,
     pub last_leader_contact: Option<Instant>,
     pub leader_udp: Option<SocketAddr>,
     pub last_sync_sent_at: Option<u64>,
@@ -307,11 +312,15 @@ pub(crate) struct Shared {
     pub clock: Mutex<clock::ClockSync>,
     pub follower: Mutex<FollowerRuntime>,
     pub manifest_trigger: Notify,
+    /// Serializes follower show installs with adopt / release, so a sync that
+    /// was in flight can never re-install a show from a leader we just left.
+    pub install_lock: tokio::sync::Mutex<()>,
     /// Wakes the leader sync sender immediately (show / extras changed).
     pub sync_trigger: Notify,
     pub slices: slices::SliceCache,
     pub health: Mutex<HashMap<String, Health>>,
     pub extras: Mutex<SyncExtras>,
+    #[allow(dead_code)] // used by `forward_overlay`
     pub overlay_frame: AtomicU32,
     pub shutdown: watch::Sender<bool>,
     pub cluster_dir: PathBuf,
@@ -359,7 +368,7 @@ impl Shared {
             } else {
                 format!("{p}:{}", self.settings.port)
             };
-            match tokio::net::lookup_host(&with_port).await {
+            match tokio::net::lookup_host(with_port).await {
                 Ok(addrs) => out.extend(addrs.filter(|a| a.is_ipv4())),
                 Err(e) => tracing::debug!("cluster peer {p}: {e}"),
             }
@@ -386,6 +395,8 @@ pub struct ClusterHandle {
     pub(crate) shared: Arc<Shared>,
 }
 
+// Part of this API is for the player engine and the alerts service.
+#[allow(dead_code)]
 impl ClusterHandle {
     /// Cluster events for the alerts service.
     pub fn subscribe(&self) -> broadcast::Receiver<ClusterEvent> {
@@ -507,7 +518,7 @@ pub async fn start_with(state: &AppState, settings: ClusterSettings) -> anyhow::
     let cluster_dir = state.config.data_dir.join("cluster");
     std::fs::create_dir_all(&cluster_dir)?;
     // Warm the hardware facts off the async runtime (I²C probing).
-    let _ = tokio::task::spawn_blocking(net::hardware).await;
+    let _ = tokio::task::spawn_blocking(crate::services::system::detection).await;
 
     let http = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(4))
@@ -529,6 +540,7 @@ pub async fn start_with(state: &AppState, settings: ClusterSettings) -> anyhow::
         clock: Default::default(),
         follower: Default::default(),
         manifest_trigger: Notify::new(),
+        install_lock: tokio::sync::Mutex::new(()),
         sync_trigger: Notify::new(),
         slices: slices::SliceCache::new(cluster_dir.join("slices")),
         health: Default::default(),

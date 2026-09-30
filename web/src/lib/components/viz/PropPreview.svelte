@@ -36,7 +36,12 @@
 			const off = offsets.get(p.id);
 			if (off == null) return;
 			const box = fitBox(cw, ch, Math.max(aw, ah * 0.2), Math.max(ah, aw * 0.08), 12);
-			const dot = p.pixelCount > 1500 ? Math.max(1, box.w / (p.matrix?.width ?? 80)) * 0.8 : p.pixelCount > 400 ? 2.2 : 3.2;
+			const dot =
+				p.pixelCount > 1500
+					? Math.max(1, box.w / (p.matrix?.width ?? 80)) * 0.8
+					: p.pixelCount > 400
+						? 2.2
+						: 3.2;
 			drawPixels(ctx, pts, rgb, off, p.pixelCount, box, dot, p.pixelCount < 1500);
 		};
 		return onPreview(draw);

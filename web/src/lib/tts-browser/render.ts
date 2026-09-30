@@ -30,7 +30,13 @@ import {
 	voicedSemitones
 } from './dsp';
 import { compileRules, mergePronunciations, toPhonemes, type Pronunciation } from './pronounce';
-import { hypeSetting, resolveVoice, type DjVoiceLike, type DjVoiceObject, type ResolvedVoice } from './voices';
+import {
+	hypeSetting,
+	resolveVoice,
+	type DjVoiceLike,
+	type DjVoiceObject,
+	type ResolvedVoice
+} from './voices';
 
 export const SAMPLE_RATE = 24000;
 export const DEFAULT_GAP_MS = 350;
@@ -92,7 +98,12 @@ export function substitutePlaceholders(
 const median = (xs: number[]) => percentile(xs, 50);
 
 /** Flat energy: raise the whole line by pitch*energy semitones. */
-export function flatEnergy(audio: Float32Array, v: ResolvedVoice, energy: number, sr = SAMPLE_RATE): Float32Array {
+export function flatEnergy(
+	audio: Float32Array,
+	v: ResolvedVoice,
+	energy: number,
+	sr = SAMPLE_RATE
+): Float32Array {
 	const semis = hypeSetting(v, 'pitch') * energy;
 	return Math.abs(semis) > 0.05 ? pitchShift(audio, semis, 1, sr) : audio;
 }
@@ -146,7 +157,11 @@ export function hypeEnergy(
 		[tp, boost]
 	];
 	if (tail.length) pts.push([tp + 0.25, 0]);
-	return applyGainCurve(out, sr, pts.filter((p, n) => n === 0 || p[0] > pts[n - 1][0]));
+	return applyGainCurve(
+		out,
+		sr,
+		pts.filter((p, n) => n === 0 || p[0] > pts[n - 1][0])
+	);
 }
 
 export function radioEq(v: ResolvedVoice, energy: number, sr = SAMPLE_RATE) {
@@ -181,16 +196,23 @@ export async function renderLines(
 			const energy = line.energy ?? v.defaultEnergy;
 			const plan = planLine(v, energy, v.speed * speedMul);
 			const speed = Math.min(Math.max(plan.speed, 0.5), 2);
-			const parts: [string, string, string] = plan.hype ? findEmphasis(text) : [text.replace(/\*/g, ''), '', ''];
+			const parts: [string, string, string] = plan.hype
+				? findEmphasis(text)
+				: [text.replace(/\*/g, ''), '', ''];
 			const lang = v.lang === 'en-gb' ? 'b' : 'a';
 			const ph = (await Promise.all(
-				parts.map((p) => (p.trim() ? toPhonemes(p, rules, (s) => backend.phonemize(s, lang)) : Promise.resolve('')))
+				parts.map((p) =>
+					p.trim() ? toPhonemes(p, rules, (s) => backend.phonemize(s, lang)) : Promise.resolve('')
+				)
 			)) as [string, string, string];
 			const joined = ph.filter(Boolean).join(' ');
 			if (!joined.trim()) throw new Error(`Line ${i + 1}: nothing to say`);
 			let audio = await backend.synthesize(joined, v, speed, text.replace(/\*/g, ''));
 			if (fx) {
-				audio = plan.hype && ph[1] ? hypeEnergy(audio, v, ph, plan.base, energy, sr) : flatEnergy(audio, v, energy, sr);
+				audio =
+					plan.hype && ph[1]
+						? hypeEnergy(audio, v, ph, plan.base, energy, sr)
+						: flatEnergy(audio, v, energy, sr);
 				audio = applyBiquads(audio, radioEq(v, energy, sr));
 				// hype lines sit a touch louder than the rest of the banter
 				audio = normalizeLoudness(audio, sr, target + Math.min(energy, 1.5));
