@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pixelplus-core",
+    "crates/pixelplus-output",
+    "crates/pixelplus-hw",
+    "crates/pixelplus-daemon",
+    "crates/pixelplus-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/tlchandler/PixelPlus"
+authors = ["PixelPlus contributors"]
+rust-version = "1.80"
+
+[workspace.dependencies]
+pixelplus-core = { path = "crates/pixelplus-core" }
+pixelplus-output = { path = "crates/pixelplus-output" }
+pixelplus-hw = { path = "crates/pixelplus-hw" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

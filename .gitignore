@@ -1,0 +1,12 @@
+/target
+node_modules/
+/web/build/
+/web/.svelte-kit/
+/image/deploy/
+/image/work/
+/imager/src-tauri/target/
+__pycache__/
+*.pyc
+.venv/
+/data-dev/
+.DS_Store
