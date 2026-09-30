@@ -1,0 +1,29 @@
+[Unit]
+Description=PixelPlus games sidecar (Super Mario Bros. / NES arcade on matrix props)
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/ARCHITECTURE.md
+After=pixelplusd.service sound.target
+PartOf=pixelplusd.service
+ConditionPathExists=/opt/pixelplus-games/venv/bin/python
+
+[Service]
+Type=simple
+User=pixelplus
+Group=pixelplus
+Environment=PIXELPLUS_API=http://127.0.0.1:80
+Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock
+Environment=PIXELPLUS_GAMES_ROMS=/var/lib/pixelplus/games/roms
+Environment=PIXELPLUS_GAMES_PORT=8088
+EnvironmentFile=-/etc/default/pixelplus
+WorkingDirectory=/opt/pixelplus-games
+ExecStart=/opt/pixelplus-games/venv/bin/python -m pixelplus_games
+Restart=on-failure
+RestartSec=5
+Nice=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=-/var/lib/pixelplus/games -/run/pixelplus
+
+[Install]
+WantedBy=multi-user.target

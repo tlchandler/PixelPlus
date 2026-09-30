@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0E0F12">
+<title>PixelPlus Setup</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #0E0F12; --panel: #17191E; --panel-2: #1E2127; --line: #2A2E36;
+    --text: #F2F3F5; --muted: #9AA1AD; --accent: #F5A524; --accent-ink: #1A1204;
+    --ok: #3CCB7F; --err: #F2555A; --radius: 16px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #F6F6F4; --panel: #FFFFFF; --panel-2: #F1F1EE; --line: #E2E2DE; --text: #16171A; --muted: #5F6570; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 16px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; min-height: 100vh;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 460px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; margin: 8px 0 20px; }
+  .logo { width: 40px; height: 40px; border-radius: 12px; background: var(--panel); display: grid; place-items: center; border: 1px solid var(--line); }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 4px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  ul.nets { list-style: none; margin: 12px -8px 0; padding: 0; }
+  ul.nets li button {
+    width: 100%; min-height: 52px; display: flex; align-items: center; gap: 12px; padding: 10px 8px;
+    border: 0; background: transparent; color: inherit; font: inherit; text-align: left; border-radius: 12px; cursor: pointer;
+  }
+  ul.nets li button:hover, ul.nets li button:focus-visible { background: var(--panel-2); outline: none; }
+  ul.nets li button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .ssid { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .tag { font-size: 12px; color: var(--muted); }
+  svg { flex: none; }
+  .bars rect { fill: var(--line); } .bars rect.on { fill: var(--text); }
+  label { display: block; font-size: 14px; color: var(--muted); margin: 14px 0 6px; }
+  input, select {
+    width: 100%; min-height: 48px; padding: 12px 14px; font: inherit; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .pw { position: relative; }
+  .pw input { padding-right: 76px; }
+  .pw button { position: absolute; right: 6px; top: 6px; height: 36px; padding: 0 12px; border-radius: 9px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 50px; margin-top: 18px;
+    border: 0; border-radius: 12px; font: inherit; font-weight: 600; cursor: pointer; background: var(--accent); color: var(--accent-ink);
+  }
+  .btn[disabled] { opacity: .5; cursor: default; }
+  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+  .link { background: none; border: 0; padding: 8px 0; color: var(--accent); font: inherit; font-size: 14px; cursor: pointer; }
+  .alert { border-radius: 12px; padding: 12px 14px; font-size: 14px; margin-bottom: 16px; border: 1px solid; }
+  .alert.err { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); background: color-mix(in srgb, var(--err) 10%, transparent); }
+  .hidden { display: none !important; }
+  .spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: s .8s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .big-url { display: block; margin: 12px 0 4px; padding: 14px; border-radius: 12px; background: var(--panel-2); border: 1px dashed var(--accent);
+    font-size: 20px; font-weight: 600; text-align: center; word-break: break-all; color: var(--accent); text-decoration: none; }
+  ol.steps { padding-left: 20px; margin: 8px 0 0; } ol.steps li { margin: 6px 0; }
+  .skeleton { height: 44px; border-radius: 10px; background: linear-gradient(90deg, var(--panel-2), var(--line), var(--panel-2)); background-size: 200% 100%; animation: sh 1.2s infinite; margin: 8px 0; }
+  @keyframes sh { to { background-position: -200% 0; } }
+  footer { text-align: center; margin-top: 8px; }
+  @media (prefers-reduced-motion: reduce) { .spin, .skeleton { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24"><g fill="#F5A524"><circle cx="5" cy="5" r="2.2"/><circle cx="12" cy="5" r="2.2" opacity=".55"/><circle cx="19" cy="5" r="2.2"/><circle cx="5" cy="12" r="2.2" opacity=".55"/><circle cx="12" cy="12" r="2.6"/><circle cx="19" cy="12" r="2.2" opacity=".55"/><circle cx="5" cy="19" r="2.2"/><circle cx="12" cy="19" r="2.2" opacity=".55"/><circle cx="19" cy="19" r="2.2"/></g></svg>
+    </div>
+    <div>
+      <h1>Connect PixelPlus to Wi-Fi</h1>
+      <p class="sub" id="devline">Setting up <b id="hn">pixelplus</b></p>
+    </div>
+  </header>
+
+  <div id="err" class="alert err hidden" role="alert"></div>
+
+  <!-- Step 1: pick + password -->
+  <section id="pick">
+    <div class="card">
+      <div class="row">
+        <div>
+          <h2>Choose your network</h2>
+          <div class="muted">The Wi-Fi your lights should use</div>
+        </div>
+        <button class="link" id="rescan" type="button" aria-label="Scan again">Refresh</button>
+      </div>
+      <ul class="nets" id="nets" aria-live="polite">
+        <li><div class="skeleton"></div></li><li><div class="skeleton"></div></li><li><div class="skeleton"></div></li>
+      </ul>
+      <button class="link" id="other" type="button">Other network (hidden)&hellip;</button>
+    </div>
+
+    <form class="card hidden" id="form" autocomplete="off">
+      <h2 id="formTitle">Network</h2>
+      <div id="ssidWrap" class="hidden">
+        <label for="ssid">Network name (SSID)</label>
+        <input id="ssid" name="ssid" maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div id="pwWrap">
+        <label for="pw">Password</label>
+        <div class="pw">
+          <input id="pw" name="password" type="password" minlength="8" maxlength="64" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+          <button type="button" id="toggle" aria-controls="pw">Show</button>
+        </div>
+      </div>
+      <label for="country">Country</label>
+      <select id="country" name="country"></select>
+      <button class="btn" id="go" type="submit">Connect</button>
+    </form>
+  </section>
+
+  <!-- Step 2: connecting -->
+  <section id="done" class="hidden">
+    <div class="card">
+      <div class="row" style="justify-content:flex-start;gap:12px">
+        <div class="spin" style="color:var(--accent)"></div>
+        <h2 style="margin:0">Joining <span id="doneSsid"></span>&hellip;</h2>
+      </div>
+      <p class="muted">PixelPlus is switching to your network. This phone will be disconnected from
+        <b id="apName">the setup hotspot</b> in a few seconds.</p>
+      <ol class="steps">
+        <li>Reconnect this phone to <b id="doneSsid2">your Wi-Fi</b>.</li>
+        <li>Wait about a minute, then open:</li>
+      </ol>
+      <a class="big-url" id="url" href="#">http://pixelplus.local</a>
+      <button class="btn ghost" id="copy" type="button">Copy address</button>
+      <p class="muted" style="margin-top:14px">If that address does not open (some Android phones and
+        Windows PCs don't support <i>.local</i> names), look for <b id="hn2">pixelplus</b> in your router's
+        list of devices and open its IP address instead.<br><br>
+        Wrong password? The <b id="apName2">PixelPlus</b> hotspot comes back within a minute &mdash; just join it again.</p>
+    </div>
+  </section>
+
+  <section id="stayed" class="hidden">
+    <div class="card">
+      <h2>Using PixelPlus without Wi-Fi</h2>
+      <p class="muted">Stay connected to this hotspot and open the full PixelPlus app:</p>
+      <a class="big-url" href="http://10.42.0.1/">http://10.42.0.1</a>
+      <p class="muted">You can connect to Wi-Fi later in Settings &rarr; Network.</p>
+    </div>
+  </section>
+
+  <footer id="foot">
+    <button class="link" id="stay" type="button">Use PixelPlus without Wi-Fi</button>
+  </footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { nets: [], sel: null, hidden: false, hostname: "pixelplus", ap: "PixelPlus" };
+
+  function show(el, on) { el.classList.toggle("hidden", !on); }
+  function err(msg) { $("err").textContent = msg || ""; show($("err"), !!msg); }
+  function api(path, body) {
+    var opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+    return fetch(path, opt).then(function (r) {
+      return r.json().then(function (j) { if (!r.ok && !j.error) j.error = "Something went wrong (" + r.status + ")"; return j; });
+    });
+  }
+  function bars(sig) {
+    var n = sig >= 75 ? 4 : sig >= 50 ? 3 : sig >= 25 ? 2 : 1, s = '<svg class="bars" width="20" height="16" viewBox="0 0 20 16" aria-hidden="true">';
+    for (var i = 0; i < 4; i++) s += '<rect x="' + (i * 5) + '" y="' + (12 - i * 4) + '" width="3.5" height="' + (4 + i * 4) + '" rx="1" class="' + (i < n ? "on" : "") + '"/>';
+    return s + "</svg>";
+  }
+  var lock = '<svg width="14" height="14" viewBox="0 0 24 24" aria-label="secured"><path fill="currentColor" opacity=".7" d="M7 10V7a5 5 0 0 1 10 0v3h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h1Zm2 0h6V7a3 3 0 0 0-6 0v3Z"/></svg>';
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+
+  function renderNets() {
+    var ul = $("nets");
+    if (!state.nets.length) {
+      ul.innerHTML = '<li class="muted" style="padding:12px 8px">No networks found. Tap Refresh, or use “Other network”.</li>';
+      return;
+    }
+    ul.innerHTML = state.nets.map(function (n, i) {
+      var tag = n.enterprise ? "Enterprise – not supported" : n.secure ? "" : "Open";
+      return '<li><button type="button" data-i="' + i + '" aria-pressed="' + (state.sel === n ? "true" : "false") + '">' +
+        bars(n.signal) + '<span class="ssid">' + esc(n.ssid) + '</span>' + (tag ? '<span class="tag">' + tag + "</span>" : "") +
+        (n.secure ? lock : "") + "</button></li>";
+    }).join("");
+  }
+
+  function choose(n) {
+    state.sel = n; state.hidden = !n;
+    renderNets(); err("");
+    show($("form"), true);
+    show($("ssidWrap"), !n);
+    $("formTitle").textContent = n ? n.ssid : "Other network";
+    show($("pwWrap"), !n || n.secure);
+    $("pw").value = "";
+    setTimeout(function () { (n ? (n.secure ? $("pw") : $("go")) : $("ssid")).focus(); }, 50);
+    $("form").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  $("nets").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-i]"); if (!b) return;
+    var n = state.nets[+b.getAttribute("data-i")];
+    if (n.enterprise) { err("Enterprise (802.1X) networks can't be set up here. Use an Ethernet cable or another network."); return; }
+    choose(n);
+  });
+  $("other").addEventListener("click", function () { choose(null); });
+  $("toggle").addEventListener("click", function () {
+    var p = $("pw"), vis = p.type === "password";
+    p.type = vis ? "text" : "password"; this.textContent = vis ? "Hide" : "Show";
+  });
+
+  function scan(rescan) {
+    $("rescan").disabled = true;
+    return api("/api/scan" + (rescan ? "?rescan=1" : "")).then(function (list) {
+      state.nets = Array.isArray(list) ? list : []; renderNets();
+    }).catch(function () { err("Couldn't load the network list. Pull down to reload the page."); })
+      .then(function () { $("rescan").disabled = false; });
+  }
+  $("rescan").addEventListener("click", function () { scan(true); });
+
+  $("form").addEventListener("submit", function (e) {
+    e.preventDefault(); err("");
+    var ssid = state.sel ? state.sel.ssid : $("ssid").value;
+    var pw = (!state.sel || state.sel.secure) ? $("pw").value : "";
+    if (!ssid) { err("Please type the network name."); return; }
+    if (state.sel && state.sel.secure && pw.length < 8) { err("Wi-Fi passwords are at least 8 characters."); return; }
+    var go = $("go"); go.disabled = true; go.innerHTML = '<span class="spin"></span> Connecting';
+    api("/api/connect", { ssid: ssid, password: pw, hidden: state.hidden, country: $("country").value || null })
+      .then(function (r) {
+        if (!r.ok) { err(r.error); return; }
+        var url = r.url || ("http://" + state.hostname + ".local/");
+        $("url").textContent = url.replace(/\/$/, ""); $("url").href = url;
+        $("doneSsid").textContent = "“" + ssid + "”"; $("doneSsid2").textContent = ssid;
+        show($("pick"), false); show($("foot"), false); show($("done"), true); window.scrollTo(0, 0);
+      })
+      .catch(function () { err("Lost contact with PixelPlus. If this keeps happening, move closer and try again."); })
+      .then(function () { go.disabled = false; go.textContent = "Connect"; });
+  });
+
+  $("copy").addEventListener("click", function () {
+    var t = $("url").textContent, b = this;
+    function ok() { b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy address"; }, 1500); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok, function () {});
+    else { var r = document.createRange(); r.selectNode($("url")); getSelection().removeAllRanges(); getSelection().addRange(r); try { document.execCommand("copy"); ok(); } catch (e) {} }
+  });
+
+  $("stay").addEventListener("click", function () {
+    api("/api/stay", {}).then(function () { show($("pick"), false); show($("foot"), false); show($("stayed"), true); });
+  });
+
+  function fillCountries(list, current) {
+    var guess = current;
+    if (!guess) {
+      var langs = navigator.languages || [navigator.language || ""];
+      for (var i = 0; i < langs.length && !guess; i++) { var m = /[-_]([A-Za-z]{2})$/.exec(langs[i] || ""); if (m) guess = m[1].toUpperCase(); }
+    }
+    var sel = $("country");
+    sel.innerHTML = '<option value="">Choose…</option>' + list.map(function (c) {
+      return '<option value="' + esc(c[0]) + '"' + (c[0] === guess ? " selected" : "") + ">" + esc(c[1]) + "</option>";
+    }).join("");
+  }
+
+  api("/api/status").then(function (st) {
+    state.hostname = st.hostname || state.hostname; state.ap = st.hotspotSsid || state.ap;
+    $("hn").textContent = state.hostname; $("hn2").textContent = state.hostname;
+    $("apName").textContent = state.ap; $("apName2").textContent = state.ap;
+    fillCountries(st.countries || [["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"]], st.country);
+    if (st.lastError) err(st.lastError);
+    if (st.stay) { show($("pick"), false); show($("foot"), false); show($("stayed"), true); }
+  }).catch(function () {});
+  scan(false);
+})();
+</script>
+</body>
+</html>

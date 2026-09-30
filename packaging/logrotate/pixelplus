@@ -1,0 +1,21 @@
+/var/log/pixelplus-firstboot.log {
+    monthly
+    rotate 3
+    maxsize 1M
+    missingok
+    notifempty
+    compress
+    copytruncate
+}
+
+/var/lib/pixelplus/logs/*.log {
+    weekly
+    rotate 4
+    maxsize 5M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su pixelplus pixelplus
+}

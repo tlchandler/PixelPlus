@@ -1,16 +1,23 @@
 [package]
 name = "pixelplus-output"
+description = "WS281x pixel output for PixelPlus: DPI framebuffer encoder, latch banks, output backends"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+rust-version.workspace = true
 
 [dependencies]
+pixelplus-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-anyhow.workspace = true
 tracing.workspace = true
-rand.workspace = true
-chrono.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+drm = "0.14"
+drm-ffi = "0.9"
+libc = "0.2"
+
+

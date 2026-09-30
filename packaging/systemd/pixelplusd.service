@@ -1,0 +1,49 @@
+[Unit]
+Description=PixelPlus show daemon (web UI, playback, scheduler, pixel output)
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/INSTALL.md
+After=network.target sound.target time-sync.target avahi-daemon.service pixelplus-firstboot.service
+Wants=network.target avahi-daemon.service
+
+[Service]
+Type=simple
+User=pixelplus
+Group=pixelplus
+# Supplementary groups (video render i2c gpio spi audio netdev dialout) come from
+# /etc/group, set up by the package's postinst.
+Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
+Environment=PIXELPLUS_WEB_DIR=/usr/share/pixelplus/web
+Environment=PIXELPLUS_TTS_URL=http://127.0.0.1:7081
+Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock
+EnvironmentFile=-/etc/default/pixelplus
+ExecStart=/usr/bin/pixelplusd
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+KillMode=mixed
+
+# Port 80 without root, and permission for the output thread to switch itself to
+# SCHED_FIFO (pthread_setschedparam) - the rest of the daemon stays SCHED_OTHER.
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_NICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_NICE
+LimitRTPRIO=95
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+Nice=-5
+
+# Hardening. Privileged operations (config.txt, apt updates, SSH) go through
+# pixelplus-helper@.service started via systemd D-Bus + polkit; Wi-Fi, hostname,
+# timezone and reboot go through NetworkManager / hostnamed / timedated / logind.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+StateDirectory=pixelplus
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/pixelplus -/run/pixelplus
+
+[Install]
+WantedBy=multi-user.target

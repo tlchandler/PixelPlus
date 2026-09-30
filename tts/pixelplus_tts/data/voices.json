@@ -1,0 +1,55 @@
+{
+  "nick": {
+    "description": "Male DJ - warm, upbeat, classic radio baritone",
+    "aliases": [
+      "male",
+      "m",
+      "he"
+    ],
+    "blend": {
+      "am_echo": 0.3,
+      "am_fenrir": 0.3,
+      "am_puck": 0.4
+    },
+    "speed": 1.05,
+    "lang": "en-us",
+    "eq": "equalizer=f=150:t=q:w=1.0:g=2.5,equalizer=f=3200:t=q:w=1.2:g=2",
+    "energy": {
+      "pitch": 1.5,
+      "range": 1.5,
+      "speed": 1.0,
+      "stretch": 1.0,
+      "boost": 3,
+      "lift": 3,
+      "ceiling": 3,
+      "max_lift": 9
+    },
+    "default_energy": 0.4
+  },
+  "holly": {
+    "description": "Female DJ - bright, friendly, energetic",
+    "aliases": [
+      "female",
+      "f",
+      "she"
+    ],
+    "blend": {
+      "af_heart": 0.5,
+      "af_kore": 0.5
+    },
+    "speed": 1.05,
+    "lang": "en-us",
+    "eq": "equalizer=f=220:t=q:w=1.0:g=1.5,equalizer=f=4000:t=q:w=1.2:g=2",
+    "energy": {
+      "pitch": 2,
+      "range": 1.5,
+      "speed": 1.1,
+      "stretch": 1.05,
+      "boost": 3,
+      "lift": 2.5,
+      "ceiling": 3,
+      "max_lift": 8
+    },
+    "default_energy": 0.4
+  }
+}

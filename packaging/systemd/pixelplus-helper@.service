@@ -1,0 +1,11 @@
+[Unit]
+Description=PixelPlus privileged helper (%I)
+Documentation=man:systemctl(1)
+# Started by pixelplusd via `systemctl start --no-block pixelplus-helper@<verb>.service`.
+# polkit (50-pixelplus.rules) lets only the "pixelplus" user start these units, and the
+# helper script accepts only a fixed whitelist of verbs - see /usr/lib/pixelplus/pixelplus-helper.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/pixelplus/pixelplus-helper %I
+TimeoutStartSec=30min

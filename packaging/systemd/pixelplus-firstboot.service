@@ -1,0 +1,21 @@
+[Unit]
+Description=PixelPlus: apply pixelplus.txt (Wi-Fi, hostname, role, ...) and board config
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/INSTALL.md
+# Only on PixelPlus appliance images (the marker is created by the pi-gen stage).
+ConditionPathExists=/etc/pixelplus/appliance
+# After Raspberry Pi Imager customisation: firstrun.sh (Bookworm) runs in its own boot
+# (systemd.unit=kernel-command-line.target), cloud-init (Trixie) runs these stages.
+After=local-fs.target dbus.service NetworkManager.service systemd-remount-fs.service
+After=cloud-init-local.service cloud-init.service cloud-init-network.service
+Before=pixelplusd.service pixelplus-netwatch.service getty.target
+Wants=dbus.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 /usr/lib/pixelplus/firstboot/firstboot.py apply
+TimeoutStartSec=5min
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target

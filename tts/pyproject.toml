@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixelplus-tts"
+dynamic = ["version"]
+description = "PixelPlus DJ voices: Kokoro TTS sidecar with voice blends, energy/hype prosody and radio processing"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "kokoro-onnx>=0.4.9,<0.7",
+  "onnxruntime>=1.17",
+  "numpy>=1.24",
+  "praat-parselmouth>=0.4.3",
+  "imageio-ffmpeg>=0.4.9",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+pixelplus-tts = "pixelplus_tts.__main__:main"
+
+[tool.setuptools]
+packages = ["pixelplus_tts"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pixelplus_tts.__version__" }
+
+[tool.setuptools.package-data]
+pixelplus_tts = ["data/*.json", "data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

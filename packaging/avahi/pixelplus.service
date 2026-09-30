@@ -1,0 +1,19 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- PixelPlus web UI + cluster discovery (docs/ARCHITECTURE.md section 7.1).
+     pixelplusd may additionally publish a richer record (TXT id/role/board/ver)
+     over D-Bus; this static record guarantees <hostname>.local shows up in
+     "Bonjour/mDNS browsers" even before the daemon is configured. -->
+<service-group>
+  <name replace-wildcards="yes">PixelPlus on %h</name>
+  <service>
+    <type>_pixelplus._tcp</type>
+    <port>80</port>
+    <txt-record>path=/</txt-record>
+  </service>
+  <service>
+    <type>_http._tcp</type>
+    <port>80</port>
+    <txt-record>path=/</txt-record>
+  </service>
+</service-group>

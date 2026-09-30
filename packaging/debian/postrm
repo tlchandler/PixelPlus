@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+case "$1" in
+remove | purge)
+    for u in pixelplusd.service pixelplus-tts.service pixelplus-games.service \
+        pixelplus-firstboot.service pixelplus-reapply.path pixelplus-netwatch.service; do
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper purge "$u" >/dev/null 2>&1 || true
+        fi
+    done
+    rm -f /etc/NetworkManager/dnsmasq-shared.d/pixelplus-portal.conf \
+        /etc/NetworkManager/conf.d/50-pixelplus.conf
+    [ -d /run/systemd/system ] && systemctl daemon-reload >/dev/null 2>&1 || true
+    ;;
+esac
+if [ "$1" = "purge" ]; then
+    # Show data is only removed on purge.
+    rm -rf /var/lib/pixelplus /var/lib/pixelplus-system /etc/pixelplus/netwatch.json
+    rm -f /var/log/pixelplus-firstboot.log*
+    if getent passwd pixelplus >/dev/null; then
+        deluser --system pixelplus >/dev/null 2>&1 || true
+    fi
+fi
+exit 0

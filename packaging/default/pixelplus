@@ -1,0 +1,9 @@
+# Environment overrides for pixelplusd (and the TTS / games sidecars).
+# See docs/ARCHITECTURE.md section 2. Restart after editing:
+#   sudo systemctl restart pixelplusd
+#
+# PIXELPLUS_HTTP_PORT=80
+# PIXELPLUS_HTTP_BIND=0.0.0.0
+# PIXELPLUS_OUTPUT=auto        # dpi | sim | none | auto
+# PIXELPLUS_DATA_DIR=/var/lib/pixelplus
+# RUST_LOG=info

@@ -1,0 +1,8 @@
+# PixelPlus: device access for the "pixelplus" service user via groups.
+# Raspberry Pi OS already ships equivalent rules; these make the package work on
+# other Debian-based systems too.
+SUBSYSTEM=="i2c-dev", GROUP="i2c", MODE="0660"
+SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
+KERNEL=="gpiomem", GROUP="gpio", MODE="0660"
+SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
+SUBSYSTEM=="graphics", KERNEL=="fb[0-9]*", GROUP="video", MODE="0660"

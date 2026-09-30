@@ -1,0 +1,72 @@
+#!/bin/sh
+set -e
+
+SERVICE_USER=pixelplus
+
+add_group_if_missing() {
+    getent group "$1" >/dev/null 2>&1 || addgroup --system "$1" >/dev/null
+}
+
+case "$1" in
+configure)
+    if ! getent passwd "${SERVICE_USER}" >/dev/null; then
+        adduser --system --group --home /var/lib/pixelplus --no-create-home \
+            --shell /usr/sbin/nologin --gecos "PixelPlus daemon" "${SERVICE_USER}" >/dev/null
+    fi
+    # Hardware access (DPI framebuffer, i2c sensors/EEPROM/RTC, GPIO latches, audio,
+    # NetworkManager). Groups that do not exist on this system are created (harmless).
+    for g in i2c gpio spi; do add_group_if_missing "$g"; done
+    for g in video render i2c gpio spi audio netdev dialout; do
+        if getent group "$g" >/dev/null 2>&1; then
+            adduser "${SERVICE_USER}" "$g" >/dev/null 2>&1 || true
+        fi
+    done
+
+    install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0750 /var/lib/pixelplus
+    for d in sequences media thumbnails snapshots logs tts tts/models games games/roms; do
+        install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0750 "/var/lib/pixelplus/$d"
+    done
+    # provision.json (from pixelplus.txt) must stay private to the daemon
+    if [ -f /var/lib/pixelplus/provision.json ]; then
+        chown "${SERVICE_USER}:${SERVICE_USER}" /var/lib/pixelplus/provision.json
+        chmod 0600 /var/lib/pixelplus/provision.json
+    fi
+
+    # PixelPlus SD-card images ("appliances") get the hotspot/NetworkManager tweaks.
+    if [ -e /etc/pixelplus/appliance ]; then
+        install -d /etc/NetworkManager/dnsmasq-shared.d /etc/NetworkManager/conf.d
+        ln -sf /usr/share/pixelplus/appliance/nm-dnsmasq-portal.conf \
+            /etc/NetworkManager/dnsmasq-shared.d/pixelplus-portal.conf
+        ln -sf /usr/share/pixelplus/appliance/nm-pixelplus.conf \
+            /etc/NetworkManager/conf.d/50-pixelplus.conf
+    fi
+
+    if [ -d /run/systemd/system ]; then
+        systemd-tmpfiles --create /usr/lib/tmpfiles.d/pixelplus.conf >/dev/null 2>&1 || true
+        sysctl -q -p /usr/lib/sysctl.d/60-pixelplus.conf >/dev/null 2>&1 || true
+        udevadm control --reload-rules >/dev/null 2>&1 || true
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl try-reload-or-restart avahi-daemon.service >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+# Enable units (idempotent). The appliance-only units are gated by
+# ConditionPathExists=/etc/pixelplus/appliance, the sidecars by their venvs.
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ]; then
+    for u in pixelplusd.service pixelplus-tts.service pixelplus-games.service \
+        pixelplus-firstboot.service pixelplus-reapply.path pixelplus-netwatch.service; do
+        deb-systemd-helper enable "$u" >/dev/null 2>&1 || systemctl enable "$u" >/dev/null 2>&1 || true
+    done
+    if [ -d /run/systemd/system ] && [ -z "${DPKG_ROOT:-}" ]; then
+        # restart only what was already running (fresh installs in pi-gen chroots: no systemd)
+        if [ -n "$2" ]; then
+            systemctl try-restart pixelplusd.service pixelplus-tts.service pixelplus-games.service \
+                pixelplus-netwatch.service >/dev/null 2>&1 || true
+        else
+            systemctl start pixelplusd.service >/dev/null 2>&1 || true
+        fi
+    fi
+fi
+
+exit 0

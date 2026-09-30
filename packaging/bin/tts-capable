@@ -1,0 +1,29 @@
+#!/bin/sh
+# Exit 0 if this machine should run the on-device TTS sidecar (pixelplus-tts.service
+# ExecCondition): any amd64 host, or a Raspberry Pi 4/5/400/500/CM4/CM5 with >= 1.8 GB RAM.
+# Pi Zero 2 W / Pi 3 render speech in the browser instead (ARCHITECTURE.md section 4).
+# Override: PIXELPLUS_TTS=on|off in /etc/default/pixelplus.
+set -u
+# shellcheck source=/dev/null
+[ -r /etc/default/pixelplus ] && . /etc/default/pixelplus
+case "${PIXELPLUS_TTS:-auto}" in
+on) exit 0 ;;
+off) exit 1 ;;
+esac
+
+case "$(uname -m)" in
+x86_64 | amd64) exit 0 ;;
+esac
+
+model=""
+if [ -r /proc/device-tree/model ]; then
+    model=$(tr -d '\0' </proc/device-tree/model)
+fi
+case "${model}" in
+# (also matches Pi 400 / Pi 500)
+*"Raspberry Pi 4"* | *"Raspberry Pi 5"* | *"Compute Module 4"* | *"Compute Module 5"*) ;;
+*) exit 1 ;;
+esac
+
+mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+[ "${mem_kb:-0}" -ge 1800000 ]

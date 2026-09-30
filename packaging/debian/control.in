@@ -1,0 +1,19 @@
+Package: pixelplus
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: PixelPlus contributors <pixelplus@users.noreply.github.com>
+Installed-Size: @SIZE@
+Section: misc
+Priority: optional
+Homepage: https://github.com/tlchandler/PixelPlus
+Depends: adduser, systemd, python3 (>= 3.9), avahi-daemon, alsa-utils, ffmpeg, libc6 (>= 2.31)
+Recommends: network-manager, dnsmasq-base, nftables, iw, rfkill, i2c-tools, polkitd | policykit-1, logrotate
+Suggests: libretro-nestopia
+Description: prop-oriented show player for Raspberry Pi pixel controllers
+ PixelPlus plays xLights sequences on Raspberry Pi based pixel controllers
+ (difftx, difftxlarge, diffsmart boards) with a modern web UI: props instead of
+ channels, leader/follower clusters, scheduling, DJ voice clips and games.
+ .
+ This package contains the pixelplusd daemon, the pixelplus CLI, the web UI,
+ systemd units, and - for PixelPlus SD-card images - the pixelplus.txt
+ first-boot applier and the Wi-Fi setup hotspot.

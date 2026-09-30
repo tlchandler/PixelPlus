@@ -1,0 +1,42 @@
+// PixelPlus: what the unprivileged "pixelplus" service user (pixelplusd) may do
+// without a password. Everything else falls through to the distribution defaults.
+polkit.addRule(function (action, subject) {
+    if (subject.user !== "pixelplus") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    // Wi-Fi scan/connect, hotspot, Ethernet settings (Settings -> Network).
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0) {
+        return polkit.Result.YES;
+    }
+
+    switch (action.id) {
+    case "org.freedesktop.login1.reboot":
+    case "org.freedesktop.login1.reboot-multiple-sessions":
+    case "org.freedesktop.login1.power-off":
+    case "org.freedesktop.login1.power-off-multiple-sessions":
+    case "org.freedesktop.hostname1.set-hostname":
+    case "org.freedesktop.hostname1.set-static-hostname":
+    case "org.freedesktop.timedate1.set-timezone":
+    case "org.freedesktop.timedate1.set-ntp":
+    case "org.freedesktop.timedate1.set-time":
+        return polkit.Result.YES;
+    }
+
+    if (action.id === "org.freedesktop.systemd1.manage-units") {
+        var unit = action.lookup("unit") || "";
+        var verb = action.lookup("verb") || "";
+        // Whitelisted root helper verbs (see /usr/lib/pixelplus/pixelplus-helper).
+        if (/^pixelplus-helper@[A-Za-z0-9:_.\-]+\.service$/.test(unit) && verb === "start") {
+            return polkit.Result.YES;
+        }
+        if (/^pixelplus-(tts|games|netwatch)\.service$/.test(unit) &&
+            ["start", "stop", "restart", "try-restart"].indexOf(verb) >= 0) {
+            return polkit.Result.YES;
+        }
+        if (unit === "pixelplusd.service" && (verb === "restart" || verb === "try-restart")) {
+            return polkit.Result.YES;
+        }
+    }
+    return polkit.Result.NOT_HANDLED;
+});

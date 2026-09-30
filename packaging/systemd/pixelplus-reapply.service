@@ -1,0 +1,9 @@
+[Unit]
+Description=PixelPlus: re-apply pixelplus.txt after it was edited
+ConditionPathExists=/etc/pixelplus/appliance
+After=pixelplus-firstboot.service
+
+[Service]
+Type=oneshot
+# No automatic reboot for edits made while running; a board= change is applied at next boot.
+ExecStart=/usr/bin/python3 /usr/lib/pixelplus/firstboot/firstboot.py apply --no-reboot

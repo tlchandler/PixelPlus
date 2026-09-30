@@ -1,0 +1,93 @@
+#!/bin/bash
+# PixelPlus privileged helper. Runs as root via pixelplus-helper@<verb>.service, which
+# the unprivileged pixelplusd starts with:
+#     systemctl start --no-block 'pixelplus-helper@<verb>.service'
+# (allowed by /usr/share/polkit-1/rules.d/50-pixelplus.rules).
+#
+# Verbs (arguments are ':'-separated inside the instance name):
+#   config-txt:<board>[:<rev>]  write the board's config.txt block, reboot if it changed
+#   update                      apt-get update + upgrade the pixelplus package, restart
+#   ssh-on | ssh-off            enable / disable the SSH server
+#   reapply                     re-apply /boot/firmware/pixelplus.txt now
+#
+# Progress/result is written to /run/pixelplus/helper-<verb>.json for the UI to poll:
+#   {"verb": "...", "state": "running|ok|failed", "message": "...", "updatedAt": <unix>}
+set -euo pipefail
+
+readonly STATUS_DIR=/run/pixelplus
+readonly FIRSTBOOT=/usr/lib/pixelplus/firstboot/firstboot.py
+
+instance="${1:-}"
+IFS=':' read -r verb arg1 arg2 extra <<<"${instance}"
+extra="${extra:-}"
+
+status() {
+    local state="$1" msg="$2"
+    mkdir -p "${STATUS_DIR}"
+    # message is escaped for JSON (backslashes and quotes; no control chars expected)
+    msg="${msg//\\/\\\\}"
+    msg="${msg//\"/\\\"}"
+    printf '{"verb":"%s","state":"%s","message":"%s","updatedAt":%s}\n' \
+        "${verb}" "${state}" "${msg}" "$(date +%s)" >"${STATUS_DIR}/helper-${verb}.json.tmp"
+    chmod 0644 "${STATUS_DIR}/helper-${verb}.json.tmp"
+    mv -f "${STATUS_DIR}/helper-${verb}.json.tmp" "${STATUS_DIR}/helper-${verb}.json"
+}
+
+fail() {
+    echo "pixelplus-helper: $*" >&2
+    status failed "$*"
+    exit 1
+}
+
+valid_token() { [[ "$1" =~ ^[A-Za-z0-9._-]{1,32}$ ]]; }
+
+[[ -n "${extra}" ]] && { verb="invalid"; fail "too many arguments"; }
+valid_token "${verb:-}" || { verb="invalid"; fail "missing or invalid verb"; }
+
+case "${verb}" in
+config-txt)
+    valid_token "${arg1:-}" || fail "invalid board id"
+    args=(board-config --board "${arg1}" --reboot)
+    if [[ -n "${arg2:-}" ]]; then
+        valid_token "${arg2}" || fail "invalid board revision"
+        args+=(--rev "${arg2}")
+    fi
+    status running "Writing board settings for ${arg1}"
+    if /usr/bin/python3 "${FIRSTBOOT}" "${args[@]}"; then
+        status ok "Board settings for ${arg1} applied (the controller restarts if they changed)"
+    else
+        fail "Could not write board settings (see /var/log/pixelplus-firstboot.log)"
+    fi
+    ;;
+update)
+    [[ -z "${arg1:-}" ]] || fail "update takes no arguments"
+    status running "Checking for updates"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -q || fail "apt-get update failed (no internet?)"
+    status running "Installing update"
+    apt-get install -y -q --only-upgrade \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        pixelplus || fail "Installing the update failed"
+    status ok "Up to date: $(dpkg-query -W -f='${Version}' pixelplus 2>/dev/null || echo unknown)"
+    # postinst restarts pixelplusd
+    ;;
+ssh-on | ssh-off)
+    [[ -z "${arg1:-}" ]] || fail "${verb} takes no arguments"
+    if command -v raspi-config >/dev/null 2>&1; then
+        raspi-config nonint do_ssh "$([[ ${verb} == ssh-on ]] && echo 0 || echo 1)"
+    elif [[ ${verb} == ssh-on ]]; then
+        systemctl enable --now ssh.service
+    else
+        systemctl disable --now ssh.service
+    fi
+    status ok "SSH ${verb#ssh-}"
+    ;;
+reapply)
+    [[ -z "${arg1:-}" ]] || fail "reapply takes no arguments"
+    /usr/bin/python3 "${FIRSTBOOT}" apply --force --no-reboot || fail "re-apply failed"
+    status ok "pixelplus.txt applied"
+    ;;
+*)
+    fail "unknown verb '${verb}'"
+    ;;
+esac

@@ -1,0 +1,7 @@
+# PixelPlus TTS runtime (Python 3.10 - 3.13)
+kokoro-onnx>=0.4.9,<0.7
+onnxruntime>=1.17
+numpy>=1.24
+praat-parselmouth>=0.4.3
+# Fallback ffmpeg when the system has none (apt install ffmpeg is preferred on Pi OS)
+imageio-ffmpeg>=0.4.9

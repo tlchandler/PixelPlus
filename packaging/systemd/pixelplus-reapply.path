@@ -1,0 +1,11 @@
+[Unit]
+Description=PixelPlus: watch pixelplus.txt for edits
+ConditionPathExists=/etc/pixelplus/appliance
+After=pixelplus-firstboot.service
+
+[Path]
+PathChanged=/boot/firmware/pixelplus.txt
+Unit=pixelplus-reapply.service
+
+[Install]
+WantedBy=multi-user.target

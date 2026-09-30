@@ -1,0 +1,18 @@
+[Unit]
+Description=PixelPlus network watchdog and "PixelPlus-XXXX" setup hotspot
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/INSTALL.md
+ConditionPathExists=/etc/pixelplus/appliance
+After=NetworkManager.service pixelplus-firstboot.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/lib/pixelplus/netwatch/netwatch.py
+Restart=always
+RestartSec=5
+# Runs as root: it drives NetworkManager, nftables and binds 10.42.0.1:8099.
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

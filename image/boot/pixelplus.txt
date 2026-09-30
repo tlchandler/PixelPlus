@@ -78,7 +78,8 @@ board=auto
 # ---------------------------------------------------------------------------
 #  Fixed IP address (optional - most people leave this empty)
 # ---------------------------------------------------------------------------
-# Leave ip_address empty to get an address automatically (DHCP).
+# Leave ip_address empty to keep the current setting (a new card uses DHCP =
+# automatic). Type "dhcp" to go back to automatic after using a fixed address.
 # Example:  ip_address=192.168.1.50/24   ip_gateway=192.168.1.1   ip_dns=192.168.1.1
 ip_address=
 ip_gateway=

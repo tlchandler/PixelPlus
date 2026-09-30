@@ -1,0 +1,35 @@
+[Unit]
+Description=PixelPlus text-to-speech sidecar (Kokoro, loopback :7081)
+Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/ARCHITECTURE.md
+After=network.target
+PartOf=pixelplusd.service
+# Only installed on images/hosts that have the venv...
+ConditionPathExists=/opt/pixelplus-tts/venv/bin/python
+
+[Service]
+Type=simple
+User=pixelplus
+Group=pixelplus
+# ...and only worth running on a Pi 4/5 (>= 2 GB) or a PC (amd64). Exit 1 = skip.
+ExecCondition=/usr/lib/pixelplus/tts-capable
+Environment=PIXELPLUS_TTS_BIND=127.0.0.1:7081
+Environment=PIXELPLUS_TTS_MODELS=/var/lib/pixelplus/tts/models
+Environment=OMP_NUM_THREADS=3
+EnvironmentFile=-/etc/default/pixelplus
+WorkingDirectory=/opt/pixelplus-tts
+ExecStart=/opt/pixelplus-tts/venv/bin/python -m pixelplus_tts
+Restart=on-failure
+RestartSec=10
+# Never steal CPU from the pixel output thread.
+Nice=10
+CPUWeight=40
+IOWeight=40
+MemoryHigh=900M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=-/var/lib/pixelplus/tts
+
+[Install]
+WantedBy=multi-user.target
