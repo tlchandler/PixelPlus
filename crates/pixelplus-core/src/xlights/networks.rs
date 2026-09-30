@@ -4,7 +4,7 @@
 //! (`<network>`) inside it, each consuming `MaxChannels` channels. A controller's start
 //! channel is therefore the sum of everything before it, plus one.
 
-use roxmltree::{Document, Node};
+use roxmltree::Node;
 
 /// One output (`<network>` element): a universe for E1.31/Art-Net, the whole controller
 /// for DDP, a serial port, ...
@@ -74,13 +74,11 @@ fn attr_u32(n: Node, name: &str) -> Option<u32> {
 impl Networks {
     /// Parse `xlights_networks.xml`. Unknown elements are ignored.
     pub fn parse(xml: &str, warnings: &mut Vec<String>) -> Result<Networks, roxmltree::Error> {
-        let doc = Document::parse_with_options(
-            xml,
-            roxmltree::ParsingOptions {
-                allow_dtd: true,
-                ..Default::default()
-            },
-        )?;
+        let doc = super::parse_xml(xml).map_err(|e| match e {
+            super::XmlError::Xml(e) => e,
+            // roxmltree has no "too deep" error; nesting is a node-count problem too.
+            super::XmlError::TooDeep => roxmltree::Error::NodesLimitReached,
+        })?;
         let root = doc.root_element();
         let mut controllers = Vec::new();
         let mut next = 1u32;
@@ -208,7 +206,8 @@ impl Networks {
 fn parse_outputs(net: Node, controller_ip: Option<&str>, next: &mut u32) -> Vec<NetOutput> {
     let kind = attr(net, "NetworkType").unwrap_or("NULL").to_string();
     let channels = attr_u32(net, "MaxChannels").unwrap_or(0);
-    let universe = attr_u32(net, "BaudRate").unwrap_or(0);
+    // xLights reads `BaudRate` with a default of 1.
+    let universe = attr_u32(net, "BaudRate").unwrap_or(1);
     let ip = attr(net, "ComPort")
         .filter(|s| s.contains('.') || s.contains(':'))
         .map(str::to_string)

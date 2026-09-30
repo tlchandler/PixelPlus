@@ -137,6 +137,29 @@ pub fn gpio_ranges(pins: &[u8]) -> String {
     out
 }
 
+/// Common Raspberry Pi interfaces whose default pins overlap `pins`
+/// (their drivers would fight the pixel engine for the pin).
+pub fn pin_conflicts(pins: &[u8]) -> Vec<&'static str> {
+    const USERS: [(&str, &[u8]); 5] = [
+        ("dtoverlay=w1-gpio (GPIO4)", &[4]),
+        ("dtparam=spi (GPIO7-11)", &[7, 8, 9, 10, 11]),
+        ("enable_uart / serial console (GPIO14/15)", &[14, 15]),
+        (
+            "dtparam=i2s / I2S audio HATs (GPIO18-21)",
+            &[18, 19, 20, 21],
+        ),
+        (
+            "dtoverlay=gpio-fan / pwm on GPIO12/13/18/19",
+            &[12, 13, 18, 19],
+        ),
+    ];
+    USERS
+        .iter()
+        .filter(|(_, used)| used.iter().any(|p| pins.contains(p)))
+        .map(|(name, _)| *name)
+        .collect()
+}
+
 /// The `dtoverlay=` line for `soc` and `geometry` (only non-default parameters).
 pub fn overlay_line(soc: DpiSoc, geometry: &DpiGeometry) -> String {
     let d = DpiGeometry::default();
@@ -216,6 +239,14 @@ pub fn config_txt(board: BoardKind, soc: DpiSoc, geometry: &DpiGeometry) -> Resu
             soc.dpi_function()
         );
         let _ = writeln!(s, "gpio={}=op,dl", gpio_ranges(&pins));
+        let conflicts = pin_conflicts(&pins);
+        if !conflicts.is_empty() {
+            let _ = writeln!(
+                s,
+                "# Nothing else may drive these pins: leave {} disabled.",
+                conflicts.join(", ")
+            );
+        }
     }
 
     if board == BoardKind::Difftxlarge {
@@ -274,6 +305,8 @@ mod tests {
         let s = config_txt(BoardKind::Difftx, DpiSoc::Bcm283x, &g).unwrap();
         assert!(s.contains("dtoverlay=pixelplus-dpi,vactive=807\n"), "{s}");
         assert!(s.contains("gpio=4-7=op,dl\n"));
+        assert!(s.contains("w1-gpio") && s.contains("spi"), "{s}");
+        assert!(!s.contains("uart"), "{s}");
         assert!(s.contains("dtparam=i2c_arm=on"));
         assert!(!s.contains("ds3231"));
         assert!(!s.contains("enable_dpi_lcd"));
@@ -288,6 +321,7 @@ mod tests {
             "{s}"
         );
         assert!(s.contains("gpio=4-23,25-27=op,dl"));
+        assert!(s.contains("serial console"), "{s}");
         assert!(s.contains("dtoverlay=i2c-rtc,ds3231"));
         assert!(s.contains("usb_max_current_enable=1"));
         assert!(!s.contains("dtparam=audio=on"));

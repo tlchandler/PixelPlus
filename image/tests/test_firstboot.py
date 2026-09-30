@@ -212,6 +212,49 @@ class FirstbootTests(unittest.TestCase):
         self.assertIn(f"{sys.executable} config-txt --board difftx --pixels 1600", flat)
         self.assertIn("vactive=1607", self.conf())
 
+    def run_main(self, sysops, argv):
+        s_orig = firstboot.Sys
+
+        def fake(dry_run=False):
+            return sysops
+
+        fake.have = s_orig.have  # detect_board() calls Sys.have
+        firstboot.Sys = fake
+        try:
+            os.environ["PIXELPLUS_FIRSTBOOT_LOG"] = os.path.join(self.tmp, "fb.log")
+            return firstboot.main(argv)
+        finally:
+            firstboot.Sys = s_orig
+
+    def test_board_config_failure_exits_nonzero(self):
+        # the root helper maps the exit code to {"state": "failed"} for the web UI
+        s = RecordingSys(fragment=None)
+        self.assertEqual(self.run_main(s, ["--dry-run", "board-config", "--board", "difftx", "--pixels", "1600"]), 2)
+        s = RecordingSys(board_json=None)
+        self.assertEqual(self.run_main(s, ["--dry-run", "board-config"]), 2)
+        s = RecordingSys(fragment="[all]\ndtoverlay=pixelplus-dpi,vactive=807\n")
+        self.assertEqual(self.run_main(s, ["--dry-run", "board-config", "--board", "difftx"]), 0)
+
+    def test_private_json_ignores_planted_symlinks(self):
+        data = os.path.join(self.tmp, "data")
+        os.makedirs(data, exist_ok=True)
+        victim = os.path.join(self.tmp, "victim")
+        with open(victim, "w") as f:
+            f.write('{"secret": 1}')
+        os.chmod(victim, 0o640)
+        ppath = os.path.join(data, "provision.json")
+        # the service user owns /var/lib/pixelplus and could plant these links
+        os.symlink(victim, ppath)
+        os.symlink(victim, ppath + ".tmp")
+        self.assertEqual(firstboot.read_json_nofollow(ppath), {})
+        firstboot.write_private_json(ppath, {"role": "leader"})
+        with open(victim) as f:
+            self.assertEqual(f.read(), '{"secret": 1}')
+        self.assertEqual(os.stat(victim).st_mode & 0o777, 0o640)
+        self.assertFalse(os.path.islink(ppath))
+        self.assertEqual(firstboot.read_json_nofollow(ppath), {"role": "leader"})
+        self.assertEqual(os.stat(ppath).st_mode & 0o777, 0o600)
+
     def test_reboot_loop_guard(self):
         boards = ["difftx", "diffsmart"]
         for i in range(firstboot.MAX_BOARD_REBOOTS + 2):

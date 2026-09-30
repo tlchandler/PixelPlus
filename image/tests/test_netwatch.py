@@ -272,5 +272,27 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(self.nw.state, "HOTSPOT")
 
 
+class StatusFileTests(unittest.TestCase):
+    def test_status_write_does_not_follow_planted_symlinks(self):
+        d = tempfile.mkdtemp()
+        victim = os.path.join(d, "victim")
+        with open(victim, "w") as f:
+            f.write("precious\n")
+        os.chmod(victim, 0o600)
+        target = os.path.join(d, "netwatch.json")
+        os.symlink(victim, target)
+        os.symlink(victim, target + ".tmp")
+        netwatch.write_json_atomic(target, {"state": "hotspot"})
+        with open(victim) as f:
+            self.assertEqual(f.read(), "precious\n")
+        self.assertEqual(os.stat(victim).st_mode & 0o777, 0o600)
+        self.assertFalse(os.path.islink(target))
+        with open(target) as f:
+            self.assertEqual(json.load(f), {"state": "hotspot"})
+        self.assertEqual(os.stat(target).st_mode & 0o777, 0o644)
+        leftovers = [n for n in os.listdir(d) if n.startswith(".netwatch-")]
+        self.assertEqual(leftovers, [])
+
+
 if __name__ == "__main__":
     unittest.main()

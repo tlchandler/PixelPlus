@@ -369,3 +369,79 @@ fn full_pipeline_routes_every_pixel() {
     assert_eq!(e.frames_sampled, 12);
     assert!(e.per_prop.iter().all(|p| p.peak_amps >= 0.0));
 }
+
+// ---------------------------------------------------------------------------
+// xLights 2025-format fixture (named attributes, sorted like xLights writes them,
+// <Controller> networks with ExtraProperty children, 3D custom model, layered arch,
+// tree with exportFirstStrand, multi-string poly line).
+// ---------------------------------------------------------------------------
+
+const RGB_2025: &str = include_str!("../testdata/xlights_2025_rgbeffects.xml");
+const NET_2025: &str = include_str!("../testdata/xlights_2025_networks.xml");
+
+#[test]
+fn xlights_2025_format_imports_with_xlights_channel_math() {
+    let show = Show::default();
+    let p = import_preview(RGB_2025, Some(NET_2025), &show).expect("2025 fixture imports");
+    let props = by_name(&p);
+    // (name, pixels, 0-based channel start)
+    let expect = [
+        ("Big Arch", 100, 0),           // layered arch: NodesPerArch nodes, not layers' sum
+        ("Canes", 100, 300),            // >Big Arch:1
+        ("Snowflake 3D", 6, 600),       // node 5/6 live on layer 1 only
+        ("Star", 60, 618),              // >Snowflake 3D:1
+        ("Garage Poly", 150, 798),      // @Star:181
+        ("Mega Tree", 1600, 6000),      // #10.0.0.20:1:1
+        ("Matrix", 800, 11100),         // #10.0.0.20:11:1 = 6001 + 10*510
+        ("Sphere", 100, 13500),         // >Matrix:1
+        ("Window", 60, 16742),
+    ];
+    for (name, px, ch) in expect {
+        let prop = props.get(name).unwrap_or_else(|| panic!("{name} missing: {:?}", p.warnings));
+        assert_eq!((prop.pixel_count, prop.channel_start), (px, ch), "{name}");
+    }
+    assert!(!props.contains_key("Flood") && !props.contains_key("Mini Lights"));
+    assert!(p.warnings.iter().any(|w| w.contains("'Window' is not assigned")));
+
+    let segs = |name: &str| {
+        let mut v: Vec<(String, u32, u32, u32, u32)> = props[name]
+            .segments
+            .iter()
+            .map(|s| (s.node_id.clone(), s.output, s.start_pixel, s.pixel_count, s.prop_offset))
+            .collect();
+        v.sort();
+        v
+    };
+    let f = |o, sp, n, off| ("Front PixelPlus".to_string(), o, sp, n, off);
+    assert_eq!(segs("Big Arch"), vec![f(1, 0, 100, 0)]);
+    assert_eq!(segs("Snowflake 3D"), vec![f(3, 0, 6, 0)]);
+    assert_eq!(segs("Star"), vec![f(3, 8, 60, 0)]); // after the snowflake + 2 nulls
+    assert_eq!(segs("Garage Poly"), vec![f(4, 0, 75, 0), f(5, 0, 75, 75)]);
+    let tree = segs("Mega Tree");
+    assert_eq!(tree.len(), 16);
+    assert!(tree
+        .iter()
+        .enumerate()
+        .all(|(i, s)| s.0 == "Tree F48" && s.1 == i as u32 + 1 && s.3 == 100 && s.4 == 100 * i as u32));
+    assert_eq!(segs("Matrix").iter().map(|s| s.1).collect::<Vec<_>>(), vec![17, 18, 19, 20]);
+    assert_eq!(segs("Sphere").iter().map(|s| (s.1, s.3)).collect::<Vec<_>>(), vec![(21, 50), (22, 50)]);
+
+    // The 3D custom model's map shows both layers side by side.
+    let m = props["Snowflake 3D"].matrix.as_ref().unwrap();
+    assert_eq!((m.width, m.height), (6, 3));
+    // Horizontal matrix starting top-left: pixel 0 is the top-left cell.
+    let m = props["Matrix"].matrix.as_ref().unwrap();
+    assert_eq!((m.width, m.height), (50, 16));
+    assert_eq!(m.pixel_map[0], 0);
+
+    let ctrls: HashMap<&str, (u32, u32, Option<&str>)> = p
+        .controllers
+        .iter()
+        .map(|c| (c.name.as_str(), (c.ports, c.prop_count, c.protocol.as_deref())))
+        .collect();
+    assert_eq!(ctrls["Front PixelPlus"], (5, 5, Some("DDP")));
+    assert_eq!(ctrls["Tree F48"], (22, 3, Some("E131")));
+    let g: HashMap<&str, usize> = p.groups.iter().map(|g| (g.name.as_str(), g.prop_ids.len())).collect();
+    assert_eq!(g["Front Yard"], 4);
+    assert_eq!(g["Everything"], 7);
+}

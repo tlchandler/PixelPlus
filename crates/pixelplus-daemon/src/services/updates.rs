@@ -130,7 +130,10 @@ pub async fn apply(state: &AppState) -> ApiResult<String> {
         ));
     }
     platform::run_helper(state, HelperVerb::Update, HelperOpts::default()).await?;
-    Ok("Installing the update. PixelPlus will restart by itself when it's done (a minute or two).".into())
+    Ok(
+        "Installing the update. PixelPlus will restart by itself when it's done (a minute or two)."
+            .into(),
+    )
 }
 
 #[cfg(test)]

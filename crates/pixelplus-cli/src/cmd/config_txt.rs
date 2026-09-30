@@ -1,6 +1,7 @@
 //! `pixelplus config-txt`: the boot configuration fragment for a board.
 
 use crate::args::{BoardArg, PiArg};
+use crate::hwctx::HwContext;
 use anyhow::{bail, Result};
 use clap::Args;
 use pixelplus_core::model::BoardKind;
@@ -28,13 +29,24 @@ pub struct ConfigTxtArgs {
     pub overlay: bool,
 }
 
-/// Run `config-txt`.
-pub fn run(args: ConfigTxtArgs) -> Result<()> {
+/// Run `config-txt` (prints the fragment).
+pub fn run(ctx: &HwContext, args: ConfigTxtArgs) -> Result<()> {
+    print!("{}", render(ctx, &args)?);
+    Ok(())
+}
+
+/// The fragment (or overlay source) `config-txt` prints.
+pub fn render(ctx: &HwContext, args: &ConfigTxtArgs) -> Result<String> {
     let board = BoardKind::from(args.board);
     let soc = match args.pi.soc() {
         Some(s) => s,
         None => {
-            let model = read_pi_info().map(|p| p.model);
+            // --simulate: the simulated Pi (see HwContext::pi_info).
+            let model = if ctx.is_simulated() {
+                ctx.pi_info().map(|p| p.model)
+            } else {
+                read_pi_info().map(|p| p.model)
+            };
             match model.as_deref().and_then(DpiSoc::from_model) {
                 Some(s) => s,
                 None => bail!("this is not a Raspberry Pi; choose one with --pi pi3|pi4|pi5"),
@@ -42,14 +54,41 @@ pub fn run(args: ConfigTxtArgs) -> Result<()> {
         }
     };
     if args.overlay {
-        print!("{}", soc.overlay_source());
-        return Ok(());
+        return Ok(soc.overlay_source().to_string());
     }
     let geometry = match (args.pixels, args.fps) {
         (_, Some(fps)) => DpiGeometry::for_refresh(fps)?,
         (Some(px), None) => DpiGeometry::for_pixels(px)?,
         (None, None) => DpiGeometry::for_pixels(800)?,
     };
-    print!("{}", config_txt(board, soc, &geometry)?);
-    Ok(())
+    Ok(config_txt(board, soc, &geometry)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hwctx::HwContext;
+
+    fn args(board: BoardArg, pixels: Option<u32>) -> ConfigTxtArgs {
+        ConfigTxtArgs {
+            board,
+            pi: PiArg::Auto,
+            pixels,
+            fps: None,
+            overlay: false,
+        }
+    }
+
+    #[test]
+    fn simulated_pi_needs_no_pi_flag() {
+        let ctx = HwContext {
+            simulate: Some(BoardKind::Difftx),
+        };
+        let f = render(&ctx, &args(BoardArg::Difftx, Some(1600))).unwrap();
+        assert!(f.contains("up to 1600 pixels per output"), "{f}");
+        assert!(f.contains("dtoverlay=pixelplus-dpi"));
+        // Bare Pi / virtual: still a valid fragment (I2C for sensors), no pixel engine.
+        let f = render(&ctx, &args(BoardArg::BarePi, None)).unwrap();
+        assert!(f.contains("dtparam=i2c_arm=on"));
+    }
 }

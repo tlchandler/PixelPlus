@@ -41,6 +41,9 @@ async fn main() -> anyhow::Result<()> {
         config.web_dir.display()
     );
 
+    if config.dev {
+        tracing::info!("Development mode (PIXELPLUS_DEV)");
+    }
     let events = EventBus::new();
     let store = store::ShowStore::load(&config.show_path(), events.clone())?;
     let identity = node::NodeIdentity::load_or_create(&config.node_path())?;

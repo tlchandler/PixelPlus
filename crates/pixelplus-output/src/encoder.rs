@@ -491,6 +491,9 @@ impl WsEncoder {
                 }
             }
             OutputMode::Latched => {
+                // Edge by edge, bank by bank: the slots of one edge are
+                // adjacent, so the (write-combined) buffer is written
+                // strictly in ascending address order.
                 for (bit, px) in line
                     .chunks_exact_mut(ppb)
                     .enumerate()
@@ -499,9 +502,15 @@ impl WsEncoder {
                     for (tables, lane) in self.lanes.iter().zip(lanes) {
                         let s = tables.slot;
                         write_slot(&mut px[s..s + 4], lane.mask, tables.le);
-                        write_slot(&mut px[t0h + s..t0h + s + 4], lane.words[bit], tables.le);
-                        if full {
-                            write_slot(&mut px[t1h + s..t1h + s + 4], 0, tables.le);
+                    }
+                    for (tables, lane) in self.lanes.iter().zip(lanes) {
+                        let s = t0h + tables.slot;
+                        write_slot(&mut px[s..s + 4], lane.words[bit], tables.le);
+                    }
+                    if full {
+                        for tables in &self.lanes {
+                            let s = t1h + tables.slot;
+                            write_slot(&mut px[s..s + 4], 0, tables.le);
                         }
                     }
                 }

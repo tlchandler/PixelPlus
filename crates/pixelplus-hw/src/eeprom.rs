@@ -391,7 +391,22 @@ impl SysfsEeprom {
 
     /// As [`SysfsEeprom::open`] with an alternative filesystem root (tests).
     pub fn open_in(root: &Path, bus: u8, addr: u8) -> Result<SysfsEeprom> {
-        let dev = root.join(format!("sys/bus/i2c/devices/{bus}-{addr:04x}/eeprom"));
+        let client = root.join(format!("sys/bus/i2c/devices/{bus}-{addr:04x}"));
+        let dev = client.join("eeprom");
+        if !dev.exists() && client.exists() {
+            let name = std::fs::read_to_string(client.join("name")).unwrap_or_default();
+            let driver = std::fs::read_link(client.join("driver"))
+                .ok()
+                .and_then(|l| l.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "no driver".into());
+            return Err(HwError::NotFound(format!(
+                "I2C device {bus}-{addr:04x} is already registered (`{}`, {driver}) but has no \
+                 eeprom file: no EEPROM answered at 0x{addr:02x}, or another driver owns the \
+                 address. Remove it with `echo 0x{addr:02x} | sudo tee \
+                 /sys/bus/i2c/devices/i2c-{bus}/delete_device` and try again",
+                name.trim()
+            )));
+        }
         if !dev.exists() {
             let new_device = root.join(format!("sys/bus/i2c/devices/i2c-{bus}/new_device"));
             if !new_device.exists() {
@@ -687,6 +702,28 @@ mod tests {
     }
 
     #[test]
+    fn i2c_eeprom_writes_never_cross_a_page() {
+        let dev = MockByteRegisters::new(AT24C256_SIZE, 2, 0xFF).with_page_wrap(AT24C256_PAGE);
+        let mut e = I2cEeprom::new(MockI2c::new().with(EEPROM_ADDR, dev), EEPROM_ADDR);
+        let data: Vec<u8> = (0..200u8).collect();
+        e.write(60, &data).unwrap();
+        let mut back = vec![0u8; 200];
+        e.read(60, &mut back).unwrap();
+        assert_eq!(back, data);
+        let mut before = [0u8; 4];
+        e.read(56, &mut before).unwrap();
+        assert_eq!(before, [0xFF; 4], "nothing wrapped to the page start");
+        // 60..64, 64..128, 128..192, 192..256, 256..260
+        let bus = e.into_inner();
+        assert_eq!(
+            bus.device::<MockByteRegisters>(EEPROM_ADDR)
+                .unwrap()
+                .data_writes,
+            5
+        );
+    }
+
+    #[test]
     fn out_of_range_access_is_an_error() {
         let mut e = MemoryEeprom::blank();
         let mut buf = [0u8; 4];
@@ -708,6 +745,35 @@ mod tests {
             EepromContents::Ppx1 { .. }
         ));
         assert!(SysfsEeprom::open_in(&root, 3, 0x50).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A client registered at 1-0050 without an `eeprom` file (at24 probe
+    /// failed because no chip answered, or another driver owns the address):
+    /// writing `new_device` again can only fail with EBUSY, so say what is
+    /// wrong straight away instead of timing out.
+    #[test]
+    fn sysfs_stale_client_is_explained() {
+        let root =
+            std::env::temp_dir().join(format!("pixelplus-eeprom-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let client = root.join("sys/bus/i2c/devices/1-0050");
+        std::fs::create_dir_all(&client).unwrap();
+        std::fs::write(client.join("name"), "24c256\n").unwrap();
+        let bus = root.join("sys/bus/i2c/devices/i2c-1");
+        std::fs::create_dir_all(&bus).unwrap();
+        std::fs::write(bus.join("new_device"), "").unwrap();
+        let started = Instant::now();
+        let err = SysfsEeprom::open_in(&root, 1, 0x50)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "no 2 s wait"
+        );
+        assert!(err.contains("already registered"), "{err}");
+        assert!(err.contains("delete_device"), "{err}");
+        assert_eq!(std::fs::read_to_string(bus.join("new_device")).unwrap(), "");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

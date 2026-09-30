@@ -39,6 +39,13 @@ It installs `libretro-nestopia` (the NES emulator), `python3-numpy`, `python3-qr
 `/var/lib/pixelplus/games/roms/` and enables `pixelplus-games.service`
 (`--help` lists the options). Logs: `journalctl -u pixelplus-games -f`.
 
+The service runs as the unprivileged `pixelplus` user (the same user as `pixelplusd`, member
+of `audio` for game sound), with the unit the `pixelplus` package ships
+(`packaging/systemd/pixelplus-games.service`, identical to `games/pixelplus-games.service`).
+It writes frames into the prop's overlay buffer `/dev/shm/pixelplus-overlay-<prop>` (created
+by pixelplusd, mode 0660) and listens on the control socket `/run/pixelplus/games.sock`
+(`/run/pixelplus` is created by tmpfiles.d, owned by `pixelplus`).
+
 Then open **Settings → Games** in PixelPlus:
 
 1. Upload your Super Mario Bros. ROM (stored as `/var/lib/pixelplus/games/roms/smb.nes`) and,

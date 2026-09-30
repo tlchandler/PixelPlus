@@ -65,6 +65,7 @@ impl EventBus {
         );
     }
 
+    #[allow(dead_code)] // API for services that skip work nobody watches
     pub fn has_listeners(&self) -> bool {
         self.tx.receiver_count() > 0
     }

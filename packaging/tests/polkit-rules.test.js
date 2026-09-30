@@ -14,4 +14,14 @@ t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'ssh.service',verb
 t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'pixelplus-tts.service',verb:'restart'}),'yes');
 t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'pixelplusd.service',verb:'stop'}),'nh');
 t('pixelplus',A('org.freedesktop.udisks2.filesystem-mount'),'nh');
+// What pixelplusd actually does (crates/pixelplus-daemon/src/services/platform.rs):
+t('pixelplus',A('org.freedesktop.login1.power-off'),'yes');
+t('pixelplus',A('org.freedesktop.login1.reboot-multiple-sessions'),'yes');
+t('pixelplus',A('org.freedesktop.hostname1.set-static-hostname'),'yes');
+t('pixelplus',A('org.freedesktop.hostname1.set-hostname'),'yes');
+t('pixelplus',A('org.freedesktop.hostname1.set-machine-info'),'nh');
+t('pixelplus',A('org.freedesktop.timedate1.set-timezone'),'yes');
+t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:'pixelplusd.service',verb:'restart'}),'yes');
+for (const u of ['config-txt:difftxlarge:1600','config-txt:bare-pi','update','ssh-on','ssh-off','reapply','wifi-country:US','hosts'])
+  t('pixelplus',A('org.freedesktop.systemd1.manage-units',{unit:`pixelplus-helper@${u}.service`,verb:'start'}),'yes');
 if(!process.exitCode)console.log('polkit rules OK');

@@ -66,17 +66,38 @@ pub struct ButtonEvent {
 
 #[derive(Debug, Clone, Copy)]
 struct PinState {
+    /// Debounced (reported) level.
     pressed: bool,
+    /// Level after the most recent raw edge.
+    raw: bool,
+    /// Time of the most recent raw edge.
+    raw_at: Duration,
+    /// Time of the last reported change.
     last_change: Option<Duration>,
+}
+
+impl PinState {
+    fn lockout_ends(&self, period: Duration) -> Duration {
+        self.last_change
+            .map_or(Duration::ZERO, |t| t.saturating_add(period))
+    }
 }
 
 /// Lock-out debouncer: after an accepted change, further edges on the same
 /// pin are ignored for `period`; an edge that does not change the settled
 /// state is ignored.
+///
+/// An edge that arrives inside the lock-out is not forgotten: if the line is
+/// still at that level when the lock-out expires, the change is reported
+/// then (by [`Debouncer::poll`], or by the next [`Debouncer::feed`]).
+/// Otherwise a quick tap (release within `period` of the press) would leave
+/// the debouncer believing the button is still held, and the next press
+/// would be swallowed.
 #[derive(Debug, Clone)]
 pub struct Debouncer {
     period: Duration,
     pins: BTreeMap<u8, PinState>,
+    ready: VecDeque<ButtonEvent>,
 }
 
 impl Debouncer {
@@ -85,26 +106,71 @@ impl Debouncer {
         Debouncer {
             period,
             pins: BTreeMap::new(),
+            ready: VecDeque::new(),
         }
     }
 
-    /// Feed a raw edge; returns the event if it is a genuine change.
-    pub fn feed(&mut self, gpio: u8, pressed: bool, at: Duration) -> Option<ButtonEvent> {
-        let st = self.pins.entry(gpio).or_insert(PinState {
-            pressed: false,
-            last_change: None,
-        });
-        if st.pressed == pressed {
-            return None;
-        }
-        if let Some(last) = st.last_change {
-            if at.saturating_sub(last) < self.period {
-                return None;
+    /// Report a pending level of `gpio` that has been stable until `now`
+    /// and whose lock-out has expired.
+    fn settle(&mut self, gpio: u8, now: Duration) {
+        let period = self.period;
+        if let Some(st) = self.pins.get_mut(&gpio) {
+            if st.raw != st.pressed && now >= st.lockout_ends(period) {
+                st.pressed = st.raw;
+                st.last_change = Some(st.raw_at);
+                self.ready.push_back(ButtonEvent {
+                    gpio,
+                    pressed: st.raw,
+                    at: st.raw_at,
+                });
             }
         }
-        st.pressed = pressed;
-        st.last_change = Some(at);
-        Some(ButtonEvent { gpio, pressed, at })
+    }
+
+    /// Feed a raw edge (`at` on the same clock as [`Debouncer::poll`]);
+    /// returns the next debounced event, if any. More than one event can
+    /// become ready at once: fetch the rest with [`Debouncer::pop`].
+    pub fn feed(&mut self, gpio: u8, pressed: bool, at: Duration) -> Option<ButtonEvent> {
+        self.settle(gpio, at);
+        let period = self.period;
+        let st = self.pins.entry(gpio).or_insert(PinState {
+            pressed: false,
+            raw: false,
+            raw_at: Duration::ZERO,
+            last_change: None,
+        });
+        st.raw = pressed;
+        st.raw_at = at;
+        if st.pressed != pressed && at >= st.lockout_ends(period) {
+            st.pressed = pressed;
+            st.last_change = Some(at);
+            self.ready.push_back(ButtonEvent { gpio, pressed, at });
+        }
+        self.ready.pop_front()
+    }
+
+    /// Report changes whose lock-out has expired by `now`.
+    pub fn poll(&mut self, now: Duration) -> Option<ButtonEvent> {
+        let pins: Vec<u8> = self.pins.keys().copied().collect();
+        for gpio in pins {
+            self.settle(gpio, now);
+        }
+        self.ready.pop_front()
+    }
+
+    /// An event that is ready but was not returned yet.
+    pub fn pop(&mut self) -> Option<ButtonEvent> {
+        self.ready.pop_front()
+    }
+
+    /// When the earliest pending change can be reported (call
+    /// [`Debouncer::poll`] then); `None` if nothing is pending.
+    pub fn next_deadline(&self) -> Option<Duration> {
+        self.pins
+            .values()
+            .filter(|st| st.raw != st.pressed)
+            .map(|st| st.lockout_ends(self.period))
+            .min()
     }
 }
 
@@ -138,12 +204,16 @@ impl MockButtons {
 
 impl ButtonSource for MockButtons {
     fn wait(&mut self, _timeout: Duration) -> Result<Option<ButtonEvent>> {
+        if let Some(ev) = self.debouncer.pop() {
+            return Ok(Some(ev));
+        }
         while let Some((gpio, pressed, at)) = self.raw.pop_front() {
             if let Some(ev) = self.debouncer.feed(gpio, pressed, at) {
                 return Ok(Some(ev));
             }
         }
-        Ok(None)
+        // Scripted time runs on past the last edge: flush pending changes.
+        Ok(self.debouncer.poll(Duration::MAX))
     }
 }
 
@@ -216,17 +286,44 @@ mod linux {
         }
     }
 
+    /// `CLOCK_MONOTONIC`, the clock of gpiocdev v2 edge event timestamps.
+    fn monotonic_now() -> Duration {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: clock_gettime writes into the valid timespec.
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        Duration::new(
+            u64::try_from(ts.tv_sec).unwrap_or(0),
+            u32::try_from(ts.tv_nsec).unwrap_or(0),
+        )
+    }
+
     impl ButtonSource for GpioButtons {
         fn wait(&mut self, timeout: Duration) -> Result<Option<ButtonEvent>> {
             let deadline = Instant::now() + timeout;
             loop {
-                let left = deadline.saturating_duration_since(Instant::now());
+                if let Some(ev) = self.debouncer.pop() {
+                    return Ok(Some(ev));
+                }
+                if let Some(ev) = self.debouncer.poll(monotonic_now()) {
+                    return Ok(Some(ev));
+                }
+                let mut left = deadline.saturating_duration_since(Instant::now());
+                // Wake up when a pending change's lock-out expires.
+                if let Some(due) = self.debouncer.next_deadline() {
+                    left = left.min(due.saturating_sub(monotonic_now()));
+                }
                 let ready = self
                     .request
                     .wait_edge_event(left)
                     .map_err(|e| HwError::Unsupported(format!("waiting for GPIO edge: {e}")))?;
                 if !ready {
-                    return Ok(None);
+                    if Instant::now() >= deadline {
+                        return Ok(self.debouncer.poll(monotonic_now()));
+                    }
+                    continue;
                 }
                 let ev = self
                     .request
@@ -241,9 +338,6 @@ mod linux {
                         .feed(gpio, pressed, Duration::from_nanos(ev.timestamp_ns))
                 {
                     return Ok(Some(event));
-                }
-                if left.is_zero() {
-                    return Ok(None);
                 }
             }
         }
@@ -287,5 +381,38 @@ mod tests {
         let second = b.wait(ms(0)).unwrap().unwrap();
         assert_eq!((second.pressed, second.at), (false, ms(300)));
         assert!(b.wait(ms(0)).unwrap().is_none());
+    }
+
+    /// A quick tap: the release edge arrives inside the lock-out after the
+    /// press. It must still be reported once the lock-out expires, and the
+    /// next press must not be lost.
+    #[test]
+    fn quick_tap_is_not_lost() {
+        let ms = Duration::from_millis;
+        let mut d = Debouncer::new(ms(30));
+        assert!(d.feed(24, true, ms(100)).is_some());
+        assert_eq!(d.feed(24, false, ms(110)), None, "inside the lock-out");
+        assert_eq!(d.next_deadline(), Some(ms(130)));
+        assert_eq!(d.poll(ms(120)), None);
+        let release = d.poll(ms(130)).expect("release reported after lock-out");
+        assert_eq!((release.pressed, release.at), (false, ms(110)));
+        assert_eq!(d.next_deadline(), None);
+        // Next press is a genuine change.
+        let press = d.feed(24, true, ms(1000)).unwrap();
+        assert!(press.pressed);
+
+        // Same, but nobody polled in between: the next edge flushes the
+        // pending release first, then reports the press.
+        let mut b = MockButtons::new(ms(30));
+        b.push_edge(24, true, ms(100));
+        b.push_edge(24, false, ms(110));
+        b.push_edge(24, true, ms(1000));
+        let got: Vec<(bool, Duration)> = std::iter::from_fn(|| b.wait(ms(0)).unwrap())
+            .map(|e| (e.pressed, e.at))
+            .collect();
+        assert_eq!(
+            got,
+            vec![(true, ms(100)), (false, ms(110)), (true, ms(1000))]
+        );
     }
 }

@@ -307,7 +307,7 @@ pub struct PpseqFile<R = BufReader<File>> {
     cur: Option<usize>,
     data: Vec<u8>,
     compressed: Vec<u8>,
-    dec: Option<zstd::bulk::Decompressor<'static>>,
+    dec: Option<zstd::stream::raw::Decoder<'static>>,
 }
 
 impl<R> std::fmt::Debug for PpseqFile<R> {
@@ -365,6 +365,9 @@ impl<R: Read + Seek> PpseqFile<R> {
         if frame_us == 0 {
             return Err(fmt("frame duration of 0"));
         }
+        if frame_bytes as u64 > crate::fseq::MAX_FRAME_BYTES {
+            return Err(fmt("frame size exceeds the supported maximum"));
+        }
 
         // Trailer.
         reader.seek(SeekFrom::Start(file_len - 8))?;
@@ -392,7 +395,10 @@ impl<R: Read + Seek> PpseqFile<R> {
             let offset = u64::from_le_bytes(o);
             let len = rd32(e, 8);
             let first = rd32(e, 12);
-            if offset < header_len || offset + len as u64 > index_start {
+            let in_data = offset
+                .checked_add(len as u64)
+                .is_some_and(|end| end <= index_start);
+            if offset < header_len || !in_data {
                 return Err(PpseqError::Format(format!(
                     "block {i} lies outside the data area"
                 )));
@@ -417,6 +423,9 @@ impl<R: Read + Seek> PpseqFile<R> {
                 return Err(fmt("block index inconsistent with frame count"));
             }
             blocks[i].end = end;
+            if (end - blocks[i].first) as u64 * frame_bytes as u64 > crate::fseq::MAX_BLOCK_BYTES {
+                return Err(fmt("block decompresses to more than the supported maximum"));
+            }
         }
         if frame_count > 0 && blocks.is_empty() {
             return Err(fmt("frames present but no blocks"));
@@ -511,17 +520,15 @@ impl<R: Read + Seek> PpseqFile<R> {
         self.reader.seek(SeekFrom::Start(b.offset))?;
         self.reader.read_exact(&mut self.compressed)?;
         let expected = (b.end - b.first) as usize * self.header.frame_bytes as usize;
-        self.data.clear();
-        self.data.reserve(expected.max(1));
         let err = |e: io::Error| PpseqError::Decompress {
             block,
             message: e.to_string(),
         };
         if self.dec.is_none() {
-            self.dec = Some(zstd::bulk::Decompressor::new().map_err(err)?);
+            self.dec = Some(zstd::stream::raw::Decoder::new().map_err(err)?);
         }
         let dec = self.dec.as_mut().expect("initialised above");
-        dec.decompress_to_buffer(&self.compressed, &mut self.data)
+        crate::fseq::zstd_decompress_capped(dec, &self.compressed, &mut self.data, expected)
             .map_err(err)?;
         self.cur = Some(block);
         Ok(())
@@ -705,5 +712,56 @@ mod tests {
         assert!(pp.frame(0, &mut buf).is_err());
         // Garbage.
         assert!(PpseqFile::from_reader(Cursor::new(vec![0u8; 5])).is_err());
+    }
+
+    /// Minimal slice: one output of `pixels` pixels, `frame_count` frames and the
+    /// given block index entries (offset, len, first) over `data`.
+    fn raw_slice(pixels: u32, frame_count: u32, data: &[u8], index: &[(u64, u32, u32)]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(MAGIC);
+        v.extend_from_slice(&VERSION.to_le_bytes());
+        v.extend_from_slice(&frame_count.to_le_bytes());
+        v.extend_from_slice(&25_000u32.to_le_bytes());
+        v.extend_from_slice(&(pixels * 3).to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&pixels.to_le_bytes());
+        v.extend_from_slice(&[0u8; 32]);
+        v.extend_from_slice(data);
+        for &(o, l, f) in index {
+            v.extend_from_slice(&o.to_le_bytes());
+            v.extend_from_slice(&l.to_le_bytes());
+            v.extend_from_slice(&f.to_le_bytes());
+        }
+        v.extend_from_slice(&(index.len() as u32).to_le_bytes());
+        v.extend_from_slice(MAGIC);
+        v
+    }
+
+    #[test]
+    fn hostile_index_and_sizes_are_errors_not_panics() {
+        let block = zstd::bulk::compress(&[1u8; 30], 3).unwrap();
+        let hdr = 20 + 4 + 32;
+        // Sane file reads.
+        let ok = raw_slice(10, 1, &block, &[(hdr, block.len() as u32, 0)]);
+        let mut pp = PpseqFile::from_reader(Cursor::new(ok)).unwrap();
+        let mut buf = [0u8; 30];
+        pp.frame(0, &mut buf).unwrap();
+        assert_eq!(buf, [1u8; 30]);
+        // offset + len overflowing u64 used to panic.
+        let t = raw_slice(10, 1, &block, &[(u64::MAX - 1, 16, 0)]);
+        assert!(PpseqFile::from_reader(Cursor::new(t)).is_err());
+        // One block claiming 4 billion frames of 3 KB each.
+        let t = raw_slice(1000, u32::MAX, &block, &[(hdr, block.len() as u32, 0)]);
+        assert!(PpseqFile::from_reader(Cursor::new(t)).is_err());
+        // A frame of billions of pixels.
+        let t = raw_slice(0x4000_0000, 1, &block, &[(hdr, block.len() as u32, 0)]);
+        assert!(PpseqFile::from_reader(Cursor::new(t)).is_err());
+        // Decompression bomb: the block inflates far past its frames.
+        let bomb = zstd::bulk::compress(&vec![5u8; 16 << 20], 3).unwrap();
+        let t = raw_slice(10, 2, &bomb, &[(hdr, bomb.len() as u32, 0)]);
+        let mut pp = PpseqFile::from_reader(Cursor::new(t)).unwrap();
+        pp.frame(1, &mut buf).unwrap();
+        assert_eq!(buf, [5u8; 30]);
+        assert!(pp.data.capacity() < 1 << 20);
     }
 }

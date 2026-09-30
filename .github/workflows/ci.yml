@@ -43,12 +43,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: aarch64
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+      - name: arm64 cross toolchain + ALSA headers (cpal)
+        run: sudo packaging/ci/install-arm64-cross-deps.sh
       - name: cargo build (aarch64)
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_LIBDIR: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         run: cargo build --release --locked --target aarch64-unknown-linux-gnu -p pixelplus-daemon -p pixelplus-cli
 
   web:
@@ -85,6 +88,8 @@ jobs:
             deps: pytest -r games/requirements.txt
           - dir: tts
             deps: pytest -r tts/requirements.txt
+          - dir: packaging
+            deps: pytest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -113,7 +118,8 @@ jobs:
           shellcheck --version
           shellcheck -x image/build.sh image/build-in-docker.sh \
             image/stage-pixelplus/prerun.sh image/stage-pixelplus/*/*.sh \
-            packaging/build-deb.sh packaging/apt-repo.sh packaging/bin/pixelplus-helper
+            packaging/build-deb.sh packaging/apt-repo.sh packaging/bin/pixelplus-helper \
+            packaging/ci/install-arm64-cross-deps.sh
           shellcheck -s sh packaging/bin/tts-capable packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm
           if [ -f games/install.sh ]; then shellcheck -s sh games/install.sh; fi
       - name: bash -n

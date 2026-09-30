@@ -30,6 +30,11 @@ framebuffer, once per frame, at any time before the next vertical blank.
   sends R on `D23..D16`, G on `D15..D8`, B on `D7..D0`, which is exactly the
   `u32` value `0x00RRGGBB`. Therefore **bit *n* of the `u32` appears on DPI_D*n*
   = GPIO *n + 4*** — the rule in ARCHITECTURE §3.1. Bits 24..31 are ignored.
+* Sources for the mapping: the Raspberry Pi DPI documentation's output-format
+  table (24-bit RGB: R7..R0 on GPIO27..20, G on GPIO19..12, B on GPIO11..4),
+  the vc4 DPI driver (`MEDIA_BUS_FMT_RGB888_1X24` → 24-bit RGB format, RGB
+  order) and the RP1 DPI driver's format table (RGB888_1X24: R at bits
+  23..16). Confirmed on hardware only by bring-up item 4.
 * 32 bpp rather than packed RGB888 because it is the native scan-out format on
   every Pi (no conversion), every pixel is one aligned store, and the encoder
   can fill runs with `slice::fill`.
@@ -52,14 +57,32 @@ not used by the pixel engine and stays available as a button input.
 2. The 26.04 ns resolution is fine enough to hit the narrow window shared by
    all chip families (§4) and to fit three latch time slots of four pixels
    between each pair of bit edges (§7).
-3. It is 2 × the 19.2 MHz crystal of the Pi 3/Zero 2 W and an easy division on
-   Pi 4 and RP1, and it is well within every Pi's DPI pixel-clock range.
+3. It is well within every Pi's DPI pixel-clock range and its *average* rate
+   can be produced exactly (see below).
 
 The value is not trusted blindly: the backend reads the video mode back from
 the kernel and `BitTiming::for_clock` recomputes the pixel counts for whatever
 clock is actually programmed, rejecting it if the result leaves the chip
-tolerances. (What the clock *hardware* really produces must still be checked
-with a scope once per Pi model — §12.)
+tolerances. But the mode only carries the *requested* rate; what the clock
+hardware really produces must be checked once per Pi model (§13, items 1–2).
+
+**How the clock is made (expected, from the Linux `clk-bcm2835` driver; not
+yet measured).** On BCM283x/BCM2711 the DPI pixel clock is a peripheral clock
+divider with 4 integer and 8 fractional bits and no MASH filter, i.e. a
+first-order fractional divider: every pixel is an *integer* number of
+source-clock cycles, and the fraction is realised by mixing two lengths.
+
+| Pi | likely source | divider | average | individual pixel |
+|---|---|---|---|---|
+| Zero 2 W / 3 | PLLD_PER 500 MHz | 13 + 5/256 | 38.404 MHz | 26 or 28 ns |
+| 4 / 400 / CM4 | crystal 54 MHz (PLLD_PER 750 MHz would need ÷19.5 > 15.99) | 1 + 104/256 | 38.400 MHz exact | **18.5 or 37 ns** |
+| 5 (RP1) | RP1 video PLL, integer divider | – | ≈ 38.4 MHz | 26.04 ns (expected) |
+
+The Pi 4 case is benign for the strings — a 12-pixel T0H is 16 or 17 crystal
+cycles = 296–315 ns, a 28-pixel T1H 39 or 40 cycles = 722–741 ns, both inside
+the common window of §4 — but it shortens the latch hold pixel of §7 to as
+little as 18.5 ns (still ≫ the 573's hold requirement). The pixel counts
+never drift: the error of the fractional divider does not accumulate.
 
 ## 4. Bit timing
 
@@ -75,7 +98,20 @@ Every bit starts high; a `0` falls after T0H, a `1` after T1H.
 
 `Ws281xSpec::COMMON` encodes the common window; `BitTiming::validate` and the
 decoder check against it. 312.5 / 729.2 ns sits inside all of them, so one
-setting drives mixed strings without a per-output "pixel type" switch.
+setting drives mixed strings without a per-output "pixel type" switch. The
+margin that matters most is T1H to the 750 ns WS2811 ceiling (21 ns nominal,
+~9 ns with the Pi 4 clock dither of §3); buffer/driver/receiver pulse-width
+distortion (tPLH − tPHL of the '541, '573, AM26C31 and the receiver) eats into
+it, so it is item 3 of the bring-up checklist.
+
+Low times are deliberately *not* held to the datasheets' nominal ±150 ns low
+windows: T0L is 937.5 ns, T1L 520.8 ns, and the 24th bit of every LED is
+stretched by the 24-pixel h-blank (1562 / 1146 ns). WS281x-family receivers
+decode each bit from its high time and treat only a low of several µs as a
+reset; the decoder enforces 400 ns ≤ low ≤ 5 µs. This is the same bit layout
+the board documentation records for FPP's DPIPixels output (12/28 of 48
+pixels at 38.4 MHz, `boardtempinfo/difftxlarge/RESEARCH.md`), which these
+boards were designed around.
 
 ## 5. Framebuffer geometry
 
@@ -153,10 +189,18 @@ data lines   value      value        value        value
 LE_b           0          1            1            0
 ```
 
-* data set-up before LE rises: 26 ns; LE high: 52 ns; data held after LE
-  falls: 26 ns. The SN74AHCT573 needs t_w ≥ 5 ns, t_su ≥ 3.5 ns,
-  t_h ≥ 1.5 ns (board VERIFICATION.md: ~17 ns hold margin even with buffer
-  skew; 74HCT573 is *not* a substitute).
+* data set-up before LE rises: 26 ns; LE high: 52 ns; data set up before LE
+  falls: 78 ns; data held after LE falls: 26 ns (Pi 4 worst case with the
+  clock dither of §3: 37 / 55 / 18.5 ns). The board documentation budgets the
+  SN74AHCT573 at t_w ≥ 5 ns, t_su ≥ 3.5 ns, t_h ≥ 1.5 ns and finds ~17 ns of
+  hold margin after '541 package-to-package skew (VERIFICATION.md "Latch
+  timing"; the 74HCT573 is *not* a substitute). The hold after LE falls is the
+  tight parameter, and ringing on the long LE bus at LE's falling edge is the
+  realistic failure — bring-up item 6.
+* The decoder checks this structure pixel by pixel on every simulated frame
+  (`DecodedFrame::latch_violations`): a bank's data lines are constant from
+  one pixel before its LE rises to one pixel after it falls, and no two LE
+  lines are ever high together — so no bank can latch another bank's data.
 
 Bank *b*'s three slots sit at pixel offsets `edge + 4b`:
 
@@ -199,9 +243,12 @@ lines (latching zeros); that is harmless and keeps the static regions constant.
 4. The mapped DRM buffer is write-combined: the encoder only ever writes it,
    sequentially, never reads it.
 
+   In latched mode the slots are written edge by edge (all banks' edge-0
+   slots, then all T0H slots), which is strictly ascending addresses.
+
 Measured (`cargo run --release -p pixelplus-output --example encode_bench`,
-Xeon 2.1 GHz, one core): **60 × 1600 LEDs: 0.96 ms per frame** steady state
-(6 ms for the first, full-template frame); 4 × 1600: 0.5 ms. A Cortex-A72 at
+Xeon 2.1 GHz, one core): **60 × 1600 LEDs: 0.82 ms per frame** steady state
+(5.5 ms for the first, full-template frame); 4 × 1600: 0.54 ms. A Cortex-A72 at
 1.5–1.8 GHz is roughly 4–6× slower per core and write-combined memory costs
 more than cached memory, so expect ~5–10 ms on a Pi 4 and ~10–15 ms on a Pi 3 /
 Zero 2 W — comfortably inside the 25 ms (40 fps) / 50 ms (20 fps) budget.
@@ -261,8 +308,14 @@ PixelPlus does not emit them.
   page-flipped reliably, and gives no completion events. The backend scans
   `/dev/dri/card*` for a connector of type DPI (on the Pi 4 the display card
   is usually `card1`; on the Pi 5 RP1 DPI is a separate card), reads its mode,
-  derives the `DpiGeometry` from it, allocates **two dumb buffers**, sets the
-  mode, and page-flips on vblank with events. `write_frame` waits for the
+  derives the `DpiGeometry` from it, allocates **two dumb buffers**, clears
+  any CRTC colour management a previous client left (`DEGAMMA_LUT`, `CTM`,
+  `GAMMA_LUT` — a LUT would rewrite the waveform bits), sets the mode, muxes
+  the pins and then **scans out one complete idle frame on the real pins**
+  before returning: on the difftxlarge the 573 latches power up undefined and
+  LE is held low until the pins are muxed, so this frame latches 0 into every
+  bank and ends with the reset before the first data frame (it also proves
+  page flips complete). It then page-flips on vblank with events. `write_frame` waits for the
   previous flip (≤ one refresh), encodes into the back buffer and queues the
   next flip. `stop` sends one all-black frame to every LED, waits for it to be
   scanned out, parks the pins low and restores the previous CRTC state. If the
@@ -298,15 +351,104 @@ length (so the string goes dark rather than freezing on its last frame).
 | `checker` | 24 short then 24 long pulses per LED |
 | `identify` | the first byte on output *k* is *k* in binary — verifies the pin map and latch banks |
 
-## 13. Needs validation on hardware
+## 13. Bring-up checklist (needs real hardware)
 
-1. Actual DPI clock per model (`/sys/kernel/debug/clk/*dpi*/clk_rate`) and
-   T0H/T1H on a scope (`zeros`, `ones`) for Pi Zero 2 W, 3B+, 4, 5.
-2. Minimal blanking (8/8/8, 1/1/1) accepted by vc4 and RP1 without FIFO
-   underruns at full height; HVS/RP1 maximum height (2048 / 7680 / 4096).
-3. Pi 5: `&rp1_dpi` label, empty `pinctrl-0`, `pinctrl set … a1`, and whether
-   RP1 holds or drives low during blanking (either is fine by design).
-4. difftxlarge: LE0–LE2 signal integrity at the far latch (board
-   VERIFICATION.md item 6) using the `identify` pattern on all 60 outputs.
-5. `gpio=…=op,dl` in config.txt applied by the Pi 5 firmware.
-6. Encoder timing on a Pi Zero 2 W with 60 × 1600 (example `encode_bench`).
+Nothing in this crate has run on a Pi yet. Everything below is an assumption
+that could not be verified by the test-suite; each item says how to check it.
+Tools: a ≥ 100 MHz scope (a 24 MHz logic analyser is too slow for 26 ns
+pixels), `pixelplus test-output --pattern scope --scope <name>`, root shell.
+
+1. **Real DPI clock and its source, per Pi model** (Zero 2 W, 3B+, 4, 5).
+   `sudo cat /sys/kernel/debug/clk/clk_summary | grep -i dpi` (Pi 5: look for
+   `clk_dpi` / `pll_video`). Expect 38400000 (Pi 3: 38403xxx). Record the
+   parent: on a Pi 4 we expect the 54 MHz crystal (§3).
+2. **Pixel quantisation.** Scope any data pin with `alternating`. On a Pi 4
+   expect edges on an 18.5 ns grid (pulse widths 296–315 / 722–741 ns); on a
+   Pi 3 26–28 ns pixels; on a Pi 5 26.04 ns.
+3. **T0H/T1H at the far end of the chain.** With `zeros` and `ones`, measure
+   the high time on the Pi pin, at the AM26C31 output (difftx: U1 Y; difftxlarge:
+   a driver) and at the receiver's pixel output (diffrx/diffsmart). Pass:
+   T0H 250–380 ns and **T1H 650–750 ns at the pixel input**, bit period 1250 ns,
+   and the gap after every 24th bit 1.8 µs (`checker`). If T1H exceeds
+   ~745 ns at the receiver, note the per-stage distortion and report it.
+4. **Bit/GPIO map and byte order** (DESIGN §2, rgb888 bus format). With
+   `identify`, the first byte on output *k* must read *k* MSB first.
+   difftx/diffsmart: Port 1..4 on GPIO5, 6, 7, 4. difftxlarge: all 60 outputs,
+   which also proves bank order (LE0 = GPIO27 → J1–J5, LE1 = GPIO26 → J6–J10,
+   LE2 = GPIO25 → J11–J15). **Pi 5 specifically**: check GPIO4, 12 and 20
+   (the LSB of B, G and R) carry clean data with `ones` and `zeros` — any RP1
+   dithering or colour processing would show up on exactly these pins.
+5. **Blanking and mode acceptance.** `dmesg | grep -iE "dpi|vc4|rp1"` shows no
+   errors or FIFO underruns at the configured height; on the difftxlarge
+   `vactive` up to the model limit (2048 lines Pi 3, test 1607 and a tall mode
+   such as 4000 on Pi 4/5 — RP1's limit of 4096 is an assumption). With the
+   scope on a data pin during the reset gap, the line must stay low for
+   ≥ 280 µs between frames (`zeros`).
+6. **difftxlarge latch timing and LE integrity.** Scope LE0–LE2 (GPIO27/26/25)
+   at the far latch of each bank (bus test points) together with a data line:
+   LE pulse ≈ 52 ns (Pi 4 ≥ 37 ns), clean single edges — **no ringing that
+   re-crosses the 573's input threshold within ~26 ns after LE falls**, data
+   stable ≥ 10 ns after LE's falling edge at the latch pins. Then run
+   `identify` and a full-length `checker` into all 60 outputs. If hold is
+   marginal, report it: the slot can be reshaped in software (e.g. data, LE,
+   data, data = 26 ns LE, 52 ns hold) without a board change.
+7. **Power-up / start-up.** Power the difftxlarge with strings attached and
+   watch a string for the first seconds: static levels while the Pi boots are
+   expected (latches undefined, LE held low), but **no LED may flash** when
+   pixelplusd starts (the idle priming frame of §10 must precede the first
+   data). Repeat by `systemctl restart pixelplusd` during a show, and with
+   `kill -9 $(pidof pixelplusd)`: `ExecStopPost=pixelplus pins release` must
+   park the pins; LEDs may freeze, but must not show console/garbage patterns.
+8. **Pins held low by the firmware.** Before pixelplusd starts (e.g. with it
+   disabled), `pinctrl get 4-27` must show the pixel pins as `op dl`
+   (`gpio=…=op,dl` from config.txt) — **on a Pi 5 in particular**, where RP1
+   GPIOs are set up by the firmware differently. After start: `a2` (Pi 0–4) /
+   `a1` (Pi 5) with `pd`; after stop: `op dl pd` again. GPIO0–3 and (difftxlarge)
+   GPIO24 must never change.
+9. **`/dev/gpiomem` fallback** (only used when `pinctrl` is missing): on a Pi 3
+   or 4 temporarily `sudo mv /usr/bin/pinctrl{,.bak}`, start/stop output, and
+   confirm the same `pinctrl get` states as item 8 (restore pinctrl first).
+10. **Overlay on each model.** `dtoverlay -l` lists `pixelplus-dpi` /
+    `pixelplus-dpi-pi5`; `ls /sys/class/drm/` shows a `card*-DPI-1` connector;
+    `cat /sys/class/drm/card*-DPI-1/modes` shows `1152x<vactive>`. On a Pi 5
+    confirm the overlay's `&rp1_dpi` target resolves and that HDMI still works.
+11. **DRM master / desktop.** On Raspberry Pi OS Lite `start()` succeeds. With
+    a desktop session on the same card (Pi 0–4: HDMI and DPI share vc4) it must
+    fail with the "is another program … using the display" error, not hang.
+12. **Encoder speed on the slowest Pi.** `cargo run --release -p
+    pixelplus-output --example encode_bench` on a Zero 2 W: steady 60 × 1600
+    must stay well below 50 ms (expect ~10–15 ms); also watch `lastEncodeUs` /
+    `maxEncodeUs` in the output stats during a show.
+13. **Conflicting overlays.** The generated fragment warns about w1-gpio
+    (GPIO4), SPI0 (GPIO7–11), UART0 (GPIO14/15), I²S (GPIO18–21) and PWM/fan
+    pins; confirm none are enabled in `/boot/firmware/config.txt`.
+
+### Board peripherals (`pixelplus-hw`)
+
+14. **EEPROM (AT24C256, 0x50).** `pixelplus eeprom write --board … --rev …`
+    then `pixelplus detect`: PPX1 record read back. Test both paths: with the
+    kernel `at24` driver (`/sys/bus/i2c/devices/1-0050/eeprom`) and without it
+    (`echo 0x50 | sudo tee /sys/bus/i2c/devices/i2c-1/delete_device`, then the
+    direct i2c-dev path writes 64-byte pages and polls for the ~5 ms write
+    cycle). With the write-protect jumper closed the write must fail with the
+    "JP1" message, not succeed silently.
+15. **INA226 (difftxlarge, 0x40, 10 mΩ).** With a known load, `12 V input`
+    must match a multimeter within ~1 % and `Input current` within ~2 %.
+    **Check the sign**: current must read *positive* when the board draws
+    power. Negative means IN+/IN− are swapped relative to the current
+    direction (then report it; the driver reports the signed value). If the
+    kernel `ina2xx` driver is bound instead, its shunt must be 10000 µΩ (the
+    driver default).
+16. **LM75B (0x48/0x49).** Readings plausible (±2 °C of ambient at idle) and
+    in 0.125 °C steps.
+17. **DS3231 (0x68).** `pixelplus doctor` / `hwclock -r -f /dev/rtc1` (Pi 5) or
+    `/dev/rtc0`; set the time, remove power for a minute with the CR2032 in,
+    confirm it kept time and the oscillator-stop flag is clear.
+18. **OLED (0x3C).** `pixelplus detect` must list 0x3c (probed with a write,
+    since SSD1306 modules need not acknowledge reads). The status screen must
+    be upright and not shifted: a module that is really an **SH1106** (132
+    columns, no horizontal addressing mode) shows a garbled or 2-pixel-shifted
+    image — note the controller printed on the module.
+19. **Buttons (GPIO24 on difftxlarge).** Short taps (< 30 ms) and long
+    presses must each give exactly one press and one release event.
+

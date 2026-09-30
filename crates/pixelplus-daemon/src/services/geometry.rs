@@ -55,7 +55,8 @@ pub fn parse_configured_pixels(text: &str) -> Option<u32> {
         let l = l.trim_start_matches('#').trim();
         let rest = &l[l.find("up to ")? + "up to ".len()..];
         let (n, tail) = rest.split_once(' ')?;
-        tail.starts_with("pixels per output").then(|| n.parse().ok())?
+        tail.starts_with("pixels per output")
+            .then(|| n.parse().ok())?
     })
 }
 
@@ -67,7 +68,10 @@ fn configured_pixels(dir: Option<&Path>) -> Option<u32> {
 /// The length to configure for `longest`: rounded up to 100 (so adding a few
 /// pixels later doesn't need another reboot), at least the default.
 pub fn target_for(longest: u32) -> u32 {
-    longest.div_ceil(100).saturating_mul(100).max(DEFAULT_PIXELS)
+    longest
+        .div_ceil(100)
+        .saturating_mul(100)
+        .max(DEFAULT_PIXELS)
 }
 
 fn pi_max_pixels() -> Option<u32> {
@@ -115,7 +119,11 @@ pub fn evaluate(
         max_pixels: player.max_pixels,
         configured_pixels: configured,
         pending_reboot,
-        can_apply: !player.ok && !too_long && !pending_reboot && can_run_helper && board_has_outputs,
+        can_apply: !player.ok
+            && !too_long
+            && !pending_reboot
+            && can_run_helper
+            && board_has_outputs,
         target_pixels: target,
         pi_max_pixels: pi_max,
         message,
@@ -124,16 +132,28 @@ pub fn evaluate(
 
 fn can_run_helper() -> bool {
     platform::helper_installed()
-        || (super::system::is_root() && !super::system::in_docker() && Path::new(platform::FIRSTBOOT).is_file())
+        || (super::system::is_root()
+            && !super::system::in_docker()
+            && Path::new(platform::FIRSTBOOT).is_file())
 }
 
 /// Current geometry status of this node.
 pub fn status(state: &AppState) -> OutputGeometry {
     let g = crate::player::geometry_status();
     let (board, _) = super::system::effective_board(state);
-    let configured = if g.ok { None } else { configured_pixels(boot_dir().as_deref()) };
+    let configured = if g.ok {
+        None
+    } else {
+        configured_pixels(boot_dir().as_deref())
+    };
     let pi_max = if g.ok { None } else { pi_max_pixels() };
-    evaluate(&g, configured, pi_max, can_run_helper(), board.output_count() > 0)
+    evaluate(
+        &g,
+        configured,
+        pi_max,
+        can_run_helper(),
+        board.output_count() > 0,
+    )
 }
 
 /// "Apply & reboot": write the boot fragment for the longest string via the
@@ -161,7 +181,11 @@ pub async fn apply(state: &AppState, reboot: bool) -> ApiResult<HelperStatus> {
             updated_at: chrono::Utc::now().timestamp(),
         });
     }
-    if let Some(m) = g.message.as_ref().filter(|_| g.pi_max_pixels.is_some_and(|max| g.longest_string > max)) {
+    if let Some(m) = g
+        .message
+        .as_ref()
+        .filter(|_| g.pi_max_pixels.is_some_and(|max| g.longest_string > max))
+    {
         return Err(ApiError::bad_request(m.clone()));
     }
     let (board, _) = super::system::effective_board(state);
@@ -178,10 +202,15 @@ pub async fn apply(state: &AppState, reboot: bool) -> ApiResult<HelperStatus> {
         .ok()
         .and_then(|v| v.as_str().map(String::from))
         .ok_or_else(|| ApiError::internal("board id"))?;
-    let pixels = g.target_pixels.unwrap_or_else(|| target_for(g.longest_string));
+    let pixels = g
+        .target_pixels
+        .unwrap_or_else(|| target_for(g.longest_string));
     let job = platform::run_helper(
         state,
-        HelperVerb::ConfigTxt { board: board_id, pixels: Some(pixels) },
+        HelperVerb::ConfigTxt {
+            board: board_id,
+            pixels: Some(pixels),
+        },
         HelperOpts { quiet: reboot },
     )
     .await?;
@@ -241,7 +270,10 @@ mod tests {
         let frag = "# --- PixelPlus: x ---\n[all]\n# WS281x pixel engine: 4 outputs, up to 1600 pixels per output at 20.3 fps.\ndtoverlay=pixelplus-dpi,vactive=1607\n";
         assert_eq!(parse_configured_pixels(frag), Some(1600));
         assert_eq!(parse_configured_pixels("dtoverlay=pixelplus-dpi\n"), None);
-        assert_eq!(parse_configured_pixels("# up to lots of pixels per output\n"), None);
+        assert_eq!(
+            parse_configured_pixels("# up to lots of pixels per output\n"),
+            None
+        );
     }
 
     #[test]

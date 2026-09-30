@@ -37,6 +37,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Dict, List, Optional, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -142,20 +143,46 @@ def save_state(state: Dict) -> None:
 
 
 def write_private_json(path: str, obj: Dict, owner: Optional[str] = None, mode: int = 0o600) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=2, sort_keys=True)
-        f.flush()
-        os.fsync(f.fileno())
-    if owner:
+    """Atomically write JSON readable only by ``owner``. We run as root and the target
+    directory may belong to the unprivileged service user (/var/lib/pixelplus), so never
+    open, chmod or chown through a predictable path: the file is created exclusively under
+    a random name (O_EXCL does not follow symlinks), changed by descriptor, then renamed."""
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", suffix=".tmp", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            os.fchmod(f.fileno(), mode)
+            if owner:
+                try:
+                    pw = pwd.getpwnam(owner)
+                    os.fchown(f.fileno(), pw.pw_uid, pw.pw_gid)
+                except (KeyError, PermissionError):
+                    pass
+            json.dump(obj, f, indent=2, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
         try:
-            pw = pwd.getpwnam(owner)
-            os.chown(tmp, pw.pw_uid, pw.pw_gid)
-        except (KeyError, PermissionError):
+            os.unlink(tmp)
+        except OSError:
             pass
-    os.replace(tmp, path)
+        raise
+
+
+def read_json_nofollow(path: str) -> Dict:
+    """Read a JSON object, refusing symlinks (see write_private_json). {} when absent/invalid."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return {}
+    try:
+        with os.fdopen(fd, encoding="utf-8") as f:
+            obj = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return obj if isinstance(obj, dict) else {}
 
 
 def first_login_user() -> Optional[pwd.struct_passwd]:
@@ -449,10 +476,12 @@ def board_config(
     required (and allowed)."""
     source = "pixelplus.txt"
     rev = None
+    state.pop("board_error", None)
     if not board or board == "auto":
         info = detect_board(sysops)
         if not info:
             LOG.info("board: not detected (blank EEPROM or CLI unavailable) - the setup wizard will ask")
+            state["board_error"] = "board not detected; pass --board"
             return False
         board, rev, source = info["board"], info.get("rev"), "eeprom"
     model = pi_model()
@@ -482,7 +511,9 @@ def board_config(
         frag = board_fragment(sysops, board, pixels)
         if frag is None:
             LOG.warning("board: 'pixelplus config-txt' failed; %s left unchanged", conf)
+            state["board_error"] = f"'pixelplus config-txt --board {board}' failed"
         else:
+            state.pop("board_error", None)
             new_conf = render_board_conf(frag, board, pixels)
             old_conf = ""
             if have_conf:
@@ -665,12 +696,7 @@ def apply_settings(sysops: Sys, boot_dir: str, path: str, text: str, state: Dict
         provision["source"] = "pixelplus.txt"
         provision["createdAt"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
         ppath = os.path.join(DATA_DIR, "provision.json")
-        existing = {}
-        try:
-            with open(ppath, encoding="utf-8") as f:
-                existing = json.load(f)
-        except (OSError, ValueError):
-            pass
+        existing = read_json_nofollow(ppath)
         existing.update(provision)
         LOG.info("handing %s to pixelplusd via %s", sorted(k for k in provision if k != "uiPassword"), ppath)
         if not sysops.dry_run:
@@ -766,7 +792,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         state = load_state()
         state["board_reboots"] = 0  # explicit user action resets the loop guard
         reboot = board_config(sysops, boot_dir, args.board, state, args.reboot, pixels=args.pixels, force=True)
+        error = state.pop("board_error", None)
         save_state(state)
+        if error:
+            # non-zero so pixelplus-helper reports "failed" to the web UI
+            LOG.error("board-config: %s", error)
+            return 2
         if reboot:
             sysops.run(["systemctl", "--no-block", "reboot"])
         return 0

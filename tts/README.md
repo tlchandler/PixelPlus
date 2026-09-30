@@ -9,8 +9,10 @@ project's tested sound:
 * **Nick** (30% `am_echo` + 30% `am_fenrir` + 40% `am_puck`) and **Holly** (50% `af_heart` + 50% `af_kore`),
   and any custom blend (a weighted average of Kokoro style vectors).
 * **Energy and hype that build to the end.** The punchline lands about 2–3 semitones above the lead-in,
-  with wider pitch swings, a swell of about 2.5 dB, a soft pitch ceiling and a stretch for Holly. It uses Praat PSOLA
-  (praat-parselmouth) with the same algorithm and constants as fpp-voices.
+  with wider pitch swings, a swell of about 2.5 dB, a soft pitch ceiling and a stretch for Holly. With
+  praat-parselmouth installed it uses Praat PSOLA with the same algorithm and constants as fpp-voices;
+  on a Raspberry Pi (no parselmouth wheels, see [Platforms](#platforms)) a simpler method gives the
+  same lift, stretch and swell without the widened swings.
 * Radio processing: highpass, per-voice EQ, presence for energetic lines, a de-esser and a compressor.
 * Linear loudness normalization to **-16 LUFS** by default, with a true-peak-safe limiter.
 * Pronunciation fixes (about 100 built in, plus the show's own list) and exact IPA overrides (`/noʊˈɛl/`).
@@ -25,6 +27,24 @@ Runs on **Pi 4 / Pi 5 (64-bit OS) and Docker/x86**. **Pi Zero 2 W and Pi 3 use b
 would be many times slower than real time and the model barely fits in 512 MB–1 GB RAM.
 
 ---
+
+## Platforms
+
+Wheels on PyPI (checked 2026-09; `https://pypi.org/pypi/<package>/json`):
+
+| Package | Linux x86_64 | Linux aarch64 (Pi OS Bookworm 3.11 / Trixie 3.13) |
+|---|---|---|
+| onnxruntime 1.30 | cp311–cp314 | cp311–cp314 (`manylinux_2_28`) |
+| kokoro-onnx 0.6.1 | pure Python | pure Python (+ espeakng-loader `manylinux_2_28_aarch64`) |
+| numpy 2.x | yes | yes |
+| praat-parselmouth 0.4.7 | cp37–cp314 | **none** (source only: C++ build, hours under qemu) |
+
+So `praat-parselmouth` is optional (`pip install '.[psola]'`, or it is tried automatically by
+`install.sh`, the image build and the Docker image with `--only-binary`). Without it,
+`pixelplus_tts/prosody.py` does the energy/hype prosody: the line is raised by the voice's energy
+pitch, the punchline additionally by its lift (capped), slowed by its stretch and swollen by its
+boost, with ffmpeg's `rubberband` filter (formants preserved) or, without it, a numpy phase vocoder.
+`GET /health` reports the method in use as `prosody`: `psola`, `rubberband` or `basic`.
 
 ## Install
 
@@ -245,6 +265,7 @@ pixelplus_tts/
   render.py    request validation, per-line chain, pauses, bed, loudness, cache
   engine.py    Kokoro load/idle-unload, blend styles, synthesize a line
   energy.py    energy/hype prosody (fpp-voices), pure helpers + Praat PSOLA
+  prosody.py   energy/hype without Praat (rubberband or numpy phase vocoder) for aarch64
   audio.py     ffmpeg chains (in-memory pipes), loudness, ducking
   voices.py    base voice catalog, Nick/Holly presets, DjVoice normalization, blending
   pronounce.py pronunciation rules + IPA splicing

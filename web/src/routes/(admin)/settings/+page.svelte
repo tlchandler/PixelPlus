@@ -3,6 +3,8 @@
 	import { api } from '$lib/api/client';
 	import type {
 		NetworkConfig,
+		NetwatchStatus,
+		SshState,
 		ShowSettings,
 		Snapshot,
 		SongRequest,
@@ -51,6 +53,9 @@
 		Sun,
 		Moon,
 		Monitor,
+		Radio,
+		Terminal,
+		TriangleAlert,
 		X
 	} from '@lucide/svelte';
 
@@ -166,6 +171,19 @@
 		}
 	}
 	const netDirty = $derived(!!net && (JSON.stringify(net) !== netOrig || !!psk));
+	const nw = $derived<NetwatchStatus | null>(net?.netwatch ?? null);
+	// Refresh the hotspot status while this section is open (it changes on its own).
+	$effect(() => {
+		if (sec !== 'network') return;
+		const t = setInterval(async () => {
+			const n = await api.network().catch(() => null);
+			if (n && net) net.netwatch = n.netwatch ?? null;
+		}, 10_000);
+		return () => clearInterval(t);
+	});
+	function ago(unix?: number | null) {
+		return unix ? fmtRelative(new Date(unix * 1000).toISOString()) : '';
+	}
 	function sigIcon(dbm: number) {
 		return dbm > -60 ? WifiHigh : dbm > -75 ? Wifi : dbm > -85 ? WifiLow : WifiZero;
 	}
@@ -296,9 +314,52 @@
 		updating = true;
 		await api
 			.applyUpdate()
-			.then(() => toasts.success('Update installed'))
-			.catch((e) => toasts.error('Update failed', e.message));
-		updating = false;
+			.catch((e) => toasts.error('Update failed', e.message))
+			.finally(() => (updating = false));
+	}
+	const updJob = $derived(app.helpers['update'] ?? upd?.job ?? null);
+
+	// ---- ssh
+	let ssh = $state<SshState | null>(null);
+	$effect(() => {
+		if (sec === 'security' && !ssh)
+			api
+				.ssh()
+				.then((v) => (ssh = v))
+				.catch(() => {});
+	});
+	const sshJob = $derived(
+		[app.helpers['ssh-on'], app.helpers['ssh-off']]
+			.filter((j) => !!j)
+			.sort((a, b) => b.updatedAt - a.updatedAt)[0]
+	);
+	let sshSeen = '';
+	$effect(() => {
+		const key = sshJob ? `${sshJob.verb}:${sshJob.state}:${sshJob.updatedAt}` : '';
+		if (key && key !== sshSeen && sshJob.state !== 'running') {
+			sshSeen = key;
+			api
+				.ssh()
+				.then((v) => (ssh = v))
+				.catch(() => {});
+		}
+	});
+	async function setSsh(on: boolean) {
+		if (
+			on &&
+			!(await confirm({
+				title: 'Turn SSH on?',
+				message:
+					'SSH lets someone with the controller’s login password (or key) run commands on it. Only turn it on if you need it.',
+				confirmLabel: 'Turn on'
+			}))
+		)
+			return;
+		try {
+			await api.setSsh(on);
+		} catch (e) {
+			toasts.error('Could not change SSH', (e as Error).message);
+		}
 	}
 
 	// ---- system
@@ -387,6 +448,60 @@
 					<div class="card-head"><h2 class="grow">Network & Wi-Fi</h2></div>
 					<div class="card-body">
 						{#if !net}<Skeleton count={4} h={36} />{:else}
+							{#if net.managed === false}
+								<div class="nw-note muted small">
+									{sys?.docker
+										? 'PixelPlus runs in Docker here: Wi-Fi, the computer’s name and wired settings belong to the host. Change them there.'
+										: 'This computer’s network isn’t managed by PixelPlus. Change it in the computer’s own settings.'}
+								</div>
+							{/if}
+							{#if nw}
+								<div class="nw {nw.state}">
+									<span
+										class="icon-tile {nw.state === 'hotspot'
+											? 'accent'
+											: nw.state === 'online'
+												? 'green'
+												: ''}"><Radio size={18} /></span
+									>
+									<div class="grow">
+										{#if nw.state === 'hotspot'}
+											<strong>Setup hotspot is on{nw.hotspotSsid ? `: ${nw.hotspotSsid}` : ''}</strong>
+											<div class="small muted">
+												{nw.hotspotSecured
+													? 'Password protected (default password: pixelplus).'
+													: 'Open network, no password.'}
+												Join it with a phone and open
+												<span class="mono">{nw.portalUrl ?? 'http://10.42.0.1/'}</span> to pick a Wi-Fi network.
+												It turns off by itself once the controller is back online.
+											</div>
+										{:else if nw.state === 'connecting'}
+											<strong>Joining a Wi-Fi network…</strong>
+											<div class="small muted">
+												The setup hotspot is paused while the controller tries the network picked on the setup
+												page.
+											</div>
+										{:else if nw.state === 'online'}
+											<strong>Online</strong>
+											<div class="small muted">
+												{#if nw.lastJoined}Joined “{nw.lastJoined.ssid}” from the setup page {ago(
+														nw.lastJoined.at
+													)}{nw.lastJoined.ips?.length ? ` (${nw.lastJoined.ips.join(', ')})` : ''}.{:else}If
+													the network is lost for 5 minutes, the setup hotspot turns on so you can fix it from
+													a phone.{/if}
+											</div>
+										{:else}
+											<strong>Checking the network…</strong>
+											<div class="small muted">
+												No connection yet. The setup hotspot starts if none comes up within a minute or two.
+											</div>
+										{/if}
+										{#if nw.lastError}
+											<div class="small nw-err"><TriangleAlert size={13} /> {nw.lastError}</div>
+										{/if}
+									</div>
+								</div>
+							{/if}
 							<div class="form-grid">
 								<label class="field"
 									><span class="label">Controller name on the network</span>
@@ -485,7 +600,7 @@
 								</div>
 							</details>
 							<div class="row" style="margin-top:18px;justify-content:flex-end">
-								<button class="btn primary" disabled={!netDirty} onclick={saveNet}
+								<button class="btn primary" disabled={!netDirty || net.managed === false} onclick={saveNet}
 									>Apply network settings</button
 								>
 							</div>
@@ -1053,6 +1168,25 @@
 						</div>
 						<div class="setting">
 							<div class="text">
+								<div class="title"><Terminal size={14} /> SSH (remote command line)</div>
+								<div class="desc">
+									{#if !ssh}Checking…{:else if ssh.enabled === null}Not available here: PixelPlus doesn’t
+										manage this computer’s SSH server.{:else if sshJob?.state === 'running'}{sshJob.message}{:else}For
+										advanced troubleshooting. Log in as the controller’s user (set with Raspberry Pi Imager or
+										<span class="mono">ssh_password=</span> in pixelplus.txt).{/if}
+								</div>
+							</div>
+							<div class="control">
+								<Switch
+									checked={!!ssh?.enabled}
+									disabled={!ssh?.canChange || sshJob?.state === 'running'}
+									label="SSH"
+									onchange={(v: boolean) => setSsh(v)}
+								/>
+							</div>
+						</div>
+						<div class="setting">
+							<div class="text">
 								<div class="title">Sign out</div>
 								<div class="desc">Ends your session in this browser.</div>
 							</div>
@@ -1153,10 +1287,27 @@
 										You have {upd.current}{upd.channel ? ` · ${upd.channel} channel` : ''}
 									</div>
 								</div>
-								<button class="btn primary" onclick={applyUpdate} disabled={updating}
-									>{updating ? 'Updating…' : 'Update now'}</button
-								>
+								{#if upd.canApply !== false}
+									<button
+										class="btn primary"
+										onclick={applyUpdate}
+										disabled={updating || updJob?.state === 'running'}
+										>{updating || updJob?.state === 'running' ? 'Updating…' : 'Update now'}</button
+									>
+								{/if}
 							</div>
+							{#if updJob}
+								<div class="small upd-job {updJob.state}">
+									{#if updJob.state === 'running'}<RefreshCw
+											size={13}
+											class="spin"
+										/>{:else if updJob.state === 'ok'}<Check size={13} />{:else}<TriangleAlert
+											size={13}
+										/>{/if}
+									{updJob.message}
+								</div>
+							{/if}
+							{#if upd.message && upd.canApply === false}<div class="small muted">{upd.message}</div>{/if}
 							{#if upd.notes}<pre class="notes">{upd.notes}</pre>{/if}
 						{:else}
 							<div class="upd">
@@ -1166,6 +1317,7 @@
 									<div class="faint small">PixelPlus {upd.current}</div>
 								</div>
 							</div>
+							{#if upd.message}<div class="small muted" style="margin-top:10px">{upd.message}</div>{/if}
 						{/if}
 					</div>
 				</section>
@@ -1374,6 +1526,45 @@
 		to {
 			transform: rotate(360deg);
 		}
+	}
+	.nw {
+		display: flex;
+		gap: 12px;
+		align-items: flex-start;
+		padding: 12px 14px;
+		margin-bottom: 16px;
+		border: 1px solid var(--border-2);
+		border-radius: 12px;
+		background: var(--surface-2);
+	}
+	.nw.hotspot {
+		border-color: var(--accent-line);
+		background: var(--accent-soft);
+	}
+	.nw .grow {
+		min-width: 0;
+	}
+	.nw-err {
+		color: var(--red);
+		margin-top: 6px;
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+	.nw-note {
+		margin-bottom: 12px;
+	}
+	.upd-job {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		margin-top: 10px;
+	}
+	.upd-job.failed {
+		color: var(--red);
+	}
+	.upd-job.ok {
+		color: var(--green);
 	}
 	.wifi {
 		margin-top: 20px;

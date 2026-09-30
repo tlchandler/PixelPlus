@@ -143,7 +143,16 @@ export const api = {
 	sensorHistory: (minutes = 60) => get<T.SensorHistory>(`/system/sensors/history?minutes=${minutes}`),
 	writeEeprom: (board: T.BoardKind, rev: string) => post('/system/eeprom', { board, rev }),
 	checkUpdate: () => get<T.UpdateInfo>('/system/update'),
-	applyUpdate: () => post('/system/update'),
+	applyUpdate: () => post<{ ok: boolean; message: string; job?: T.HelperStatus | null }>('/system/update'),
+	helpers: () => get<T.HelperStatus[]>('/system/helpers'),
+	ssh: () => get<T.SshState>('/system/ssh'),
+	setSsh: (enabled: boolean) => put<{ ok: boolean; job: T.HelperStatus }>('/system/ssh', { enabled }),
+	reapply: () => post<{ ok: boolean; job: T.HelperStatus }>('/system/reapply'),
+	outputGeometry: () => get<T.OutputGeometry>('/system/output-geometry'),
+	applyOutputGeometry: (reboot = true) =>
+		post<{ ok: boolean; job: T.HelperStatus; geometry: T.OutputGeometry }>('/system/output-geometry/apply', {
+			reboot
+		}),
 	audioDevices: () => get<{ id: string; name: string }[]>('/system/audio/devices'),
 
 	// ---- auth

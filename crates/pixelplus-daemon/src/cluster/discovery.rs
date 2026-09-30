@@ -244,10 +244,166 @@ async fn beacon_loop(state: AppState, sh: Arc<Shared>) {
 // ---------------------------------------------------------------------------
 // mDNS
 // ---------------------------------------------------------------------------
+//
+// Every node advertises `_pixelplus._tcp` (TXT id/role/board/ver). There must be
+// exactly one mDNS responder per host name: two responders (avahi + mdns-sd)
+// answering for `<hostname>.local` with different address sets each see the
+// other's records as a name conflict and rename the host (`pixelplus-2.local`).
+// Sharing UDP 5353 itself is fine (both use SO_REUSEADDR/SO_REUSEPORT and join
+// the multicast group), so the rule is about *who owns the names*:
+//
+// * avahi-daemon running (PixelPlus images, most Linux desktops): publish the
+//   service through avahi (`avahi-publish -s`, D-Bus), so avahi remains the
+//   only responder; the static packaging/avahi/pixelplus.service only carries
+//   `_http._tcp`.
+// * otherwise (Docker, a PC without avahi): mdns-sd. In Docker, or whenever we
+//   can't tell whether the host runs its own responder, its SRV target is a
+//   PixelPlus-only host name (`pixelplus-<id>.local`) so it never competes for
+//   the machine's own `<hostname>.local`.
 
 const MDNS_TYPE: &str = "_pixelplus._tcp.local.";
+const MDNS_TYPE_SHORT: &str = "_pixelplus._tcp";
+
+/// (instance name, TXT key/values) we advertise.
+type MdnsRecord = (String, Vec<(String, String)>);
+
+/// The instance name and TXT record we advertise right now.
+fn mdns_record(state: &AppState) -> MdnsRecord {
+    let identity = state.identity();
+    let (board, _) = net::local_board(state);
+    let hostname = net::hostname();
+    let role = match identity.role {
+        LocalRole::Leader => "leader",
+        LocalRole::Follower => "follower",
+        LocalRole::Unconfigured => "unconfigured",
+    };
+    let board_id = serde_json::to_value(board)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+    let txt = vec![
+        ("id".to_string(), identity.id.clone()),
+        ("role".to_string(), role.to_string()),
+        ("board".to_string(), board_id),
+        ("ver".to_string(), super::VERSION.to_string()),
+    ];
+    (format!("{hostname}-{}", identity.id), txt)
+}
+
+/// avahi-daemon is running here and we can publish through it.
+pub(crate) fn avahi_available() -> bool {
+    use crate::services::system::have;
+    (std::path::Path::new("/run/avahi-daemon/pid").exists()
+        || std::path::Path::new("/run/avahi-daemon/socket").exists())
+        && have("avahi-publish")
+}
+
+/// `avahi-publish` arguments for our record.
+pub(crate) fn avahi_publish_args(
+    instance: &str,
+    port: u16,
+    txt: &[(String, String)],
+) -> Vec<String> {
+    let mut args = vec![
+        "-s".to_string(),
+        instance.to_string(),
+        MDNS_TYPE_SHORT.to_string(),
+        port.to_string(),
+    ];
+    args.extend(txt.iter().map(|(k, v)| format!("{k}={v}")));
+    args
+}
+
+/// SRV target host for mdns-sd: the machine's own name only when nobody else
+/// can be answering for it.
+pub(crate) fn mdns_sd_host(hostname: &str, node_id: &str, shared_host: bool) -> String {
+    if shared_host {
+        let short: String = node_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .take(8)
+            .collect();
+        format!("pixelplus-{}.local.", short.to_ascii_lowercase())
+    } else {
+        format!("{hostname}.local.")
+    }
+}
 
 async fn mdns_loop(state: AppState, sh: Arc<Shared>) {
+    if avahi_available() {
+        tracing::info!("mDNS: publishing {MDNS_TYPE_SHORT} through avahi-daemon");
+        if avahi_loop(&state, &sh).await {
+            return;
+        }
+        tracing::warn!(
+            "mDNS: avahi-publish keeps failing; publishing with the built-in responder instead"
+        );
+    }
+    mdns_sd_loop(state, sh).await
+}
+
+/// Keep an `avahi-publish -s` child running with our current record. Returns
+/// true when stopped, false when avahi-publish keeps failing.
+async fn avahi_loop(state: &AppState, sh: &Arc<Shared>) -> bool {
+    let mut stop = sh.stop_rx();
+    let mut child: Option<(tokio::process::Child, MdnsRecord)> = None;
+    let mut quick_failures = 0u32;
+    loop {
+        let rec = mdns_record(state);
+        let exited = match child.as_mut() {
+            Some((c, _)) => matches!(c.try_wait(), Ok(Some(_)) | Err(_)),
+            None => true,
+        };
+        let changed = child.as_ref().is_some_and(|(_, r)| *r != rec);
+        if exited || changed {
+            if let Some((mut c, _)) = child.take() {
+                let _ = c.kill().await;
+            }
+            if exited && quick_failures >= 3 {
+                return false;
+            }
+            let args = avahi_publish_args(&rec.0, sh.settings.http_port, &rec.1);
+            match tokio::process::Command::new("avahi-publish")
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+            {
+                Ok(c) => {
+                    let started = Instant::now();
+                    child = Some((c, rec));
+                    // A child that dies within seconds (D-Bus denied, avahi gone) counts as a failure.
+                    if sleep_or_stop(&mut stop, Duration::from_secs(3)).await {
+                        return true;
+                    }
+                    let died = child
+                        .as_mut()
+                        .is_some_and(|(c, _)| matches!(c.try_wait(), Ok(Some(_))));
+                    if died && started.elapsed() < Duration::from_secs(10) {
+                        quick_failures += 1;
+                        tracing::debug!("avahi-publish exited early ({quick_failures})");
+                    } else {
+                        quick_failures = 0;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("mDNS: can't run avahi-publish: {e}");
+                    return false;
+                }
+            }
+        }
+        if sleep_or_stop(&mut stop, Duration::from_secs(10)).await {
+            if let Some((mut c, _)) = child.take() {
+                let _ = c.kill().await;
+            }
+            return true;
+        }
+    }
+}
+
+async fn mdns_sd_loop(state: AppState, sh: Arc<Shared>) {
     let mut stop = sh.stop_rx();
     let daemon = match mdns_sd::ServiceDaemon::new() {
         Ok(d) => d,
@@ -256,34 +412,17 @@ async fn mdns_loop(state: AppState, sh: Arc<Shared>) {
             return;
         }
     };
+    let shared_host = crate::services::system::in_docker() || avahi_available();
     // (fullname, TXT) of the current registration.
-    let mut registered: Option<(String, Vec<(String, String)>)> = None;
+    let mut registered: Option<MdnsRecord> = None;
     loop {
-        let identity = state.identity();
-        let (board, _) = net::local_board(&state);
-        let hostname = net::hostname();
-        let role = match identity.role {
-            LocalRole::Leader => "leader",
-            LocalRole::Follower => "follower",
-            LocalRole::Unconfigured => "unconfigured",
-        };
-        let board_id = serde_json::to_value(board)
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-            .unwrap_or_default();
-        let txt = vec![
-            ("id".to_string(), identity.id.clone()),
-            ("role".to_string(), role.to_string()),
-            ("board".to_string(), board_id),
-            ("ver".to_string(), super::VERSION.to_string()),
-        ];
-        let instance = format!("{hostname}-{}", identity.id);
+        let (instance, txt) = mdns_record(&state);
         let fullname = format!("{instance}.{MDNS_TYPE}");
         if registered.as_ref() != Some(&(fullname.clone(), txt.clone())) {
             if let Some((old, _)) = registered.take() {
                 let _ = daemon.unregister(&old);
             }
-            let host = format!("{hostname}.local.");
+            let host = mdns_sd_host(&net::hostname(), &state.identity().id, shared_host);
             let props: std::collections::HashMap<String, String> = txt.iter().cloned().collect();
             match mdns_sd::ServiceInfo::new(
                 MDNS_TYPE,
@@ -304,5 +443,38 @@ async fn mdns_loop(state: AppState, sh: Arc<Shared>) {
             let _ = daemon.shutdown();
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod mdns_tests {
+    use super::*;
+
+    #[test]
+    fn avahi_args() {
+        let txt = vec![
+            ("id".to_string(), "abc".to_string()),
+            ("role".to_string(), "leader".to_string()),
+        ];
+        assert_eq!(
+            avahi_publish_args("garage-abc", 80, &txt),
+            vec![
+                "-s",
+                "garage-abc",
+                "_pixelplus._tcp",
+                "80",
+                "id=abc",
+                "role=leader"
+            ]
+        );
+    }
+
+    #[test]
+    fn mdns_sd_never_claims_a_shared_hostname() {
+        assert_eq!(mdns_sd_host("garage", "01J9ZQ-XY", false), "garage.local.");
+        assert_eq!(
+            mdns_sd_host("garage", "01J9ZQ-XYzzzz", true),
+            "pixelplus-01j9zqxy.local."
+        );
     }
 }

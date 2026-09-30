@@ -10,7 +10,8 @@ keeps short punchlines ("…everybody!") excited rather than shrieking.
 
 The pure helpers (find_emphasis, plan_line, energy_curve, punch_lift,
 soft_ceiling, shape_pitch) are unit tested; add_energy() runs Praat PSOLA via
-praat-parselmouth.
+praat-parselmouth when it is installed (optional: it has no Linux aarch64 wheels), else the
+simpler segment-wise method in prosody.py.
 """
 from __future__ import annotations
 
@@ -104,6 +105,10 @@ def add_energy(audio: np.ndarray, voice: Mapping, curve: Curve, base: float | No
     times, levels = zip(*curve)
     if max(levels) <= 0:
         return audio if base is None else (audio, None)
+    from . import prosody
+    if not prosody.have_parselmouth():
+        # No Praat (no aarch64 wheels): segment-wise pitch/tempo/loudness instead.
+        return prosody.add_energy(audio, voice, curve, base)
     import parselmouth
     from parselmouth.praat import call
     energy_at = lambda t: float(np.interp(t, times, levels))  # noqa: E731

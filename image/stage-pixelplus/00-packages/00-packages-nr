@@ -5,6 +5,7 @@ nftables
 iw
 rfkill
 avahi-daemon
+avahi-utils
 alsa-utils
 ffmpeg
 i2c-tools

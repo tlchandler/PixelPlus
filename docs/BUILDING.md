@@ -19,10 +19,10 @@ docker/        Dockerfile + docker-compose.yml for a PC/NAS leader
 
 | For | Needs |
 |---|---|
-| Rust | rustup, stable toolchain (MSRV 1.80) |
+| Rust | rustup, stable toolchain (MSRV 1.80); `pkg-config libasound2-dev` (ALSA headers for the daemon's audio output; `--no-default-features` builds a lights-only daemon without them) |
 | Web / Imager UI | Node 22, pnpm 10 (`corepack enable`) |
 | Python parts | Python 3.11+ (`pip install pytest jsonschema` for tests) |
-| arm64 .deb on x86 | `gcc-aarch64-linux-gnu` + `rustup target add aarch64-unknown-linux-gnu`, or `cross` |
+| arm64 .deb on x86 | `sudo packaging/ci/install-arm64-cross-deps.sh` (aarch64 gcc + `libasound2-dev:arm64`) + `rustup target add aarch64-unknown-linux-gnu`, or `cross` (Cross.toml installs the arm64 ALSA headers) |
 | .deb | `dpkg-deb`, `device-tree-compiler` (arm64: DPI overlays) |
 | SD image | Docker with `--privileged`, ~25 GB disk; on x86: `qemu-user-static binfmt-support` |
 | Imager app | Tauri 2 prerequisites: Linux `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev`; macOS Xcode CLT; Windows WebView2 + MSVC |
@@ -38,7 +38,10 @@ PIXELPLUS_DATA_DIR=./data-dev PIXELPLUS_HTTP_PORT=8080 PIXELPLUS_OUTPUT=sim carg
 Environment variables read by `pixelplusd`: `PIXELPLUS_DATA_DIR` (/var/lib/pixelplus),
 `PIXELPLUS_WEB_DIR` (/usr/share/pixelplus/web), `PIXELPLUS_HTTP_PORT` (80),
 `PIXELPLUS_HTTP_BIND`, `PIXELPLUS_CLUSTER_PORT` (32320), `PIXELPLUS_OUTPUT`
-(dpi|sim|none|auto), `PIXELPLUS_TTS_URL`, `PIXELPLUS_GAMES_SOCKET`, `PIXELPLUS_DEV`.
+(dpi|sim|none|auto), `PIXELPLUS_BOARD` (board override: difftx|difftxlarge|diffsmart|bare-pi|virtual|auto),
+`PIXELPLUS_AUDIO` (`none` disables audio output), `PIXELPLUS_SHM_DIR` (/dev/shm),
+`PIXELPLUS_TTS_URL`, `PIXELPLUS_GAMES_SOCKET`, `PIXELPLUS_MDNS` (0 = no mDNS), `PIXELPLUS_DEV`;
+for tests: `PIXELPLUS_RUN_DIR` (/run/pixelplus), `PIXELPLUS_NETWATCH_STATUS`, `PIXELPLUS_BOOT_DIR`.
 On the Pi they come from `pixelplusd.service` and optional overrides in `/etc/default/pixelplus`.
 
 ## Debian package
@@ -54,8 +57,11 @@ Output: `dist/pixelplus_<version>_<arch>.deb`. The version is the workspace vers
 
 **Cross-compiling for arm64** – the script picks, in order: `cross` (Docker-based;
 old glibc, so binaries run on Bookworm and Trixie), or the Debian/Ubuntu cross gcc. For
-the latter it sets `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER` and
-`CC_aarch64_unknown_linux_gnu`/`AR_…` (needed by `zstd-sys`). Build on the *oldest*
+the latter it sets `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER`,
+`CC_aarch64_unknown_linux_gnu`/`AR_…` (needed by `zstd-sys`) and `PKG_CONFIG_ALLOW_CROSS` /
+`PKG_CONFIG_LIBDIR` for the arm64 ALSA headers (`alsa-sys`, via cpal); install both with
+`sudo packaging/ci/install-arm64-cross-deps.sh` (Ubuntu: adds the ports.ubuntu.com arm64
+sources). Build on the *oldest*
 distribution you target (Ubuntu 22.04 / Debian Bookworm) because glibc is only forward
 compatible.
 
@@ -74,7 +80,7 @@ compatible.
 | `/usr/share/pixelplus/pixelplus.txt.template` | the commented `pixelplus.txt` |
 | `/usr/lib/systemd/system/` | `pixelplusd`, `pixelplus-tts`, `pixelplus-games`, `pixelplus-firstboot`, `pixelplus-reapply.{path,service}`, `pixelplus-netwatch`, `pixelplus-helper@` |
 | `/usr/share/polkit-1/rules.d/50-pixelplus.rules` | what the `pixelplus` user may do |
-| `/etc/avahi/services/pixelplus.service` | `_pixelplus._tcp` + `_http._tcp` on port 80 |
+| `/etc/avahi/services/pixelplus.service` | `_http._tcp` on port 80 (`_pixelplus._tcp` is published by pixelplusd, see below) |
 | `/usr/lib/sysctl.d`, `/usr/lib/udev/rules.d`, `/usr/lib/tmpfiles.d`, `/etc/logrotate.d` | UDP buffers, device groups, `/run/pixelplus`, log rotation |
 | `/usr/share/pixelplus/appliance/` | NetworkManager configs, linked into `/etc` only on appliances |
 
@@ -91,9 +97,11 @@ operations go through system services, authorised by polkit for that user only:
 |---|---|
 | Wi-Fi scan/connect, Ethernet settings | NetworkManager D-Bus (`org.freedesktop.NetworkManager.*`) |
 | Reboot / power off | logind (`org.freedesktop.login1.reboot`, `power-off`) |
-| Hostname, time zone, NTP | hostnamed / timedated |
+| Hostname, time zone, NTP | hostnamed (`hostnamectl --static --transient set-hostname`) / timedated (`timedatectl set-timezone`); avahi follows via `avahi-set-host-name` (netdev group) |
 | Start/stop/restart `pixelplus-{tts,games,netwatch}`; restart `pixelplusd` | systemd `manage-units` |
-| Board boot config, updates, SSH on/off, re-apply `pixelplus.txt` | `systemctl start --no-block pixelplus-helper@<verb>.service` (root oneshot, whitelisted verbs) |
+| Board boot config, updates, SSH on/off, re-apply `pixelplus.txt`, Wi-Fi country, `/etc/hosts` | `systemctl start --no-block pixelplus-helper@<verb>.service` (root oneshot, whitelisted verbs) |
+| Board EEPROM read/write | `/dev/i2c-1` (group `i2c`, `I2C_RDWR` works even while at24 is bound); the at24 sysfs file only if it is accessible. `new_device` (root) is never used |
+| Update check | `apt-cache policy pixelplus` (lists refreshed daily by apt and by the `update` verb) |
 
 Helper verbs (`packaging/bin/pixelplus-helper`), arguments `:`-separated in the instance name:
 
@@ -102,9 +110,55 @@ Helper verbs (`packaging/bin/pixelplus-helper`), arguments `:`-separated in the 
   and then reboots via logind.
 * `update` – `apt-get update` + upgrade `pixelplus` (postinst restarts the daemon).
 * `ssh-on`, `ssh-off`, `reapply`.
+* `wifi-country:<CC>` – `raspi-config nonint do_wifi_country` (or `iw reg set`).
+* `hosts` – point `/etc/hosts`' `127.0.1.1` line at the current hostname (after the daemon
+  renamed the host through hostnamed) and keep cloud-init from resetting it.
 
 Each writes `/run/pixelplus/helper-<verb>.json`
 (`{"verb","state":"running|ok|failed","message","updatedAt"}`) for the UI to poll.
+`/run/pixelplus` belongs to `pixelplus` (tmpfiles.d), so root writers never write through a
+path there: the helper writes in root-only `/run/pixelplus-helper` and renames into place,
+netwatch and firstboot create files with `O_EXCL` under random names and rename them.
+
+pixelplusd (`crates/pixelplus-daemon/src/services/platform.rs`) polls the file (only results
+newer than the start count; a unit that fails without writing one is detected with
+`systemctl is-failed`), forwards progress as `helper` WebSocket messages and toasts, and lists
+the latest runs at `GET /api/v1/system/helpers`. Without the helper (development machine,
+Docker) the API answers 403 with an explanation; running as root without the package it does
+the same work directly.
+
+### mDNS (decided)
+
+avahi-daemon owns the host's mDNS names (`<hostname>.local`) on PixelPlus images. The daemon
+publishes its cluster record `_pixelplus._tcp` (TXT `id`, `role`, `board`, `ver`) **through
+avahi** (`avahi-publish -s`, D-Bus, package `avahi-utils`), and the static avahi service file
+carries only `_http._tcp`, so there is exactly one responder and one `_pixelplus._tcp` instance
+per controller. Two responders sharing UDP 5353 is not the problem (avahi and mdns-sd both
+use `SO_REUSEADDR`/`SO_REUSEPORT` and receive every multicast packet); the problem is two
+responders *claiming the same host name* with different address sets: each treats the other's
+answer as a conflict and renames the host (`pixelplus-2.local`). Where avahi isn't running
+(Docker, PCs) the built-in `mdns-sd` responder publishes the record; in Docker (the host may
+run its own responder) its SRV target is `pixelplus-<id>.local`, never the machine's own name.
+`PIXELPLUS_MDNS=0` turns mDNS off (UDP beacons still find controllers).
+
+### Provisioning (`provision.json`)
+
+`firstboot.py` hands the settings only the daemon may apply to
+`/var/lib/pixelplus/provision.json` (0600, owner `pixelplus`; keys all optional: `role`,
+`uiPassword`, `board`, `source`, `createdAt`; `name`, `showName`, `timezone` are also
+accepted). pixelplusd checks for it at startup and every 5 s, applies it exactly like
+`POST /api/v1/system/setup` (password hashed with Argon2, role/board set, show defaults
+seeded for a leader), and deletes it. A file that can't be applied is deleted too (it holds
+a plain-text password) and the reason is shown as a toast and logged.
+
+### CLI contract used by the image
+
+`firstboot.py` runs `pixelplus --json detect` (reads `board.board`: id or `null`, and
+`board.rev`), `pixelplus config-txt --board <id> [--pixels N]` (prints the fragment; the
+comment `up to N pixels per output` is what pixelplusd reads back from `pixelplus.conf`), and
+`pixelplusd.service` runs `pixelplus pins release` after every stop (board from `--board`,
+`PIXELPLUS_BOARD`, `/run/pixelplus/board` written by pixelplusd, or the EEPROM; no board =
+nothing to do, exit 0). All of them work with `--simulate <board>` on a PC.
 
 ### apt repository (optional)
 
@@ -251,6 +305,7 @@ python3 -m pytest image/tests          # parser, scrubbing, keyfiles, firstboot 
 RPI_IMAGER_SCHEMA=/path/to/rpi-imager/doc/json-schema/os-list-schema.json python3 -m pytest image/tests/test_os_list.py
 shellcheck image/*.sh image/stage-pixelplus/*/*.sh packaging/*.sh packaging/bin/*
 node packaging/tests/polkit-rules.test.js
+python3 -m pytest packaging/tests    # root helper: verbs, argument checks, symlink safety
 systemd-analyze verify packaging/systemd/*
 ```
 
@@ -271,8 +326,10 @@ docker compose -f docker/docker-compose.yml up -d
 Multi-stage: `node:22` builds `web/`, `rust:1-bookworm` builds `pixelplusd` + `pixelplus`,
 the runtime is `debian:bookworm-slim` with ffmpeg/alsa, user `pixelplus` (uid 1000,
 `cap_net_bind_service` file capability for port 80), `tini` as PID 1,
-`PIXELPLUS_OUTPUT=none`, `PIXELPLUS_BOARD=virtual`, volume `/var/lib/pixelplus`, and a
-healthcheck on `/api/v1/system` (200 or 401 = alive). The compose file uses host networking
+`PIXELPLUS_OUTPUT=none`, `PIXELPLUS_BOARD=virtual`, `PIXELPLUS_AUDIO=none` (set `auto` when
+passing `/dev/snd`), volume `/var/lib/pixelplus`, and a healthcheck on the unauthenticated
+`GET /api/v1/public/health` (`{"ok", "version", "role"}`); the build stage installs
+`libasound2-dev`. The compose file uses host networking
 (UDP broadcast + mDNS) and runs TTS/games as optional profiles from the same image
 (`games` shares the daemon's IPC namespace for the `/dev/shm` overlay buffers).
 `docker/Dockerfile.dockerignore` keeps the build context small. Multi-arch

@@ -351,7 +351,8 @@ tts/models/                  # kokoro model (Pi 4/5, Docker)
 ## 7. Cluster (leader / followers)
 
 ### 7.1 Discovery & adoption
-* Every node advertises mDNS `_pixelplus._tcp` (TXT: `id`, `role`, `board`, `ver`) and sends a UDP
+* Every node advertises mDNS `_pixelplus._tcp` (TXT: `id`, `role`, `board`, `ver`; through
+  avahi-daemon when it runs, else the built-in responder - see BUILDING.md "mDNS") and sends a UDP
   broadcast **beacon** on port 32320 every 2 s:
   `{"t":"beacon","id","name","role","board","boardRev","pi","ver","http":80,"adoptedBy":<leaderId|null>}`.
 * The leader UI lists unadopted nodes under **Controllers → New controllers found**. Clicking
@@ -410,11 +411,17 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `POST /system/setup` | first-run wizard: {role:"leader"|"follower", showName?, board?, boardRev?, location?, timezone?, password?} |
 | `POST /system/reboot`, `/system/shutdown`, `/system/restart-service` | |
 | `GET /system/logs?lines=500` | text |
-| `GET/PUT /system/network` | {hostname, wifi:{ssid, psk?, country}, ethernet:{dhcp, address?, gateway?, dns?}}; `GET /system/network/scan` → [{ssid, signal, secure}] |
+| `GET/PUT /system/network` | {hostname, wifi:{ssid, psk?, country}, ethernet:{dhcp, address?, gateway?, dns?}, managed (read-only), netwatch (read-only: `/run/pixelplus/netwatch.json` {state:"waiting"|"online"|"hotspot"|"connecting", hotspotSsid, hotspotSecured, portalUrl, lastError, lastJoined:{ssid, ips, at}, updatedAt} or null)}; `GET /system/network/scan` → [{ssid, signal, secure}] |
+| `GET /system/helpers` | latest root-helper jobs [{verb, state:"running"|"ok"|"failed", message, updatedAt}] (also pushed as WS `helper`) |
+| `GET/PUT /system/ssh` | {enabled:boolean|null, canChange, job?} / {enabled} → helper `ssh-on`/`ssh-off` |
+| `POST /system/reapply` | re-apply `/boot/firmware/pixelplus.txt` (helper `reapply`) |
+| `GET /system/output-geometry` | {ok, longestString, maxPixels, configuredPixels, pendingReboot, canApply, targetPixels, piMaxPixels, message} |
+| `POST /system/output-geometry/apply` | {reboot?:true}: helper `config-txt:<board>:<pixels>` for the longest string, then reboot via logind → {ok, job, geometry}; 409 when nothing to do |
+| `GET /public/health` | {ok, version, role}: unauthenticated liveness (Docker healthcheck) |
 | `GET /system/sensors` | [{id, label, kind:"temperature"|"voltage"|"current"|"power", value, unit, warn?, crit?}]; ids: cpuTemp, driverTemp, powerTemp, enclosureTemp, inputVoltage, inputCurrent, inputPower. For voltage sensors warn/crit are minimums, otherwise maximums |
 | `GET /system/sensors/history?minutes=60` | {series: {id: [[t,v]...]}} |
 | `POST /system/eeprom` | {board, rev} write EEPROM |
-| `GET /system/update`, `POST /system/update` | check / apply updates (apt repo) |
+| `GET /system/update`, `POST /system/update` | check (`apt-cache policy`; {current, latest, available, canApply, message?, job?}) / install (helper `update`) |
 | `POST /auth/login`, `POST /auth/logout`, `PUT /auth/password` | |
 | `GET /show` | full `Show` |
 | `PUT /show/settings` | ShowSettings (partial merge) |
@@ -437,7 +444,7 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `POST /test/stop` | |
 | `POST /faultfinder/start` {propId} → FaultSession; `POST /faultfinder/:session/answer {lit:boolean}` → next step or result {pixelIndex, message} ; `POST /faultfinder/stop` | binary search for first bad pixel: lights pixels [0..mid], asks "do all lit pixels light correctly?" |
 | `GET /power/estimate?sequenceId=` | {perOutput:[{nodeId, output, peakAmps, avgAmps}], perReceiverPort:[...], perProp:[...], warnings[]} |
-| `GET /health` | HealthReport {ok, checks:[{id, label, status:"ok"|"warn"|"fail", detail}]} |
+| `GET /health` | HealthReport {ok, checks:[{id, label, status:"ok"|"warn"|"fail", detail, action?:"applyOutputGeometry"|"reboot"}]} |
 | `POST /health/run` | run pre-show check now |
 | `GET /snapshots`, `POST /snapshots {label}`, `POST /snapshots/:id/restore`, `GET /snapshots/:id/download`, `POST /snapshots/import` (multipart), `DELETE /snapshots/:id` | |
 | `GET /effects/catalog` | `effect_catalog()` → [{kind, label, description, params: ParamSpec[]}]; `GET /effects/schema` → {kind: ParamSpec[]} ; `GET /effects/builtin` → builtin presets |

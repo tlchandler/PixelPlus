@@ -218,7 +218,7 @@ struct BlockCache {
     block: Option<usize>,
     data: Vec<u8>,
     compressed: Vec<u8>,
-    zstd: Option<zstd::bulk::Decompressor<'static>>,
+    zstd: Option<zstd::stream::raw::Decoder<'static>>,
     zlib: Option<flate2::Decompress>,
 }
 
@@ -246,6 +246,19 @@ impl<R> std::fmt::Debug for FseqFile<R> {
 
 const FIXED_V1_HEADER: usize = 28;
 const FIXED_V2_HEADER: usize = 32;
+
+/// Largest frame (in absolute channel space, and stored) accepted by the reader:
+/// 64 MiB ≈ 22 million channels, far beyond any real display. Protects against headers
+/// that would make us allocate gigabytes for a single frame buffer.
+pub const MAX_FRAME_BYTES: u64 = 64 << 20;
+
+/// Largest decompressed compression block accepted by the reader (256 MiB). xLights
+/// sizes blocks so that 255 (or 4095) of them cover the sequence, which keeps real
+/// blocks in the low megabytes; anything larger is a corrupt or hostile header.
+pub const MAX_BLOCK_BYTES: u64 = 256 << 20;
+
+/// Largest `ED` (extended data) variable header payload that is loaded (16 MiB).
+const MAX_EXTENDED_HEADER_BYTES: u64 = 16 << 20;
 
 fn u16le(b: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([b[at], b[at + 1]])
@@ -425,6 +438,21 @@ impl<R: Read + Seek> FseqFile<R> {
             if sum != channel_count as u64 {
                 return Err(FseqError::Format(format!(
                     "sparse ranges cover {sum} channels but header declares {channel_count}"
+                )));
+            }
+        }
+        if channel_count as u64 > MAX_FRAME_BYTES || header.frame_size() as u64 > MAX_FRAME_BYTES
+        {
+            return Err(FseqError::Format(format!(
+                "frame of {} channels exceeds the supported maximum of {MAX_FRAME_BYTES}",
+                (channel_count as u64).max(header.frame_size() as u64)
+            )));
+        }
+        for (i, b) in blocks.iter().enumerate() {
+            let bytes = (b.end_frame - b.first_frame) as u64 * channel_count as u64;
+            if bytes > MAX_BLOCK_BYTES {
+                return Err(FseqError::Format(format!(
+                    "compression block {i} would decompress to {bytes} bytes (limit {MAX_BLOCK_BYTES})"
                 )));
             }
         }
@@ -609,24 +637,19 @@ impl<R: Read + Seek> FseqFile<R> {
             &mut self.cache.compressed,
         )?;
 
-        self.cache.data.clear();
-        self.cache.data.reserve(expected);
         let decomp_err = |message: String| FseqError::Decompress { block, message };
         match self.header.compression {
             Compression::Zstd => {
                 if self.cache.zstd.is_none() {
                     self.cache.zstd = Some(
-                        zstd::bulk::Decompressor::new().map_err(|e| decomp_err(e.to_string()))?,
+                        zstd::stream::raw::Decoder::new().map_err(|e| decomp_err(e.to_string()))?,
                     );
                 }
                 let dec = self.cache.zstd.as_mut().expect("initialised above");
-                // Frames without a content-size field need a generous upper bound; the
-                // block table tells us exactly how much to expect.
-                let cap = expected.max(1);
-                if self.cache.data.capacity() < cap {
-                    self.cache.data.reserve(cap);
-                }
-                dec.decompress_to_buffer(&self.cache.compressed, &mut self.cache.data)
+                // Decode at most what the block table says the block holds: a block
+                // that inflates further (a decompression bomb, or trailing frames the
+                // header does not count) cannot make us allocate more.
+                zstd_decompress_capped(dec, &self.cache.compressed, &mut self.cache.data, expected)
                     .map_err(|e| decomp_err(e.to_string()))?;
             }
             Compression::Zlib => {
@@ -634,42 +657,71 @@ impl<R: Read + Seek> FseqFile<R> {
                     .cache
                     .zlib
                     .get_or_insert_with(|| flate2::Decompress::new(true));
-                dec.reset(true);
-                loop {
-                    if self.cache.data.len() == self.cache.data.capacity() {
-                        self.cache.data.reserve(expected.max(4096));
-                    }
-                    let consumed = dec.total_in() as usize;
-                    let produced = self.cache.data.len();
-                    let status = dec
-                        .decompress_vec(
-                            &self.cache.compressed[consumed..],
-                            &mut self.cache.data,
-                            flate2::FlushDecompress::Finish,
-                        )
-                        .map_err(|e| decomp_err(e.to_string()))?;
-                    match status {
-                        flate2::Status::StreamEnd => break,
-                        flate2::Status::Ok | flate2::Status::BufError => {
-                            let stalled = dec.total_in() as usize == consumed
-                                && self.cache.data.len() == produced
-                                && self.cache.data.len() < self.cache.data.capacity();
-                            if stalled
-                                || (dec.total_in() as usize >= self.cache.compressed.len()
-                                    && self.cache.data.len() < self.cache.data.capacity())
-                            {
-                                // Input exhausted without a stream end: use what we have.
-                                break;
-                            }
-                        }
-                    }
-                }
+                zlib_decompress_capped(dec, &self.cache.compressed, &mut self.cache.data, expected)
+                    .map_err(|e| decomp_err(e.to_string()))?;
             }
             Compression::None => unreachable!("uncompressed files have no blocks"),
         }
         self.cache.block = Some(block);
         Ok(())
     }
+}
+
+/// Decompress the zstd stream `src` (one or more concatenated frames) into `dst`,
+/// producing at most `cap` bytes. Output beyond `cap` is never materialised, so a
+/// decompression bomb costs no more memory than a legitimate block. Reuses `dst`'s
+/// allocation and the decoder context (no allocation in steady state).
+pub(crate) fn zstd_decompress_capped(
+    dec: &mut zstd::stream::raw::Decoder<'static>,
+    src: &[u8],
+    dst: &mut Vec<u8>,
+    cap: usize,
+) -> io::Result<()> {
+    use zstd::stream::raw::{InBuffer, Operation, OutBuffer};
+    dec.reinit()?;
+    dst.clear();
+    if dst.capacity() < cap {
+        dst.reserve_exact(cap);
+    }
+    let mut input = InBuffer::around(src);
+    while dst.len() < cap {
+        let (in_before, out_before) = (input.pos(), dst.len());
+        let mut out = OutBuffer::around_pos(dst, out_before);
+        let remaining = dec.run(&mut input, &mut out)?;
+        drop(out);
+        let progressed = input.pos() != in_before || dst.len() != out_before;
+        if !progressed || (input.pos() >= src.len() && remaining == 0) {
+            break;
+        }
+    }
+    dst.truncate(cap);
+    Ok(())
+}
+
+/// zlib counterpart of [`zstd_decompress_capped`].
+fn zlib_decompress_capped(
+    dec: &mut flate2::Decompress,
+    src: &[u8],
+    dst: &mut Vec<u8>,
+    cap: usize,
+) -> std::result::Result<(), flate2::DecompressError> {
+    dec.reset(true);
+    dst.clear();
+    if dst.capacity() < cap {
+        dst.reserve_exact(cap);
+    }
+    while dst.len() < cap {
+        let consumed = (dec.total_in() as usize).min(src.len());
+        let produced = dst.len();
+        let status = dec.decompress_vec(&src[consumed..], dst, flate2::FlushDecompress::Finish)?;
+        if status == flate2::Status::StreamEnd
+            || (dec.total_in() as usize == consumed && dst.len() == produced)
+        {
+            break;
+        }
+    }
+    dst.truncate(cap);
+    Ok(())
 }
 
 /// Read exactly `buf.len()` bytes at `at`, seeking only when the tracked position
@@ -745,7 +797,8 @@ fn parse_variable_headers<R: Read + Seek>(
             let real_code = [payload[0], payload[1]];
             let offset = u64le(payload, 2);
             let dlen = u32le(payload, 10) as u64;
-            if offset + dlen <= file_len {
+            let in_file = offset.checked_add(dlen).is_some_and(|end| end <= file_len);
+            if in_file && dlen <= MAX_EXTENDED_HEADER_BYTES {
                 let here = reader.stream_position()?;
                 reader.seek(SeekFrom::Start(offset))?;
                 let mut data = vec![0u8; dlen as usize];
@@ -1373,6 +1426,160 @@ mod tests {
                 let mut buf = vec![0u8; f.frame_size().min(1 << 16)];
                 let _ = f.frame(0, &mut buf);
             }
+        }
+    }
+
+    /// Hand-built v2 file: `blocks` = (first frame, compressed length) entries of the
+    /// block table (including any empty trailing entries), `sparse` = (start, len).
+    fn v2_raw(
+        compression: u8,
+        channels: u32,
+        frames: u32,
+        blocks: &[(u32, u32)],
+        sparse: &[(u32, u32)],
+        var: &[u8],
+        data: &[u8],
+    ) -> Vec<u8> {
+        let header = FIXED_V2_HEADER + blocks.len() * 8 + sparse.len() * 6;
+        let offset = (header + var.len()).div_ceil(4) * 4;
+        let mut h = vec![0u8; offset];
+        h[0..4].copy_from_slice(b"PSEQ");
+        h[4..6].copy_from_slice(&(offset as u16).to_le_bytes());
+        h[6] = 2;
+        h[7] = 2;
+        h[8..10].copy_from_slice(&(header as u16).to_le_bytes());
+        h[10..14].copy_from_slice(&channels.to_le_bytes());
+        h[14..18].copy_from_slice(&frames.to_le_bytes());
+        h[18] = 25;
+        h[20] = ((blocks.len() >> 4) as u8 & 0xF0) | compression;
+        h[21] = blocks.len() as u8;
+        h[22] = sparse.len() as u8;
+        let mut p = FIXED_V2_HEADER;
+        for &(first, len) in blocks {
+            h[p..p + 4].copy_from_slice(&first.to_le_bytes());
+            h[p + 4..p + 8].copy_from_slice(&len.to_le_bytes());
+            p += 8;
+        }
+        for &(start, len) in sparse {
+            h[p..p + 3].copy_from_slice(&start.to_le_bytes()[..3]);
+            h[p + 3..p + 6].copy_from_slice(&len.to_le_bytes()[..3]);
+            p += 6;
+        }
+        h[p..p + var.len()].copy_from_slice(var);
+        h.extend_from_slice(data);
+        h
+    }
+
+    #[test]
+    fn extended_data_header_with_overflowing_offset_is_ignored() {
+        // `ED` header pointing at offset u64::MAX: offset + len used to overflow
+        // (panic in debug builds, a 4 GiB allocation in release builds).
+        let mut var = vec![18u8, 0, b'E', b'D', b'm', b'f'];
+        var.extend_from_slice(&(u64::MAX - 4).to_le_bytes());
+        var.extend_from_slice(&u32::MAX.to_le_bytes());
+        let v = v2_raw(0, 3, 1, &[], &[], &var, &[1, 2, 3]);
+        let f = FseqFile::from_reader(Cursor::new(v)).unwrap();
+        assert_eq!(f.media_filename(), None);
+
+        // A well-formed ED header still resolves.
+        let payload = b"song.mp3\0";
+        let mut var = vec![18u8, 0, b'E', b'D', b'm', b'f'];
+        let data_at = 32 + 20 + 3; // header (rounded) + one frame of 3 channels
+        var.extend_from_slice(&(data_at as u64).to_le_bytes());
+        var.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        let mut v = v2_raw(0, 3, 1, &[], &[], &var, &[1, 2, 3]);
+        assert_eq!(v.len(), data_at);
+        v.extend_from_slice(payload);
+        let f = FseqFile::from_reader(Cursor::new(v)).unwrap();
+        assert_eq!(f.media_filename().as_deref(), Some("song.mp3"));
+    }
+
+    #[test]
+    fn absurd_frame_sizes_are_rejected_not_allocated() {
+        let block = zstd::bulk::compress(&[0u8; 30], 3).unwrap();
+        // Compressed file declaring ~4 billion channels per frame.
+        let v = v2_raw(1, 0xF000_0000, 1, &[(0, block.len() as u32)], &[], &[], &block);
+        assert!(matches!(
+            FseqFile::from_reader(Cursor::new(v)),
+            Err(FseqError::Format(_))
+        ));
+        // Sparse ranges summing to ~4 GiB of stored channels.
+        let ranges: Vec<(u32, u32)> = (0..255).map(|_| (0, 0xFF_FFFF)).collect();
+        let v = v2_raw(1, 255 * 0xFF_FFFF, 1, &[(0, block.len() as u32)], &ranges, &[], &block);
+        assert!(FseqFile::from_reader(Cursor::new(v)).is_err());
+        // One block claiming billions of frames.
+        let v = v2_raw(1, 1000, u32::MAX, &[(0, block.len() as u32)], &[], &[], &block);
+        assert!(matches!(
+            FseqFile::from_reader(Cursor::new(v)),
+            Err(FseqError::Format(_))
+        ));
+        // Uncompressed file with a huge channel count but zero frames.
+        let v = v2_raw(0, u32::MAX, 0, &[], &[], &[], &[]);
+        assert!(FseqFile::from_reader(Cursor::new(v)).is_err());
+    }
+
+    #[test]
+    fn zlib_bomb_is_capped_at_the_block_size() {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        enc.write_all(&vec![7u8; 32 << 20]).unwrap();
+        let bomb = enc.finish().unwrap();
+        assert!(bomb.len() < 64 * 1024);
+        let v = v2_raw(2, 30, 2, &[(0, bomb.len() as u32)], &[], &[], &bomb);
+        let mut f = FseqFile::from_reader(Cursor::new(v)).unwrap();
+        let mut buf = [0u8; 30];
+        f.frame(1, &mut buf).unwrap();
+        assert_eq!(buf, [7u8; 30]);
+        assert!(
+            f.cache.data.capacity() < 1 << 20,
+            "decompressed {} bytes for a 60-byte block",
+            f.cache.data.capacity()
+        );
+    }
+
+    #[test]
+    fn zstd_bomb_and_overlong_blocks_are_capped() {
+        let bomb = zstd::bulk::compress(&vec![9u8; 32 << 20], 3).unwrap();
+        let v = v2_raw(1, 30, 2, &[(0, bomb.len() as u32)], &[], &[], &bomb);
+        let mut f = FseqFile::from_reader(Cursor::new(v)).unwrap();
+        let mut buf = [0u8; 30];
+        f.frame(1, &mut buf).unwrap();
+        assert_eq!(buf, [9u8; 30]);
+        assert!(f.cache.data.capacity() < 1 << 20);
+
+        // A block holding one frame more than the table/header accounts for
+        // (e.g. a writer that stopped counting frames) still plays.
+        let raw: Vec<u8> = (0..3 * 30).map(|i| i as u8).collect();
+        let block = zstd::bulk::compress(&raw, 3).unwrap();
+        let v = v2_raw(1, 30, 2, &[(0, block.len() as u32)], &[], &[], &block);
+        let mut f = FseqFile::from_reader(Cursor::new(v)).unwrap();
+        f.frame(1, &mut buf).unwrap();
+        assert_eq!(&buf[..], &raw[30..60]);
+    }
+
+    #[test]
+    fn xlights_block_layout_is_read() {
+        // xLights: first block holds 10 frames, the rest `framesPerBlock`, and the
+        // reserved table has unused (zero-length) trailing entries.
+        let cc = 12usize;
+        let frames = 35u32;
+        let mut data = Vec::new();
+        let mut table = Vec::new();
+        let mut first = 0u32;
+        for n in [10u32, 12, 12, 1] {
+            let raw: Vec<u8> = (first..first + n).flat_map(|f| pattern(f, cc)).collect();
+            let c = zstd::bulk::compress(&raw, -5).unwrap();
+            table.push((first, c.len() as u32));
+            data.extend_from_slice(&c);
+            first += n;
+        }
+        table.extend([(0, 0), (0, 0)]);
+        let v = v2_raw(1, cc as u32, frames, &table, &[], &[], &data);
+        let mut f = FseqFile::from_reader(Cursor::new(v)).unwrap();
+        assert_eq!(f.block_count(), 4);
+        let mut buf = vec![0u8; cc];
+        for i in (0..frames).rev().chain(0..frames) {
+            f.frame(i, &mut buf).unwrap();
+            assert_eq!(buf, pattern(i, cc), "frame {i}");
         }
     }
 

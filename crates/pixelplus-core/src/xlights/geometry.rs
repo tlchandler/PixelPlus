@@ -231,7 +231,8 @@ pub(crate) fn shape(a: Attrs) -> Shape {
             ]) else {
                 return too_big();
             };
-            let mut s = Shape::new(PropKind::Other, n, 1);
+            let strings = clamp_count(a.int("Strings").unwrap_or(1)).clamp(1, n.max(1));
+            let mut s = Shape::new(PropKind::Other, n, strings);
             s.placement = Placement::Boxed {
                 render_w: 1.0,
                 render_h: 1.0,
@@ -246,7 +247,13 @@ pub(crate) fn shape(a: Attrs) -> Shape {
             "DMX fixtures are not supported",
             clamp_count(a.named("DmxChannelCount", "parm1", 1)),
         ),
-        "Image" | "Label" => Shape::skipped("image/label models have no pixels", 0),
+        "Image" | "Label" => {
+            // One (non-pixel) node that still occupies channels for `>`/`@` chaining.
+            let (cpn, _) = string_type(a.str("StringType").unwrap_or("RGB Nodes"));
+            let mut s = Shape::skipped("image/label models have no pixels", 1);
+            s.channels_per_node = cpn;
+            s
+        }
         "" => Shape::skipped("model has no DisplayAs", 0),
         other => Shape::skipped(format!("unsupported model type '{other}'"), 0),
     };
@@ -305,7 +312,10 @@ fn arches(a: Attrs) -> Shape {
     let Some(total) = pixels(&[arches, per]) else {
         return too_big();
     };
-    let layered = !layers.is_empty() && layers.iter().map(|&l| l as u64).sum::<u64>() == per as u64;
+    // xLights switches to the layered layout (one string of `NodesPerArch` nodes spread
+    // over the layers) as soon as any layer size is set, whether or not the layer sizes
+    // add up to `NodesPerArch`.
+    let layered = !layers.is_empty();
     let mut s;
     if !layered {
         s = Shape::new(PropKind::Arch, total, arches);
@@ -527,18 +537,30 @@ fn tree(a: Attrs, display: &str) -> Shape {
             _ => (false, false, a.int("TreeDegrees").unwrap_or(360)),
         },
     };
+    // `StrandDir` (default "Vertical"): trees can also be strung horizontally.
+    let vertical = !matches!(a.raw("StrandDir"), Some(d) if d != "Vertical");
     let Some((
         mut s,
         Grid {
-            coords,
+            mut coords,
             width: w,
             height: h,
         },
-    )) = grid_model(a, true)
+    )) = grid_model(a, vertical)
     else {
         return too_big();
     };
     s.kind = PropKind::Tree;
+    // `exportFirstStrand` (1-based): the strand wired first. xLights rotates the strand
+    // start channels so that strand's pixels come first in channel order.
+    if vertical {
+        let first = a.int("exportFirstStrand").unwrap_or(0) - 1;
+        if first > 0 && (first as u64) < w as u64 {
+            let per_strand = h as usize;
+            let k = (first as usize * per_strand).min(coords.len());
+            coords.rotate_left(k);
+        }
+    }
     let (w_f, h_f) = (w as f32, h as f32);
     if degrees > 0 {
         let render_h = h_f * 3.0;
@@ -1002,38 +1024,50 @@ fn icicles(a: Attrs) -> Shape {
     s
 }
 
+/// Upper bound on the cells of a custom model grid (all layers).
+const MAX_CUSTOM_CELLS: usize = 16_000_000;
+
 /// Parse `CustomModelCompressed` (`node,row,col[,layer];…`) or `CustomModel`
-/// (`,`-separated cells, `;` rows, `|` layers). Returns the first layer as rows of
-/// 1-based node numbers (0 = empty).
-pub(crate) fn custom_grid(a: Attrs) -> Vec<Vec<u32>> {
+/// (`,`-separated cells, `;` rows, `|` layers) like xLights' `ParseCompressed` /
+/// `ParseCustomModel`. Returns `layers × rows × cols` of 1-based node numbers
+/// (0 = empty). Every layer has the same number of rows and columns.
+pub(crate) fn custom_layers(a: Attrs) -> Vec<Vec<Vec<u32>>> {
     if let Some(c) = a.str("CustomModelCompressed") {
-        let mut cells: Vec<(u32, usize, usize)> = Vec::new();
+        let mut cells: Vec<(u32, usize, usize, usize)> = Vec::new();
         for item in c.split(';') {
             let f: Vec<i64> = item.split(',').map(strtol).collect();
-            if f.len() >= 3 && (f.len() < 4 || f[3] == 0) && f[0] > 0 && f[1] >= 0 && f[2] >= 0 {
-                if f[1] > 100_000 || f[2] > 100_000 {
-                    continue;
-                }
-                cells.push((clamp_count(f[0]), f[1] as usize, f[2] as usize));
+            if f.len() != 3 && f.len() != 4 {
+                continue;
             }
+            let layer = f.get(3).copied().unwrap_or(0);
+            if f[0] <= 0 || f[1] < 0 || f[2] < 0 || layer < 0 {
+                continue;
+            }
+            if f[1] > 100_000 || f[2] > 100_000 || layer > 100_000 {
+                continue;
+            }
+            cells.push((clamp_count(f[0]), f[1] as usize, f[2] as usize, layer as usize));
         }
         let rows = cells.iter().map(|c| c.1 + 1).max().unwrap_or(0);
         let cols = cells.iter().map(|c| c.2 + 1).max().unwrap_or(0);
-        if rows.saturating_mul(cols) > 16_000_000 {
+        let layers = cells.iter().map(|c| c.3 + 1).max().unwrap_or(0);
+        if rows.saturating_mul(cols).saturating_mul(layers) > MAX_CUSTOM_CELLS {
             return Vec::new();
         }
-        let mut g = vec![vec![0u32; cols]; rows];
-        for (n, r, c) in cells {
-            g[r][c] = n;
+        let mut g = vec![vec![vec![0u32; cols]; rows]; layers];
+        for (n, r, c, l) in cells {
+            g[l][r][c] = n;
         }
         g
     } else {
         let data = a.raw("CustomModel").unwrap_or("");
-        let layer = data.split('|').next().unwrap_or("");
-        let mut g: Vec<Vec<u32>> = layer
-            .split(';')
-            .map(|row| {
-                row.split(',')
+        let mut layers: Vec<Vec<Vec<u32>>> = Vec::new();
+        let mut cells = 0usize;
+        for layer in data.split('|') {
+            let mut rows = Vec::new();
+            for row in layer.split(';') {
+                let r: Vec<u32> = row
+                    .split(',')
                     .map(|v| {
                         let v = v.trim();
                         if v.is_empty() {
@@ -1042,56 +1076,98 @@ pub(crate) fn custom_grid(a: Attrs) -> Vec<Vec<u32>> {
                             clamp_count(strtol(v))
                         }
                     })
-                    .collect()
-            })
-            .collect();
-        if g.len() == 1 && g[0].iter().all(|&v| v == 0) {
-            g.clear();
+                    .collect();
+                cells = cells.saturating_add(r.len().max(1));
+                if cells > MAX_CUSTOM_CELLS {
+                    return Vec::new();
+                }
+                rows.push(r);
+            }
+            layers.push(rows);
         }
-        g
+        // xLights sizes every layer like the last one, and every row to the widest.
+        let height = layers.last().map(|l| l.len()).unwrap_or(0);
+        let width = layers.iter().flatten().map(|r| r.len()).max().unwrap_or(0);
+        if width.saturating_mul(height).saturating_mul(layers.len()) > MAX_CUSTOM_CELLS {
+            return Vec::new();
+        }
+        for l in &mut layers {
+            l.resize(height, Vec::new());
+            for r in l.iter_mut() {
+                r.resize(width, 0);
+            }
+        }
+        if layers.iter().flatten().flatten().all(|&v| v == 0) {
+            layers.clear();
+        }
+        layers
     }
 }
 
 fn custom(a: Attrs) -> Shape {
-    let grid = custom_grid(a);
-    let data_h = grid.len() as u32;
-    let data_w = grid.iter().map(|r| r.len()).max().unwrap_or(0) as u32;
+    let layers = custom_layers(a);
+    let depth = layers.len().max(1) as u32;
+    let data_h = layers.first().map(|l| l.len()).unwrap_or(0) as u32;
+    let data_w = layers
+        .first()
+        .and_then(|l| l.first())
+        .map(|r| r.len())
+        .unwrap_or(0) as u32;
     let width = clamp_count(a.named("CustomWidth", "parm1", data_w as i64))
         .max(data_w)
         .max(1);
     let height = clamp_count(a.named("CustomHeight", "parm2", data_h as i64))
         .max(data_h)
         .max(1);
-    let nodes = grid.iter().flatten().copied().max().unwrap_or(0);
+    // Channels span node numbers 1..=max over *all* layers (xLights assigns node n the
+    // channels at `start + (n-1)*3`, whether or not every number is used).
+    let nodes = layers.iter().flatten().flatten().copied().max().unwrap_or(0);
     let strings = clamp_count(a.int("CustomStrings").unwrap_or(1)).max(1);
     let mut s = Shape::new(PropKind::Custom, nodes, strings);
     if strings > 1 {
+        // `NodeStartN`; files older than 2020 used `StringN` when the model did not
+        // also have individual start channels.
+        let legacy = a.int("Advanced").unwrap_or(0) == 0;
         let starts: Vec<u32> = (1..=strings)
-            .map(|i| clamp_count(a.int(&format!("NodeStart{i}")).unwrap_or(0)))
+            .map(|i| {
+                a.int(&format!("NodeStart{i}"))
+                    .or_else(|| legacy.then(|| a.int(&format!("String{i}"))).flatten())
+                    .map(clamp_count)
+                    .unwrap_or(0)
+            })
             .collect();
         if starts.iter().all(|&v| v > 0) {
             s.string_start_nodes = Some(starts);
         }
     }
-    // Pixel positions: average of the cells holding that node.
+    // Pixel positions: average of the cells holding that node (layers seen from the
+    // front). The 2D map puts layers side by side, like xLights' default buffer.
     let mut sum = vec![[0f32; 3]; nodes as usize];
-    let cells = (width as usize).saturating_mul(height as usize);
+    let map_w = (width as usize).saturating_mul(depth as usize);
+    let cells = map_w.saturating_mul(height as usize);
     let mut map = if cells <= 4_000_000 {
         Some(vec![-1i32; cells])
     } else {
         None
     };
-    for (r, row) in grid.iter().enumerate() {
-        for (c, &v) in row.iter().enumerate() {
-            if v == 0 {
-                continue;
-            }
-            let i = (v - 1) as usize;
-            sum[i][0] += c as f32 + 0.5;
-            sum[i][1] += (height as usize - r) as f32 - 0.5;
-            sum[i][2] += 1.0;
-            if let Some(m) = map.as_mut() {
-                m[r * width as usize + c] = i as i32;
+    for (l, layer) in layers.iter().enumerate() {
+        for (r, row) in layer.iter().enumerate() {
+            for (c, &v) in row.iter().enumerate() {
+                if v == 0 {
+                    continue;
+                }
+                let i = (v - 1) as usize;
+                sum[i][0] += c as f32 + 0.5;
+                sum[i][1] += (height as usize - r) as f32 - 0.5;
+                sum[i][2] += 1.0;
+                if let Some(m) = map.as_mut() {
+                    let x = l * width as usize + c;
+                    if let Some(cell) = m.get_mut(r * map_w + x) {
+                        if *cell < 0 {
+                            *cell = i as i32;
+                        }
+                    }
+                }
             }
         }
     }
@@ -1106,7 +1182,7 @@ fn custom(a: Attrs) -> Shape {
         })
         .collect();
     s.matrix = map.map(|pixel_map| MatrixInfo {
-        width,
+        width: map_w as u32,
         height,
         pixel_map,
     });
@@ -1375,6 +1451,110 @@ mod tests {
         with_model(
             r#"DisplayAs="Arches" parm1="1" parm2="10" StringType="RGBW Nodes""#,
             |a| assert_eq!(shape(a).channels(), 40),
+        );
+    }
+
+    #[test]
+    fn layered_arch_uses_nodes_per_arch_even_if_layers_do_not_add_up() {
+        // xLights 2024+: NumArches="3" NodesPerArch="50" with layers set → one layered
+        // arch of 50 nodes (not 150), whatever the layer sizes sum to.
+        with_model(
+            r#"DisplayAs="Arches" NumArches="3" NodesPerArch="50" LightsPerNode="1" LayerSizes="20,20" Arc="180" Hollow="70""#,
+            |a| {
+                let s = shape(a);
+                assert_eq!((s.nodes, s.channels(), s.points.len()), (50, 150, 50));
+            },
+        );
+        with_model(
+            r#"DisplayAs="Arches" NumArches="3" NodesPerArch="50" LayerSizes="""#,
+            |a| assert_eq!(shape(a).nodes, 150),
+        );
+    }
+
+    #[test]
+    fn custom_model_layers_all_count() {
+        // 3D custom model: node 5 only exists on layer 1.
+        let comp = with_model(
+            r#"DisplayAs="Custom" CustomWidth="2" CustomHeight="2" Depth="2" CustomModelCompressed="1,0,0;2,0,1;3,1,0,0;4,1,1,1;5,0,0,1""#,
+            shape,
+        );
+        assert_eq!(comp.nodes, 5);
+        assert_eq!(comp.points.len(), 5);
+        let m = comp.matrix.unwrap();
+        assert_eq!((m.width, m.height), (4, 2));
+        // Layer 1 sits to the right of layer 0 (xLights buffer layout).
+        assert_eq!(m.pixel_map, vec![0, 1, 4, -1, 2, -1, -1, 3]);
+        let plain = with_model(
+            r#"DisplayAs="Custom" parm1="2" parm2="2" CustomModel="1,2;3,|5,;,4""#,
+            shape,
+        );
+        assert_eq!(plain.nodes, 5);
+        assert_eq!(plain.matrix.unwrap().pixel_map, m.pixel_map);
+        // Malformed compressed entries (wrong arity, negative) are ignored.
+        let bad = with_model(
+            r#"DisplayAs="Custom" CustomModelCompressed="1,0,0;9,0;7,0,0,0,0;8,-1,0;2,0,1""#,
+            shape,
+        );
+        assert_eq!(bad.nodes, 2);
+    }
+
+    #[test]
+    fn custom_legacy_string_start_nodes() {
+        let s = with_model(
+            r#"DisplayAs="Custom" CustomStrings="2" String1="1" String2="3" CustomModel="1,2,3,4""#,
+            shape,
+        );
+        assert_eq!(s.string_start_nodes, Some(vec![1, 3]));
+        let s = with_model(
+            r#"DisplayAs="Custom" CustomStrings="2" NodeStart1="1" NodeStart2="2" CustomModel="1,2,3,4""#,
+            shape,
+        );
+        assert_eq!(s.string_start_nodes, Some(vec![1, 2]));
+    }
+
+    #[test]
+    fn tree_strand_direction_and_first_strand() {
+        // Flat tree, 4 strands of 5, wired starting with strand 3 (exportFirstStrand is
+        // 1-based): channel order begins at buffer column 2.
+        let s = with_model(
+            r#"DisplayAs="Tree" TreeType="1" NumStrings="4" NodesPerString="5" StrandsPerString="1" StrandDir="Vertical" exportFirstStrand="3" StartSide="B" Dir="L""#,
+            shape,
+        );
+        let m = s.matrix.unwrap();
+        assert_eq!((m.width, m.height), (4, 5));
+        let pos = |p: i32| m.pixel_map.iter().position(|&v| v == p).unwrap();
+        assert_eq!(pos(0), 4 * 4 + 2); // bottom row, column 2
+        assert_eq!(pos(10), 4 * 4); // strand 1 follows strand 4 (wrap-around)
+        assert_eq!(pos(19), 1); // last pixel: top of column 1
+        // Horizontal strands.
+        let s = with_model(
+            r#"DisplayAs="Tree" TreeType="1" NumStrings="2" NodesPerString="6" StrandsPerString="1" StrandDir="Horizontal" exportFirstStrand="1""#,
+            shape,
+        );
+        let m = s.matrix.unwrap();
+        assert_eq!((m.width, m.height, s.nodes), (6, 2, 12));
+    }
+
+    #[test]
+    fn image_and_label_occupy_one_node_of_channels() {
+        with_model(r#"DisplayAs="Label" StringType="RGB Nodes""#, |a| {
+            let s = shape(a);
+            assert!(s.skip.is_some());
+            assert_eq!(s.channels(), 3);
+        });
+        with_model(r#"DisplayAs="Image" StringType="Single Color White""#, |a| {
+            assert_eq!(shape(a).channels(), 1);
+        });
+    }
+
+    #[test]
+    fn cube_strings_are_physical_strings() {
+        with_model(
+            r#"DisplayAs="Cube" CubeWidth="5" CubeHeight="5" CubeDepth="4" Strings="4""#,
+            |a| {
+                let s = shape(a);
+                assert_eq!((s.nodes, s.physical_strings), (100, 4));
+            },
         );
     }
 

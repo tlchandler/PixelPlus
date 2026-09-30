@@ -1,4 +1,5 @@
 <script lang="ts">
+	import GeometryBanner from '$lib/components/ui/GeometryBanner.svelte';
 	import { api } from '$lib/api/client';
 	import type { HealthReport, SensorHistory, SongRequest } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
@@ -140,6 +141,8 @@
 		</div>
 		<a class="btn" href="/layout"><Maximize2 size={16} /> Full layout</a>
 	</header>
+
+	<GeometryBanner />
 
 	<section class="hero card">
 		<div class="stage">

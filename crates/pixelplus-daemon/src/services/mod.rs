@@ -56,6 +56,7 @@ impl Services {
     ///
     /// # Panics
     /// Only if called before startup finished (a programming error).
+    #[allow(dead_code)] // handlers use `api::content::player`, which errors instead of panicking
     pub fn player(&self) -> &crate::player::PlayerHandle {
         self.player.get().expect("player service not started")
     }

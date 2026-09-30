@@ -19,7 +19,10 @@ use serde::Serialize;
 pub const DS3231_ADDR: u8 = 0x68;
 
 const REG_TIME: u8 = 0x00;
+const REG_CONTROL: u8 = 0x0E;
 const REG_STATUS: u8 = 0x0F;
+/// Control register bit 7: when set, the oscillator stops on battery power.
+const CONTROL_EOSC: u8 = 0x80;
 const REG_TEMP: u8 = 0x11;
 const STATUS_OSF: u8 = 0x80;
 
@@ -129,13 +132,22 @@ impl<'a> Ds3231<'a> {
         })
     }
 
-    /// Set the time (UTC) and clear the oscillator-stop flag.
+    /// Set the time (UTC), make sure the oscillator keeps running on the
+    /// backup battery (control register EOSC = 0) and clear the
+    /// oscillator-stop flag.
     pub fn set_time(&mut self, utc: &NaiveDateTime) -> Result<()> {
         let regs = encode_time(utc)?;
         let mut msg = [0u8; 8];
         msg[0] = REG_TIME;
         msg[1..].copy_from_slice(&regs);
         self.bus.write(self.addr, &msg)?;
+        let mut control = [0u8; 1];
+        self.bus
+            .write_read(self.addr, &[REG_CONTROL], &mut control)?;
+        if control[0] & CONTROL_EOSC != 0 {
+            self.bus
+                .write(self.addr, &[REG_CONTROL, control[0] & !CONTROL_EOSC])?;
+        }
         let mut status = [0u8; 1];
         self.bus.write_read(self.addr, &[REG_STATUS], &mut status)?;
         self.bus
@@ -196,17 +208,25 @@ mod tests {
     #[test]
     fn device_round_trip() {
         let mut regs = MockByteRegisters::new(0x13, 1, 0);
+        regs.mem[0x0E] = 0x9C; // EOSC set: the clock would stop on battery
         regs.mem[0x0F] = 0x88; // OSF set
         regs.mem[0x11] = 0x19; // 25.75 °C
         regs.mem[0x12] = 0xC0;
         let mut bus = MockI2c::new().with(DS3231_ADDR, regs);
-        let mut rtc = Ds3231::new(&mut bus);
         let t = dt(2026, 11, 28, 17, 45, 0);
-        rtc.set_time(&t).unwrap();
-        let read = rtc.read_time().unwrap();
-        assert_eq!(read.utc, t);
-        assert!(!read.oscillator_stopped);
-        assert_eq!(rtc.temperature().unwrap(), 25.75);
+        {
+            let mut rtc = Ds3231::new(&mut bus);
+            rtc.set_time(&t).unwrap();
+            let read = rtc.read_time().unwrap();
+            assert_eq!(read.utc, t);
+            assert!(!read.oscillator_stopped);
+            assert_eq!(rtc.temperature().unwrap(), 25.75);
+        }
+        let dev = bus.device::<MockByteRegisters>(DS3231_ADDR).unwrap();
+        assert_eq!(dev.mem[0x0E], 0x1C, "EOSC cleared, other control bits kept");
+        assert_eq!(dev.mem[0x0F], 0x08, "OSF cleared, EN32kHz kept");
+        let mut rtc = Ds3231::new(&mut bus);
+        assert_eq!(rtc.read_time().unwrap().utc, t);
         let mut empty = MockI2c::new();
         assert!(Ds3231::new(&mut empty).read_time().is_err());
     }

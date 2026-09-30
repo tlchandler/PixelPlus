@@ -6,9 +6,12 @@ import type {
 	FaultStep,
 	GamesStatus,
 	HealthReport,
+	HelperStatus,
 	LogLine,
 	Media,
+	NetwatchStatus,
 	NodeStatus,
+	OutputGeometry,
 	PlayerStatus,
 	Playlist,
 	PlaylistItem,
@@ -91,6 +94,30 @@ export class MockServer {
 	];
 	password: string | null = null;
 	loggedIn = true;
+	/** Root helper jobs (boot settings, update, SSH) by verb. */
+	helpers: Record<string, HelperStatus> = {};
+	sshOn = false;
+	/** DPI string length vs. boot configuration (set `ok: false` to demo the banner). */
+	geo: OutputGeometry = {
+		ok: true,
+		longestString: 612,
+		maxPixels: 800,
+		configuredPixels: 800,
+		pendingReboot: false,
+		canApply: false,
+		targetPixels: null,
+		piMaxPixels: 2041,
+		message: null
+	};
+	netwatch: NetwatchStatus = {
+		state: 'online',
+		hotspotSsid: null,
+		hotspotSecured: true,
+		portalUrl: null,
+		lastError: null,
+		lastJoined: null,
+		updatedAt: Math.floor(Date.now() / 1000)
+	};
 	started = Date.now();
 	#timers: ReturnType<typeof setInterval>[] = [];
 	#coords = new Map<string, { xs: Float32Array; ys: Float32Array }>();
@@ -120,7 +147,9 @@ export class MockServer {
 			wifi: { ssid: 'Chandler-Home', signal: -54 },
 			needsSetup: !!opts.needsSetup,
 			passwordSet: false,
-			detectedBoard: 'difftxlarge'
+			detectedBoard: 'difftxlarge',
+			docker: false,
+			platform: { root: false, helper: true, power: true, boardOverride: null }
 		};
 		this.discovered = [
 			{
@@ -270,6 +299,24 @@ export class MockServer {
 		const s = JSON.stringify(msg);
 		for (const sock of this.sockets) sock.deliver(s);
 	}
+	/** Pretend to run a root helper verb: `helper` messages running → ok, like pixelplusd. */
+	runHelper(verb: string, running: string, done: string, after?: () => void, ms = 1200): HelperStatus {
+		if (this.helpers[verb]?.state === 'running')
+			throw new HttpError(409, 'conflict', `${running.replace(/…$/, '')} is already in progress.`);
+		const now = () => Math.floor(Date.now() / 1000);
+		const job: HelperStatus = { verb, state: 'running', message: running, updatedAt: now() };
+		this.helpers[verb] = job;
+		this.#broadcast({ type: 'helper', data: job });
+		setTimeout(() => {
+			const fin: HelperStatus = { verb, state: 'ok', message: done, updatedAt: now() };
+			this.helpers[verb] = fin;
+			after?.();
+			this.#broadcast({ type: 'helper', data: fin });
+			this.toast('success', done);
+		}, ms);
+		return job;
+	}
+
 	toast(kind: 'info' | 'success' | 'warning' | 'error', message: string) {
 		this.#broadcast({ type: 'toast', data: { kind, message } });
 	}
@@ -323,8 +370,58 @@ export class MockServer {
 			time: new Date().toISOString(),
 			cpuPct: Math.round(18 + Math.random() * 14),
 			tempC: +(this.#sensorsNow().find((s) => s.id === 'cpu')?.value ?? 50).toFixed(1),
-			passwordSet: !!this.password
+			passwordSet: !!this.password,
+			outputGeometry: this.geo
 		}));
+		r('GET', '/public/health', () => ({ ok: true, version: this.system.version, role: this.system.role }));
+		r('GET', '/system/helpers', () => Object.values(this.helpers));
+		r('GET', '/system/ssh', () => ({
+			enabled: this.sshOn,
+			canChange: true,
+			job: this.helpers['ssh-on'] ?? this.helpers['ssh-off'] ?? null
+		}));
+		r('PUT', '/system/ssh', ({ body }) => {
+			const on = !!body.enabled;
+			const job = this.runHelper(
+				on ? 'ssh-on' : 'ssh-off',
+				on ? 'Turning SSH on…' : 'Turning SSH off…',
+				`SSH ${on ? 'on' : 'off'}`,
+				() => {
+					this.sshOn = on;
+				}
+			);
+			return { ok: true, job };
+		});
+		r('POST', '/system/reapply', () => ({
+			ok: true,
+			job: this.runHelper('reapply', 'Applying pixelplus.txt…', 'pixelplus.txt applied')
+		}));
+		r('GET', '/system/output-geometry', () => this.geo);
+		r('POST', '/system/output-geometry/apply', ({ body }) => {
+			if (this.geo.ok)
+				throw new HttpError(
+					409,
+					'conflict',
+					'The pixel output already handles your longest string; nothing to change.'
+				);
+			const target = this.geo.targetPixels ?? this.geo.longestString;
+			const job = this.runHelper(
+				'config-txt',
+				`Writing the boot settings for ${this.system.board} (${target} pixels per output)…`,
+				`Board settings for ${this.system.board} saved`,
+				() => {
+					this.geo = {
+						...this.geo,
+						configuredPixels: target,
+						pendingReboot: true,
+						canApply: false,
+						message: `The pixel output is set up for ${target} pixels per output after the next restart.`
+					};
+					if (body?.reboot !== false) this.toast('info', 'Demo mode: would restart now');
+				}
+			);
+			return { ok: true, job, geometry: this.geo };
+		});
 		r('POST', '/system/setup', ({ body }) => {
 			this.system.needsSetup = false;
 			this.system.role = body.role;
@@ -346,10 +443,15 @@ export class MockServer {
 		let network = {
 			hostname: 'pixelplus-main',
 			wifi: { ssid: 'Chandler-Home', country: 'US' },
-			ethernet: { dhcp: true }
+			ethernet: { dhcp: true },
+			managed: true
 		};
-		r('GET', '/system/network', () => network);
-		r('PUT', '/system/network', ({ body }) => (network = { ...network, ...body }));
+		r('GET', '/system/network', () => ({ ...network, netwatch: this.netwatch }));
+		r('PUT', '/system/network', ({ body }) => {
+			const { netwatch: _ignored, ...rest } = body ?? {};
+			network = { ...network, ...rest, managed: true };
+			return { ...network, netwatch: this.netwatch };
+		});
 		r('GET', '/system/network/scan', async () => {
 			await sleep(900);
 			return [
@@ -387,14 +489,25 @@ export class MockServer {
 			current: '0.9.0',
 			latest: '0.9.2',
 			available: true,
+			canApply: true,
 			channel: 'stable',
+			job: this.helpers['update'] ?? null,
 			notes:
 				'• Faster sequence slicing for followers\n• Fault finder now supports reversed segments\n• Fixes a crash when a follower disconnects mid-song'
 		}));
-		r('POST', '/system/update', async () => {
-			await sleep(1500);
-			this.toast('success', 'Demo mode: update installed');
-			return { ok: true };
+		r('POST', '/system/update', () => {
+			const job = this.runHelper(
+				'update',
+				'Installing the update…',
+				'Demo mode: update installed',
+				undefined,
+				2500
+			);
+			return {
+				ok: true,
+				message: 'Installing the update. PixelPlus will restart by itself when it’s done (a minute or two).',
+				job
+			};
 		});
 
 		// auth
@@ -1006,7 +1119,19 @@ export class MockServer {
 
 	#health(): HealthReport {
 		const unwired = this.show.props.filter((p) => !p.segments.length);
+		const geometry: HealthReport['checks'] = this.geo.ok
+			? []
+			: [
+					{
+						id: 'geometry',
+						label: 'String length',
+						status: 'fail',
+						detail: this.geo.message ?? 'A string is longer than the pixel output allows',
+						action: this.geo.canApply ? 'applyOutputGeometry' : this.geo.pendingReboot ? 'reboot' : undefined
+					}
+				];
 		const checks: HealthReport['checks'] = [
+			...geometry,
 			{
 				id: 'followers',
 				label: 'Controllers online',

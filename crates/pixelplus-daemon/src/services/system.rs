@@ -30,6 +30,7 @@ pub async fn start(state: &AppState) {
     }
     // Settings handed over by pixelplus.txt / the imager (provision.json).
     crate::services::provision::start(state).await;
+    crate::services::platform::publish_board(state);
     crate::services::media::purge_trash(&state.config.data_dir);
     crate::services::sensors::start(state);
     crate::services::alerts::start(state);
@@ -148,7 +149,9 @@ fn probe_board() -> (BoardDetection, Option<pixelplus_hw::PiInfo>) {
                 let mut eeprom = open_board_eeprom(false).ok();
                 let det = pixelplus_hw::board::detect(
                     &mut bus,
-                    eeprom.as_mut().map(|e| e.as_mut() as &mut dyn pixelplus_hw::EepromStore),
+                    eeprom
+                        .as_mut()
+                        .map(|e| e.as_mut() as &mut dyn pixelplus_hw::EepromStore),
                 );
                 return (det, pi);
             }
@@ -176,7 +179,8 @@ pub fn open_board_eeprom(write: bool) -> Result<Box<dyn pixelplus_hw::EepromStor
             return Ok(Box::new(e));
         }
     }
-    let bus = pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS).map_err(|e| e.to_string())?;
+    let bus =
+        pixelplus_hw::LinuxI2c::open(pixelplus_hw::i2c::DEFAULT_BUS).map_err(|e| e.to_string())?;
     Ok(Box::new(I2cEeprom::new(bus, EEPROM_ADDR)))
 }
 
@@ -201,7 +205,11 @@ fn parse_board_override(v: &str) -> Option<BoardKind> {
     if v.is_empty() || v == "auto" {
         return None;
     }
-    let v = if v == "barepi" || v == "bare_pi" || v == "none" { "bare-pi".to_string() } else { v };
+    let v = if v == "barepi" || v == "bare_pi" || v == "none" {
+        "bare-pi".to_string()
+    } else {
+        v
+    };
     serde_json::from_value(serde_json::Value::String(v)).ok()
 }
 
@@ -571,6 +579,14 @@ pub async fn system_info(state: &AppState, authed: bool) -> serde_json::Value {
         "ttsAvailable": crate::services::tts::device_available(state).await,
         "gamesAvailable": crate::services::games::available(state).await,
         "outputs": board.output_count(),
+        // What this installation may do (see services::platform).
+        "platform": {
+            "root": is_root(),
+            "helper": crate::services::platform::helper_installed(),
+            "power": crate::services::platform::can_control_power(),
+            "boardOverride": board_override(),
+        },
+        "outputGeometry": crate::services::geometry::status(state),
     });
     if let (serde_json::Value::Object(a), serde_json::Value::Object(b)) = (&mut info, extra) {
         a.extend(b);
@@ -707,6 +723,17 @@ mod tests {
         assert_eq!(d[0].0, "plughw:CARD=Headphones,DEV=0");
         assert_eq!(d[0].1, "Headphone jack (line out)");
         assert_eq!(d[1].1, "USB Audio Device");
+    }
+
+    #[test]
+    fn board_override_values() {
+        assert_eq!(parse_board_override("virtual"), Some(BoardKind::Virtual));
+        assert_eq!(parse_board_override(" DiffTX "), Some(BoardKind::Difftx));
+        assert_eq!(parse_board_override("bare-pi"), Some(BoardKind::BarePi));
+        assert_eq!(parse_board_override("barepi"), Some(BoardKind::BarePi));
+        assert_eq!(parse_board_override("auto"), None);
+        assert_eq!(parse_board_override(""), None);
+        assert_eq!(parse_board_override("toaster"), None);
     }
 
     #[test]

@@ -13,6 +13,17 @@ use serde_json::{json, Value};
 use std::net::IpAddr;
 use std::time::Instant;
 
+/// `GET /public/health`: liveness for Docker / monitoring. Unauthenticated and
+/// cheap (no I/O): `{ok, version, role}`.
+async fn health(State(state): State<AppState>) -> Json<Value> {
+    let role = match state.identity.read().role {
+        crate::node::LocalRole::Unconfigured => "unconfigured",
+        crate::node::LocalRole::Leader => "leader",
+        crate::node::LocalRole::Follower => "follower",
+    };
+    Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "role": role }))
+}
+
 async fn public_list(State(state): State<AppState>) -> Json<Value> {
     Json(crate::services::requests::public_view(&state))
 }
@@ -91,6 +102,7 @@ async fn admin_delete(
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/public/health", get(health))
         .route("/public/requests", get(public_list).post(submit))
         .route("/requests", get(admin_list))
         .route("/requests/{id}", delete(admin_delete))

@@ -54,7 +54,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: deb-${{ matrix.arch }}
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu device-tree-compiler pkg-config libasound2-dev libssl-dev libdbus-1-dev
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends device-tree-compiler pkg-config libasound2-dev libssl-dev libdbus-1-dev
+      - name: arm64 cross toolchain + ALSA headers (cpal)
+        if: matrix.arch == 'arm64'
+        run: sudo packaging/ci/install-arm64-cross-deps.sh
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: web/package.json

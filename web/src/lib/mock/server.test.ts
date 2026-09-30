@@ -124,4 +124,39 @@ describe('mock backend', () => {
 		expect(data[0]).toHaveProperty('start');
 		expect(data[0]).toHaveProperty('playlistId');
 	});
+
+	it('platform endpoints: health, netwatch, helper jobs, geometry', async () => {
+		const m = new MockServer({ autoplay: false });
+		const h = await call(m, 'GET', '/public/health');
+		expect(h.data).toMatchObject({ ok: true, role: 'leader' });
+
+		const net = await call(m, 'GET', '/system/network');
+		expect(net.data.netwatch.state).toBe('online');
+		// PUT echoes the config; netwatch is read-only
+		const put = await call(m, 'PUT', '/system/network', { ...net.data, netwatch: { state: 'hotspot' } });
+		expect(put.data.netwatch.state).toBe('online');
+
+		const ssh = await call(m, 'PUT', '/system/ssh', { enabled: true });
+		expect(ssh.data.job).toMatchObject({ verb: 'ssh-on', state: 'running' });
+		expect((await call(m, 'PUT', '/system/ssh', { enabled: true })).status).toBe(409);
+		const helpers = await call(m, 'GET', '/system/helpers');
+		expect(helpers.data.map((j: { verb: string }) => j.verb)).toContain('ssh-on');
+
+		expect((await call(m, 'POST', '/system/output-geometry/apply', {})).status).toBe(409);
+		m.geo = {
+			...m.geo,
+			ok: false,
+			longestString: 1234,
+			canApply: true,
+			targetPixels: 1300,
+			message: 'too long'
+		};
+		const report = await call(m, 'POST', '/health/run');
+		expect(report.data.checks[0]).toMatchObject({ id: 'geometry', action: 'applyOutputGeometry' });
+		const apply = await call(m, 'POST', '/system/output-geometry/apply', { reboot: true });
+		expect(apply.data.job).toMatchObject({ verb: 'config-txt', state: 'running' });
+		const sys = await call(m, 'GET', '/system');
+		expect(sys.data.outputGeometry.ok).toBe(false);
+		expect(sys.data.platform.helper).toBe(true);
+	});
 });

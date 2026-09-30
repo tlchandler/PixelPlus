@@ -25,6 +25,9 @@ pub struct Check {
     pub label: String,
     pub status: Status,
     pub detail: String,
+    /// A fix the UI can offer as a button (e.g. `applyOutputGeometry`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -54,6 +57,7 @@ fn check(id: &str, label: &str, status: Status, detail: impl Into<String>) -> Ch
         label: label.into(),
         status,
         detail: detail.into(),
+        action: None,
     }
 }
 
@@ -411,9 +415,33 @@ async fn host_checks(state: &AppState) -> Vec<Check> {
             }
         }
     });
+    // Pixel output length vs. the DPI mode set at boot.
+    if let Some(c) = geometry_check(&super::geometry::status(state)) {
+        out.push(c);
+    }
     // Clock.
     out.push(clock_check(state).await);
     out
+}
+
+/// Strings longer than the boot-time DPI mode (only reported when there is a problem).
+pub fn geometry_check(g: &super::geometry::OutputGeometry) -> Option<Check> {
+    if g.ok {
+        return None;
+    }
+    let detail = g
+        .message
+        .clone()
+        .unwrap_or_else(|| "A string is longer than the pixel output allows".into());
+    let mut c = check("geometry", "String length", Status::Fail, detail);
+    c.action = if g.can_apply {
+        Some("applyOutputGeometry".into())
+    } else if g.pending_reboot {
+        Some("reboot".into())
+    } else {
+        None
+    };
+    Some(c)
 }
 
 async fn audio_check(device: &str) -> Check {
@@ -618,5 +646,39 @@ mod tests {
         let sched = checks.iter().find(|c| c.id == "schedule").unwrap();
         assert_eq!(sched.status, Status::Warn);
         std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+    use crate::player::GeometryStatus;
+    use crate::services::geometry::evaluate;
+
+    #[test]
+    fn geometry_check_offers_the_fix() {
+        let fine = GeometryStatus {
+            ok: true,
+            longest_string: 100,
+            max_pixels: Some(800),
+            ..Default::default()
+        };
+        assert!(geometry_check(&evaluate(&fine, None, None, true, true)).is_none());
+        let long = GeometryStatus {
+            ok: false,
+            longest_string: 1000,
+            max_pixels: Some(800),
+            needed_pixels: Some(1000),
+            message: None,
+        };
+        let c = geometry_check(&evaluate(&long, Some(800), Some(2041), true, true)).unwrap();
+        assert_eq!(c.status, Status::Fail);
+        assert_eq!(c.action.as_deref(), Some("applyOutputGeometry"));
+        let c = geometry_check(&evaluate(&long, Some(1000), Some(2041), true, true)).unwrap();
+        assert_eq!(c.action.as_deref(), Some("reboot"));
+        let c = geometry_check(&evaluate(&long, None, None, false, true)).unwrap();
+        assert_eq!(c.action, None);
+        let v = serde_json::to_value(&c).unwrap();
+        assert!(v.get("action").is_none());
     }
 }

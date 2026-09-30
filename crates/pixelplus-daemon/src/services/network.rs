@@ -404,7 +404,13 @@ pub async fn apply(new: NetworkConfig, state: AppState) -> ApiResult<NetworkConf
             && !new.wifi.country.eq_ignore_ascii_case(&current.wifi.country)
         {
             let cc = new.wifi.country.to_ascii_uppercase();
-            let res = match platform::run_helper(&state, HelperVerb::WifiCountry(cc.clone()), HelperOpts { quiet: true }).await {
+            let res = match platform::run_helper(
+                &state,
+                HelperVerb::WifiCountry(cc.clone()),
+                HelperOpts { quiet: true },
+            )
+            .await
+            {
                 Ok(job) => {
                     let s = job.wait(Duration::from_secs(60)).await;
                     (s.state == HelperState::Ok).then_some(()).ok_or(s.message)
@@ -543,10 +549,8 @@ mod tests {
         let s = read_netwatch(&p).unwrap();
         assert_eq!(s.last_joined.unwrap().ips, vec!["192.168.1.5"]);
         // The UI's PUT echoes the config back; netwatch is read-only.
-        let c: NetworkConfig = serde_json::from_str(
-            r#"{"hostname":"x","netwatch":{"state":"hotspot"}}"#,
-        )
-        .unwrap();
+        let c: NetworkConfig =
+            serde_json::from_str(r#"{"hostname":"x","netwatch":{"state":"hotspot"}}"#).unwrap();
         assert!(c.netwatch.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

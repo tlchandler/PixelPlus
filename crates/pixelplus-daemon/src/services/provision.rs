@@ -59,8 +59,14 @@ pub fn to_request(p: &ProvisionFile) -> (SetupRequest, Vec<String>) {
             None => notes.push(format!("role \"{r}\" isn't leader or follower")),
         }
     }
-    if let Some(b) = p.board.as_deref().map(str::trim).filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("auto")) {
-        match serde_json::from_value::<BoardKind>(serde_json::Value::String(b.to_ascii_lowercase())) {
+    if let Some(b) = p
+        .board
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("auto"))
+    {
+        match serde_json::from_value::<BoardKind>(serde_json::Value::String(b.to_ascii_lowercase()))
+        {
             Ok(k) => req.board = Some(k),
             Err(_) => notes.push(format!("board \"{b}\" isn't a board PixelPlus knows")),
         }
@@ -75,7 +81,13 @@ pub fn to_request(p: &ProvisionFile) -> (SetupRequest, Vec<String>) {
 fn describe(req: &SetupRequest) -> Vec<String> {
     let mut what = Vec::new();
     if let Some(r) = req.role {
-        what.push(format!("role {}", serde_json::to_value(r).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()));
+        what.push(format!(
+            "role {}",
+            serde_json::to_value(r)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default()
+        ));
     }
     if let Some(b) = req.board {
         what.push(format!("board {}", b.display_name()));
@@ -137,6 +149,9 @@ pub async fn check_once(state: &AppState) -> Checked {
         }
     };
     let source = file.source.clone().unwrap_or_else(|| "provisioning".into());
+    if let Some(at) = &file.created_at {
+        tracing::info!("Found {} from {source} (written {at})", p.display());
+    }
     let (req, mut notes) = to_request(&file);
     let what = describe(&req);
     let mut req = req;
@@ -164,15 +179,22 @@ pub async fn check_once(state: &AppState) -> Checked {
             }
             for n in &notes {
                 tracing::warn!("{source}: {n}");
-                state.events.toast(ToastKind::Warning, format!("{source}: {n}"));
+                state
+                    .events
+                    .toast(ToastKind::Warning, format!("{source}: {n}"));
             }
-            state.events.publish("system", &serde_json::json!({ "changed": true }));
+            state
+                .events
+                .publish("system", &serde_json::json!({ "changed": true }));
             Checked::Applied(what)
         }
         Err(e) if e.status.is_server_error() => Checked::Retry(e.message),
         Err(e) => {
             remove(&p);
-            let msg = format!("The settings from {source} couldn't be applied: {}", e.message);
+            let msg = format!(
+                "The settings from {source} couldn't be applied: {}",
+                e.message
+            );
             tracing::error!("{msg}");
             state.events.toast(ToastKind::Error, msg.clone());
             Checked::Rejected(msg)
@@ -243,16 +265,27 @@ mod tests {
         )
         .unwrap();
         let r = check_once(&app.state).await;
-        assert!(matches!(r, Checked::Applied(ref w) if w.len() == 3), "{r:?}");
+        assert!(
+            matches!(r, Checked::Applied(ref w) if w.len() == 3),
+            "{r:?}"
+        );
         assert!(!p.exists(), "provision.json must be deleted");
         let id = app.state.identity();
         assert_eq!(id.role, LocalRole::Leader);
         assert_eq!(id.board, Some(BoardKind::Difftx));
         let show = app.state.store.get();
-        let hash = show.settings.security.password_hash.clone().expect("password set");
+        let hash = show
+            .settings
+            .security
+            .password_hash
+            .clone()
+            .expect("password set");
         assert!(crate::api::auth::verify_password(&hash, "jingle"));
         assert!(!hash.contains("jingle"));
-        assert!(show.playlists.iter().any(|p| p.name == "Main Show"), "defaults seeded");
+        assert!(
+            show.playlists.iter().any(|p| p.name == "Main Show"),
+            "defaults seeded"
+        );
     }
 
     #[tokio::test]
@@ -261,7 +294,14 @@ mod tests {
         std::fs::write(path(&app.state), r#"{"uiPassword":"secret1"}"#).unwrap();
         assert!(matches!(check_once(&app.state).await, Checked::Applied(_)));
         assert_eq!(app.state.identity().role, LocalRole::Unconfigured);
-        assert!(app.state.store.get().settings.security.password_hash.is_some());
+        assert!(app
+            .state
+            .store
+            .get()
+            .settings
+            .security
+            .password_hash
+            .is_some());
     }
 
     #[tokio::test]

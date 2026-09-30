@@ -28,6 +28,11 @@ RUN pnpm build && test -f build/index.html
 # Rust daemon + CLI
 # ---------------------------------------------------------------------------
 FROM rust:1-${DEBIAN} AS rust
+ARG DEBIAN_FRONTEND=noninteractive
+# libasound2-dev: ALSA headers for the daemon's audio output (cpal, feature "audio").
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends pkg-config libasound2-dev \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
@@ -44,7 +49,7 @@ FROM debian:${DEBIAN}-slim AS base
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        ca-certificates curl tini ffmpeg alsa-utils libcap2-bin tzdata \
+        ca-certificates curl tini ffmpeg alsa-utils libasound2 libcap2-bin tzdata \
  && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 1000 pixelplus \
  && useradd --system --uid 1000 --gid pixelplus --groups audio \
@@ -60,14 +65,15 @@ ENV PIXELPLUS_DATA_DIR=/var/lib/pixelplus \
     PIXELPLUS_HTTP_PORT=80 \
     PIXELPLUS_OUTPUT=none \
     PIXELPLUS_BOARD=virtual \
+    PIXELPLUS_AUDIO=none \
     PIXELPLUS_TTS_URL=http://127.0.0.1:7081 \
     PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock \
     TZ=Etc/UTC
 VOLUME ["/var/lib/pixelplus"]
 EXPOSE 80/tcp 32320/udp 32321/udp 7081/tcp 8088/tcp
+# Unauthenticated and cheap: {"ok": true, "version": "...", "role": "..."}
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PIXELPLUS_HTTP_PORT}/api/v1/system") \
-        && case "$code" in 2??|401) exit 0 ;; *) exit 1 ;; esac
+    CMD curl -fsS -o /dev/null "http://127.0.0.1:${PIXELPLUS_HTTP_PORT}/api/v1/public/health" || exit 1
 USER pixelplus
 WORKDIR /var/lib/pixelplus
 ENTRYPOINT ["/usr/bin/tini", "--"]
@@ -92,7 +98,9 @@ RUN apt-get update \
 COPY tts/ /opt/pixelplus-tts/src/
 RUN --mount=type=cache,id=pip,target=/root/.cache/pip \
     python3 -m venv /opt/pixelplus-tts/venv \
- && /opt/pixelplus-tts/venv/bin/pip install --prefer-binary -r /opt/pixelplus-tts/src/requirements.txt \
+ && /opt/pixelplus-tts/venv/bin/pip install --prefer-binary --only-binary=:all: -r /opt/pixelplus-tts/src/requirements.txt \
+ && { /opt/pixelplus-tts/venv/bin/pip install --only-binary=:all: "praat-parselmouth>=0.4.3" \
+      || echo "no praat-parselmouth wheel for $(uname -m): built-in energy prosody"; } \
  && /opt/pixelplus-tts/venv/bin/pip install --no-deps /opt/pixelplus-tts/src \
  && rm -rf /opt/pixelplus-tts/src
 COPY games/pixelplus_games/ /usr/lib/pixelplus/games/pixelplus_games/

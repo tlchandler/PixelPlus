@@ -17,9 +17,12 @@
 #        cargo install cross --locked
 #      glibc of the cross image (2.31) is older than Raspberry Pi OS Bookworm (2.36)
 #      and Trixie (2.41), so the binaries run on both.
-#   2. Debian/Ubuntu cross toolchain (the script sets the linker and CC_aarch64_unknown_linux_gnu
-#      that zstd-sys needs):
-#        sudo apt install gcc-aarch64-linux-gnu && rustup target add aarch64-unknown-linux-gnu
+#      (Cross.toml adds the arm64 ALSA headers the daemon's audio output needs.)
+#   2. Debian/Ubuntu cross toolchain (the script sets the linker, CC_aarch64_unknown_linux_gnu
+#      that zstd-sys needs, and pkg-config for the arm64 ALSA headers that cpal needs):
+#        sudo packaging/ci/install-arm64-cross-deps.sh && rustup target add aarch64-unknown-linux-gnu
+#   Native builds need the ALSA headers too: sudo apt install pkg-config libasound2-dev
+#   (lights-only daemon without audio: cargo build --no-default-features -p pixelplus-daemon).
 #      Build on the OLDEST distribution you target (Bookworm) - glibc is forward compatible only.
 #   3. Native build on a Pi 4/5 (slow but simple).
 set -euo pipefail
@@ -102,9 +105,13 @@ if [[ -z "${BIN_DIR}" ]]; then
         log "cargo build --target ${TRIPLE} (gcc-aarch64-linux-gnu)"
         rustup target add "${TRIPLE}" >/dev/null 2>&1 || true
         # CC_* is needed by C dependencies (zstd-sys) built through the cc crate.
+        [[ -f /usr/lib/aarch64-linux-gnu/pkgconfig/alsa.pc ]] ||
+            die "arm64 ALSA headers missing: sudo packaging/ci/install-arm64-cross-deps.sh"
         (cd "${REPO}" && CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
             CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
             AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+            PKG_CONFIG_ALLOW_CROSS=1 \
+            PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig \
             cargo "${CARGO_ARGS[@]}" --target "${TRIPLE}")
         BIN_DIR="${REPO}/target/${TRIPLE}/release"
     else

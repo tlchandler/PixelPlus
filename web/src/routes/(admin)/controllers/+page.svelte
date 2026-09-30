@@ -16,6 +16,7 @@
 	} from '$lib/util/boards';
 	import { fmtRelative } from '$lib/util/format';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import GeometryBanner from '$lib/components/ui/GeometryBanner.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
@@ -224,6 +225,8 @@
 			>
 		{/snippet}
 	</PageHeader>
+
+	<GeometryBanner />
 
 	{#if discovered.length}
 		<section class="found card" transition:slide>

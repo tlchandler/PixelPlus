@@ -58,12 +58,16 @@ pub fn validate(state: &AppState, req: &SetupRequest) -> ApiResult<Option<String
     }
     if let Some(name) = req.show_name.as_deref() {
         if name.trim().is_empty() || name.chars().count() > 120 {
-            return Err(ApiError::bad_request("Give your show a name (up to 120 characters)."));
+            return Err(ApiError::bad_request(
+                "Give your show a name (up to 120 characters).",
+            ));
         }
     }
     if let Some(name) = req.name.as_deref() {
         if name.chars().count() > 64 {
-            return Err(ApiError::bad_request("A controller name can be at most 64 characters."));
+            return Err(ApiError::bad_request(
+                "A controller name can be at most 64 characters.",
+            ));
         }
     }
     let tz = req
@@ -94,7 +98,9 @@ pub fn validate(state: &AppState, req: &SetupRequest) -> ApiResult<Option<String
     }
     if let Some(p) = req.password.as_deref().filter(|p| !p.is_empty()) {
         if p.chars().count() < 4 {
-            return Err(ApiError::bad_request("Use at least 4 characters for the password."));
+            return Err(ApiError::bad_request(
+                "Use at least 4 characters for the password.",
+            ));
         }
     }
     Ok(tz)
@@ -120,7 +126,10 @@ pub async fn apply(state: &AppState, req: SetupRequest) -> ApiResult<SetupOutcom
     if let Some(board) = req.board {
         if req.write_eeprom
             && det.board.is_none()
-            && matches!(board, BoardKind::Difftx | BoardKind::Difftxlarge | BoardKind::Diffsmart)
+            && matches!(
+                board,
+                BoardKind::Difftx | BoardKind::Difftxlarge | BoardKind::Diffsmart
+            )
         {
             let rev = req.board_rev.clone().unwrap_or_else(|| "A".into());
             if let Err(e) = write_eeprom(board, rev).await {
@@ -147,7 +156,11 @@ pub async fn apply(state: &AppState, req: SetupRequest) -> ApiResult<SetupOutcom
                 };
                 let detected_same = det.board == Some(board) && rev_matches;
                 id.board = if detected_same { None } else { Some(board) };
-                id.board_rev = if detected_same { None } else { req.board_rev.clone() };
+                id.board_rev = if detected_same {
+                    None
+                } else {
+                    req.board_rev.clone()
+                };
             }
             if name.is_some() {
                 id.name = name.clone();
@@ -197,6 +210,7 @@ pub async fn apply(state: &AppState, req: SetupRequest) -> ApiResult<SetupOutcom
     if let Some(tz) = tz {
         tokio::spawn(async move { sys::set_system_timezone(&tz).await });
     }
+    crate::services::platform::publish_board(state);
     Ok(out)
 }
 
@@ -207,7 +221,8 @@ pub async fn write_eeprom(board: BoardKind, rev: String) -> Result<(), String> {
         {
             let mut store = sys::open_board_eeprom(true)?;
             let record = pixelplus_hw::Ppx1Record::new(board, &rev);
-            pixelplus_hw::eeprom::write_record(store.as_mut(), &record).map_err(|e| e.to_string())?;
+            pixelplus_hw::eeprom::write_record(store.as_mut(), &record)
+                .map_err(|e| e.to_string())?;
             sys::redetect_board();
             Ok(())
         }

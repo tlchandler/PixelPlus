@@ -46,10 +46,7 @@ struct SetupBody {
     write_eeprom: bool,
 }
 
-async fn setup(
-    State(state): State<AppState>,
-    Json(b): Json<SetupBody>,
-) -> ApiResult<Response> {
+async fn setup(State(state): State<AppState>, Json(b): Json<SetupBody>) -> ApiResult<Response> {
     let Some(role) = setup::parse_role(&b.role) else {
         return Err(ApiError::bad_request(
             "Choose whether this controller runs the show (leader) or joins one (follower).",
@@ -199,6 +196,7 @@ async fn eeprom(
     if state.identity().role == LocalRole::Leader {
         let _ = crate::cluster::ensure_self_node(&state).await;
     }
+    platform::publish_board(&state);
     let msg = format!("EEPROM written: {} rev {rev}", b.board.display_name());
     state
         .events
@@ -230,7 +228,13 @@ async fn get_ssh(State(state): State<AppState>) -> Json<Value> {
 
 async fn ssh_state(state: &AppState) -> Value {
     let enabled = if sys::has_systemd() && sys::have("systemctl") && !sys::in_docker() {
-        match sys::run("systemctl", &["is-enabled", "ssh.service"], Duration::from_secs(5)).await {
+        match sys::run(
+            "systemctl",
+            &["is-enabled", "ssh.service"],
+            Duration::from_secs(5),
+        )
+        .await
+        {
             Ok(o) => match o.stdout.trim() {
                 "enabled" | "enabled-runtime" | "alias" => Some(true),
                 "disabled" | "masked" | "static" | "indirect" => Some(false),
@@ -257,8 +261,23 @@ struct SshBody {
 }
 
 async fn put_ssh(State(state): State<AppState>, Json(b): Json<SshBody>) -> ApiResult<Json<Value>> {
-    let verb = if b.enabled { platform::HelperVerb::SshOn } else { platform::HelperVerb::SshOff };
+    let verb = if b.enabled {
+        platform::HelperVerb::SshOn
+    } else {
+        platform::HelperVerb::SshOff
+    };
     let job = platform::run_helper(&state, verb, platform::HelperOpts::default()).await?;
+    Ok(Json(json!({ "ok": true, "job": job.status })))
+}
+
+/// Re-apply /boot/firmware/pixelplus.txt now (root helper `reapply`).
+async fn reapply(State(state): State<AppState>, _body: Bytes) -> ApiResult<Json<Value>> {
+    let job = platform::run_helper(
+        &state,
+        platform::HelperVerb::Reapply,
+        platform::HelperOpts::default(),
+    )
+    .await?;
     Ok(Json(json!({ "ok": true, "job": job.status })))
 }
 
@@ -280,10 +299,13 @@ async fn apply_geometry(State(state): State<AppState>, body: Bytes) -> ApiResult
     let b: GeometryApplyBody = if body.is_empty() {
         GeometryApplyBody { reboot: true }
     } else {
-        serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(format!("Invalid request: {e}")))?
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("Invalid request: {e}")))?
     };
     let job = geometry::apply(&state, b.reboot).await?;
-    Ok(Json(json!({ "ok": true, "job": job, "geometry": geometry::status(&state) })))
+    Ok(Json(
+        json!({ "ok": true, "job": job, "geometry": geometry::status(&state) }),
+    ))
 }
 
 async fn audio_devices() -> Json<Vec<Value>> {
@@ -333,6 +355,7 @@ pub fn routes() -> Router<AppState> {
         .route("/system/audio/devices", get(audio_devices))
         .route("/system/helpers", get(helpers))
         .route("/system/ssh", get(get_ssh).put(put_ssh))
+        .route("/system/reapply", post(reapply))
         .route("/system/output-geometry", get(get_geometry))
         .route("/system/output-geometry/apply", post(apply_geometry))
         .route("/system/identify", post(identify_self))

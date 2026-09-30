@@ -318,11 +318,24 @@ pub fn classify(eeprom: Option<&EepromContents>, present: &[u8]) -> BoardDetecti
 }
 
 /// Addresses among [`KNOWN_ADDRESSES`] that acknowledge on `bus`.
+///
+/// Every device is probed with a one-byte read (as `i2cdetect -r` does),
+/// except the SSD1306 OLED: PixelPlus only ever writes to it, the controller
+/// does not support reading in its serial (I²C/SPI) modes, and module clones
+/// differ in whether they acknowledge a read address. It is probed the way
+/// every OLED library does, with a write: a lone command-stream control byte
+/// (`0x00`), which selects "commands follow" and executes nothing.
 pub fn probe_known(bus: &mut dyn I2cBus) -> Vec<u8> {
     KNOWN_ADDRESSES
         .iter()
         .copied()
-        .filter(|&a| bus.probe(a))
+        .filter(|&a| {
+            if a == crate::oled::OLED_ADDR {
+                bus.write(a, &[0x00]).is_ok()
+            } else {
+                bus.probe(a)
+            }
+        })
         .collect()
 }
 
@@ -467,6 +480,32 @@ mod tests {
         );
         let d = classify(Some(&fpp("k8-pi", "1.0")), &[0x50]);
         assert_eq!(d.board, None);
+    }
+
+    /// A write-only device (SSD1306 over I²C): reads are not acknowledged.
+    struct WriteOnly;
+
+    impl crate::i2c::MockDevice for WriteOnly {
+        fn write(&mut self, _data: &[u8]) -> crate::Result<()> {
+            Ok(())
+        }
+        fn read(&mut self, _buf: &mut [u8]) -> crate::Result<()> {
+            Err(crate::HwError::i2c(0x3C, "no acknowledge for read"))
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn write_only_oled_is_found() {
+        let mut bus = MockI2c::new()
+            .with(0x3C, WriteOnly)
+            .with(0x50, MockByteRegisters::new(256, 2, 0xFF));
+        assert_eq!(probe_known(&mut bus), vec![0x3C, 0x50]);
     }
 
     #[test]

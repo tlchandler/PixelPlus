@@ -294,11 +294,11 @@ impl SensorHub {
                 }
                 let bus = self.bus_mut()?;
                 ensure_calibration(bus, INA226_ADDR)?;
-                let r = |bus: &mut dyn I2cBus, reg| read_u16(bus, INA226_ADDR, reg);
+                let r = read_ina226(bus, INA226_ADDR)?;
                 Ok(match source {
-                    Source::InaBus => f64::from(r(bus, 0x02)?) * 0.001_25,
-                    Source::InaCurrent => f64::from(r(bus, 0x04)? as i16) * INA226_CURRENT_LSB_A,
-                    _ => f64::from(r(bus, 0x03)?) * INA226_CURRENT_LSB_A * 25.0,
+                    Source::InaBus => r.bus_v,
+                    Source::InaCurrent => r.current_a,
+                    _ => r.bus_v * r.current_a.abs(),
                 })
             }
         }
@@ -366,9 +366,39 @@ pub fn configure_ina226(bus: &mut dyn I2cBus, addr: u8) -> Result<()> {
     write_u16(bus, addr, 0x05, INA226_CALIBRATION)
 }
 
+/// One INA226 measurement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ina226Reading {
+    /// Bus (12 V input) voltage, V (LSB 1.25 mV).
+    pub bus_v: f64,
+    /// Shunt current, A; positive when current flows IN+ → IN−.
+    pub current_a: f64,
+}
+
+/// Read bus voltage and current.
+///
+/// The current is computed from the **shunt voltage register** (LSB 2.5 µV,
+/// / 10 mΩ = 0.25 mA — bit-identical to the current register with
+/// [`INA226_CALIBRATION`]) rather than from the current/power registers:
+/// those are only recomputed at the end of the next averaged conversion
+/// after the calibration register is written (datasheet §7.5), so the first
+/// reading after configuration or a brown-out would report 0 A / 0 W.
+pub fn read_ina226(bus: &mut dyn I2cBus, addr: u8) -> Result<Ina226Reading> {
+    let shunt = read_u16(bus, addr, 0x01)? as i16;
+    let vbus = read_u16(bus, addr, 0x02)?;
+    Ok(Ina226Reading {
+        // Bit 15 of the bus register is always 0 (unsigned, 0..40.96 V).
+        bus_v: f64::from(vbus & 0x7FFF) * 0.001_25,
+        current_a: f64::from(shunt) * 2.5e-6 / INA226_SHUNT_OHMS,
+    })
+}
+
 fn ensure_calibration(bus: &mut dyn I2cBus, addr: u8) -> Result<()> {
-    // A brown-out resets the chip to calibration 0 (current reads 0).
-    if read_u16(bus, addr, 0x05)? != INA226_CALIBRATION {
+    // A brown-out resets the chip to its power-on configuration
+    // (calibration 0, 1-sample averaging); restore ours.
+    if read_u16(bus, addr, 0x05)? != INA226_CALIBRATION
+        || read_u16(bus, addr, 0x00)? != INA226_CONFIG
+    {
         write_u16(bus, addr, 0x00, INA226_CONFIG)?;
         write_u16(bus, addr, 0x05, INA226_CALIBRATION)?;
     }
@@ -428,6 +458,59 @@ mod tests {
         );
         let mut wrong = MockI2c::new().with(0x40, MockWordRegisters::lm75(20.0));
         assert!(configure_ina226(&mut wrong, 0x40).is_err());
+    }
+
+    /// Right after the calibration register is written the INA226's current
+    /// and power registers still hold values computed with the old (power-on
+    /// 0) calibration until the next averaged conversion finishes (16 × 2.2 ms
+    /// here). The first reading must not report 0 A / 0 W.
+    #[test]
+    fn first_reading_after_configuration_is_not_stale() {
+        let mut dev = MockWordRegisters::ina226(12.0, 2.0);
+        // Power-on state: calibration 0, so current and power read 0 and
+        // stay 0 until a conversion completes after calibration.
+        dev.regs.insert(0x04, 0);
+        dev.regs.insert(0x03, 0);
+        let bus = MockI2c::new().with(0x40, StaleIna(dev));
+        let root = fake_root("stale");
+        let mut hub = SensorHub::new(BoardKind::Difftxlarge, Some(Box::new(bus))).with_root(&root);
+        let s = hub.read_all();
+        let get = |id: &str| s.iter().find(|x| x.id == id).unwrap().value;
+        assert_eq!(get("inputCurrent"), 2.0);
+        assert_eq!(get("inputPower"), 24.0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An INA226 whose current/power registers never update (conversion
+    /// still in progress after configuration).
+    struct StaleIna(MockWordRegisters);
+
+    impl crate::i2c::MockDevice for StaleIna {
+        fn write(&mut self, data: &[u8]) -> crate::Result<()> {
+            let (cur, pow) = (self.0.regs[&0x04], self.0.regs[&0x03]);
+            self.0.write(data)?;
+            self.0.regs.insert(0x04, cur);
+            self.0.regs.insert(0x03, pow);
+            Ok(())
+        }
+        fn read(&mut self, buf: &mut [u8]) -> crate::Result<()> {
+            self.0.read(buf)
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn negative_current_is_signed() {
+        let mut bus = MockI2c::new().with(0x40, MockWordRegisters::ina226(12.0, -1.25));
+        configure_ina226(&mut bus, 0x40).unwrap();
+        let r = read_ina226(&mut bus, 0x40).unwrap();
+        assert!((r.current_a + 1.25).abs() < 1e-9, "{r:?}");
+        assert!((r.bus_v - 12.0).abs() < 1e-9, "{r:?}");
     }
 
     #[test]

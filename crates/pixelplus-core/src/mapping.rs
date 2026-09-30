@@ -28,6 +28,11 @@ pub enum MappingError {
 /// Bytes per pixel handled by the router (RGB).
 pub const BYTES_PER_PIXEL: usize = 3;
 
+/// Sanity bound on the length of one output (pixels). Far beyond anything a WS281x
+/// output can refresh (≈1600 px at 20 fps); segments reaching past it come from corrupt
+/// or hostile show data and are dropped with a warning instead of allocating gigabytes.
+pub const MAX_OUTPUT_PIXELS: u32 = 1 << 17;
+
 // ---------------------------------------------------------------------------
 // OutputFrame
 // ---------------------------------------------------------------------------
@@ -227,6 +232,13 @@ impl NodeMap {
                 } else {
                     (seg.start_pixel, seg.start_pixel.saturating_add(count))
                 };
+                if end > MAX_OUTPUT_PIXELS {
+                    warnings.push(format!(
+                        "prop '{}' segment on output {} ends at pixel {end}, beyond the {MAX_OUTPUT_PIXELS}-pixel limit; ignored",
+                        prop.name, seg.output
+                    ));
+                    continue;
+                }
                 pixels[out] = pixels[out].max(end);
                 let src = prop
                     .channel_start
@@ -250,7 +262,7 @@ impl NodeMap {
         let runs = merge_runs(runs);
         let source_len = runs
             .iter()
-            .map(|r| r.src as usize + r.pixels as usize * BYTES_PER_PIXEL)
+            .map(|r| (r.src as usize).saturating_add(r.pixels as usize * BYTES_PER_PIXEL))
             .max()
             .unwrap_or(0);
         NodeMap {
@@ -367,8 +379,8 @@ fn merge_runs(runs: Vec<CopyRun>) -> Vec<CopyRun> {
             if !last.reverse
                 && !r.reverse
                 && last.output == r.output
-                && last.dst + last_bytes == r.dst
-                && last.src + last_bytes == r.src
+                && last.dst.checked_add(last_bytes) == Some(r.dst)
+                && last.src.checked_add(last_bytes) == Some(r.src)
             {
                 last.pixels += r.pixels;
                 continue;
@@ -403,9 +415,9 @@ pub fn prop_pixel_location(prop: &Prop, i: u32) -> Option<PixelLocation> {
         }
         let k = i - s.prop_offset;
         let pixel = if s.reverse {
-            s.start_pixel + (s.pixel_count - 1 - k)
+            s.start_pixel.saturating_add(s.pixel_count - 1 - k)
         } else {
-            s.start_pixel + k
+            s.start_pixel.saturating_add(k)
         };
         Some(PixelLocation {
             node_id: s.node_id.clone(),
@@ -467,6 +479,9 @@ impl PropMap {
         let mut index = HashMap::new();
         let mut entries = Vec::new();
         for prop in props {
+            if !prop.segments.iter().any(|s| s.node_id == node.id) {
+                continue;
+            }
             let mut dst = vec![NOT_HERE; prop.pixel_count as usize];
             let mut local = 0;
             for seg in prop.segments.iter().filter(|s| s.node_id == node.id) {
@@ -666,6 +681,34 @@ mod tests {
             reverse,
             null_pixels: 0,
         }
+    }
+
+    #[test]
+    fn hostile_segments_do_not_allocate_or_panic() {
+        let mut show = Show::default();
+        show.nodes.push(node("n1", BoardKind::Difftx));
+        // A segment starting four billion pixels into the output.
+        show.props.push(prop("far", 10, 0, vec![seg("n1", 1, u32::MAX - 20, 10, 0, false)]));
+        // Channel start at the very end of the channel space, two adjacent segments.
+        show.props.push(prop(
+            "end",
+            4,
+            u32::MAX - 2,
+            vec![seg("n1", 2, 0, 2, 0, false), seg("n1", 2, 2, 2, 2, false)],
+        ));
+        // A huge prop that is not on this node at all.
+        show.props.push(prop("elsewhere", u32::MAX, 0, vec![seg("n2", 1, 0, 10, 0, false)]));
+        let map = NodeMap::build(&show, "n1").unwrap();
+        assert!(map.total_pixels() <= 4 * MAX_OUTPUT_PIXELS as u64);
+        assert!(map.warnings.iter().any(|w| w.contains("far")));
+        let mut out = map.new_frame();
+        map.render(&[1, 2, 3], &mut out);
+        let pm = PropMap::build(&show, "n1").unwrap();
+        assert!(!pm.contains("elsewhere"));
+        assert_eq!(
+            prop_pixel_location(&show.props[0], 9).map(|l| l.pixel),
+            Some(u32::MAX - 11)
+        );
     }
 
     fn frame_with_pixel_ids(pixels: usize) -> Vec<u8> {

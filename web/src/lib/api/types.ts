@@ -484,6 +484,58 @@ export interface SystemInfo {
 	detectedBoard?: BoardKind | null;
 	/** Assumed extension: leader this follower was adopted by. */
 	leaderName?: string;
+	/** Running in a container (Docker / Podman). */
+	docker?: boolean;
+	/** What this installation may change on the host (signed-in only). */
+	platform?: PlatformCaps;
+	/** DPI string length vs. the boot configuration (signed-in only). */
+	outputGeometry?: OutputGeometry;
+}
+
+/** How pixelplusd may do privileged things here (see services/platform.rs). */
+export interface PlatformCaps {
+	/** Running as root (development). */
+	root: boolean;
+	/** The root helper (pixelplus-helper@.service) can be used. */
+	helper: boolean;
+	/** Reboot / power off / restart are possible. */
+	power: boolean;
+	/** PIXELPLUS_BOARD override, if set. */
+	boardOverride?: BoardKind | null;
+}
+
+/** Progress of a root helper job (`helper` WebSocket message, GET /system/helpers). */
+export interface HelperStatus {
+	verb: 'config-txt' | 'update' | 'ssh-on' | 'ssh-off' | 'reapply' | 'wifi-country' | 'hosts' | string;
+	state: 'running' | 'ok' | 'failed';
+	message: string;
+	/** Unix seconds. */
+	updatedAt: number;
+}
+
+/** GET /system/output-geometry. */
+export interface OutputGeometry {
+	/** False when a string is longer than the pixel output was set up for at boot. */
+	ok: boolean;
+	longestString: number;
+	/** Pixels per output of the running DPI mode (null: not DPI / unknown). */
+	maxPixels?: number | null;
+	/** Pixels per output the boot configuration on disk is set up for. */
+	configuredPixels?: number | null;
+	/** The boot configuration already fits; only a restart is missing. */
+	pendingReboot: boolean;
+	/** "Apply & reboot" is possible here. */
+	canApply: boolean;
+	targetPixels?: number | null;
+	piMaxPixels?: number | null;
+	message?: string | null;
+}
+
+export interface SshState {
+	/** null: unknown (not a PixelPlus Pi). */
+	enabled: boolean | null;
+	canChange: boolean;
+	job?: HelperStatus | null;
 }
 
 export interface SetupRequest {
@@ -502,6 +554,26 @@ export interface NetworkConfig {
 	hostname: string;
 	wifi: { ssid: string; psk?: string; country: string };
 	ethernet: { dhcp: boolean; address?: string; gateway?: string; dns?: string };
+	/** Read-only: false when this machine's network isn't PixelPlus's to change (Docker, PC). */
+	managed?: boolean;
+	/** Read-only: setup-hotspot watchdog (image/netwatch); null when it isn't running. */
+	netwatch?: NetwatchStatus | null;
+}
+
+/** /run/pixelplus/netwatch.json, written by the setup-hotspot watchdog. */
+export interface NetwatchStatus {
+	state: 'waiting' | 'online' | 'hotspot' | 'connecting' | string;
+	/** The setup hotspot's name while it is up (PixelPlus-XXXX). */
+	hotspotSsid?: string | null;
+	/** The hotspot has a password (default "pixelplus"). */
+	hotspotSecured: boolean;
+	/** Setup page for phones on the hotspot (http://10.42.0.1/). */
+	portalUrl?: string | null;
+	lastError?: string | null;
+	/** Last network joined from the setup page. */
+	lastJoined?: { ssid: string; ips: string[]; at?: number | null } | null;
+	/** Unix seconds. */
+	updatedAt?: number | null;
 }
 export interface WifiNetwork {
 	ssid: string;
@@ -614,6 +686,8 @@ export interface HealthCheck {
 	label: string;
 	status: 'ok' | 'warn' | 'fail';
 	detail: string;
+	/** A fix the UI can offer: `applyOutputGeometry` (Apply & reboot) or `reboot`. */
+	action?: 'applyOutputGeometry' | 'reboot' | string;
 }
 export interface HealthReport {
 	ok: boolean;
@@ -672,8 +746,14 @@ export interface UpdateInfo {
 	current: string;
 	latest: string;
 	available: boolean;
+	/** The update can be installed from the web UI here. */
+	canApply?: boolean;
 	notes?: string;
 	channel?: string;
+	/** Why it can't be installed here / how to update instead. */
+	message?: string;
+	/** The latest install run, if any. */
+	job?: HelperStatus | null;
 }
 
 export interface ImportPreview {

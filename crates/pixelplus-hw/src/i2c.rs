@@ -274,6 +274,7 @@ pub struct MockByteRegisters {
     pub mem: Vec<u8>,
     pointer_bytes: usize,
     ptr: usize,
+    page: Option<usize>,
     /// Number of write transactions that carried data (not just a pointer).
     pub data_writes: usize,
 }
@@ -286,8 +287,16 @@ impl MockByteRegisters {
             mem: vec![fill; size.max(1)],
             pointer_bytes: pointer_bytes.clamp(1, 2),
             ptr: 0,
+            page: None,
             data_writes: 0,
         }
+    }
+
+    /// Model an EEPROM's page write: data written past the end of a
+    /// `page`-byte page wraps to the start of the same page (AT24C256: 64).
+    pub fn with_page_wrap(mut self, page: usize) -> Self {
+        self.page = (page > 0).then_some(page);
+        self
     }
 }
 
@@ -301,9 +310,14 @@ impl MockDevice for MockByteRegisters {
         if !rest.is_empty() {
             self.data_writes += 1;
         }
-        for &b in rest {
-            self.mem[self.ptr] = b;
-            self.ptr = (self.ptr + 1) % self.mem.len();
+        let start = self.ptr;
+        for (i, &b) in rest.iter().enumerate() {
+            let at = match self.page {
+                Some(page) => (start / page * page + (start % page + i) % page) % self.mem.len(),
+                None => (start + i) % self.mem.len(),
+            };
+            self.mem[at] = b;
+            self.ptr = (at + 1) % self.mem.len();
         }
         Ok(())
     }

@@ -1,7 +1,10 @@
 # PixelPlus TTS runtime (Python 3.10 - 3.13). Mirrors pyproject.toml.
+# Every package here has binary wheels for Linux x86_64 and aarch64 (cp310-cp313; newest onnxruntime needs 3.11+, pip picks an older one on 3.10), so the
+# image build can use --only-binary=:all: (see README "Platforms").
 kokoro-onnx>=0.4.9,<0.7
 onnxruntime>=1.17
 numpy>=1.24
-praat-parselmouth>=0.4.3
+# Optional, better energy/hype prosody (Praat PSOLA): pip install praat-parselmouth
+# It has NO Linux aarch64 wheels (Raspberry Pi); without it pixelplus_tts/prosody.py is used.
 # ffmpeg: the system one is used when present (apt install ffmpeg). Uncomment for a bundled copy:
 # imageio-ffmpeg>=0.4.9

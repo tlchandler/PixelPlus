@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xrgb>
+  <models>
+    <model name="Big Arch" DisplayAs="Arches" Angle="0" Antialias="1" Arc="180" Controller="Front PixelPlus" Dir="L" Height="1.000000" Hollow="70" LayerSizes="40,35,25" LayoutGroup="Default" LightsPerNode="1" NodesPerArch="100" NumArches="1" PixelSize="2" RotateX="0.000000" Shear="0.000000" SourceVersion="2025.12" StartChannel="!Front PixelPlus:1" StartSide="B" StringType="RGB Nodes" TagColour="#FF8000" Transparency="0" versionNumber="8" WorldPosX="-500.000000" WorldPosY="0.000000" WorldPosZ="0.000000" X2="300.000000" Y2="0.000000" Z2="0.000000">
+      <ControllerConnection Port="1" Protocol="WS2811"/>
+    </model>
+    <model name="Canes" DisplayAs="Candy Canes" AlternateNodes="false" Angle="0" Antialias="1" CandyCaneHeight="1.000000" CandyCaneReverse="false" CandyCaneSticks="false" Controller="Front PixelPlus" Dir="R" Height="1.000000" LayoutGroup="Default" LightsPerNode="1" ModelChain="&gt;Big Arch" NodesPerCane="25" NumCanes="4" PixelSize="2" RotateX="0.000000" Shear="0.000000" SourceVersion="2025.12" StartChannel="&gt;Big Arch:1" StartSide="B" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="-500.000000" WorldPosY="-200.000000" WorldPosZ="0.000000" X2="260.000000" Y2="0.000000" Z2="0.000000">
+      <ControllerConnection Port="2" Protocol="WS2811"/>
+    </model>
+    <model name="Snowflake 3D" DisplayAs="Custom" Antialias="1" Controller="Front PixelPlus" CustomHeight="3" CustomWidth="3" Depth="2" Dir="L" LayoutGroup="Default" ModelChain="&gt;Canes" PixelSize="2" RotateX="0.000000" RotateY="0.000000" RotateZ="0.000000" ScaleX="10.000000" ScaleY="10.000000" ScaleZ="1.000000" SourceVersion="2025.12" StartChannel="&gt;Canes:1" StartSide="B" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="0.000000" WorldPosY="200.000000" WorldPosZ="0.000000" CustomModelCompressed="1,0,1;2,1,0;3,1,2;4,2,1;5,1,1,1;6,0,1,1">
+      <ControllerConnection Port="3" Protocol="WS2811"/>
+    </model>
+    <model name="Star" DisplayAs="Star" Antialias="1" Controller="Front PixelPlus" Dir="L" LayerSizes="30,20,10" LayoutGroup="Default" ModelChain="&gt;Snowflake 3D" NodesPerString="60" NumStrings="1" PixelSize="2" RotateX="0.000000" RotateY="0.000000" RotateZ="0.000000" ScaleX="3.000000" ScaleY="3.000000" ScaleZ="1.000000" SourceVersion="2025.12" starCenterPercent="-1" StarPoints="5" starRatio="2.618034" StarStartLocation="Bottom Ctr-CW" StartChannel="&gt;Snowflake 3D:1" StartSide="B" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="0.000000" WorldPosY="400.000000" WorldPosZ="0.000000">
+      <ControllerConnection Port="3" Protocol="WS2811" nullNodes="2"/>
+    </model>
+    <model name="Garage Poly" DisplayAs="Poly Line" AlternateNodes="false" Antialias="1" Controller="Front PixelPlus" cPointData="" Dir="L" DropPattern="1" LayoutGroup="Default" LightsPerNode="1" ModelHeight="1.000000" NodesPerString="150" NumPoints="3" PixelSize="2" PointData="0.000000,0.000000,0.000000,200.000000,0.000000,0.000000,200.000000,80.000000,0.000000" PolyNode1="1" PolyNode2="76" PolyStrings="2" ScaleX="1.000000" ScaleY="1.000000" ScaleZ="1.000000" SourceVersion="2025.12" StartChannel="@Star:181" StartSide="B" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="-300.000000" WorldPosY="-400.000000" WorldPosZ="0.000000">
+      <ControllerConnection Port="4" Protocol="WS2811"/>
+    </model>
+    <model name="Mega Tree" DisplayAs="Tree" AlternateNodes="false" Antialias="1" Controller="Tree F48" Dir="L" exportFirstStrand="5" LayoutGroup="Default" NodesPerString="100" NoZig="false" NumStrings="16" PixelSize="2" RotateX="0.000000" RotateY="0.000000" RotateZ="0.000000" ScaleX="4.000000" ScaleY="4.000000" ScaleZ="1.000000" SourceVersion="2025.12" StartChannel="#10.0.0.20:1:1" StartSide="B" StrandDir="Vertical" StrandsPerString="2" StringType="RGB Nodes" Transparency="0" TreeBottomTopRatio="6.000000" TreeDegrees="360" TreePerspective="0.200000" TreeRotation="3.000000" TreeSpiralRotations="0.000000" TreeType="0" versionNumber="8" WorldPosX="400.000000" WorldPosY="100.000000" WorldPosZ="0.000000">
+      <ControllerConnection Port="1" Protocol="WS2811" brightness="80"/>
+    </model>
+    <model name="Matrix" DisplayAs="Matrix" AlternateNodes="false" Antialias="1" Controller="Tree F48" Dir="L" LayoutGroup="Default" LowDefinition="100" NodesPerString="200" NoZig="false" NumStrings="4" PixelSize="2" RotateX="0.000000" RotateY="0.000000" RotateZ="0.000000" ScaleX="5.000000" ScaleY="5.000000" ScaleZ="1.000000" SourceVersion="2025.12" StartChannel="#10.0.0.20:11:1" StartSide="T" StrandsPerString="4" StringType="RGB Nodes" Transparency="0" versionNumber="8" Vertical="false" WorldPosX="800.000000" WorldPosY="100.000000" WorldPosZ="0.000000">
+      <ControllerConnection Port="17" Protocol="WS2811"/>
+    </model>
+    <model name="Sphere" DisplayAs="Sphere" AlternateNodes="false" Antialias="1" Controller="Tree F48" Degrees="360" Dir="L" EndLat="86" LayoutGroup="Default" ModelChain="&gt;Matrix" NodesPerString="50" NoZig="false" NumStrings="2" PixelSize="2" RotateX="0.000000" RotateY="0.000000" RotateZ="0.000000" ScaleX="3.000000" ScaleY="3.000000" ScaleZ="1.000000" SourceVersion="2025.12" StartChannel="&gt;Matrix:1" StartLat="-86" StartSide="B" StrandsPerString="2" StringType="RGB Nodes" Transparency="0" versionNumber="8" WorldPosX="800.000000" WorldPosY="400.000000" WorldPosZ="0.000000">
+      <ControllerConnection Port="21" Protocol="WS2811"/>
+    </model>
+    <model name="Flood" DisplayAs="DmxGeneral" Antialias="1" Controller="DMX Dongle" Dir="L" DmxChannelCount="7" LayoutGroup="Default" PixelSize="2" RotateX="0.000000" RotateY="0.000000" RotateZ="0.000000" ScaleX="1.000000" ScaleY="1.000000" ScaleZ="1.000000" SourceVersion="2025.12" StartChannel="!DMX Dongle:1" StartSide="B" StringType="Single Color White" Transparency="0" versionNumber="8" WorldPosX="0.000000" WorldPosY="0.000000" WorldPosZ="0.000000">
+      <ControllerConnection Port="1" Protocol="DMX" Channel="1" Speed="250000"/>
+    </model>
+    <model name="Mini Lights" DisplayAs="Channel Block" Antialias="1" Controller="DMX Dongle" Dir="L" LayoutGroup="Default" ModelChain="&gt;Flood" NumChannels="8" PixelSize="2" SourceVersion="2025.12" StartChannel="&gt;Flood:1" StartSide="B" StringType="Single Color Custom" Transparency="0" versionNumber="8" WorldPosX="0.000000" WorldPosY="-50.000000" WorldPosZ="0.000000" X2="100.000000" Y2="0.000000" Z2="0.000000">
+      <ControllerConnection Port="1" Protocol="DMX" Channel="8"/>
+    </model>
+    <model name="Window" DisplayAs="Window Frame" Antialias="1" BottomNodes="20" Controller="No Controller" Dir="L" LayoutGroup="Default" PixelSize="2" RotateX="0.000000" RotateY="0.000000" RotateZ="0.000000" Rotation="Clockwise" ScaleX="5.000000" ScaleY="5.000000" ScaleZ="1.000000" SideNodes="10" SourceVersion="2025.12" StartChannel="16743" StartSide="B" StringType="RGB Nodes" TopNodes="20" Transparency="0" versionNumber="8" WorldPosX="-800.000000" WorldPosY="300.000000" WorldPosZ="0.000000">
+    </model>
+  </models>
+  <modelGroups>
+    <modelGroup name="Front Yard" DisplayAs="ModelGroup" LayoutGroup="Default" GridSize="400" layout="minimalGrid" DefaultCamera="2D" models="Big Arch,Canes,Star,Garage Poly"/>
+    <modelGroup name="Everything" DisplayAs="ModelGroup" LayoutGroup="Default" GridSize="400" layout="minimalGrid" DefaultCamera="2D" models="Front Yard,Mega Tree,Mega Tree/Top Half,Matrix,Sphere,Flood"/>
+  </modelGroups>
+  <view_objects>
+    <view_object name="Gridlines" DisplayAs="Gridlines" LayoutGroup="Default" GridLineSpacing="50" GridWidth="2000.000000" GridHeight="1000.000000" WorldPosX="0.000000" WorldPosY="0.000000" WorldPosZ="0.000000"/>
+  </view_objects>
+  <layoutGroups/>
+  <perspectives current="Default Perspective"/>
+  <settings>
+    <previewWidth value="1280"/>
+    <previewHeight value="720"/>
+  </settings>
+</xrgb>

@@ -325,6 +325,7 @@ impl DpiOutput {
         }
         let crtc = pick_crtc(&card, &conn)?;
         let saved_crtc = card.get_crtc(crtc).ok();
+        reset_color_management(&card, crtc);
 
         let mut buffers = Vec::with_capacity(2);
         for _ in 0..2 {
@@ -390,6 +391,24 @@ impl DpiOutput {
                 return Err(e);
             }
             rt.pins = Some((mux, pins));
+        }
+        // Scan out one complete idle frame on the real pins before the first
+        // data frame. On the difftxlarge the 74AHCT573 latches power up in an
+        // undefined state and LE is held low (config.txt `gpio=…=op,dl`)
+        // until the pins are muxed, so a string may sit at a static high.
+        // The pins can be muxed during the reset lines of the frame that the
+        // first data flip follows, so without this the first bits of the
+        // first frame would start from that undefined level. The idle frame
+        // latches 0 into every bank on every data line and ends with the
+        // ≥ 280 µs reset. It also proves that page flips complete before the
+        // player starts.
+        let timeout = self.config.flip_timeout;
+        if let Err(e) = rt
+            .present(&OutputFrameRef::default(), timeout)
+            .and_then(|_| rt.wait_flip(timeout))
+        {
+            rt.teardown();
+            return Err(e);
         }
         tracing::info!(
             device = %rt.device.display(),
@@ -604,6 +623,31 @@ fn find_dpi_connector(explicit: Option<&Path>) -> Result<(Card, PathBuf, connect
         "no DPI display connector found{detail}. Add the PixelPlus overlay to \
          /boot/firmware/config.txt (`pixelplus config-txt`) and reboot"
     )))
+}
+
+/// Clear CRTC colour management (`DEGAMMA_LUT`, `CTM`, `GAMMA_LUT`) that a
+/// previous DRM client may have left behind: legacy `set_crtc` keeps it, and
+/// any LUT would rewrite the framebuffer bits, i.e. the WS281x waveform.
+/// Best effort: drivers without these properties are fine as they are.
+fn reset_color_management(card: &Card, crtc: crtc::Handle) {
+    let Ok(props) = card.get_properties(crtc) else {
+        return;
+    };
+    for (&prop, &value) in props.iter() {
+        if value == 0 {
+            continue;
+        }
+        let Ok(info) = card.get_property(prop) else {
+            continue;
+        };
+        let name = info.name().to_string_lossy();
+        if matches!(name.as_ref(), "DEGAMMA_LUT" | "CTM" | "GAMMA_LUT") {
+            match card.set_property(crtc, prop, 0) {
+                Ok(()) => tracing::info!("cleared {name} on the DPI CRTC"),
+                Err(e) => tracing::warn!("could not clear {name} on the DPI CRTC: {e}"),
+            }
+        }
+    }
 }
 
 fn pick_crtc(card: &Card, conn: &connector::Handle) -> Result<crtc::Handle> {

@@ -24,7 +24,7 @@
 //! safe; in Docker or on a PC without the PixelPlus package the API answers
 //! with a friendly explanation instead.
 
-use super::system::{have, has_systemd, in_docker, is_root, run};
+use super::system::{has_systemd, have, in_docker, is_root, run};
 use crate::api::{ApiError, ApiResult};
 use crate::events::ToastKind;
 use crate::state::AppState;
@@ -49,6 +49,30 @@ pub fn run_dir() -> PathBuf {
     std::env::var_os("PIXELPLUS_RUN_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/run/pixelplus"))
+}
+
+/// Record the board we run in `/run/pixelplus/board`, so `pixelplus pins release`
+/// (pixelplusd.service `ExecStopPost=`) parks the right pins even when the board
+/// was chosen in the setup wizard and its EEPROM is blank. Best effort.
+pub fn publish_board(state: &AppState) {
+    let (board, _) = super::system::effective_board(state);
+    let Some(id) = serde_json::to_value(board)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+    else {
+        return;
+    };
+    let dir = run_dir();
+    if !dir.is_dir() {
+        return;
+    }
+    let tmp = dir.join(format!(".board.{}", std::process::id()));
+    let res = std::fs::write(&tmp, format!("{id}\n"))
+        .and_then(|_| std::fs::rename(&tmp, dir.join("board")));
+    if let Err(e) = res {
+        let _ = std::fs::remove_file(&tmp);
+        tracing::debug!("couldn't write {}/board: {e}", dir.display());
+    }
 }
 
 /// The pixelplus polkit rules are installed (so the service user may reboot,
@@ -84,7 +108,10 @@ pub fn can_control_power() -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HelperVerb {
     /// Regenerate `/boot/firmware/pixelplus.conf` for a board (+ string length).
-    ConfigTxt { board: String, pixels: Option<u32> },
+    ConfigTxt {
+        board: String,
+        pixels: Option<u32>,
+    },
     /// apt-get update + upgrade the pixelplus package.
     Update,
     SshOn,
@@ -100,8 +127,7 @@ pub enum HelperVerb {
 fn valid_token(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 32
-        && s
-            .chars()
+        && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
@@ -159,7 +185,10 @@ impl HelperVerb {
     /// Human description used in progress messages.
     fn describe(&self) -> String {
         match self {
-            HelperVerb::ConfigTxt { board, pixels: Some(p) } => {
+            HelperVerb::ConfigTxt {
+                board,
+                pixels: Some(p),
+            } => {
                 format!("Writing the boot settings for {board} ({p} pixels per output)")
             }
             HelperVerb::ConfigTxt { board, .. } => format!("Writing the boot settings for {board}"),
@@ -282,7 +311,11 @@ impl HelperJob {
         let verb = self.status.verb.clone();
         match tokio::time::timeout(timeout, self.done).await {
             Ok(Ok(s)) => s,
-            _ => HelperStatus::new(&verb, HelperState::Failed, "Timed out waiting for the helper"),
+            _ => HelperStatus::new(
+                &verb,
+                HelperState::Failed,
+                "Timed out waiting for the helper",
+            ),
         }
     }
 }
@@ -330,7 +363,10 @@ pub fn not_possible_here(what: &str) -> ApiError {
 
 fn friendly_start_error(unit: &str, stderr: &str) -> ApiError {
     let e = stderr.trim();
-    if e.contains("Access denied") || e.contains("authentication") || e.contains("Permission denied") {
+    if e.contains("Access denied")
+        || e.contains("authentication")
+        || e.contains("Permission denied")
+    {
         return ApiError::forbidden(
             "PixelPlus wasn't allowed to start its system helper. The PixelPlus permissions (polkit rules) are missing; reinstall the pixelplus package.",
         );
@@ -346,8 +382,12 @@ fn friendly_start_error(unit: &str, stderr: &str) -> ApiError {
 /// Start a helper verb and follow its progress in the background. Errors when
 /// the helper can't be used here (see [`not_possible_here`]) or is already
 /// running that verb.
-pub async fn run_helper(state: &AppState, verb: HelperVerb, opts: HelperOpts) -> ApiResult<HelperJob> {
-    let instance = verb.instance()?;
+pub async fn run_helper(
+    state: &AppState,
+    verb: HelperVerb,
+    opts: HelperOpts,
+) -> ApiResult<HelperJob> {
+    verb.instance()?; // validate before anything else
     let name = verb.name();
     let initial = HelperStatus::new(name, HelperState::Running, format!("{}…", verb.describe()));
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -387,7 +427,10 @@ pub async fn run_helper(state: &AppState, verb: HelperVerb, opts: HelperOpts) ->
             finish(&st, &last, opts);
             let _ = tx.send(last);
         });
-        return Ok(HelperJob { status: initial, done: rx });
+        return Ok(HelperJob {
+            status: initial,
+            done: rx,
+        });
     }
 
     if is_root() && !in_docker() && cfg!(target_os = "linux") {
@@ -409,7 +452,10 @@ pub async fn run_helper(state: &AppState, verb: HelperVerb, opts: HelperOpts) ->
             finish(&st, &last, opts);
             let _ = tx.send(last);
         });
-        return Ok(HelperJob { status: initial, done: rx });
+        return Ok(HelperJob {
+            status: initial,
+            done: rx,
+        });
     }
 
     Err(not_possible_here(match verb {
@@ -450,15 +496,18 @@ pub(crate) async fn follow(
         } else if Instant::now() >= next_unit_check && !unit.is_empty() {
             // No fresh status yet: did the unit die before writing one?
             next_unit_check = Instant::now() + Duration::from_secs(5);
-            if let Ok(o) = run("systemctl", &["is-failed", "--quiet", unit], Duration::from_secs(5)).await {
+            if let Ok(o) = run(
+                "systemctl",
+                &["is-failed", "--quiet", unit],
+                Duration::from_secs(5),
+            )
+            .await
+            {
                 if o.success {
                     return HelperStatus::new(
                         name,
                         HelperState::Failed,
-                        format!(
-                            "{} failed. Details: journalctl -u {unit}",
-                            verb.describe()
-                        ),
+                        format!("{} failed. Details: journalctl -u {unit}", verb.describe()),
                     );
                 }
             }
@@ -510,16 +559,35 @@ async fn ok_or(program: &str, args: &[&str], timeout: Duration, what: &str) -> R
 async fn direct(verb: &HelperVerb) -> Result<String, String> {
     match verb {
         HelperVerb::ConfigTxt { board, pixels } => {
-            let mut args = vec![FIRSTBOOT.to_string(), "board-config".into(), "--board".into(), board.clone()];
+            let mut args = vec![
+                FIRSTBOOT.to_string(),
+                "board-config".into(),
+                "--board".into(),
+                board.clone(),
+            ];
             if let Some(p) = pixels {
                 args.extend(["--pixels".into(), p.to_string()]);
             }
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            ok_or("python3", &refs, Duration::from_secs(60), "Writing the board settings").await?;
-            Ok(format!("Board settings for {board} saved; restart the controller to use them"))
+            ok_or(
+                "python3",
+                &refs,
+                Duration::from_secs(60),
+                "Writing the board settings",
+            )
+            .await?;
+            Ok(format!(
+                "Board settings for {board} saved; restart the controller to use them"
+            ))
         }
         HelperVerb::Reapply => {
-            ok_or("python3", &[FIRSTBOOT, "apply", "--force", "--no-reboot"], Duration::from_secs(300), "Applying pixelplus.txt").await?;
+            ok_or(
+                "python3",
+                &[FIRSTBOOT, "apply", "--force", "--no-reboot"],
+                Duration::from_secs(300),
+                "Applying pixelplus.txt",
+            )
+            .await?;
             Ok("pixelplus.txt applied".into())
         }
         HelperVerb::Update => {
@@ -537,16 +605,29 @@ async fn direct(verb: &HelperVerb) -> Result<String, String> {
                 "Starting the update",
             )
             .await?;
-            Ok("Installing the update. PixelPlus will restart by itself in a minute or two.".into())
+            Ok(
+                "Installing the update. PixelPlus will restart by itself in a minute or two."
+                    .into(),
+            )
         }
         HelperVerb::SshOn | HelperVerb::SshOff => {
             let on = *verb == HelperVerb::SshOn;
             if have("raspi-config") {
-                ok_or("raspi-config", &["nonint", "do_ssh", if on { "0" } else { "1" }], Duration::from_secs(60), "Changing SSH").await?;
+                ok_or(
+                    "raspi-config",
+                    &["nonint", "do_ssh", if on { "0" } else { "1" }],
+                    Duration::from_secs(60),
+                    "Changing SSH",
+                )
+                .await?;
             } else {
                 ok_or(
                     "systemctl",
-                    &[if on { "enable" } else { "disable" }, "--now", "ssh.service"],
+                    &[
+                        if on { "enable" } else { "disable" },
+                        "--now",
+                        "ssh.service",
+                    ],
                     Duration::from_secs(60),
                     "Changing SSH",
                 )
@@ -557,9 +638,21 @@ async fn direct(verb: &HelperVerb) -> Result<String, String> {
         HelperVerb::WifiCountry(cc) => {
             let cc = cc.to_ascii_uppercase();
             if have("raspi-config") {
-                ok_or("raspi-config", &["nonint", "do_wifi_country", &cc], Duration::from_secs(30), "Setting the Wi-Fi country").await?;
+                ok_or(
+                    "raspi-config",
+                    &["nonint", "do_wifi_country", &cc],
+                    Duration::from_secs(30),
+                    "Setting the Wi-Fi country",
+                )
+                .await?;
             } else {
-                ok_or("iw", &["reg", "set", &cc], Duration::from_secs(10), "Setting the Wi-Fi country").await?;
+                ok_or(
+                    "iw",
+                    &["reg", "set", &cc],
+                    Duration::from_secs(10),
+                    "Setting the Wi-Fi country",
+                )
+                .await?;
             }
             Ok(format!("Wi-Fi country set to {cc}"))
         }
@@ -578,7 +671,9 @@ pub fn sync_hosts(hosts: &str, name: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut done = false;
     for l in hosts.lines() {
-        if l.trim_start().starts_with("127.0.1.1") && l.trim_start()[9..].starts_with(char::is_whitespace) {
+        if l.trim_start().starts_with("127.0.1.1")
+            && l.trim_start()[9..].starts_with(char::is_whitespace)
+        {
             if !done {
                 out.push(format!("127.0.1.1\t{name}"));
                 done = true;
@@ -611,7 +706,12 @@ impl PowerAction {
         match self {
             PowerAction::Reboot => &["--no-ask-password", "reboot"],
             PowerAction::Shutdown => &["--no-ask-password", "poweroff"],
-            PowerAction::RestartService => &["--no-ask-password", "--no-block", "restart", "pixelplusd.service"],
+            PowerAction::RestartService => &[
+                "--no-ask-password",
+                "--no-block",
+                "restart",
+                "pixelplusd.service",
+            ],
         }
     }
 }
@@ -697,7 +797,13 @@ pub async fn set_timezone(tz: &str) -> Result<bool, String> {
 pub async fn set_hostname(state: &AppState, name: &str) -> Result<(), String> {
     let o = run(
         "hostnamectl",
-        &["--no-ask-password", "--static", "--transient", "set-hostname", name],
+        &[
+            "--no-ask-password",
+            "--static",
+            "--transient",
+            "set-hostname",
+            name,
+        ],
         Duration::from_secs(15),
     )
     .await?;
@@ -710,7 +816,12 @@ pub async fn set_hostname(state: &AppState, name: &str) -> Result<(), String> {
             .await
             .is_ok_and(|o| o.success);
     if !renamed && is_root() {
-        let _ = run("systemctl", &["try-reload-or-restart", "avahi-daemon.service"], Duration::from_secs(15)).await;
+        let _ = run(
+            "systemctl",
+            &["try-reload-or-restart", "avahi-daemon.service"],
+            Duration::from_secs(15),
+        )
+        .await;
     }
     // /etc/hosts (sudo warns "unable to resolve host" otherwise): root-only file.
     if helper_installed() || is_root() {
@@ -731,21 +842,49 @@ mod tests {
 
     #[test]
     fn verbs_and_instances() {
-        let v = HelperVerb::ConfigTxt { board: "difftxlarge".into(), pixels: Some(1600) };
+        let v = HelperVerb::ConfigTxt {
+            board: "difftxlarge".into(),
+            pixels: Some(1600),
+        };
         assert_eq!(v.instance().unwrap(), "config-txt:difftxlarge:1600");
-        assert_eq!(v.unit().unwrap(), "pixelplus-helper@config-txt:difftxlarge:1600.service");
+        assert_eq!(
+            v.unit().unwrap(),
+            "pixelplus-helper@config-txt:difftxlarge:1600.service"
+        );
         assert_eq!(v.name(), "config-txt");
-        let v = HelperVerb::ConfigTxt { board: "bare-pi".into(), pixels: None };
+        let v = HelperVerb::ConfigTxt {
+            board: "bare-pi".into(),
+            pixels: None,
+        };
         assert_eq!(v.instance().unwrap(), "config-txt:bare-pi");
-        assert!(HelperVerb::ConfigTxt { board: "x;rm -rf".into(), pixels: None }.instance().is_err());
-        assert!(HelperVerb::ConfigTxt { board: "difftx".into(), pixels: Some(0) }.instance().is_err());
+        assert!(HelperVerb::ConfigTxt {
+            board: "x;rm -rf".into(),
+            pixels: None
+        }
+        .instance()
+        .is_err());
+        assert!(HelperVerb::ConfigTxt {
+            board: "difftx".into(),
+            pixels: Some(0)
+        }
+        .instance()
+        .is_err());
         assert_eq!(HelperVerb::Update.instance().unwrap(), "update");
-        assert_eq!(HelperVerb::SshOff.unit().unwrap(), "pixelplus-helper@ssh-off.service");
-        assert_eq!(HelperVerb::WifiCountry("gb".into()).instance().unwrap(), "wifi-country:GB");
+        assert_eq!(
+            HelperVerb::SshOff.unit().unwrap(),
+            "pixelplus-helper@ssh-off.service"
+        );
+        assert_eq!(
+            HelperVerb::WifiCountry("gb".into()).instance().unwrap(),
+            "wifi-country:GB"
+        );
         assert!(HelperVerb::WifiCountry("G1".into()).instance().is_err());
         // Unit names must satisfy the polkit rule: ^pixelplus-helper@[A-Za-z0-9:_.\-]+\.service$
         for v in [
-            HelperVerb::ConfigTxt { board: "difftx".into(), pixels: Some(800) },
+            HelperVerb::ConfigTxt {
+                board: "difftx".into(),
+                pixels: Some(800),
+            },
             HelperVerb::Update,
             HelperVerb::SshOn,
             HelperVerb::Reapply,
@@ -753,14 +892,23 @@ mod tests {
             HelperVerb::WifiCountry("US".into()),
         ] {
             let u = v.unit().unwrap();
-            let inst = u.strip_prefix("pixelplus-helper@").unwrap().strip_suffix(".service").unwrap();
-            assert!(inst.chars().all(|c| c.is_ascii_alphanumeric() || ":_.-".contains(c)), "{u}");
+            let inst = u
+                .strip_prefix("pixelplus-helper@")
+                .unwrap()
+                .strip_suffix(".service")
+                .unwrap();
+            assert!(
+                inst.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || ":_.-".contains(c)),
+                "{u}"
+            );
         }
     }
 
     #[test]
     fn status_file_parsing() {
-        let dir = std::env::temp_dir().join(format!("pp-helper-{}", pixelplus_core::model::new_id()));
+        let dir =
+            std::env::temp_dir().join(format!("pp-helper-{}", pixelplus_core::model::new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(read_status(&dir, "update").is_none());
         std::fs::write(
@@ -787,7 +935,10 @@ mod tests {
         // A stale result from an earlier run must be ignored.
         std::fs::write(
             status_path(&dir, "ssh-on"),
-            format!(r#"{{"verb":"ssh-on","state":"ok","message":"old","updatedAt":{}}}"#, now - 3600),
+            format!(
+                r#"{{"verb":"ssh-on","state":"ok","message":"old","updatedAt":{}}}"#,
+                now - 3600
+            ),
         )
         .unwrap();
         let d2 = dir.clone();
@@ -795,7 +946,9 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(60)).await;
             std::fs::write(
                 status_path(&d2, "ssh-on"),
-                format!(r#"{{"verb":"ssh-on","state":"running","message":"working","updatedAt":{now}}}"#),
+                format!(
+                    r#"{{"verb":"ssh-on","state":"running","message":"working","updatedAt":{now}}}"#
+                ),
             )
             .unwrap();
             tokio::time::sleep(Duration::from_millis(60)).await;
@@ -805,7 +958,15 @@ mod tests {
             )
             .unwrap();
         });
-        let s = follow(&app.state, &dir, &HelperVerb::SshOn, "", now - 1, Duration::from_millis(10)).await;
+        let s = follow(
+            &app.state,
+            &dir,
+            &HelperVerb::SshOn,
+            "",
+            now - 1,
+            Duration::from_millis(10),
+        )
+        .await;
         assert_eq!(s.state, HelperState::Ok);
         assert_eq!(s.message, "SSH on");
         // The running state was published on the way.
@@ -816,14 +977,23 @@ mod tests {
             }
         }
         assert!(saw_running);
-        assert_eq!(app.state.services.helpers.get("ssh-on").unwrap().message, "working");
+        assert_eq!(
+            app.state.services.helpers.get("ssh-on").unwrap().message,
+            "working"
+        );
     }
 
     #[test]
     fn hosts_sync() {
         let h = "127.0.0.1\tlocalhost\n127.0.1.1\told-name\n::1 localhost\n";
-        assert_eq!(sync_hosts(h, "garage"), "127.0.0.1\tlocalhost\n127.0.1.1\tgarage\n::1 localhost\n");
-        assert_eq!(sync_hosts("127.0.0.1 localhost\n", "garage"), "127.0.0.1 localhost\n127.0.1.1\tgarage\n");
+        assert_eq!(
+            sync_hosts(h, "garage"),
+            "127.0.0.1\tlocalhost\n127.0.1.1\tgarage\n::1 localhost\n"
+        );
+        assert_eq!(
+            sync_hosts("127.0.0.1 localhost\n", "garage"),
+            "127.0.0.1 localhost\n127.0.1.1\tgarage\n"
+        );
         // 127.0.1.10 is a different address.
         assert!(sync_hosts("127.0.1.10 other\n", "g").contains("127.0.1.10 other"));
     }
@@ -831,7 +1001,9 @@ mod tests {
     #[test]
     fn power_args_match_polkit_rules() {
         // polkit allows restart/try-restart of exactly "pixelplusd.service".
-        assert!(PowerAction::RestartService.systemctl_args().contains(&"pixelplusd.service"));
+        assert!(PowerAction::RestartService
+            .systemctl_args()
+            .contains(&"pixelplusd.service"));
         assert!(PowerAction::Reboot.systemctl_args().contains(&"reboot"));
         assert!(PowerAction::Shutdown.systemctl_args().contains(&"poweroff"));
     }

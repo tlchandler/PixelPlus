@@ -37,6 +37,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Dict, List, Optional
@@ -85,6 +86,29 @@ def mac_suffix(iface: str) -> str:
         return "0000"
 
 
+def write_json_atomic(path: str, obj: Dict) -> None:
+    """Write world-readable JSON to ``path`` without following links an unprivileged user
+    could plant: /run/pixelplus belongs to the pixelplus user, and we run as root. The file
+    is created exclusively under a random name (O_EXCL never follows symlinks), chmod-ed by
+    descriptor, then renamed over the target (rename replaces a symlink, never follows it)."""
+    d = os.path.dirname(path) or "."
+    try:
+        os.makedirs(d, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".netwatch-", suffix=".tmp", dir=d)
+    except OSError:
+        return
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            os.fchmod(f.fileno(), 0o644)
+            json.dump(obj, f)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 class Netwatch:
     def __init__(self, nm: nmconn.NM, cfg: Dict, clock=time.monotonic, sleep=time.sleep):
         self.nm = nm
@@ -126,15 +150,7 @@ class Netwatch:
             "lastJoined": self.last_joined,
             "updatedAt": int(time.time()),
         }
-        try:
-            os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
-            tmp = STATUS_PATH + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(st, f)
-            os.chmod(tmp, 0o644)
-            os.replace(tmp, STATUS_PATH)
-        except OSError:
-            pass
+        write_json_atomic(STATUS_PATH, st)
 
     def elapsed(self) -> float:
         return self.clock() - self.state_since

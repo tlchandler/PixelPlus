@@ -34,6 +34,22 @@ pub fn read_sensors(ctx: &HwContext, board: pixelplus_core::model::BoardKind) ->
     SensorHub::new(board, bus).read_all()
 }
 
+/// `detect --json` output. image/firstboot/firstboot.py reads
+/// `board.board` (board id or null) and `board.rev`; keep that shape.
+pub fn json_report(
+    simulated: bool,
+    pi: &Option<pixelplus_hw::board::PiInfo>,
+    detection: &pixelplus_hw::board::BoardDetection,
+    sensors: &[Sensor],
+) -> serde_json::Value {
+    serde_json::json!({
+        "simulated": simulated,
+        "pi": pi,
+        "board": detection,
+        "sensors": sensors,
+    })
+}
+
 /// Run `detect`.
 pub fn run(ctx: &HwContext, json: bool) -> Result<()> {
     let pi = ctx.pi_info();
@@ -45,12 +61,7 @@ pub fn run(ctx: &HwContext, json: bool) -> Result<()> {
     let sensors = read_sensors(ctx, board_for_sensors);
 
     if json {
-        let out = serde_json::json!({
-            "simulated": ctx.is_simulated(),
-            "pi": pi,
-            "board": detection,
-            "sensors": sensors,
-        });
+        let out = json_report(ctx.is_simulated(), &pi, &detection, &sensors);
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -143,4 +154,27 @@ pub fn run(ctx: &HwContext, json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use pixelplus_core::model::BoardKind;
+
+    /// The shape image/firstboot/firstboot.py (detect_board) depends on.
+    #[test]
+    fn json_matches_firstboot() {
+        let ctx = HwContext {
+            simulate: Some(BoardKind::Difftxlarge),
+        };
+        let det = ctx.detect().unwrap();
+        let v = json_report(true, &ctx.pi_info(), &det, &[]);
+        assert_eq!(v["board"]["board"], "difftxlarge");
+        assert!(v["board"]["rev"].is_string());
+        // Blank EEPROM: board.board is null (firstboot then leaves the boot config alone).
+        let blank = pixelplus_hw::board::classify(None, &[]);
+        let v = json_report(false, &None, &blank, &[]);
+        assert!(v["board"].is_object());
+        assert!(v["board"]["board"].is_null());
+    }
 }

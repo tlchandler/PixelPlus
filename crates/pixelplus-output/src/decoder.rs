@@ -70,18 +70,38 @@ pub struct DecodedOutput {
 pub struct DecodedFrame {
     /// One entry per layout output, in output order.
     pub outputs: Vec<DecodedOutput>,
+    /// Latch-enable timing problems (latched layouts only): data not stable
+    /// for at least one pixel before LE rises, while LE is high and one pixel
+    /// after LE falls, or two banks' LE high at once. At most a few are kept.
+    pub latch_violations: Vec<String>,
+    /// Total number of latch timing problems.
+    pub latch_violation_count: usize,
 }
 
 impl DecodedFrame {
-    /// Total timing violations across all outputs.
+    /// Total timing violations across all outputs (including latch timing).
     pub fn violation_count(&self) -> usize {
-        self.outputs.iter().map(|o| o.violation_count).sum()
+        self.outputs
+            .iter()
+            .map(|o| o.violation_count)
+            .sum::<usize>()
+            + self.latch_violation_count
     }
 
     /// Compare with the frame that was encoded. `capacity` is the geometry's
     /// pixels per output (longer outputs are expected to be truncated).
     /// Returns a description of the first difference.
     pub fn verify(&self, expected: &OutputFrameRef<'_>, capacity: usize) -> Result<(), String> {
+        if self.latch_violation_count > 0 {
+            return Err(format!(
+                "{} latch timing violation(s), first: {}",
+                self.latch_violation_count,
+                self.latch_violations
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("?")
+            ));
+        }
         for (i, got) in self.outputs.iter().enumerate() {
             if got.violation_count > 0 {
                 return Err(format!(
@@ -333,12 +353,79 @@ impl WsDecoder {
             &mut tracks,
         );
         let period = t;
+        let (latch_violations, latch_violation_count) = if latched {
+            self.check_latch_timing(fb, &data_masks, &le_masks)
+        } else {
+            (Vec::new(), 0)
+        };
         Ok(DecodedFrame {
             outputs: tracks
                 .into_iter()
                 .map(|tr| tr.finish(period, px_ns, &self.spec))
                 .collect(),
+            latch_violations,
+            latch_violation_count,
         })
+    }
+
+    /// Check every latch-enable pulse pixel by pixel (blanking included):
+    /// the bank's data lines must hold one value from the pixel before LE
+    /// rises (set-up) until the pixel after LE falls (hold), and no two LE
+    /// lines may be high together. With the 4-pixel slot this guarantees
+    /// ≥ 26 ns set-up and hold at the SN74AHCT573 at 38.4 MHz, and that a
+    /// bank never latches data meant for another bank.
+    fn check_latch_timing(
+        &self,
+        fb: &FrameBufferRef<'_>,
+        data_masks: &[u32],
+        le_masks: &[u32],
+    ) -> (Vec<String>, usize) {
+        let g = &self.geometry;
+        let width = g.hactive() as usize;
+        let htotal = g.htotal() as usize;
+        let any_le = le_masks.iter().fold(0, |m, &l| m | l);
+        let mut kept = Vec::new();
+        let mut count = 0usize;
+        let mut report = |y: usize, x: usize, msg: String| {
+            count += 1;
+            if kept.len() < MAX_VIOLATIONS_KEPT {
+                kept.push(format!("line {y} pixel {x}: {msg}"));
+            }
+        };
+        let mut prev = 0u32;
+        let vactive = g.vactive() as usize;
+        for y in 0..=vactive {
+            // The last "line" is vertical blanking: all zero.
+            let line: &[u32] = if y < vactive {
+                &fb.line(y)[..width]
+            } else {
+                &[]
+            };
+            let span = if y < vactive { htotal } else { 1 };
+            for x in 0..span {
+                let w = line.get(x).copied().unwrap_or(0);
+                if (w & any_le).count_ones() > 1 {
+                    report(
+                        y,
+                        x,
+                        format!("{} latch enables high at once", (w & any_le).count_ones()),
+                    );
+                }
+                for (&le, &dm) in le_masks.iter().zip(data_masks) {
+                    let (was, is) = (prev & le != 0, w & le != 0);
+                    if (was || is) && (prev & dm) != (w & dm) {
+                        let what = match (was, is) {
+                            (false, true) => "changes as LE rises (no set-up pixel)",
+                            (true, false) => "changes as LE falls (no hold pixel)",
+                            _ => "changes while LE is high",
+                        };
+                        report(y, x, format!("data {what}"));
+                    }
+                }
+                prev = w;
+            }
+        }
+        (kept, count)
     }
 }
 
@@ -397,6 +484,33 @@ mod tests {
             let t0 = out.t0h_ns.unwrap();
             assert!((t0.min - 312.5).abs() < 0.1 && (t0.max - 312.5).abs() < 0.1);
         }
+    }
+
+    #[test]
+    fn latch_hold_violation_is_detected() {
+        let layout = OutputLayout::for_board(BoardKind::Difftxlarge);
+        let geometry = DpiGeometry::for_pixels(2).unwrap();
+        let enc = WsEncoder::new(layout.clone(), geometry).unwrap();
+        let px = [0xFFu8; 3];
+        let frame = OutputFrameRef::new(vec![&px]);
+        let mut words = enc.encode_to_vec(&frame).unwrap();
+        let fb = FrameBufferRef::new(&words, 1152, geometry.vactive() as usize, 1152).unwrap();
+        let dec = WsDecoder::new(layout.clone(), geometry)
+            .decode(&fb)
+            .unwrap();
+        assert_eq!(dec.latch_violation_count, 0, "{:?}", dec.latch_violations);
+        // Bank 0's edge-0 slot is px 0..4 (data, data+LE, data+LE, data).
+        // Drop the hold pixel: data changes in the same pixel LE falls.
+        words[3] = 0;
+        let fb = FrameBufferRef::new(&words, 1152, geometry.vactive() as usize, 1152).unwrap();
+        let dec = WsDecoder::new(layout, geometry).decode(&fb).unwrap();
+        assert!(dec.latch_violation_count >= 1);
+        assert!(
+            dec.latch_violations[0].contains("no hold"),
+            "{:?}",
+            dec.latch_violations
+        );
+        assert!(dec.verify(&frame, 2).is_err());
     }
 
     #[test]

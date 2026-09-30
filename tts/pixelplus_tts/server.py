@@ -8,7 +8,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from . import __version__
+from . import __version__, prosody
 from .config import Config
 from .engine import Engine, ModelMissing
 from .pronounce import builtin_pronunciations
@@ -41,6 +41,7 @@ class App:
         return {"ok": True, "version": __version__, "modelLoaded": self.engine.loaded,
                 "modelAvailable": self.engine.available, "device": "cpu",
                 "modelVariant": self.engine.variant, "threads": self.engine.threads,
+                "prosody": prosody.backend(),
                 "idleUnloadMinutes": self.cfg.idle_minutes, "renders": self._renders, "queued": self._waiting,
                 "uptimeS": int(time.time() - self.started)}
 

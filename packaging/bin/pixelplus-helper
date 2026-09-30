@@ -12,28 +12,39 @@
 #   update                      apt-get update + upgrade the pixelplus package, restart
 #   ssh-on | ssh-off            enable / disable the SSH server
 #   reapply                     re-apply /boot/firmware/pixelplus.txt now
+#   wifi-country:<CC>           set the Wi-Fi regulatory country (two letters)
+#   hosts                       point /etc/hosts' 127.0.1.1 line at the current hostname
+#                               (pixelplusd changes the hostname itself via hostnamed)
 #
 # Progress/result is written to /run/pixelplus/helper-<verb>.json for the UI to poll:
 #   {"verb": "...", "state": "running|ok|failed", "message": "...", "updatedAt": <unix>}
+# /run/pixelplus is writable by the pixelplus user, so the file is written in a root-only
+# directory first and then renamed into place (rename never follows a planted symlink).
 set -euo pipefail
 
-readonly STATUS_DIR=/run/pixelplus
-readonly FIRSTBOOT=/usr/lib/pixelplus/firstboot/firstboot.py
+readonly STATUS_DIR="${PIXELPLUS_HELPER_STATUS_DIR:-/run/pixelplus}"
+readonly PRIVATE_DIR="${PIXELPLUS_HELPER_PRIVATE_DIR:-/run/pixelplus-helper}"
+readonly FIRSTBOOT="${PIXELPLUS_FIRSTBOOT:-/usr/lib/pixelplus/firstboot/firstboot.py}"
+readonly HOSTS_FILE="${PIXELPLUS_HOSTS_FILE:-/etc/hosts}"
 
 instance="${1:-}"
 IFS=':' read -r verb arg1 arg2 extra <<<"${instance}"
 extra="${extra:-}"
 
 status() {
-    local state="$1" msg="$2"
+    local state="$1" msg="$2" tmp
     mkdir -p "${STATUS_DIR}"
-    # message is escaped for JSON (backslashes and quotes; no control chars expected)
+    [[ -d "${PRIVATE_DIR}" ]] || mkdir -m 0700 "${PRIVATE_DIR}"
+    # message is escaped for JSON (backslashes, quotes; control characters become spaces)
     msg="${msg//\\/\\\\}"
     msg="${msg//\"/\\\"}"
+    msg="${msg//[$'\t\r\n']/ }"
+    tmp="$(mktemp "${PRIVATE_DIR}/helper-${verb}.XXXXXX")"
     printf '{"verb":"%s","state":"%s","message":"%s","updatedAt":%s}\n' \
-        "${verb}" "${state}" "${msg}" "$(date +%s)" >"${STATUS_DIR}/helper-${verb}.json.tmp"
-    chmod 0644 "${STATUS_DIR}/helper-${verb}.json.tmp"
-    mv -f "${STATUS_DIR}/helper-${verb}.json.tmp" "${STATUS_DIR}/helper-${verb}.json"
+        "${verb}" "${state}" "${msg}" "$(date +%s)" >"${tmp}"
+    chmod 0644 "${tmp}"
+    # same filesystem (/run): an atomic rename that replaces whatever is at the target name
+    mv -fT "${tmp}" "${STATUS_DIR}/helper-${verb}.json" || rm -f "${tmp}"
 }
 
 fail() {
@@ -87,8 +98,40 @@ ssh-on | ssh-off)
     ;;
 reapply)
     [[ -z "${arg1:-}" ]] || fail "reapply takes no arguments"
+    status running "Applying pixelplus.txt"
     /usr/bin/python3 "${FIRSTBOOT}" apply --force --no-reboot || fail "re-apply failed"
     status ok "pixelplus.txt applied"
+    ;;
+wifi-country)
+    [[ "${arg1:-}" =~ ^[A-Za-z]{2}$ ]] || fail "invalid Wi-Fi country (two letters, like US)"
+    [[ -z "${arg2:-}" ]] || fail "wifi-country takes one argument"
+    cc="${arg1^^}"
+    status running "Setting the Wi-Fi country to ${cc}"
+    if command -v raspi-config >/dev/null 2>&1; then
+        raspi-config nonint do_wifi_country "${cc}" || fail "Could not set the Wi-Fi country to ${cc}"
+    else
+        iw reg set "${cc}" || fail "Could not set the Wi-Fi country to ${cc}"
+        rfkill unblock wifi || true
+    fi
+    status ok "Wi-Fi country set to ${cc}"
+    ;;
+hosts)
+    [[ -z "${arg1:-}" ]] || fail "hosts takes no arguments"
+    name="$(hostnamectl --static 2>/dev/null || hostname)"
+    [[ "${name}" =~ ^[A-Za-z0-9-]{1,63}$ ]] || fail "unexpected hostname '${name}'"
+    tmp_hosts="$(mktemp "${HOSTS_FILE}.pixelplus.XXXXXX")"
+    if [[ -f "${HOSTS_FILE}" ]]; then
+        grep -Ev '^[[:space:]]*127\.0\.1\.1[[:space:]]' "${HOSTS_FILE}" >"${tmp_hosts}" || true
+    fi
+    printf '127.0.1.1\t%s\n' "${name}" >>"${tmp_hosts}"
+    chmod 0644 "${tmp_hosts}"
+    mv -f "${tmp_hosts}" "${HOSTS_FILE}"
+    # cloud-init (Trixie images) would reset the hostname at the next boot otherwise
+    if [[ -d /etc/cloud/cloud.cfg.d && -z "${PIXELPLUS_HOSTS_FILE:-}" ]]; then
+        printf '# Written by PixelPlus: hostname is managed by pixelplus.txt / the PixelPlus UI\npreserve_hostname: true\n' \
+            >/etc/cloud/cloud.cfg.d/99-pixelplus-hostname.cfg
+    fi
+    status ok "/etc/hosts points at ${name}"
     ;;
 *)
     fail "unknown verb '${verb}'"

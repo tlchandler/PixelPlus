@@ -1,29 +1,34 @@
 [Unit]
-Description=PixelPlus games (play NES games on a matrix prop from a phone)
+Description=PixelPlus games sidecar (NES games on a matrix prop, phone as gamepad)
 Documentation=file:///usr/lib/pixelplus/games/README.md
 After=network.target sound.target pixelplusd.service
+PartOf=pixelplusd.service
+# Code is shipped by the pixelplus package (from games/); the emulator core by the
+# libretro-nestopia package (installed on PixelPlus images).
+ConditionPathExists=/usr/lib/pixelplus/games/pixelplus_games/__main__.py
 
 [Service]
 Type=simple
-# install.sh rewrites these two lines if it installs somewhere else.
+User=pixelplus
+Group=pixelplus
 WorkingDirectory=/usr/lib/pixelplus/games
 ExecStart=/usr/bin/python3 -m pixelplus_games
 Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
+Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock
 Environment=PYTHONUNBUFFERED=1
-# The control socket pixelplusd proxies /api/v1/games/* to. Kept when this service stops
-# so pixelplusd's own use of /run/pixelplus is not disturbed.
-RuntimeDirectory=pixelplus
-RuntimeDirectoryPreserve=yes
+EnvironmentFile=-/etc/default/pixelplus
 Restart=on-failure
 RestartSec=3
-# The emulator must finish every frame in under 16.7 ms.
+# The emulator must finish every frame in under 16.7 ms (nice is set before the
+# switch to the pixelplus user, so no extra capability is needed).
 Nice=-5
-# Hardening. The overlay buffer (/dev/shm) and the sound card (/dev/snd) stay reachable.
+# Hardening. The overlay buffer (/dev/shm) and the sound card (/dev/snd, audio group)
+# stay reachable; /run/pixelplus is created by tmpfiles.d (0775 root:pixelplus).
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=-/var/lib/pixelplus/games
+ReadWritePaths=-/var/lib/pixelplus/games -/run/pixelplus
 
 [Install]
 WantedBy=multi-user.target

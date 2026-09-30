@@ -1,7 +1,15 @@
 import { api, ApiError, setUnauthorizedHandler } from '$lib/api/client';
 import { initBackend } from '$lib/api/mode';
 import { openSocket, parsePreviewFrame, type SocketLike } from '$lib/api/socket';
-import type { LogLine, NodeStatus, PlayerStatus, Sensor, Show, SystemInfo } from '$lib/api/types';
+import type {
+	HelperStatus,
+	LogLine,
+	NodeStatus,
+	PlayerStatus,
+	Sensor,
+	Show,
+	SystemInfo
+} from '$lib/api/types';
 import { toasts } from './toasts.svelte';
 
 type PreviewCb = (rgb: Uint8Array, frameNo: number) => void;
@@ -21,6 +29,8 @@ class AppState {
 	nodes = $state<NodeStatus[]>([]);
 	sensors = $state<Sensor[]>([]);
 	logs = $state<LogLine[]>([]);
+	/** Root helper jobs by verb (boot settings, updates, SSH…), from `helper` messages. */
+	helpers = $state<Record<string, HelperStatus>>({});
 
 	#ws: SocketLike | null = null;
 	#retry = 0;
@@ -183,6 +193,13 @@ class AppState {
 				break;
 			case 'toast':
 				toasts.push({ kind: msg.data.kind, message: msg.data.message });
+				break;
+			case 'helper':
+				if (msg.data?.verb) this.helpers = { ...this.helpers, [msg.data.verb]: msg.data };
+				break;
+			case 'system':
+				// e.g. settings from pixelplus.txt were applied (role, board, password)
+				this.loadSystem().catch(() => {});
 				break;
 		}
 	}

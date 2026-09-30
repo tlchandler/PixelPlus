@@ -1141,3 +1141,71 @@ mod tests {
         assert_eq!(show["name"], "Renamed");
     }
 }
+
+#[cfg(test)]
+mod platform_api_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn public_health_is_open_and_cheap() {
+        let mut app = TestApp::new();
+        let (s, h) = app.json("GET", "/public/health", None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(h["ok"], true);
+        assert_eq!(h["role"], "unconfigured");
+        assert_eq!(h["version"], env!("CARGO_PKG_VERSION"));
+        // Still open once a password protects everything else.
+        app.state
+            .store
+            .update(|s| {
+                s.settings.security.password_hash =
+                    Some(crate::api::auth::hash_password("jingle").unwrap());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        app.cookie = None;
+        assert_eq!(
+            app.json("GET", "/show", None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.json("GET", "/public/health", None).await.0,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn platform_endpoints_degrade_gracefully() {
+        let app = TestApp::new();
+        let (s, v) = app.json("GET", "/system/helpers", None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v, json!([]));
+        let (s, g) = app.json("GET", "/system/output-geometry", None).await;
+        assert_eq!(s, StatusCode::OK, "{g}");
+        assert!(g["ok"].is_boolean());
+        // Nothing to apply when the strings fit.
+        if g["ok"] == true {
+            let (s, _) = app
+                .json("POST", "/system/output-geometry/apply", Some(json!({})))
+                .await;
+            assert_eq!(s, StatusCode::CONFLICT);
+        }
+        let (s, ssh) = app.json("GET", "/system/ssh", None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(ssh.get("canChange").is_some());
+        let (s, n) = app.json("GET", "/system/network", None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(n.get("netwatch").is_some(), "{n}");
+        let (s, info) = app.json("GET", "/system", None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(info["platform"]["helper"].is_boolean());
+        assert!(info["outputGeometry"]["ok"].is_boolean());
+        // Invalid helper arguments never reach systemctl.
+        let (s, _) = app
+            .json("PUT", "/system/ssh", Some(json!({"enabled": "yes"})))
+            .await;
+        assert!(s.is_client_error());
+    }
+}

@@ -133,6 +133,10 @@ struct Resolver<'m, 'a, 'i> {
 
 impl Resolver<'_, '_, '_> {
     /// 1-based absolute start channel of model `i`.
+    ///
+    /// Resolution is iterative: xLights' default for a new model is `>Previous:1`, so
+    /// real layouts contain chains thousands of models long, which must not grow the
+    /// call stack.
     fn start(&mut self, i: usize) -> Option<u32> {
         match self.state[i] {
             Resolve::Done(v) => return v,
@@ -146,13 +150,39 @@ impl Resolver<'_, '_, '_> {
             Resolve::Pending => {}
         }
         self.state[i] = Resolve::Visiting;
-        let expr = Attrs(self.models[i].node)
+        let mut stack = vec![i];
+        while let Some(&top) = stack.last() {
+            if let Some(dep) = self.dependency(top) {
+                if self.state[dep] == Resolve::Pending {
+                    self.state[dep] = Resolve::Visiting;
+                    stack.push(dep);
+                    continue;
+                }
+            }
+            let expr = self.start_expr(top);
+            let v = self.eval(top, &expr);
+            self.state[top] = Resolve::Done(v);
+            stack.pop();
+        }
+        match self.state[i] {
+            Resolve::Done(v) => v,
+            _ => None,
+        }
+    }
+
+    fn start_expr(&self, i: usize) -> String {
+        Attrs(self.models[i].node)
             .str("StartChannel")
             .unwrap_or("1")
-            .to_string();
-        let v = self.eval(i, &expr);
-        self.state[i] = Resolve::Done(v);
-        v
+            .to_string()
+    }
+
+    /// The model whose start channel model `i`'s start channel is relative to.
+    fn dependency(&self, i: usize) -> Option<usize> {
+        let expr = Attrs(self.models[i].node).str("StartChannel")?;
+        let (head, _) = expr.trim().split_once(':')?;
+        let other = head.strip_prefix(['@', '<', '>'])?.trim();
+        self.by_name.get(other).copied().filter(|&j| j != i)
     }
 
     fn eval(&mut self, self_idx: usize, expr: &str) -> Option<u32> {
@@ -241,6 +271,103 @@ impl Resolver<'_, '_, '_> {
             Err(_) => fail(&mut self.warnings, "channel number is too large".into()),
         }
     }
+}
+
+/// Deepest element nesting accepted in xLights files (real files nest about 5 deep).
+/// The XML parser recurses per level, so a hostile, deeply nested upload would
+/// otherwise overflow the stack and abort the whole daemon.
+pub(crate) const MAX_XML_DEPTH: usize = 256;
+
+/// Parse an xLights XML file (DTDs allowed, nesting bounded by [`MAX_XML_DEPTH`]).
+pub(crate) fn parse_xml(text: &str) -> Result<Document<'_>, XmlError> {
+    if xml_depth_exceeds(text.as_bytes(), MAX_XML_DEPTH) {
+        return Err(XmlError::TooDeep);
+    }
+    Document::parse_with_options(
+        text,
+        roxmltree::ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        },
+    )
+    .map_err(XmlError::Xml)
+}
+
+/// Why an xLights XML file could not be parsed.
+#[derive(Debug)]
+pub(crate) enum XmlError {
+    Xml(roxmltree::Error),
+    TooDeep,
+}
+
+impl std::fmt::Display for XmlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            XmlError::Xml(e) => e.fmt(f),
+            XmlError::TooDeep => write!(f, "elements are nested more than {MAX_XML_DEPTH} levels deep"),
+        }
+    }
+}
+
+/// Conservative linear scan: does element nesting exceed `limit`? Skips comments,
+/// CDATA, processing instructions and declarations, and honours quoted attribute
+/// values, so it never undercounts the depth the XML parser will see.
+fn xml_depth_exceeds(b: &[u8], limit: usize) -> bool {
+    let find = |from: usize, pat: &[u8]| -> usize {
+        b[from.min(b.len())..]
+            .windows(pat.len())
+            .position(|w| w == pat)
+            .map_or(b.len(), |p| from + p + pat.len())
+    };
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let rest = &b[i..];
+        if rest.starts_with(b"<!--") {
+            i = find(i + 4, b"-->");
+        } else if rest.starts_with(b"<![CDATA[") {
+            i = find(i + 9, b"]]>");
+        } else if rest.starts_with(b"<?") {
+            i = find(i + 2, b"?>");
+        } else if rest.starts_with(b"<!") {
+            // DOCTYPE and its internal subset: entries are `<!...>` declarations.
+            i = find(i + 2, b">");
+        } else if rest.starts_with(b"</") {
+            depth = depth.saturating_sub(1);
+            i = find(i + 2, b">");
+        } else {
+            // Start tag: find its end, honouring quotes; `/>` closes it immediately.
+            let mut j = i + 1;
+            let mut quote = 0u8;
+            let mut self_closing = false;
+            while j < b.len() {
+                let c = b[j];
+                if quote != 0 {
+                    if c == quote {
+                        quote = 0;
+                    }
+                } else if c == b'"' || c == b'\'' {
+                    quote = c;
+                } else if c == b'>' {
+                    self_closing = b[j - 1] == b'/';
+                    break;
+                }
+                j += 1;
+            }
+            if !self_closing {
+                depth += 1;
+                if depth > limit {
+                    return true;
+                }
+            }
+            i = j + 1;
+        }
+    }
+    false
 }
 
 /// Clamp a parsed integer into `u32`.
@@ -380,14 +507,7 @@ pub fn import_preview(
         ),
         _ => None,
     };
-    let doc = Document::parse_with_options(
-        rgbeffects_xml,
-        roxmltree::ParsingOptions {
-            allow_dtd: true,
-            ..Default::default()
-        },
-    )
-    .map_err(|e| ImportError::RgbEffectsXml(e.to_string()))?;
+    let doc = parse_xml(rgbeffects_xml).map_err(|e| ImportError::RgbEffectsXml(e.to_string()))?;
     let root = doc.root_element();
     let models_el = root
         .children()
@@ -589,7 +709,9 @@ pub fn import_preview(
         let starts_1: Vec<u32> = match &m.shape.string_start_nodes {
             Some(v) if v.len() == strings as usize => v.clone(),
             _ => (0..strings)
-                .map(|s| (s as f64 * n as f64 / strings as f64) as u32 + 1)
+                // xLights' ComputeStringStartNode, in single precision like xLights
+                // (the rounding decides which pixel starts the next string).
+                .map(|s| (s as f32 * (n as f32 / strings as f32) + 1.0) as u32)
                 .collect(),
         };
         let mut non_contiguous = false;
@@ -790,6 +912,7 @@ fn parse_groups(
     let mut out = Vec::new();
     for (gi, (name, _, color)) in defs.iter().enumerate() {
         let mut members: Vec<usize> = Vec::new();
+        let mut member_set: HashSet<usize> = HashSet::new();
         let mut stack = vec![gi];
         let mut visited = HashSet::new();
         while let Some(g) = stack.pop() {
@@ -798,7 +921,7 @@ fn parse_groups(
             }
             for m in &defs[g].1 {
                 if let Some(&pi) = prop_by_name.get(m) {
-                    if !members.contains(&pi) {
+                    if member_set.insert(pi) {
                         members.push(pi);
                     }
                 } else if let Some(&sub) = by_name.get(m.as_str()) {
@@ -1107,6 +1230,62 @@ mod tests {
         }
         let s = apply_import(&Show::default(), &p, &BTreeMap::new());
         assert_eq!(s.props.len(), p.props.len());
+    }
+
+    #[test]
+    fn long_start_channel_chains_do_not_recurse() {
+        // xLights defaults new models to ">Previous:1", so chains of thousands of
+        // models are normal. Resolving them used to recurse once per link.
+        // Listed last-first, so resolving the first model walks the whole chain.
+        let mut xml = String::from("<xrgb><models>");
+        let n = 20_000;
+        for i in (1..n).rev() {
+            xml.push_str(&format!(
+                r#"<model name="M{i}" DisplayAs="Single Line" parm1="1" parm2="2" StartChannel="&gt;M{}:1"/>"#,
+                i - 1
+            ));
+        }
+        xml.push_str(r#"<model name="M0" DisplayAs="Single Line" parm1="1" parm2="2" StartChannel="1"/>"#);
+        xml.push_str("</models></xrgb>");
+        let p = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || import_preview(&xml, None, &Show::default()).unwrap())
+            .unwrap()
+            .join()
+            .expect("import must not overflow the stack");
+        assert_eq!(p.props.len(), n);
+        let last = p.props.iter().find(|p| p.name == format!("M{}", n - 1)).unwrap();
+        assert_eq!(last.channel_start, 6 * (n as u32 - 1));
+    }
+
+    #[test]
+    fn chaining_after_labels_and_uneven_string_splits_match_xlights() {
+        let xml = r#"<xrgb><models>
+          <model name="Label" DisplayAs="Label" StringType="RGB Nodes" StartChannel="1"/>
+          <model name="After" DisplayAs="Single Line" NumStrings="1" NodesPerString="4" StartChannel="&gt;Label:1"/>
+          <model name="Poly" DisplayAs="Poly Line" NodesPerString="62" PolyStrings="14" DropPattern="1" NumPoints="2" PointData="0,0,0,10,0,0" StartChannel="100" Controller="C">
+            <ControllerConnection Port="1" Protocol="WS2811"/></model>
+        </models></xrgb>"#;
+        let p = import_preview(xml, None, &Show::default()).unwrap();
+        let get = |n: &str| p.props.iter().find(|p| p.name == n).unwrap();
+        // A label is one RGB node: the next model starts on channel 4.
+        assert_eq!(get("After").channel_start, 3);
+        // String 8 of 62 nodes over 14 strings starts at node 31 in xLights'
+        // single-precision ComputeStringStartNode (not 32).
+        let poly = get("Poly");
+        assert_eq!(poly.pixel_count, 62);
+        let s8 = poly.segments.iter().find(|s| s.output == 8).unwrap();
+        assert_eq!(s8.prop_offset, 30);
+    }
+
+    #[test]
+    fn xml_depth_scan() {
+        let ok = br#"<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><a><!-- <b><c> --><b x="1>2" y='/>'><![CDATA[<d><e>]]><c/></b></a>"#;
+        assert!(!xml_depth_exceeds(ok, 2));
+        assert!(xml_depth_exceeds(ok, 1));
+        let deep = format!("<a>{}</a>", "<b>".repeat(300));
+        assert!(xml_depth_exceeds(deep.as_bytes(), MAX_XML_DEPTH));
+        assert!(!xml_depth_exceeds(include_bytes!("../testdata/xlights_2025_rgbeffects.xml"), 8));
     }
 
     #[test]

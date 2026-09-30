@@ -9,8 +9,9 @@
 //! u32 (width, height, flags) + width×height×bpp bytes, row-major from the
 //! top-left. Flags bit 0 = "new frame" (set by the writer, cleared by us after
 //! copying); bits 8–15 = bytes per pixel (0 means 3; 4 is accepted, the 4th
-//! byte is ignored). The file is created mode 0666 so the games sidecar can
-//! write it whatever user it runs as.
+//! byte is ignored). The file is created mode 0660: the games sidecar runs as
+//! the same `pixelplus` service user (or a member of its group) - see
+//! packaging/systemd/pixelplus-games.service and docker/docker-compose.yml.
 
 use super::OverlayInfo;
 use pixelplus_core::effects::Rgb;
@@ -326,12 +327,23 @@ pub fn parse_color(s: &str) -> Rgb {
     Rgb::from_hex(s.trim()).unwrap_or(Rgb::WHITE)
 }
 
+/// Overlay buffers: read/write for the `pixelplus` user and group only.
+const SHM_MODE: u32 = 0o660;
+
 fn create_shm(path: &Path, w: u32, h: u32) -> std::io::Result<Shm> {
-    use std::os::unix::fs::{FileExt, PermissionsExt};
+    use std::os::unix::fs::{FileExt, OpenOptionsExt, PermissionsExt};
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
+    // /dev/shm is world-writable: never follow a link planted at our name.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(SHM_MODE)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
     // Room for 4 bytes per pixel so either pixel format fits.
     let len = (SHM_HEADER + w as usize * h as usize * 4) as u64;
     if file.metadata()?.len() < len {
@@ -342,7 +354,8 @@ fn create_shm(path: &Path, w: u32, h: u32) -> std::io::Result<Shm> {
     header[4..8].copy_from_slice(&h.to_ne_bytes());
     header[8..12].copy_from_slice(&0u32.to_ne_bytes());
     file.write_all_at(&header, 0)?;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666));
+    // Also fixes files left by older versions (0666) - by descriptor, not by path.
+    let _ = file.set_permissions(std::fs::Permissions::from_mode(SHM_MODE));
     Ok(Shm { file, path: path.to_path_buf() })
 }
 
@@ -425,7 +438,7 @@ mod tests {
         let path = PathBuf::from(&info.shm);
         let meta = std::fs::metadata(&path).unwrap();
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(meta.permissions().mode() & 0o777, 0o666);
+        assert_eq!(meta.permissions().mode() & 0o777, 0o660);
         let f = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
         let mut hdr = [0u8; 12];
         f.read_exact_at(&mut hdr, 0).unwrap();

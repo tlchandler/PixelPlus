@@ -96,8 +96,15 @@ if [ "$SRC" != "$PREFIX/src" ]; then
   rm -rf "$PREFIX/src"; mkdir -p "$PREFIX/src"
   cp -r "$SRC/pixelplus_tts" "$SRC/pyproject.toml" "$SRC/README.md" "$SRC/requirements.txt" "$PREFIX/src/"
 fi
-"$VPY" -m pip install -q --upgrade "$PREFIX/src$EXTRA"
-"$VPY" -c 'import pixelplus_tts, kokoro_onnx, onnxruntime, parselmouth; print("pixelplus-tts", pixelplus_tts.__version__, "onnxruntime", onnxruntime.__version__)'
+# Binary wheels for the heavy packages: compiling onnxruntime on a Pi takes hours.
+"$VPY" -m pip install -q --upgrade --prefer-binary "$PREFIX/src$EXTRA"
+# Optional Praat PSOLA prosody: wheels exist for x86_64 (and macOS), not for Linux aarch64.
+if "$VPY" -m pip install -q --only-binary=:all: "praat-parselmouth>=0.4.3" 2>/dev/null; then
+  log "praat-parselmouth installed (PSOLA energy prosody)"
+else
+  log "no praat-parselmouth wheel for this platform; using the built-in energy prosody"
+fi
+"$VPY" -c 'import pixelplus_tts, kokoro_onnx, onnxruntime; from pixelplus_tts import prosody; print("pixelplus-tts", pixelplus_tts.__version__, "onnxruntime", onnxruntime.__version__, "prosody", prosody.backend())'
 
 # --- models ------------------------------------------------------------------------
 MODELS_DIR="$DATA_DIR/tts/models"

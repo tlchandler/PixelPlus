@@ -2384,8 +2384,13 @@ fn dummy_node() -> pixelplus_core::model::Node {
     }
 }
 
-/// This node's board: from the show, the setup wizard, or the platform.
+/// This node's board: PIXELPLUS_BOARD, the show, the setup wizard, or the platform.
 fn board_for(show: &Show, node_id: &str, identity_board: Option<BoardKind>, is_pi: bool) -> BoardKind {
+    // PIXELPLUS_BOARD (e.g. `virtual` in Docker) overrides everything, as in
+    // services::system::effective_board.
+    if let Some(b) = crate::services::system::board_override() {
+        return b;
+    }
     show.node(node_id)
         .map(|n| n.board)
         .or(identity_board)

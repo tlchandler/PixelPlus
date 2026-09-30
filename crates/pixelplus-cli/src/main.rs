@@ -88,7 +88,7 @@ fn main() -> ExitCode {
         Command::Eeprom(c) => cmd::eeprom::run(&ctx, c, json),
         Command::Detect => cmd::detect::run(&ctx, json),
         Command::TestOutput(a) => cmd::test_output::run(&ctx, a, json),
-        Command::ConfigTxt(a) => cmd::config_txt::run(a),
+        Command::ConfigTxt(a) => cmd::config_txt::run(&ctx, a),
         Command::Status(a) => cmd::status::run(a, json),
         Command::Doctor(a) => cmd::doctor::run(&ctx, a, json),
         Command::Pins(a) => cmd::pins::run(&ctx, a),
@@ -96,16 +96,66 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            anstream::eprintln!("{} {e:#}", style::paint(style::FAIL, "error:"));
+            anstream::eprintln!(
+                "{} {}",
+                style::paint(style::FAIL, "error:"),
+                error_chain(&e)
+            );
             ExitCode::FAILURE
         }
     }
+}
+
+/// `a: b: c` like `{:#}`, but without repeating a cause whose text the previous
+/// message already ends with (hardware errors embed their OS error).
+pub fn error_chain(e: &anyhow::Error) -> String {
+    let mut out = String::new();
+    for cause in e.chain() {
+        let text = cause.to_string();
+        if out.ends_with(&text) {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str(": ");
+        }
+        out.push_str(&text);
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn error_chain_skips_repeats() {
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "No such file");
+        let e = anyhow::Error::new(io).context("opening /dev/i2c-1: No such file");
+        assert_eq!(error_chain(&e), "opening /dev/i2c-1: No such file");
+        let e = anyhow::anyhow!("inner").context("outer");
+        assert_eq!(error_chain(&e), "outer: inner");
+    }
+
+    /// firstboot (image/firstboot/firstboot.py) runs exactly these command lines.
+    #[test]
+    fn firstboot_contract_parses() {
+        for argv in [
+            vec!["pixelplus", "--json", "detect"],
+            vec!["pixelplus", "config-txt", "--board", "difftxlarge"],
+            vec![
+                "pixelplus",
+                "config-txt",
+                "--board",
+                "bare-pi",
+                "--pixels",
+                "1600",
+            ],
+            vec!["pixelplus", "pins", "release"],
+        ] {
+            Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+        }
+    }
 
     #[test]
     fn cli_definition_is_valid() {

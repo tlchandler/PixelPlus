@@ -13,11 +13,13 @@ dependencies = [
   "kokoro-onnx>=0.4.9,<0.7",
   "onnxruntime>=1.17",
   "numpy>=1.24",
-  "praat-parselmouth>=0.4.3",
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+# Praat PSOLA energy/hype prosody. No Linux aarch64 wheels exist (Raspberry Pi): there the
+# built-in fallback (pixelplus_tts/prosody.py) is used instead.
+psola = ["praat-parselmouth>=0.4.3"]
 # bundled ffmpeg for systems without one (Windows/Mac dev); Pi OS and Docker use apt's ffmpeg
 bundled-ffmpeg = ["imageio-ffmpeg>=0.4.9"]
 
