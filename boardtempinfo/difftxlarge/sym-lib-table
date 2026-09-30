@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "difftxlarge")(type "KiCad")(uri "${KIPRJMOD}/difftxlarge.kicad_sym")(options "")(descr "Project symbols"))
+)

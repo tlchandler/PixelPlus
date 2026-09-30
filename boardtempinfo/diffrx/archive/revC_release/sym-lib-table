@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "diffrx")(type "KiCad")(uri "${KIPRJMOD}/diffrx.kicad_sym")(options "")(descr "Project symbols"))
+)

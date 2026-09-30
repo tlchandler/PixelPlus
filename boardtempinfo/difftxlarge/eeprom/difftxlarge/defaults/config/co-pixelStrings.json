@@ -1,0 +1,1216 @@
+{
+    "channelOutputs": [
+        {
+            "type": "DPIPixels",
+            "subType": "difftxlarge",
+            "pinoutVersion": "1.x",
+            "enabled": 1,
+            "startChannel": 1,
+            "channelCount": -1,
+            "outputCount": 60,
+            "pixelTiming": 0,
+            "outputs": [
+                {
+                    "portNumber": 0,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J1-1",
+                            "startChannel": 0,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 1,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J1-2",
+                            "startChannel": 150,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 2,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J1-3",
+                            "startChannel": 300,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 3,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J1-4",
+                            "startChannel": 450,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 4,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J2-1",
+                            "startChannel": 600,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 5,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J2-2",
+                            "startChannel": 750,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 6,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J2-3",
+                            "startChannel": 900,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 7,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J2-4",
+                            "startChannel": 1050,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 8,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J3-1",
+                            "startChannel": 1200,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 9,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J3-2",
+                            "startChannel": 1350,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 10,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J3-3",
+                            "startChannel": 1500,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 11,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J3-4",
+                            "startChannel": 1650,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 12,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J4-1",
+                            "startChannel": 1800,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 13,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J4-2",
+                            "startChannel": 1950,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 14,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J4-3",
+                            "startChannel": 2100,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 15,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J4-4",
+                            "startChannel": 2250,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 16,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J5-1",
+                            "startChannel": 2400,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 17,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J5-2",
+                            "startChannel": 2550,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 18,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J5-3",
+                            "startChannel": 2700,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 19,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J5-4",
+                            "startChannel": 2850,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 20,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J6-1",
+                            "startChannel": 3000,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 21,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J6-2",
+                            "startChannel": 3150,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 22,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J6-3",
+                            "startChannel": 3300,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 23,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J6-4",
+                            "startChannel": 3450,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 24,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J7-1",
+                            "startChannel": 3600,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 25,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J7-2",
+                            "startChannel": 3750,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 26,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J7-3",
+                            "startChannel": 3900,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 27,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J7-4",
+                            "startChannel": 4050,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 28,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J8-1",
+                            "startChannel": 4200,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 29,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J8-2",
+                            "startChannel": 4350,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 30,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J8-3",
+                            "startChannel": 4500,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 31,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J8-4",
+                            "startChannel": 4650,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 32,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J9-1",
+                            "startChannel": 4800,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 33,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J9-2",
+                            "startChannel": 4950,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 34,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J9-3",
+                            "startChannel": 5100,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 35,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J9-4",
+                            "startChannel": 5250,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 36,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J10-1",
+                            "startChannel": 5400,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 37,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J10-2",
+                            "startChannel": 5550,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 38,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J10-3",
+                            "startChannel": 5700,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 39,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J10-4",
+                            "startChannel": 5850,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 40,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J11-1",
+                            "startChannel": 6000,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 41,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J11-2",
+                            "startChannel": 6150,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 42,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J11-3",
+                            "startChannel": 6300,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 43,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J11-4",
+                            "startChannel": 6450,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 44,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J12-1",
+                            "startChannel": 6600,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 45,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J12-2",
+                            "startChannel": 6750,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 46,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J12-3",
+                            "startChannel": 6900,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 47,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J12-4",
+                            "startChannel": 7050,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 48,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J13-1",
+                            "startChannel": 7200,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 49,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J13-2",
+                            "startChannel": 7350,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 50,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J13-3",
+                            "startChannel": 7500,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 51,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J13-4",
+                            "startChannel": 7650,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 52,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J14-1",
+                            "startChannel": 7800,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 53,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J14-2",
+                            "startChannel": 7950,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 54,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J14-3",
+                            "startChannel": 8100,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 55,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J14-4",
+                            "startChannel": 8250,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 56,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J15-1",
+                            "startChannel": 8400,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 57,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J15-2",
+                            "startChannel": 8550,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 58,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J15-3",
+                            "startChannel": 8700,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 59,
+                    "protocol": "ws2811",
+                    "differentialType": 0,
+                    "virtualStrings": [
+                        {
+                            "description": "J15-4",
+                            "startChannel": 8850,
+                            "pixelCount": 50,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

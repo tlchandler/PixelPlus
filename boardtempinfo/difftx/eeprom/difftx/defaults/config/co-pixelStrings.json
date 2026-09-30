@@ -1,0 +1,92 @@
+{
+    "channelOutputs": [
+        {
+            "type": "DPIPixels",
+            "subType": "difftx",
+            "pinoutVersion": "1.x",
+            "enabled": 1,
+            "startChannel": 1,
+            "channelCount": -1,
+            "outputCount": 4,
+            "pixelTiming": 0,
+            "outputs": [
+                {
+                    "portNumber": 0,
+                    "protocol": "ws2811",
+                    "virtualStrings": [
+                        {
+                            "description": "Port 1",
+                            "startChannel": 0,
+                            "pixelCount": 400,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 1,
+                    "protocol": "ws2811",
+                    "virtualStrings": [
+                        {
+                            "description": "Port 2",
+                            "startChannel": 1200,
+                            "pixelCount": 400,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 2,
+                    "protocol": "ws2811",
+                    "virtualStrings": [
+                        {
+                            "description": "Port 3",
+                            "startChannel": 2400,
+                            "pixelCount": 400,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                },
+                {
+                    "portNumber": 3,
+                    "protocol": "ws2811",
+                    "virtualStrings": [
+                        {
+                            "description": "Port 4",
+                            "startChannel": 3600,
+                            "pixelCount": 400,
+                            "groupCount": 1,
+                            "reverse": 0,
+                            "colorOrder": "RGB",
+                            "nullNodes": 0,
+                            "endNulls": 0,
+                            "zigZag": 0,
+                            "brightness": 100,
+                            "gamma": "1.0"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

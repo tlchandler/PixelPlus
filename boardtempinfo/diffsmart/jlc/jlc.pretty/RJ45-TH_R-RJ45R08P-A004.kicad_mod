@@ -1,0 +1,325 @@
+(footprint "RJ45-TH_R-RJ45R08P-A004"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(property "Reference" "J14"
+		(at 0 -4.89 0)
+		(layer "F.SilkS")
+		(uuid "200cfe23-052f-4942-aefb-941af032f9ed")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "R-RJ45R08P-A004"
+		(at 0 4.89 0)
+		(layer "F.Fab")
+		(uuid "668923b4-9f03-49d1-a463-b6ba1bfd1433")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" "https://www.lcsc.com/datasheet/C385834.pdf"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "6ae9ef04-cdc8-4bf0-8c13-8cdad320d232")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" "RJ45 8P8C jack, right angle, unshielded. Falcon differential pinout: port1 = 1/2, port2 = 3/6, port3 = 4/5, port4 = 7/8"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "65435c6d-07fa-4b5c-bd81-66d048bf37c1")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC Part" "C385834"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "0446c83e-e783-4034-8664-3854c5945dc3")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC" "C385834"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "a8a5e777-d1e4-4922-ada1-fa5bc898760e")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr through_hole)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_circle
+		(center -6.35 3.43)
+		(end -5.55 3.43)
+		(stroke
+			(width 1.6)
+			(type solid)
+		)
+		(fill no)
+		(layer "Cmts.User")
+		(uuid "bb34bdf2-076b-4865-9c65-c10bb824c92a")
+	)
+	(fp_circle
+		(center 6.35 3.43)
+		(end 7.15 3.43)
+		(stroke
+			(width 1.6)
+			(type solid)
+		)
+		(fill no)
+		(layer "Cmts.User")
+		(uuid "a394b0c2-2014-4aca-9545-a1db9afc1ba7")
+	)
+	(fp_line
+		(start -8 -6.53)
+		(end 8 -6.53)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "13501d51-7e39-4300-85ec-f7aa80295417")
+	)
+	(fp_line
+		(start -8 8.62)
+		(end -8 -6.53)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "87cf9fc0-24c7-4704-8b1e-1262a2a97417")
+	)
+	(fp_line
+		(start 8 -6.53)
+		(end 8 8.62)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "8588561f-b78f-4a42-838f-53f3482a7cf0")
+	)
+	(fp_line
+		(start 8 8.62)
+		(end -8 8.62)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "c6880238-a870-439b-a01c-7fa5ddf1355a")
+	)
+	(fp_circle
+		(center -3.57 -0.89)
+		(end -3.45 -0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "a32aa50e-d49c-4640-bb3a-8d6b65e96d29")
+	)
+	(fp_circle
+		(center -2.55 0.89)
+		(end -2.42 0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "b61d87d5-1559-4fd2-a756-81c40d4216b0")
+	)
+	(fp_circle
+		(center -1.53 -0.89)
+		(end -1.41 -0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "8a170d2d-0dce-41a4-ab8d-a6f1ff4bc5e6")
+	)
+	(fp_circle
+		(center -0.51 0.89)
+		(end -0.39 0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "aae158e5-6e92-445b-8b74-c88776c6ae1c")
+	)
+	(fp_circle
+		(center 0.51 -0.89)
+		(end 0.64 -0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "668f8a63-4c15-491e-a824-a7ebb2bfb42c")
+	)
+	(fp_circle
+		(center 1.53 0.89)
+		(end 1.66 0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "d4f026a1-582f-4886-b24f-75ef7063b4cd")
+	)
+	(fp_circle
+		(center 2.55 -0.89)
+		(end 2.67 -0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "78c5a70c-6545-40e6-a1d2-234a159e8c78")
+	)
+	(fp_circle
+		(center 3.57 0.89)
+		(end 3.69 0.89)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "a3d825e7-7d6c-42a5-aaee-870603192018")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "204d45f9-bd87-401f-a19f-1312319eada7")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "" np_thru_hole circle
+		(at -6.35 3.43)
+		(size 3.4 3.4)
+		(drill 3.4)
+		(layers "*.Cu" "*.Mask")
+		(uuid "db6daf70-3b2a-4dfb-8ed3-360b0b807f05")
+	)
+	(pad "" np_thru_hole circle
+		(at 6.35 3.43)
+		(size 3.4 3.4)
+		(drill 3.4)
+		(layers "*.Cu" "*.Mask")
+		(uuid "1f37a989-914c-4f18-a203-9ae947c76b8a")
+	)
+	(pad "1" thru_hole circle
+		(at 3.57 0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "4700f5a1-6936-4c41-8c6b-7ad560cb61ac")
+	)
+	(pad "2" thru_hole circle
+		(at 2.55 -0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "c83a48e2-fe98-4e40-ad02-f17156a16aa0")
+	)
+	(pad "3" thru_hole circle
+		(at 1.53 0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "b6f809ea-695d-4214-9317-bc5472fc840c")
+	)
+	(pad "4" thru_hole circle
+		(at 0.51 -0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "e88909ea-a2c8-4b05-9f80-b1434aaa405f")
+	)
+	(pad "5" thru_hole circle
+		(at -0.51 0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "7a030bfa-5132-4c2e-a3dd-3b8158cdbcb0")
+	)
+	(pad "6" thru_hole circle
+		(at -1.53 -0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "c28949c6-d49d-42d6-9b7d-b891b637964f")
+	)
+	(pad "7" thru_hole circle
+		(at -2.55 0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "6a1701b7-b83e-480a-bffd-08f04c37c6b6")
+	)
+	(pad "8" thru_hole circle
+		(at -3.57 -0.89)
+		(size 1.4 1.4)
+		(drill 0.9144)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "270a6c82-5f9c-4be4-a040-89ba4fe1e6a9")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/jlc/jlc.3dshapes/RJ45-TH_L15.9-W15.1-H12.6.wrl"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

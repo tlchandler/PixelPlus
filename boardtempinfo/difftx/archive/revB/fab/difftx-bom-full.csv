@@ -1,0 +1,8 @@
+"Reference","Value","Footprint","LCSC","Description"
+"C1","100nF","Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder","C49678","Ceramic bypass 100nF 50V X7R 0805, at AM26C31 VCC"
+"C2","10uF","Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder","C15850","Ceramic bulk 10uF 25V X5R 0805, 5 V rail"
+"H1-H4","M3","MountingHole:MountingHole_3.2mm_M3","","Mounting hole, 3.2 mm, M3"
+"J1","R-RJ45R08P-A004","jlc:RJ45-TH_R-RJ45R08P-A004","C385834","RJ45 8P8C jack, right angle, unshielded, Falcon differential pinout"
+"J2","SCOPE","jlc:HDR-TH_2P-P2.54-V-M-3","C32713268","Scope test point: GP15 frame toggle + GND, 1x2 pin header"
+"U1","Pico2W","jlc:COMM-SMD_L51.0-W21.0-P2.54_PICOW","C42394205","Raspberry Pi Pico 2 W"
+"U2","AM26C31IDR","jlc:SOIC-16_L9.9-W3.9-P1.27-LS6.0-BL","C34923","Quad RS-422 differential line driver, SOIC-16"

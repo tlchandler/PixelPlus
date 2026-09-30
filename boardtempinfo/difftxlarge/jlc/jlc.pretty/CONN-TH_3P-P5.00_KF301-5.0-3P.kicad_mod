@@ -1,0 +1,194 @@
+(footprint "CONN-TH_3P-P5.00_KF301-5.0-3P"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(property "Reference" "J10"
+		(at 0 -4 0)
+		(layer "F.SilkS")
+		(uuid "01aa3f53-4afe-437a-b70c-77f28a36dd5e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "P3 INJ B"
+		(at 0 4 0)
+		(layer "F.Fab")
+		(uuid "03576531-b07e-4e24-b41c-1802c1a0e666")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "ab0271c1-b950-40f8-a0be-de753fa2fbe8")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" "P3 INJ B power-injection output: +12 V and ground only; the data pole is intentionally unconnected on the board"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "5d7c2fe2-a6fd-4b79-81c0-8e4a078b0153")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC Part" "C474882"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "e9826187-1281-47f6-8bb6-d269d835466f")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC" "C474882"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "202cfa14-36e8-46af-abb9-f8f773270add")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr through_hole)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -7.5 -4)
+		(end 7.5 -4)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "7a71f0c7-c4a2-44a9-b4be-3a2f273d6d50")
+	)
+	(fp_line
+		(start -7.5 3.7)
+		(end -7.5 -4)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "21f93942-7380-4e0a-bc57-2681c98c4d8f")
+	)
+	(fp_line
+		(start 7.5 -4)
+		(end 7.5 3.7)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "b3789fe6-c563-4f7b-a71e-94c85e825ff7")
+	)
+	(fp_line
+		(start 7.5 3.7)
+		(end -7.5 3.7)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "b25acde0-5ee4-491d-81f9-0f2c62c90348")
+	)
+	(fp_circle
+		(center -5 0)
+		(end -4.7 0)
+		(stroke
+			(width 0.6)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "1f795a64-0132-4c06-8108-acca30d34936")
+	)
+	(fp_circle
+		(center 0 0)
+		(end 0.3 0)
+		(stroke
+			(width 0.6)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "ff0f0046-e7d6-4346-aca1-6f98ba328cc2")
+	)
+	(fp_circle
+		(center 5 0)
+		(end 5.3 0)
+		(stroke
+			(width 0.6)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "ad295ec5-e1eb-415a-9229-952f7d4c1cf4")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "0bbdc987-d3be-457e-aa03-1fa20614ee34")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" thru_hole circle
+		(at -5 0)
+		(size 2.2 2.2)
+		(drill 1.399998)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "4c57e61f-90ef-477c-b904-d4c6f4e239ca")
+	)
+	(pad "2" thru_hole circle
+		(at 0 0)
+		(size 2.2 2.2)
+		(drill 1.399998)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "158715ac-0d2c-4d44-a1e1-f27da00b37d0")
+	)
+	(pad "3" thru_hole circle
+		(at 5 0)
+		(size 2.2 2.2)
+		(drill 1.399998)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "23b39e5d-82be-409a-9307-4900dc03f483")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/jlc/jlc.3dshapes/CONN-TH_3P-P5.00_KF301-5.0-3P.wrl"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

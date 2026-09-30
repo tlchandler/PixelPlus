@@ -1,0 +1,169 @@
+(footprint "CAP-SMD_BD8.0-L8.3-W8.3-FD"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(property "Reference" "C1"
+		(at 0 -4 0)
+		(layer "F.SilkS")
+		(uuid "48966ad2-4ba3-45c0-9808-0d5b14ef1c4b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "470uF 25V"
+		(at 0 4 0)
+		(layer "F.Fab")
+		(uuid "24f7562a-ea06-45ef-8673-aedba1ffcd6d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" "https://www.lcsc.com/datasheet/C4747956.pdf"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "d7f1c807-91f8-44b9-9031-6d744b0c413c")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" "Bulk capacitor on the 12 V bus (pin 1 = +). Damps the inductance of the run back to the supply"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7b75e288-c782-4f98-a492-fa777dffe429")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC Part" "C4747956"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "0eb3f599-4427-4936-9219-53dc39aa7465")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC" "C4747956"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "fe033e81-2f95-4d52-9a00-7022c17636e3")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -4.15 -2.49)
+		(end -2.46 -4.15)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "c2c98f7d-1b4b-44e6-ac6b-bf220df0257f")
+	)
+	(fp_line
+		(start -4.15 2.49)
+		(end -4.15 -2.49)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "a2e0e8df-9c65-4d72-b925-fad6f855575c")
+	)
+	(fp_line
+		(start -2.46 -4.15)
+		(end 4.15 -4.15)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "632cb40a-f311-45d4-9350-a3d94ad3046f")
+	)
+	(fp_line
+		(start -2.46 4.15)
+		(end -4.15 2.49)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "705652ae-81b9-4cff-ab0a-7373a5112461")
+	)
+	(fp_line
+		(start 4.15 -4.15)
+		(end 4.15 4.15)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "7b4ee33a-3ebc-4aa8-9105-dc0f694f2c2e")
+	)
+	(fp_line
+		(start 4.15 4.15)
+		(end -2.46 4.15)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "9527d189-662b-4aa2-bb38-ab517c62ee97")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "55279f98-eefd-49f0-b19f-e62b26ba2f84")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" smd rect
+		(at -3.27 0)
+		(size 4.2 1.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "664362ca-d828-4a5c-9b51-08e5ec0a54ac")
+	)
+	(pad "2" smd rect
+		(at 3.27 0)
+		(size 4.2 1.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "917dd7fa-cc2e-4868-9fb8-2a041c2072a2")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/jlc/jlc.3dshapes/CAP-SMD_BD8.0-L8.3-W8.3-FD.wrl"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 180)
+		)
+	)
+)

@@ -1,0 +1,14 @@
+#VRML V2.0 utf8
+# CN0035 RJ45 adapter on SIP header, approximate model
+Transform { translation 0.0000 -3.5000 0.5000 children [ Shape { appearance Appearance { material Material { diffuseColor 0.1 0.1 0.1 } } geometry Box { size 1.0000 8.0000 1.0000 } } ] }
+Transform { translation -3.0000 -3.5000 1.3150 children [ Shape { appearance Appearance { material Material { diffuseColor 0.05 0.45 0.15 } } geometry Box { size 7.0000 8.0000 0.6299 } } ] }
+Transform { translation -3.0236 -3.5000 4.7559 children [ Shape { appearance Appearance { material Material { diffuseColor 0.08 0.08 0.08 } } geometry Box { size 6.0472 6.4488 6.2520 } } ] }
+Transform { translation -3.0236 -3.5000 7.8937 children [ Shape { appearance Appearance { material Material { diffuseColor 0.02 0.02 0.02 } } geometry Box { size 4.6063 3.1496 0.0787 } } ] }
+Transform { translation 0.0000 -0.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }
+Transform { translation 0.0000 -1.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }
+Transform { translation 0.0000 -2.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }
+Transform { translation 0.0000 -3.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }
+Transform { translation 0.0000 -4.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }
+Transform { translation 0.0000 -5.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }
+Transform { translation 0.0000 -6.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }
+Transform { translation 0.0000 -7.0000 1.7717 children [ Shape { appearance Appearance { material Material { diffuseColor 0.8 0.7 0.3 } } geometry Box { size 0.2520 0.2520 0.2756 } } ] }

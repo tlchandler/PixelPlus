@@ -1,0 +1,31 @@
+{
+    "id": "difftxlarge",
+    "version": "1.0",
+    "eepromVersion": "0.1",
+    "name": "difftxlarge",
+    "description": "60-output RS-422 (Falcon differential) pixel cape: 15x RJ45, 4 ports each, 3 latch banks. DS3231 RTC, INA226 12 V monitor, 2x LM75B temperature sensors, OLED header.",
+    "designer": "DIY",
+    "provides": [
+        "strings"
+    ],
+    "defaultSettings": {
+        "piRTC": "2",
+        "LEDDisplayType": "1"
+    },
+    "modules": [
+        "rtc-ds1307",
+        "lm75",
+        "ina2xx"
+    ],
+    "i2cDevices": [
+        "ds3231 0x68",
+        "lm75b 0x48",
+        "lm75b 0x49",
+        "ina226 0x40"
+    ],
+    "vendor": {
+        "name": "DIY",
+        "url": "",
+        "image": ""
+    }
+}

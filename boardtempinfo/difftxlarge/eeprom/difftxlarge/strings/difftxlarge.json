@@ -1,0 +1,316 @@
+{
+    "name": "difftxlarge",
+    "longName": "difftxlarge - 60 outputs, 15x RJ45 differential, 3 latch banks",
+    "notes": "Output k -> J(k/4+1) port (k%4+1). RJ45 pairs (+/-) 1/2, 3/6, 5/4, 7/8 = ports 1-4. Bank 1 = J1-J5 (latch P1-13), bank 2 = J6-J10 (latch P1-37), bank 3 = J11-J15 (latch P1-22).",
+    "driver": "DPIPixels",
+    "numSerial": 0,
+    "outputs": [
+        {
+            "pin": "P1-7"
+        },
+        {
+            "pin": "P1-29"
+        },
+        {
+            "pin": "P1-31"
+        },
+        {
+            "pin": "P1-26"
+        },
+        {
+            "pin": "P1-24"
+        },
+        {
+            "pin": "P1-21"
+        },
+        {
+            "pin": "P1-19"
+        },
+        {
+            "pin": "P1-23"
+        },
+        {
+            "pin": "P1-32"
+        },
+        {
+            "pin": "P1-33"
+        },
+        {
+            "pin": "P1-8"
+        },
+        {
+            "pin": "P1-10"
+        },
+        {
+            "pin": "P1-36"
+        },
+        {
+            "pin": "P1-11"
+        },
+        {
+            "pin": "P1-12"
+        },
+        {
+            "pin": "P1-35"
+        },
+        {
+            "pin": "P1-38"
+        },
+        {
+            "pin": "P1-40"
+        },
+        {
+            "pin": "P1-15"
+        },
+        {
+            "pin": "P1-16"
+        },
+        {
+            "sharedOutput": 0
+        },
+        {
+            "sharedOutput": 1
+        },
+        {
+            "sharedOutput": 2
+        },
+        {
+            "sharedOutput": 3
+        },
+        {
+            "sharedOutput": 4
+        },
+        {
+            "sharedOutput": 5
+        },
+        {
+            "sharedOutput": 6
+        },
+        {
+            "sharedOutput": 7
+        },
+        {
+            "sharedOutput": 8
+        },
+        {
+            "sharedOutput": 9
+        },
+        {
+            "sharedOutput": 10
+        },
+        {
+            "sharedOutput": 11
+        },
+        {
+            "sharedOutput": 12
+        },
+        {
+            "sharedOutput": 13
+        },
+        {
+            "sharedOutput": 14
+        },
+        {
+            "sharedOutput": 15
+        },
+        {
+            "sharedOutput": 16
+        },
+        {
+            "sharedOutput": 17
+        },
+        {
+            "sharedOutput": 18
+        },
+        {
+            "sharedOutput": 19
+        },
+        {
+            "sharedOutput": 0
+        },
+        {
+            "sharedOutput": 1
+        },
+        {
+            "sharedOutput": 2
+        },
+        {
+            "sharedOutput": 3
+        },
+        {
+            "sharedOutput": 4
+        },
+        {
+            "sharedOutput": 5
+        },
+        {
+            "sharedOutput": 6
+        },
+        {
+            "sharedOutput": 7
+        },
+        {
+            "sharedOutput": 8
+        },
+        {
+            "sharedOutput": 9
+        },
+        {
+            "sharedOutput": 10
+        },
+        {
+            "sharedOutput": 11
+        },
+        {
+            "sharedOutput": 12
+        },
+        {
+            "sharedOutput": 13
+        },
+        {
+            "sharedOutput": 14
+        },
+        {
+            "sharedOutput": 15
+        },
+        {
+            "sharedOutput": 16
+        },
+        {
+            "sharedOutput": 17
+        },
+        {
+            "sharedOutput": 18
+        },
+        {
+            "sharedOutput": 19
+        }
+    ],
+    "groups": [
+        {
+            "start": 1,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J1-",
+            "portStart": 1,
+            "label": "J1 - Differential (bank 1)"
+        },
+        {
+            "start": 5,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J2-",
+            "portStart": 1,
+            "label": "J2 - Differential (bank 1)"
+        },
+        {
+            "start": 9,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J3-",
+            "portStart": 1,
+            "label": "J3 - Differential (bank 1)"
+        },
+        {
+            "start": 13,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J4-",
+            "portStart": 1,
+            "label": "J4 - Differential (bank 1)"
+        },
+        {
+            "start": 17,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J5-",
+            "portStart": 1,
+            "label": "J5 - Differential (bank 1)"
+        },
+        {
+            "start": 21,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J6-",
+            "portStart": 1,
+            "label": "J6 - Differential (bank 2)"
+        },
+        {
+            "start": 25,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J7-",
+            "portStart": 1,
+            "label": "J7 - Differential (bank 2)"
+        },
+        {
+            "start": 29,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J8-",
+            "portStart": 1,
+            "label": "J8 - Differential (bank 2)"
+        },
+        {
+            "start": 33,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J9-",
+            "portStart": 1,
+            "label": "J9 - Differential (bank 2)"
+        },
+        {
+            "start": 37,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J10-",
+            "portStart": 1,
+            "label": "J10 - Differential (bank 2)"
+        },
+        {
+            "start": 41,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J11-",
+            "portStart": 1,
+            "label": "J11 - Differential (bank 3)"
+        },
+        {
+            "start": 45,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J12-",
+            "portStart": 1,
+            "label": "J12 - Differential (bank 3)"
+        },
+        {
+            "start": 49,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J13-",
+            "portStart": 1,
+            "label": "J13 - Differential (bank 3)"
+        },
+        {
+            "start": 53,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J14-",
+            "portStart": 1,
+            "label": "J14 - Differential (bank 3)"
+        },
+        {
+            "start": 57,
+            "count": 4,
+            "type": "differential",
+            "portPrefix": "J15-",
+            "portStart": 1,
+            "label": "J15 - Differential (bank 3)"
+        }
+    ],
+    "latches": [
+        "P1-13",
+        "P1-37",
+        "P1-22"
+    ]
+}

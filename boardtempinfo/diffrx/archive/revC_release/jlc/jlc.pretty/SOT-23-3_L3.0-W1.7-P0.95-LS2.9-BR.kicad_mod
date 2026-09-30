@@ -1,0 +1,167 @@
+(footprint "SOT-23-3_L3.0-W1.7-P0.95-LS2.9-BR"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "PSM712-LF-T7")
+	(property "Reference" "D6"
+		(at 0 -4.95 0)
+		(layer "F.SilkS")
+		(uuid "b061c3f8-c2da-4686-979c-77b46edc3649")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "PSM712"
+		(at 0 4.95 0)
+		(layer "F.Fab")
+		(uuid "a62fbad2-319f-4cfe-831c-6bfbbee502fb")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" "https://protekdevices.com/wp-content/uploads/datasheets/psm712.pdf"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "fef479d7-535f-4aa8-8f31-0e23c5de2857")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" "Asymmetric TVS pair on the P4 cat5 conductors (SOT-23: 1 and 2 = I/O, 3 = GND; 7 V stand-off negative, 12 V positive, per ProTek 05094)"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "a78f64cc-b692-454e-8e55-0e103d3bc15b")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC Part" "C32677"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "1f5c5b8c-7ca4-4271-a74e-9249f8f1aafc")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC" "C32677"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "5333dd6d-c7b2-4531-897d-951e6d6e4ee1")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_circle
+		(center 1.65 0.95)
+		(end 1.75 0.95)
+		(stroke
+			(width 0.2)
+			(type solid)
+		)
+		(fill no)
+		(layer "Cmts.User")
+		(uuid "1af2d665-c437-4501-b523-d0292c91bbb2")
+	)
+	(fp_line
+		(start -0.85 -1.5)
+		(end 0.85 -1.5)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "7b0aae71-13f8-4cc6-9a91-ac1ebf91fc9a")
+	)
+	(fp_line
+		(start -0.85 1.5)
+		(end -0.85 -1.5)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "590bc35d-664d-4535-a1d2-b46369818273")
+	)
+	(fp_line
+		(start 0.85 -1.5)
+		(end 0.85 1.5)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "2f6f8897-965f-453e-ba13-2b3a4193548a")
+	)
+	(fp_line
+		(start 0.85 1.5)
+		(end -0.85 1.5)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "e4fd2af5-a853-4541-a037-cbb92a814dc4")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "fc902f59-1f53-4159-875b-3dea73dc5285")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" smd rect
+		(at 1.1 0.95)
+		(size 1.037 0.532)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "6c7ef46f-64e2-4cc7-86d1-a22d2ad8da92")
+	)
+	(pad "2" smd rect
+		(at 1.1 -0.95)
+		(size 1.037 0.532)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "fa3bad06-bbe5-4aa7-956b-9d0e29eae78b")
+	)
+	(pad "3" smd rect
+		(at -1.1 0)
+		(size 1.037 0.532)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "ff0a2fd8-878c-404c-8317-585d66577678")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/jlc/jlc.3dshapes/SOT-23-3L_L2.9-W1.6-H1.1-LS2.8-P0.95.wrl"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 270)
+		)
+	)
+)

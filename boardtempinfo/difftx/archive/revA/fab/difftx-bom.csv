@@ -1,0 +1,8 @@
+"Reference","Value","Footprint","Description","Datasheet"
+"C1","100nF","Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P5.00mm","Ceramic bypass, 50 V, at AM26C31 VCC",""
+"C2","10uF","Capacitor_THT:CP_Radial_D5.0mm_P2.00mm","Electrolytic bulk, 16 V or more, 5 V rail",""
+"H1-H4","M3","MountingHole:MountingHole_3.2mm_M3","Mounting hole, 3.2 mm, M3",""
+"J1","CN0035","difftx:CN0035","RJ45 adapter board, Falcon differential pinout","https://www.digikey.com/en/products/detail/chip-quik-inc/CN0035/5978221"
+"J2","SCOPE","Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical","Scope test point: GP15 frame toggle + GND",""
+"U1","Pico2W","Module:RaspberryPi_Pico_Common_THT","Raspberry Pi Pico 2 WH","https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf"
+"U2","AM26C31IN","Package_DIP:DIP-16_W7.62mm","Quad RS-422 differential line driver","https://www.ti.com/lit/ds/symlink/am26c31.pdf"

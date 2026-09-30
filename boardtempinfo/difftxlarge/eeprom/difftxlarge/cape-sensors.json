@@ -1,0 +1,46 @@
+{
+    "sensors": [
+        {
+            "type": "i2c",
+            "label": "Board Temp (drivers): ",
+            "driver": "lm75b",
+            "address": "0x48",
+            "path": "/sys/bus/i2c/devices/1-0048/hwmon/hwmon0/temp1_input",
+            "multiplier": 0.001,
+            "valueType": "Temperature",
+            "precision": 1
+        },
+        {
+            "type": "i2c",
+            "label": "Board Temp (power): ",
+            "driver": "lm75b",
+            "address": "0x49",
+            "path": "/sys/bus/i2c/devices/1-0049/hwmon/hwmon0/temp1_input",
+            "multiplier": 0.001,
+            "valueType": "Temperature",
+            "precision": 1
+        },
+        {
+            "type": "i2c",
+            "label": "12V In: ",
+            "driver": "ina226",
+            "address": "0x40",
+            "path": "/sys/bus/i2c/devices/1-0040/hwmon/hwmon0/in1_input",
+            "multiplier": 0.001,
+            "postfix": "V",
+            "valueType": "Voltage",
+            "precision": 2
+        },
+        {
+            "type": "i2c",
+            "label": "12V Current: ",
+            "driver": "ina226",
+            "address": "0x40",
+            "path": "/sys/bus/i2c/devices/1-0040/hwmon/hwmon0/curr1_input",
+            "multiplier": 0.001,
+            "postfix": "A",
+            "valueType": "Current",
+            "precision": 2
+        }
+    ]
+}

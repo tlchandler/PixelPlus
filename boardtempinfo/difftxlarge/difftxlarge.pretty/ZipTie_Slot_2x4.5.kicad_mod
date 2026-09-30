@@ -1,0 +1,27 @@
+(footprint "ZipTie_Slot_2x4.5"
+	(version 20240108)
+	(generator "difftxlarge")
+	(layer "F.Cu")
+	(descr "Cable-tie slot, 2.0 x 4.5 mm unplated routed oval, long axis along the cable. Takes 2.5 mm and 3.6 mm nylon ties (about 1.0-1.3 mm thick) with JLCPCB's +/-0.2 mm NPTH tolerance. Used in pairs, one each side of a cat5 cable, so the tie clamps the cable jacket to the board behind the plug boot.")
+	(tags "ziptie cable tie strain relief slot npth")
+	(attr exclude_from_pos_files exclude_from_bom allow_missing_courtyard)
+	(fp_text reference "REF**"
+		(at 0 -3.5 0)
+		(layer "F.Fab")
+		(hide yes)
+		(effects (font (size 1 1) (thickness 0.15)))
+	)
+	(fp_text value "tie"
+		(at 0 3.5 0)
+		(layer "F.Fab")
+		(hide yes)
+		(effects (font (size 1 1) (thickness 0.15)))
+	)
+	(fp_rect (start -1.3 -2.55) (end 1.3 2.55) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd"))
+	(pad "" np_thru_hole oval
+		(at 0 0)
+		(size 2 4.5)
+		(drill oval 2 4.5)
+		(layers "F&B.Cu" "*.Mask")
+	)
+)

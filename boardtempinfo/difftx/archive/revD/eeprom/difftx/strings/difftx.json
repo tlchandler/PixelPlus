@@ -1,0 +1,29 @@
+{
+    "name": "difftx",
+    "longName": "difftx 4-port RS-422 differential (Falcon pinout)",
+    "notes": "One RJ45: port 1 = pins 1/2, port 2 = 3/6, port 3 = 4/5, port 4 = 7/8. Standard (dumb) differential receivers.",
+    "driver": "DPIPixels",
+    "numSerial": 0,
+    "outputs": [
+        {
+            "pin": "P1-29"
+        },
+        {
+            "pin": "P1-31"
+        },
+        {
+            "pin": "P1-26"
+        },
+        {
+            "pin": "P1-7"
+        }
+    ],
+    "groups": [
+        {
+            "start": 1,
+            "count": 4,
+            "type": "differential",
+            "label": "Differential Port #1 (RJ45)"
+        }
+    ]
+}

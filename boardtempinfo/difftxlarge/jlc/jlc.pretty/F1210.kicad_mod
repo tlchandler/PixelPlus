@@ -1,0 +1,149 @@
+(footprint "F1210"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(property "Reference" "F13"
+		(at 0 -4 0)
+		(layer "F.SilkS")
+		(uuid "a3e362ed-2c3c-4399-adc8-3aecac6ead11")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "0.35A/30V"
+		(at 0 4 0)
+		(layer "F.Fab")
+		(uuid "c9ede38b-4663-4831-b737-fb9279d91171")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" "https://www.lcsc.com/datasheet/C2876002.pdf"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "5b700767-fd15-44c2-bd76-74a123ee4c9b")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" "Fan branch fuse: Fuzetec FSMD035-30-1206R, 0.35 A hold / 0.7 A trip, 30 V. Keep the fan under 200 mA, i.e. 40 or 60 mm, not 80 mm"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "2a5945bf-6eb0-491b-ba49-d9aa35092015")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC Part" "C2876002"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "dd0a3f23-a4de-4830-8f21-cf007a15da54")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "LCSC" "C2876002"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "6f222153-a9e9-4391-8514-80db4690b4ba")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -1.61 -1.29)
+		(end 1.61 -1.29)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "8793b897-69c3-41f6-8447-3d97ac22c46f")
+	)
+	(fp_line
+		(start -1.61 1.29)
+		(end -1.61 -1.29)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "85b0aeaa-d7e5-485e-8e61-13c5bbce42fe")
+	)
+	(fp_line
+		(start 1.61 -1.29)
+		(end 1.61 1.29)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "05a8f223-d3b9-4956-a52c-c6b06bc1b860")
+	)
+	(fp_line
+		(start 1.61 1.29)
+		(end -1.61 1.29)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "286bc86b-f384-48c8-9516-a5d8f87c9dd2")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "44964f06-a083-4651-8f6d-883420ade7cb")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" smd rect
+		(at -1.6 0)
+		(size 1.485 2.781)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "a1065475-8de2-4e44-96f6-4f31c9c710d3")
+	)
+	(pad "2" smd rect
+		(at 1.6 0)
+		(size 1.485 2.781)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "fc751343-5f6e-4211-8a0f-361eaf74d17b")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/jlc/jlc.3dshapes/F1210_L3.2-W2.6-H0.6.wrl"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

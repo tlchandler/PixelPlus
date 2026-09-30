@@ -1,0 +1,16 @@
+{
+    "id": "difftx",
+    "version": "1.1",
+    "eepromVersion": "0.1",
+    "name": "difftx RS-422 4-port",
+    "provides": [
+        "strings"
+    ],
+    "description": "4-port RS-422 (Falcon differential receiver) pixel driver pHAT for Raspberry Pi Zero 2 W, rev E",
+    "designer": "DIY",
+    "vendor": {
+        "name": "DIY",
+        "url": "",
+        "image": ""
+    }
+}
