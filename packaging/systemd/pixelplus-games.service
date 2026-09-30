@@ -1,24 +1,29 @@
 [Unit]
-Description=PixelPlus games sidecar (Super Mario Bros. / NES arcade on matrix props)
-Documentation=https://github.com/tlchandler/PixelPlus/blob/main/docs/ARCHITECTURE.md
-After=pixelplusd.service sound.target
+Description=PixelPlus games sidecar (NES games on a matrix prop, phone as gamepad)
+Documentation=file:///usr/lib/pixelplus/games/README.md
+After=network.target sound.target pixelplusd.service
 PartOf=pixelplusd.service
-ConditionPathExists=/opt/pixelplus-games/venv/bin/python
+# Code is shipped by the pixelplus package (from games/); the emulator core by the
+# libretro-nestopia package (installed on PixelPlus images).
+ConditionPathExists=/usr/lib/pixelplus/games/pixelplus_games/__main__.py
 
 [Service]
 Type=simple
 User=pixelplus
 Group=pixelplus
-Environment=PIXELPLUS_API=http://127.0.0.1:80
+WorkingDirectory=/usr/lib/pixelplus/games
+ExecStart=/usr/bin/python3 -m pixelplus_games
+Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
 Environment=PIXELPLUS_GAMES_SOCKET=/run/pixelplus/games.sock
-Environment=PIXELPLUS_GAMES_ROMS=/var/lib/pixelplus/games/roms
-Environment=PIXELPLUS_GAMES_PORT=8088
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/default/pixelplus
-WorkingDirectory=/opt/pixelplus-games
-ExecStart=/opt/pixelplus-games/venv/bin/python -m pixelplus_games
 Restart=on-failure
-RestartSec=5
-Nice=5
+RestartSec=3
+# The emulator must finish every frame in under 16.7 ms (nice is set before the
+# switch to the pixelplus user, so no extra capability is needed).
+Nice=-5
+# Hardening. The overlay buffer (/dev/shm) and the sound card (/dev/snd, audio group)
+# stay reachable; /run/pixelplus is created by tmpfiles.d (0775 root:pixelplus).
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

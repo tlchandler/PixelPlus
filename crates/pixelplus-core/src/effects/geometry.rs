@@ -84,9 +84,17 @@ pub(crate) fn local_points(prop: &Prop, n: usize) -> Vec<[f32; 2]> {
 /// whole world.
 pub(crate) fn world_points(prop: &Prop, local: &[[f32; 2]], world: WorldBounds) -> Vec<[f32; 2]> {
     let (bx, by, bw, bh, rot) = match &prop.layout {
-        Some(l) if [l.x, l.y, l.w, l.h].iter().all(|v| v.is_finite()) => {
-            (l.x, l.y, l.w, l.h, if l.rotation.is_finite() { l.rotation } else { 0.0 })
-        }
+        Some(l) if [l.x, l.y, l.w, l.h].iter().all(|v| v.is_finite()) => (
+            l.x,
+            l.y,
+            l.w,
+            l.h,
+            if l.rotation.is_finite() {
+                l.rotation
+            } else {
+                0.0
+            },
+        ),
         _ => (world.x, world.y, world.w, world.h, 0.0),
     };
     let (sin, cos) = rot.to_radians().sin_cos();
@@ -137,7 +145,7 @@ pub(crate) fn derive_points(
                 let s = i / per;
                 let t = (i % per) as f32 / (per.max(2) - 1) as f32;
                 let bx = s as f32 / (strands - 1) as f32;
-                let up = if s % 2 == 0 { t } else { 1.0 - t };
+                let up = if s & 1 == 0 { t } else { 1.0 - t };
                 *p = [0.5 + (bx - 0.5) * (1.0 - up), 1.0 - up];
             }
         }
@@ -201,7 +209,7 @@ pub(crate) fn derive_points(
                 let d = i / per;
                 let k = (i % per) as f32 / per as f32;
                 let len = 0.35 + 0.65 * (((d as f32 * 2.3).sin() + 1.0) / 2.0);
-                let down = if d % 2 == 0 { k } else { 1.0 - k };
+                let down = if d & 1 == 0 { k } else { 1.0 - k };
                 *p = [(d as f32 + 0.5) / drops as f32, down * len];
             }
         }

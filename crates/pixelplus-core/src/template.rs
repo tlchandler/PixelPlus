@@ -584,7 +584,15 @@ mod tests {
     #[test]
     fn non_placeholders_are_untouched() {
         let c = ctx(2026, 12, 13, 19, 30);
-        for s in ["{", "}", "{}", "{ time }", "{1abc}", "{time", "émoji {day} ✨ {"] {
+        for s in [
+            "{",
+            "}",
+            "{}",
+            "{ time }",
+            "{1abc}",
+            "{time",
+            "émoji {day} ✨ {",
+        ] {
             let r = render_template(s, &c);
             if s.contains("{day}") {
                 assert_eq!(r, "émoji Sunday ✨ {");

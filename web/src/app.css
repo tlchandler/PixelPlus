@@ -861,7 +861,7 @@ table.table {
 	background: var(--accent-soft);
 	border-color: var(--accent-line);
 }
-.notice.warn > :global(svg),
+.notice.warn > svg,
 .notice.warn .ico {
 	color: var(--accent);
 }

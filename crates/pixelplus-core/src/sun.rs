@@ -171,8 +171,8 @@ enum HourAngle {
 fn hour_angle_deg(lat_deg: f64, decl_deg: f64) -> HourAngle {
     let lat = lat_deg.to_radians();
     let decl = decl_deg.to_radians();
-    let cos_h = OFFICIAL_ZENITH_DEG.to_radians().cos() / (lat.cos() * decl.cos())
-        - lat.tan() * decl.tan();
+    let cos_h =
+        OFFICIAL_ZENITH_DEG.to_radians().cos() / (lat.cos() * decl.cos()) - lat.tan() * decl.tan();
     if !cos_h.is_finite() {
         // Exactly at a pole: the sun is up iff it is in that hemisphere.
         return if (lat_deg >= 0.0) == (decl_deg > 0.0) {
@@ -198,8 +198,8 @@ struct SolarPosition {
 impl SolarPosition {
     fn at(jd: f64) -> Self {
         let t = (jd - 2_451_545.0) / 36_525.0;
-        let l0 = (280.46646 + t * (36_000.76983 + t * 0.0003032)).rem_euclid(360.0);
-        let m = 357.52911 + t * (35_999.05029 - 0.0001537 * t);
+        let l0 = (280.46646 + t * (36_000.769_83 + t * 0.0003032)).rem_euclid(360.0);
+        let m = 357.52911 + t * (35_999.050_29 - 0.0001537 * t);
         let e = 0.016708634 - t * (0.000042037 + 0.0000001267 * t);
         let m_rad = m.to_radians();
         let c = m_rad.sin() * (1.914602 - t * (0.004817 + 0.000014 * t))

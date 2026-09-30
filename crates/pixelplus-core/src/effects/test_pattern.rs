@@ -59,7 +59,11 @@ impl TestPattern {
             }
             TestPattern::Chase { color } => {
                 let step = step_at(t_ms, DEFAULT_STEP_RATE) % 3;
-                const RGB: [Rgb; 3] = [Rgb::new(255, 0, 0), Rgb::new(0, 255, 0), Rgb::new(0, 0, 255)];
+                const RGB: [Rgb; 3] = [
+                    Rgb::new(255, 0, 0),
+                    Rgb::new(0, 255, 0),
+                    Rgb::new(0, 0, 255),
+                ];
                 for (i, p) in px.enumerate() {
                     // Phase so that the pattern moves toward higher indices.
                     let slot = ((i as u64 + 3 - step) % 3) as usize;

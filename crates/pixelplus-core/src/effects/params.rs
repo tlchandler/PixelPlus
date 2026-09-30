@@ -120,10 +120,7 @@ impl ParamSpec {
                     _ => None,
                 }
                 .filter(|n| n.is_finite())?;
-                let n = n.clamp(
-                    self.min.unwrap_or(f64::MIN),
-                    self.max.unwrap_or(f64::MAX),
-                );
+                let n = n.clamp(self.min.unwrap_or(f64::MIN), self.max.unwrap_or(f64::MAX));
                 Some(json!(n))
             }
             ParamKind::Bool => match value {
@@ -208,8 +205,7 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
                 .help("How bright pixels stay between twinkles."),
         ],
         EffectKind::Rainbow => vec![
-            P::number("speed", "Speed", 0.0, 5.0, 0.05, 0.25)
-                .unit("cycles/s"),
+            P::number("speed", "Speed", 0.0, 5.0, 0.05, 0.25).unit("cycles/s"),
             P::number("spread", "Rainbows across", 0.1, 10.0, 0.1, 1.0),
             P::number("saturation", "Saturation", 0.0, 1.0, 0.01, 1.0),
             P::select("mode", "Spread", &["along", "across"], "along")
@@ -221,8 +217,9 @@ pub fn param_schema(kind: EffectKind) -> Vec<ParamSpec> {
             P::number("speed", "Speed", 0.0, 2.0, 0.01, 0.05)
                 .unit("cycles/s")
                 .help("Trips through the whole colour list per second."),
-            P::number("spread", "Spread", 0.0, 2.0, 0.05, 0.0)
-                .help("0 = every prop the same colour; higher staggers colours across the display."),
+            P::number("spread", "Spread", 0.0, 2.0, 0.05, 0.0).help(
+                "0 = every prop the same colour; higher staggers colours across the display.",
+            ),
         ],
         EffectKind::Candycane => vec![
             P::colors("colors", "Stripe colors", &["#ff0000", "#ffffff"]),

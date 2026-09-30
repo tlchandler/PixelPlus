@@ -12,12 +12,13 @@ User=pixelplus
 Group=pixelplus
 # ...and only worth running on a Pi 4/5 (>= 2 GB) or a PC (amd64). Exit 1 = skip.
 ExecCondition=/usr/lib/pixelplus/tts-capable
-Environment=PIXELPLUS_TTS_BIND=127.0.0.1:7081
-Environment=PIXELPLUS_TTS_MODELS=/var/lib/pixelplus/tts/models
-Environment=OMP_NUM_THREADS=3
+Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
+Environment=PIXELPLUS_TTS_HOST=127.0.0.1
+Environment=PIXELPLUS_TTS_PORT=7081
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/default/pixelplus
 WorkingDirectory=/opt/pixelplus-tts
-ExecStart=/opt/pixelplus-tts/venv/bin/python -m pixelplus_tts
+ExecStart=/opt/pixelplus-tts/venv/bin/python -m pixelplus_tts serve
 Restart=on-failure
 RestartSec=10
 # Never steal CPU from the pixel output thread.

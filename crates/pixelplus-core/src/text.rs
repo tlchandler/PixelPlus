@@ -279,9 +279,7 @@ pub fn text_width(text: &str, font: Font, scale: u32) -> u32 {
     if count == 0 {
         return 0;
     }
-    width
-        .saturating_add(count - 1)
-        .saturating_mul(scale)
+    width.saturating_add(count - 1).saturating_mul(scale)
 }
 
 /// Draw `text` into `grid` with its top-left at `(x, y)`, clipped to the grid.
@@ -295,7 +293,7 @@ pub fn draw_text(
     y: i64,
     color: Rgb,
 ) -> u32 {
-    let scale = scale.max(1).min(MAX_GRID_DIM);
+    let scale = scale.clamp(1, MAX_GRID_DIM);
     let s = i64::from(scale);
     let mut pen = x;
     let grid_w = i64::from(grid.width());
@@ -401,8 +399,10 @@ pub fn render_lines(lines: &[(&str, Rgb)], font: Font, width: u32, height: u32) 
     }
     let n = lines.len() as u64;
     let block_h = |s: u32| n * u64::from(font.height() * s) + (n - 1) * u64::from(s);
-    let fits =
-        |s: u32| block_h(s) <= u64::from(height) && lines.iter().all(|(t, _)| text_width(t, font, s) <= width);
+    let fits = |s: u32| {
+        block_h(s) <= u64::from(height)
+            && lines.iter().all(|(t, _)| text_width(t, font, s) <= width)
+    };
     let mut scale = 1;
     while scale < MAX_GRID_DIM && fits(scale + 1) {
         scale += 1;
@@ -463,7 +463,11 @@ pub enum QrError {
     #[error(
         "a QR code for this text needs at least {needed}×{needed} pixels, but the matrix is {width}×{height}; use a shorter link"
     )]
-    TooSmall { needed: u32, width: u32, height: u32 },
+    TooSmall {
+        needed: u32,
+        width: u32,
+        height: u32,
+    },
 }
 
 /// Render `data` as a QR code centred in a `width`×`height` grid, as large as
@@ -598,11 +602,7 @@ pub fn prop_pixels_to_grid(pixels: &[u8], matrix: &MatrixInfo) -> RgbGrid {
                 .get(map_i)
                 .and_then(|&i| usize::try_from(i).ok());
             if let Some(px) = idx.and_then(|i| pixels.get(i * 3..i * 3 + 3)) {
-                grid.set(
-                    i64::from(x),
-                    i64::from(y),
-                    Rgb::new(px[0], px[1], px[2]),
-                );
+                grid.set(i64::from(x), i64::from(y), Rgb::new(px[0], px[1], px[2]));
             }
         }
     }

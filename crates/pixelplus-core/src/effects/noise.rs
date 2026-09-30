@@ -71,8 +71,7 @@ pub(crate) fn value_noise3(seed: u64, x: f64, y: f64, z: f64) -> f32 {
 
 /// Two-octave fractal noise in `[0, 1]`.
 pub(crate) fn fbm3(seed: u64, x: f64, y: f64, z: f64) -> f32 {
-    (value_noise3(seed, x, y, z) * 2.0
-        + value_noise3(seed ^ 0x5A5A, x * 2.03, y * 2.03, z * 1.7))
+    (value_noise3(seed, x, y, z) * 2.0 + value_noise3(seed ^ 0x5A5A, x * 2.03, y * 2.03, z * 1.7))
         / 3.0
 }
 

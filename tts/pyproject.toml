@@ -14,11 +14,12 @@ dependencies = [
   "onnxruntime>=1.17",
   "numpy>=1.24",
   "praat-parselmouth>=0.4.3",
-  "imageio-ffmpeg>=0.4.9",
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+# bundled ffmpeg for systems without one (Windows/Mac dev); Pi OS and Docker use apt's ffmpeg
+bundled-ffmpeg = ["imageio-ffmpeg>=0.4.9"]
 
 [project.scripts]
 pixelplus-tts = "pixelplus_tts.__main__:main"

@@ -7,8 +7,7 @@ Section: misc
 Priority: optional
 Homepage: https://github.com/tlchandler/PixelPlus
 Depends: adduser, systemd, python3 (>= 3.9), avahi-daemon, alsa-utils, ffmpeg, libc6 (>= 2.31)
-Recommends: network-manager, dnsmasq-base, nftables, iw, rfkill, i2c-tools, polkitd | policykit-1, logrotate
-Suggests: libretro-nestopia
+Recommends: network-manager, dnsmasq-base, nftables, iw, rfkill, i2c-tools, polkitd | policykit-1, logrotate, python3-numpy, python3-qrcode, libretro-nestopia
 Description: prop-oriented show player for Raspberry Pi pixel controllers
  PixelPlus plays xLights sequences on Raspberry Pi based pixel controllers
  (difftx, difftxlarge, diffsmart boards) with a modern web UI: props instead of

@@ -40,11 +40,7 @@ impl Rgb {
         let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
         match hex.len() {
             6 => Some(Rgb::new(byte(0)?, byte(2)?, byte(4)?)),
-            3 => Some(Rgb::new(
-                nibble(0)? * 17,
-                nibble(1)? * 17,
-                nibble(2)? * 17,
-            )),
+            3 => Some(Rgb::new(nibble(0)? * 17, nibble(1)? * 17, nibble(2)? * 17)),
             _ => None,
         }
     }
@@ -61,14 +57,22 @@ impl Rgb {
 
     /// Multiply every channel by `f` (clamped to 0..=1).
     pub fn scale(self, f: f32) -> Self {
-        let f = if f.is_finite() { f.clamp(0.0, 1.0) } else { 0.0 };
+        let f = if f.is_finite() {
+            f.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let s = |c: u8| (f32::from(c) * f + 0.5) as u8;
         Rgb::new(s(self.r), s(self.g), s(self.b))
     }
 
     /// Linear blend from `self` (t = 0) to `other` (t = 1).
     pub fn lerp(self, other: Rgb, t: f32) -> Self {
-        let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+        let t = if t.is_finite() {
+            t.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let l = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t + 0.5) as u8;
         Rgb::new(l(self.r, other.r), l(self.g, other.g), l(self.b, other.b))
     }
@@ -84,9 +88,21 @@ impl Rgb {
 
     /// Colour from hue (0..1, wraps), saturation and value (0..1).
     pub fn from_hsv(h: f32, s: f32, v: f32) -> Self {
-        let h = if h.is_finite() { h.rem_euclid(1.0) } else { 0.0 } * 6.0;
-        let s = if s.is_finite() { s.clamp(0.0, 1.0) } else { 0.0 };
-        let v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        let h = if h.is_finite() {
+            h.rem_euclid(1.0)
+        } else {
+            0.0
+        } * 6.0;
+        let s = if s.is_finite() {
+            s.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let v = if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let i = (h.floor() as i32).rem_euclid(6);
         let f = h - h.floor();
         let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
@@ -149,7 +165,11 @@ pub fn palette_cyclic(colors: &[Rgb], pos: f32) -> Rgb {
         0 => Rgb::BLACK,
         1 => colors[0],
         n => {
-            let pos = if pos.is_finite() { pos.rem_euclid(1.0) } else { 0.0 } * n as f32;
+            let pos = if pos.is_finite() {
+                pos.rem_euclid(1.0)
+            } else {
+                0.0
+            } * n as f32;
             let i = (pos.floor() as usize).min(n - 1);
             colors[i].lerp(colors[(i + 1) % n], pos - i as f32)
         }
@@ -163,7 +183,11 @@ pub fn palette_linear(colors: &[Rgb], pos: f32) -> Rgb {
         0 => Rgb::BLACK,
         1 => colors[0],
         n => {
-            let pos = if pos.is_finite() { pos.clamp(0.0, 1.0) } else { 0.0 } * (n - 1) as f32;
+            let pos = if pos.is_finite() {
+                pos.clamp(0.0, 1.0)
+            } else {
+                0.0
+            } * (n - 1) as f32;
             let i = (pos.floor() as usize).min(n - 2);
             colors[i].lerp(colors[i + 1], pos - i as f32)
         }

@@ -228,7 +228,7 @@ impl FaultFinder {
             }
             None => {
                 let f = self.lo as usize;
-                let blink_on = (t_ms / 250) % 2 == 0;
+                let blink_on = (t_ms / 250) & 1 == 0;
                 for (i, px) in pixels.enumerate() {
                     let c = if i < f {
                         GOOD_COLOR

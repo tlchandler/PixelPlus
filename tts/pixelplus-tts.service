@@ -1,0 +1,37 @@
+[Unit]
+Description=PixelPlus TTS (Kokoro DJ voices, loopback :7081)
+Documentation=file:///opt/pixelplus-tts/src/README.md
+After=network.target
+# pixelplusd talks to us; we never need the network beyond loopback
+PartOf=pixelplusd.service
+
+[Service]
+Type=simple
+Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
+Environment=PIXELPLUS_TTS_MODEL=auto
+Environment=PIXELPLUS_TTS_IDLE_MIN=10
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/default/pixelplus-tts
+ExecStart=/opt/pixelplus-tts/venv/bin/python -m pixelplus_tts serve
+Restart=on-failure
+RestartSec=3
+# Never compete with the light output thread in pixelplusd.
+Nice=10
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle
+# A render peaks ~750 MB with the fp32 model; cap runaway use on small boards.
+MemoryHigh=900M
+MemoryMax=1200M
+# Hardening: read-only system, writes only to its own cache/model dir.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/pixelplus/tts
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+[Install]
+WantedBy=multi-user.target

@@ -241,9 +241,9 @@ pub fn occurrences(schedule: &Schedule, from: DateTime<Tz>, days: u32) -> Vec<Oc
         first - Duration::days(MARGIN_DAYS),
         last + Duration::days(MARGIN_DAYS),
     )
-        .into_iter()
-        .filter(|o| o.end > from && o.start < window_end)
-        .collect()
+    .into_iter()
+    .filter(|o| o.end > from && o.start < window_end)
+    .collect()
 }
 
 /// The window in charge at `now`, if any.
@@ -605,8 +605,6 @@ mod tests {
             schedule_timezone(&s),
             Err(ScheduleError::UnknownTimezone(_))
         ));
-        assert!(validate(&s)
-            .iter()
-            .any(|i| i.field == "location.timezone"));
+        assert!(validate(&s).iter().any(|i| i.field == "location.timezone"));
     }
 }

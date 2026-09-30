@@ -202,7 +202,7 @@
 		align-items: center;
 		gap: 24px;
 		padding: 0 20px;
-		background: color-mix(in srgb, var(--sidebar) 86%, transparent);
+		background: color-mix(in srgb, var(--sidebar) 96%, transparent);
 		backdrop-filter: blur(20px) saturate(1.5);
 		-webkit-backdrop-filter: blur(20px) saturate(1.5);
 		border-top: 1px solid var(--border);
@@ -437,7 +437,7 @@
 			padding: 0 8px 0 8px;
 			border: 1px solid var(--border-2);
 			border-radius: 16px;
-			background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+			background: color-mix(in srgb, var(--surface-2) 97%, transparent);
 			box-shadow: var(--shadow-2);
 			overflow: hidden;
 		}

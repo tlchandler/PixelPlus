@@ -187,7 +187,9 @@ fn higher_priority_splits_lower() {
         ]
     );
     assert_eq!(
-        active_at(&s, at(&s, 2026, 12, 24, 19, 30)).unwrap().entry_id,
+        active_at(&s, at(&s, 2026, 12, 24, 19, 30))
+            .unwrap()
+            .entry_id,
         "eve"
     );
     // Other days are untouched.
@@ -376,7 +378,11 @@ fn messy_schedule_is_non_overlapping_and_sorted() {
     special.days = vec![Weekday::Fri, Weekday::Sat];
     let mut late = entry("late", clock("23:00"), clock("00:30"));
     late.priority = 7;
-    let mut season = entry("season", TimeSpec::Sunset { offset_min: 10 }, clock("22:00"));
+    let mut season = entry(
+        "season",
+        TimeSpec::Sunset { offset_min: 10 },
+        clock("22:00"),
+    );
     season.date_range = Some(DateRange {
         start: "11-20".into(),
         end: "01-10".into(),
