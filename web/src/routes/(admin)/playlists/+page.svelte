@@ -13,7 +13,7 @@
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
-		import Segmented from '$lib/components/ui/Segmented.svelte';
+	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import {
 		Plus,
@@ -33,7 +33,7 @@
 		ListMusic,
 		Gamepad2,
 		Search,
-		Check,
+		Check
 	} from '@lucide/svelte';
 
 	type Section = 'intro' | 'items' | 'outro';
@@ -91,7 +91,7 @@
 				const m = s.media.find((x) => x.id === q?.mediaId);
 				return {
 					name: q?.name ?? 'Missing sequence',
-										sub: m ? 'Song' : 'Light-only sequence',
+					sub: m ? 'Song' : 'Light-only sequence',
 					ms: q?.durationMs ?? 0,
 					icon: Music,
 					tone: 'accent'
@@ -131,7 +131,7 @@
 			case 'pause':
 				return { name: 'Pause', sub: 'Dark and quiet', ms: it.durationMs, icon: Clock, tone: '' };
 			case 'command':
-								return {
+				return {
 					name: commandLabel(it.command),
 					sub: commandKind(it.command),
 					ms: 0,
@@ -140,7 +140,7 @@
 				};
 		}
 	}
-		function commandKind(c: string) {
+	function commandKind(c: string) {
 		return c.startsWith('games.') ? 'Game' : c.startsWith('overlay.') ? 'Message' : 'Action';
 	}
 	function commandLabel(c: string) {
@@ -160,7 +160,7 @@
 		return [...p.intro, ...p.items, ...p.outro].reduce((n, it) => n + itemInfo(it, show).ms, 0);
 	}
 
-		/** Items added while the add sheet is open (it stays open so you can add several). */
+	/** Items added while the add sheet is open (it stays open so you can add several). */
 	let addedNow = $state<string[]>([]);
 	function add(it: Omit<PlaylistItem, 'id'>, section: Section = target, key?: string) {
 		if (!draft) return;
@@ -226,7 +226,7 @@
 				crossfadeMs: 0
 			})
 		);
-				if (p) {
+		if (p) {
 			selectedId = p.id;
 			focusTitle();
 		}
@@ -381,11 +381,12 @@
 			/>
 		</div>
 		<div class="lib-target faint tiny">
-			Adding to <strong>{sectionMeta.find((s) => s.id === target)?.title}</strong> · click a section to change
+			Adding to <strong>{sectionMeta.find((s) => s.id === target)?.title}</strong> · pick a section in the playlist
+			to change it
 		</div>
 		<div class="lib-list">
 			{#each library as l (l.key)}
-								{@const times = addedNow.filter((k) => k === l.key).length}
+				{@const times = addedNow.filter((k) => k === l.key).length}
 				<button
 					class="lib-item"
 					class:added={times > 0}
@@ -397,8 +398,7 @@
 						<div class="ellipsis small"><strong>{l.name}</strong></div>
 						<div class="faint tiny ellipsis">{l.sub}</div>
 					</div>
-					{#if times}<span class="addedmark"
-							><Check size={15} />{times > 1 ? ` ×${times}` : ''}</span
+					{#if times}<span class="addedmark"><Check size={15} />{times > 1 ? ` ×${times}` : ''}</span
 						>{:else}<Plus size={16} />{/if}
 				</button>
 			{:else}
@@ -451,14 +451,14 @@
 			{#if draft}
 				<section class="builder card">
 					<header class="bhead">
-												<input
+						<input
 							class="title-input"
 							bind:this={titleInput}
 							bind:value={draft.name}
 							oninput={queueSave}
 							aria-label="Playlist name"
 						/>
-												<span class="save"><SaveState state={saveState} /></span>
+						<span class="save"><SaveState state={saveState} /></span>
 						<span class="grow"></span>
 						<button
 							class="btn primary sm"
@@ -749,6 +749,12 @@
 		width: 100%;
 		padding: 6px 8px;
 		text-align: left;
+	}
+	@media (pointer: coarse) {
+		.shead {
+			min-height: 44px;
+			align-items: center;
+		}
 	}
 	.stitle {
 		font-weight: 650;

@@ -1,6 +1,16 @@
 <script lang="ts">
 	import type { Show } from '$lib/api/types';
-	import { Check, ChevronRight, Cpu, FileUp, Music, ListMusic, CalendarClock, X, Rocket } from '@lucide/svelte';
+	import {
+		Check,
+		ChevronRight,
+		Cpu,
+		FileUp,
+		Music,
+		ListMusic,
+		CalendarClock,
+		X,
+		Rocket
+	} from '@lucide/svelte';
 	import { slide } from 'svelte/transition';
 
 	let { show }: { show: Show } = $props();
@@ -102,9 +112,7 @@
 	.ready {
 		margin-bottom: 16px;
 		overflow: hidden;
-		background:
-			radial-gradient(900px 200px at 0% 0%, var(--accent-soft), transparent 70%),
-			var(--surface);
+		background: radial-gradient(900px 200px at 0% 0%, var(--accent-soft), transparent 70%), var(--surface);
 		border-color: var(--accent-line);
 	}
 	header {

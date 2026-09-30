@@ -9,7 +9,7 @@
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import Drawer from '$lib/components/ui/Drawer.svelte';
 	import EffectPreview from '$lib/components/viz/EffectPreview.svelte';
-		import ParamEditor from '$lib/components/effects/ParamEditor.svelte';
+	import ParamEditor from '$lib/components/effects/ParamEditor.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import { Radio, Square, Trash2, WandSparkles, Plus, Check } from '@lucide/svelte';
 
@@ -31,7 +31,7 @@
 	const live = $derived(app.status?.state === 'effect');
 	const isLive = $derived(live && !!draft && liveId === draft.id);
 
-		function openPreset(p: EffectPreset) {
+	function openPreset(p: EffectPreset) {
 		draft = structuredClone($state.snapshot(p) as EffectPreset);
 		draft.params = { ...defaultParams(schema[draft.effect] ?? []), ...draft.params };
 		lastSaved = JSON.stringify(draft);
@@ -106,7 +106,7 @@
 		await api.applyEffect(null).catch(() => {});
 		liveId = null;
 	}
-		async function save() {
+	async function save() {
 		if (!draft) return;
 		const d = $state.snapshot(draft) as EffectPreset;
 		lastSaved = JSON.stringify(d);
@@ -172,10 +172,16 @@
 		<h2>Your looks</h2>
 		<span class="faint small">{show?.effects.length ?? 0}</span>
 	</div>
+	{#if show && !show.effects.length}
+		<p class="muted small empty-looks">
+			No saved looks yet. Pick an effect below, make it yours, and save it — then use it as the idle look or
+			in a playlist.
+		</p>
+	{/if}
 	<div class="gallery">
 		{#each show?.effects ?? [] as p (p.id)}
 			{@const on = live && liveId === p.id}
-						<article class="card fx interactive" class:on>
+			<article class="card fx interactive" class:on>
 				<button class="pv" onclick={() => openPreset(p)} aria-label="Edit {p.name}"
 					><EffectPreview kind={p.effect} params={p.params} height={130} /></button
 				>
@@ -210,7 +216,7 @@
 	{#snippet header()}
 		{#if draft}
 			<input class="title-input" bind:value={draft.name} aria-label="Look name" />
-						<div class="faint small drawer-sub">
+			<div class="faint small drawer-sub">
 				{#if isSaved}<SaveState state={fxSave} />{:else}New look — not saved yet{/if}{isLive
 					? ' · live on the display'
 					: ''}
@@ -308,13 +314,18 @@
 		{:else}
 			<button class="btn soft" onclick={applyLive}><Radio size={15} /> Try it live</button>
 		{/if}
-				{#if !isSaved}
+		{#if !isSaved}
 			<button class="btn primary" onclick={save}><Plus size={15} /> Save as look</button>
 		{/if}
 	{/snippet}
 </Drawer>
 
 <style>
+	.empty-looks {
+		padding: 16px 18px;
+		border-radius: var(--r-3);
+		border: 1px dashed var(--border-3);
+	}
 	.meta-open {
 		text-align: left;
 		min-width: 0;

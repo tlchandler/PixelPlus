@@ -11,7 +11,10 @@ export function normalizeUrl(u: string): string {
  * Where visitors open the song request page. With a public (internet) address it works from
  * anywhere; otherwise it's this controller's own address, which only works on the home Wi-Fi.
  */
-export function requestLink(show: Show | null | undefined, origin: string): { url: string; isPublic: boolean } {
+export function requestLink(
+	show: Show | null | undefined,
+	origin: string
+): { url: string; isPublic: boolean } {
 	const pub = show?.settings.requests.publicUrl?.trim();
 	if (pub) return { url: normalizeUrl(pub), isPublic: true };
 	return { url: `${origin.replace(/\/$/, '')}/request`, isPublic: false };

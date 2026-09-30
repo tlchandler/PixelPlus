@@ -347,8 +347,8 @@
 		{:else if tab === 'wiring'}
 			{#if draft.channelRuns?.length}
 				<p class="muted small" style="margin-bottom:12px">
-					This prop’s {draft.channelRuns.length} strings were set up separately in xLights, so each one keeps
-					its own place in the sequence. Re-import from xLights to change that.
+					This prop’s {draft.channelRuns.length} strings were set up separately in xLights, so each one keeps its
+					own place in the sequence. Re-import from xLights to change that.
 				</p>
 			{/if}
 			<WiringEditor {show} bind:prop={draft} />
@@ -399,9 +399,7 @@
 					{/if}
 				{/each}
 				{#if !draft.segments.length}
-					<p class="faint small">
-						Wire this prop to a port to see how much of the receiver’s fuse it uses.
-					</p>
+					<p class="faint small">Wire this prop to a port to see how much of the receiver’s fuse it uses.</p>
 				{/if}
 				{#each myWarnings as w (w)}
 					<div class="notice warn small">
@@ -456,7 +454,6 @@
 			</div>
 		{/if}
 	{/if}
-
 </Drawer>
 
 <FaultFinder

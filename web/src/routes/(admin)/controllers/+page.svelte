@@ -4,7 +4,7 @@
 	import { COLOR_ORDERS } from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
 	import { toasts, confirm } from '$lib/stores/toasts.svelte';
-		import {
+	import {
 		BOARDS,
 		RECEIVERS,
 		needsPort3Warning,
@@ -15,13 +15,7 @@
 		MAX_PIXELS_PER_OUTPUT
 	} from '$lib/util/boards';
 	import { sortable } from '$lib/actions/sortable';
-	import {
-		reorderChain,
-		wirePropToPort,
-		flashPort,
-		COLOR_CORRECTION,
-		correctionIndex
-	} from '$lib/wiring';
+	import { reorderChain, wirePropToPort, flashPort, COLOR_CORRECTION, correctionIndex } from '$lib/wiring';
 	import { fmtTemp, tempUnitOf } from '$lib/util/units';
 	import { fmtRelative } from '$lib/util/format';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
@@ -45,7 +39,7 @@
 		RefreshCw,
 		Radio,
 		HardDrive,
-				CircleCheck,
+		CircleCheck,
 		ChevronDown,
 		ChevronUp,
 		Cpu,
@@ -93,7 +87,7 @@
 		return () => clearInterval(t);
 	});
 
-		/** A real name to start from ("Controller 3"), so nobody adopts a box called "pixelplus-3f2a". */
+	/** A real name to start from ("Controller 3"), so nobody adopts a box called "pixelplus-3f2a". */
 	function suggestName() {
 		const taken = new Set(show?.nodes.map((n) => n.name.toLowerCase()) ?? []);
 		for (let i = (show?.nodes.length ?? 0) + 1; ; i++)
@@ -248,7 +242,7 @@
 		}
 	}
 
-		const sensorIcon = { temperature: Thermometer, voltage: Zap, current: Activity, power: Gauge };
+	const sensorIcon = { temperature: Thermometer, voltage: Zap, current: Activity, power: Gauge };
 	const tunit = $derived(tempUnitOf(show));
 
 	// ---- "+ Add a prop to this port"
@@ -310,7 +304,7 @@
 						class="btn primary"
 						disabled={d.duplicate}
 						onclick={() => {
-														adopting = d;
+							adopting = d;
 							adoptName = suggestName();
 						}}><Plus size={16} /> Adopt</button
 					>
@@ -340,7 +334,7 @@
 								>{n.role === 'leader' ? 'Leader' : 'Follower'}</span
 							>
 							{#if live}
-																<span
+								<span
 									class="badge {live.online ? (live.syncState === 'syncing' ? 'accent' : 'green') : 'red'}"
 									title={live.online && n.role !== 'leader'
 										? `Clock within ${Math.abs(live.syncOffsetMs).toFixed(1)} ms of the leader`
@@ -550,7 +544,9 @@
 																	addTo = { nodeId: n.id, output: oi };
 																}}
 																><Plus size={14} />
-																{chain.length ? 'Add another prop to this port' : 'Add a prop to this port'}</button
+																{chain.length
+																	? 'Add another prop to this port'
+																	: 'Add a prop to this port'}</button
 															>
 														</div>
 														<label class="field"
@@ -596,8 +592,8 @@
 																aria-valuetext={COLOR_CORRECTION[ci].label}
 																onchange={(e) =>
 																	saveOutput(n, o, {
-																		gamma: COLOR_CORRECTION[Number((e.target as HTMLInputElement).value)]
-																			.gamma
+																		gamma:
+																			COLOR_CORRECTION[Number((e.target as HTMLInputElement).value)].gamma
 																	})}
 															/>
 														</label>
@@ -633,7 +629,8 @@
 						{#each sensors as s (s.id)}
 							{@const Icon = sensorIcon[s.kind]}
 							<div class="sensor">
-								<Icon size={14} /><span class="faint small">{s.label.replace(n.name + ' ', '')}</span><strong class="num"
+								<Icon size={14} /><span class="faint small">{s.label.replace(n.name + ' ', '')}</span><strong
+									class="num"
 									>{s.kind === 'temperature'
 										? fmtTemp(s.value, tunit)
 										: `${s.value.toFixed(s.kind === 'voltage' || s.kind === 'current' ? 1 : 0)} ${s.unit}`}</strong
@@ -699,7 +696,7 @@
 	onclose={() => (adopting = null)}
 >
 	<label class="field"
-				><span class="label">Give it a friendly name</span><input
+		><span class="label">Give it a friendly name</span><input
 			class="input"
 			placeholder="e.g. Back Yard"
 			bind:value={adoptName}
@@ -730,15 +727,16 @@
 >
 	<p class="small">
 		For the next 15 minutes, the other show leader can adopt this controller from its
-		<strong>Controllers</strong> page. When it does, this controller's own show is replaced by the other
-		one (a copy is kept).
+		<strong>Controllers</strong> page. When it does, this controller's own show is replaced by the other one (a
+		copy is kept).
 	</p>
 	<label class="field"
 		><span class="label">Other leader's address (optional)</span><input
 			class="input"
 			placeholder="e.g. 192.168.1.20"
 			bind:value={joinAddr}
-		/><span class="hint">Only that controller may adopt this one. Leave empty to allow any show leader.</span></label
+		/><span class="hint">Only that controller may adopt this one. Leave empty to allow any show leader.</span
+		></label
 	>
 	{#snippet footer()}
 		<button class="btn ghost" onclick={() => (joinOpen = false)}>Cancel</button>
@@ -1073,7 +1071,7 @@
 		gap: 12px;
 		padding: 4px 16px 16px;
 	}
-		.ochain-wrap {
+	.ochain-wrap {
 		grid-column: span 2;
 		display: flex;
 		flex-direction: column;
@@ -1194,6 +1192,14 @@
 		}
 		.nhead {
 			padding: 14px;
+			align-items: flex-start;
+		}
+		.nhead > .grow {
+			flex: 1 1 0;
+		}
+		.nact {
+			width: 100%;
+			padding-left: 54px;
 		}
 		.nwarn {
 			margin: 12px 14px 0;

@@ -9,14 +9,14 @@
 	import { fmtDuration } from '$lib/util/format';
 	import { newId } from '$lib/util/id';
 	import { renderSpeech, renderWhere, playBlob, sampleText } from '$lib/tts';
-		import { sortable, moveItem } from '$lib/actions/sortable';
+	import { sortable, moveItem } from '$lib/actions/sortable';
 	import { PLACEHOLDER_LABELS, PAUSES, tokenize } from '$lib/util/djtokens';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-		import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import VoiceEditor from '$lib/components/dj/VoiceEditor.svelte';
 	import {
@@ -72,7 +72,7 @@
 			if (!c) draft = null;
 		});
 	});
-		$effect(() => {
+	$effect(() => {
 		const list = show?.pronunciations;
 		// Only take the server's list when it's really different (not while a row is half typed).
 		if (list)
@@ -133,7 +133,7 @@
 				lines: [{ voice: v, text: '', pauseMs: 300, energy: 0.4 }]
 			})
 		);
-				if (c) {
+		if (c) {
 			clipId = c.id;
 			tab = 'clips';
 			focusTitle();
@@ -199,7 +199,7 @@
 		if (c) clipId = c.id;
 	}
 
-		/** New lines go to the other DJ: two-voice banter is the common case. */
+	/** New lines go to the other DJ: two-voice banter is the common case. */
 	function addLine() {
 		if (!draft) return;
 		const last = draft.lines[draft.lines.length - 1];
@@ -218,7 +218,7 @@
 		draft.lines = draft.lines.filter((_, k) => k !== i);
 		queueSave();
 	}
-		function insertPlaceholder(p: string) {
+	function insertPlaceholder(p: string) {
 		tokensOpen = false;
 		if (!draft) return;
 		const token = `{${p}}`;
@@ -354,7 +354,6 @@
 		};
 	}
 
-	
 	const media = $derived(show?.media.find((m) => m.id === draft?.mediaId));
 	const estSec = $derived(
 		draft
@@ -380,8 +379,8 @@
 					? 'Voices render on this controller'
 					: 'Voices render in your browser, then upload'}
 			>
-								{#if where === 'device'}<Cpu size={12} /> Voices made on the controller{:else}<Globe size={12} /> Voices made in
-					this browser{/if}
+				{#if where === 'device'}<Cpu size={12} /> Voices made on the controller{:else}<Globe size={12} /> Voices
+					made in this browser{/if}
 			</span>
 			<button class="btn primary" onclick={newClip}><Plus size={16} /> New clip</button>
 		{/snippet}
@@ -455,7 +454,7 @@
 			{/each}
 			<button class="card vnew" onclick={newVoice}
 				><span class="icon-tile accent"><Plus size={20} /></span><strong>Create a voice</strong><span
-										class="faint small">Mix base voices to create a new DJ</span
+					class="faint small">Mix base voices to create a new DJ</span
 				></button
 			>
 		</div>
@@ -464,7 +463,7 @@
 			<div class="card-head">
 				<BookA size={18} />
 				<h2 class="grow">Pronunciation dictionary</h2>
-								<SaveState state={wordsSave} />
+				<SaveState state={wordsSave} />
 			</div>
 			<div class="card-body">
 				<p class="muted small" style="margin-bottom:14px">
@@ -533,14 +532,14 @@
 			{#if draft}
 				<section class="editor card">
 					<header class="ehead">
-												<input
+						<input
 							class="title-input"
 							bind:this={titleInput}
 							bind:value={draft.name}
 							oninput={queueSave}
 							aria-label="Clip name"
 						/>
-												<span class="save"><SaveState state={saveState} /></span>
+						<span class="save"><SaveState state={saveState} /></span>
 						<span class="grow"></span>
 						<button class="btn ghost icon sm" onclick={duplicateClip} aria-label="Duplicate clip"
 							><Copy size={15} /></button
@@ -550,7 +549,7 @@
 						>
 					</header>
 
-										<div class="ph" class:open={tokensOpen}>
+					<div class="ph" class:open={tokensOpen}>
 						<button
 							class="ph-toggle btn sm"
 							onmousedown={(e) => e.preventDefault()}
@@ -563,7 +562,8 @@
 									class="pchip"
 									onmousedown={(e) => e.preventDefault()}
 									onclick={() => insertPlaceholder(p)}
-									title="Inserts {`{${p}}`}, filled in when the clip plays">{PLACEHOLDER_LABELS[p] ?? p}</button
+									title="Inserts {`{${p}}`}, filled in when the clip plays"
+									>{PLACEHOLDER_LABELS[p] ?? p}</button
 								>{/each}
 						</div>
 					</div>
@@ -584,7 +584,7 @@
 								<button class="drag-handle" aria-label="Move line {i + 1}"><GripVertical size={16} /></button>
 								<div class="who" style:--h={voiceHue(line.voice)}>
 									<span class="av">{voiceName(line.voice)[0]}</span>
-																		<select
+									<select
 										class="select sm"
 										id="voice-{i}"
 										value={line.voice}
@@ -611,7 +611,7 @@
 										bind:value={line.text}
 										oninput={queueSave}
 										onfocus={(e) => (focused = { i, el: e.currentTarget })}
-																				aria-label="Line {i + 1} text"></textarea>
+										aria-label="Line {i + 1} text"></textarea>
 									{#if /\{\w+\}/.test(line.text)}
 										<div class="said" aria-label="How line {i + 1} reads">
 											{#each tokenize(line.text) as part, k (k)}{#if 'token' in part}<span class="tok"
@@ -635,7 +635,7 @@
 												>
 											{/each}
 										</div>
-																				<select
+										<select
 											class="select sm pausesel"
 											value={String(nearestPause(line.pauseMs))}
 											onchange={(e) => {
@@ -644,7 +644,7 @@
 											}}
 											aria-label="Pause after line {i + 1}"
 										>
-																						{#each PAUSES as p (p.ms)}<option value={String(p.ms)}>{p.label}</option>{/each}
+											{#each PAUSES as p (p.ms)}<option value={String(p.ms)}>{p.label}</option>{/each}
 										</select>
 										<span class="grow"></span>
 										<button
@@ -711,7 +711,7 @@
 							<span class="hint">Plays quietly underneath the voices.</span>
 						</label>
 						<div class="field">
-														<span class="label">Say live info fresh each time</span>
+							<span class="label">Say live info fresh each time</span>
 							<div class="row" style="min-height:40px">
 								<Switch
 									checked={draft.dynamic}
@@ -723,7 +723,9 @@
 										}
 									}}
 								/><span class="small muted"
-									>{draft.dynamic ? 'The voice is made again as it plays' : 'Made once, played the same'}</span
+									>{draft.dynamic
+										? 'The voice is made again as it plays'
+										: 'Made once, played the same'}</span
 								>
 							</div>
 						</div>
@@ -745,7 +747,7 @@
 							</div>
 						{:else}
 							<div class="grow small">
-																{#if media}<span class="ok"
+								{#if media}<span class="ok"
 										><Check size={14} /> Voice ready · {fmtDuration(media.durationMs)}</span
 									>{:else}<span class="faint">No voice yet · about {estSec} s long</span>{/if}
 							</div>
@@ -764,7 +766,7 @@
 							class="btn primary"
 							onclick={renderClip}
 							disabled={rendering != null || !draft.lines.some((l) => l.text.trim())}
-														><Wand2 size={15} /> {media ? 'Update voice' : 'Make the voice'}</button
+							><Wand2 size={15} /> {media ? 'Update voice' : 'Make the voice'}</button
 						>
 					</footer>
 				</section>
@@ -1055,7 +1057,7 @@
 			font-size: 13px;
 		}
 		.en {
-			height: 40px !important;
+			height: 44px !important;
 			padding: 0 12px !important;
 			font-size: 12.5px !important;
 		}

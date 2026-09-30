@@ -13,7 +13,7 @@
 		WifiNetwork
 	} from '$lib/api/types';
 	import { app } from '$lib/stores/app.svelte';
-		import { theme, type ThemePref } from '$lib/stores/theme.svelte';
+	import { theme, type ThemePref } from '$lib/stores/theme.svelte';
 	import { toasts, confirm } from '$lib/stores/toasts.svelte';
 	import { BOARDS } from '$lib/util/boards';
 	import { fmtBytes, fmtRelative, fmtUptime } from '$lib/util/format';
@@ -22,10 +22,10 @@
 	import Switch from '$lib/components/ui/Switch.svelte';
 	import Segmented from '$lib/components/ui/Segmented.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
-		import Skeleton from '$lib/components/ui/Skeleton.svelte';
+	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import SaveState from '$lib/components/ui/SaveState.svelte';
 	import SignalBars from '$lib/components/ui/SignalBars.svelte';
-			import { requestLink, prettyUrl } from '$lib/util/visitors';
+	import { requestLink, prettyUrl } from '$lib/util/visitors';
 	import { parseLogs, dayLabel } from '$lib/util/logs';
 	import { countryName, fmtTemp, tempUnitOf, tempValue, fToC } from '$lib/util/units';
 	import QrCode from '$lib/components/viz/QrCode.svelte';
@@ -58,7 +58,7 @@
 		Radio,
 		Terminal,
 		TriangleAlert,
-				X,
+		X,
 		WifiOff,
 		SlidersHorizontal,
 		ChevronRight,
@@ -68,7 +68,7 @@
 		Info
 	} from '@lucide/svelte';
 
-		type Sec =
+	type Sec =
 		| 'general'
 		| 'network'
 		| 'audio'
@@ -81,7 +81,7 @@
 		| 'updates'
 		| 'hardware'
 		| 'logs';
-		/** `device`: settings for this controller only (the rest apply to the whole show). */
+	/** `device`: settings for this controller only (the rest apply to the whole show). */
 	const sections: { id: Sec; label: string; icon: typeof Wifi; desc: string; device?: boolean }[] = [
 		{ id: 'general', label: 'General', icon: SlidersHorizontal, desc: 'Units and appearance' },
 		{
@@ -159,7 +159,7 @@
 
 	// ---- network
 	let net = $state<NetworkConfig | null>(null);
-		let netOrig = $state('');
+	let netOrig = $state('');
 	/** The Wi-Fi network the controller is set to join (before any edits here). */
 	const savedSsid = $derived(netOrig ? ((JSON.parse(netOrig) as NetworkConfig).wifi?.ssid ?? '') : '');
 	/** Picked a different network than the saved one: needs its password, then Apply. */
@@ -255,7 +255,7 @@
 				.then((q) => (queue = q))
 				.catch(() => {});
 	});
-		const reqLink = $derived(requestLink(show, location.origin));
+	const reqLink = $derived(requestLink(show, location.origin));
 	const requestUrl = $derived(reqLink.url);
 
 	// ---- security
@@ -424,7 +424,7 @@
 	$effect(() => {
 		if (sec === 'logs' && logs == null) loadLogs();
 	});
-			let logQ = $state('');
+	let logQ = $state('');
 	const fmtClock = (d: Date) =>
 		new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(d);
 	const parsedLogs = $derived(parseLogs(logs ?? ''));
@@ -471,7 +471,7 @@
 		changed('triggers');
 	}
 
-		const sys = $derived(app.system);
+	const sys = $derived(app.system);
 	const tunit = $derived(s?.units?.temperature ?? tempUnitOf(show));
 	/** The heat alert, shown in the chosen unit but always stored in °C. */
 	const alertTemp = $derived(s ? Math.round(tempValue(s.alerts.rules.tempC, tunit)) : 0);
@@ -483,7 +483,7 @@
 </script>
 
 <div class="page">
-		<div class="head" class:mobile-hidden={mobileOpen}>
+	<div class="head" class:mobile-sr={mobileOpen}>
 		<PageHeader
 			title="Settings"
 			subtitle="Changes save automatically and apply to the whole show, followers included — except those marked “This controller”."
@@ -525,7 +525,7 @@
 			{/if}
 			{#if !s || !show}
 				<div class="card card-pad"><Skeleton count={8} h={28} /></div>
-						{:else if sec === 'general'}
+			{:else if sec === 'general'}
 				<section class="card">
 					<div class="card-head"><h2 class="grow">General</h2></div>
 					<div class="card-body">
@@ -617,10 +617,10 @@
 												{#if nw.lastJoined}Joined “{nw.lastJoined.ssid}” from the setup page {ago(
 														nw.lastJoined.at
 													)}{nw.lastJoined.ips?.length ? ` (${nw.lastJoined.ips.join(', ')})` : ''}.{:else}If
-													the network is lost for 10 minutes, the setup hotspot turns on so you can fix it from
-													a phone{nw.hotspotPassword ? ' (password ' : ''}{#if nw.hotspotPassword}<span
-														class="mono">{nw.hotspotPassword}</span
-													>){/if}.{/if}
+													the network is lost for 10 minutes, the setup hotspot turns on so you can fix it
+													from a phone{nw.hotspotPassword ? ' (password ' : ''}{#if nw.hotspotPassword}<span
+															class="mono">{nw.hotspotPassword}</span
+														>){/if}.{/if}
 											</div>
 										{:else}
 											<strong>Checking the network…</strong>
@@ -642,7 +642,7 @@
 									<dt>Addresses</dt>
 									<dd class="mono">{sys?.ips?.length ? sys.ips.join(', ') : '—'}</dd>
 									<dt>Wi-Fi</dt>
-																		<dd>
+									<dd>
 										{#if sys?.wifi?.ssid}{sys.wifi.ssid} · <SignalBars
 												dbm={sys.wifi.signal}
 												showLabel
@@ -662,7 +662,7 @@
 										><span class="label">Wi-Fi country</span><select
 											class="select"
 											bind:value={net.wifi.country}
-																						>{#each ['US', 'CA', 'GB', 'IE', 'AU', 'NZ', 'DE', 'FR', 'NL', 'SE', 'NO', 'MX'] as c (c)}<option
+											>{#each ['US', 'CA', 'GB', 'IE', 'AU', 'NZ', 'DE', 'FR', 'NL', 'SE', 'NO', 'MX'] as c (c)}<option
 													value={c}>{countryName(c)}</option
 												>{/each}</select
 										></label
@@ -676,7 +676,7 @@
 											{scanning ? 'Scanning…' : 'Scan'}</button
 										>
 									</div>
-																		<div class="current">
+									<div class="current">
 										{#if sys?.wifi?.ssid}
 											<Wifi size={16} /> Connected to <strong>{sys.wifi.ssid}</strong>
 											<SignalBars dbm={sys.wifi.signal} showLabel />
@@ -689,9 +689,7 @@
 											Switch to <strong>{net.wifi.ssid}</strong> — {pickedSecure
 												? 'type its password below, then'
 												: 'then'} press <em>Apply network settings</em>.
-											<button
-												class="linkish"
-												onclick={() => net && (net.wifi.ssid = savedSsid)}
+											<button class="linkish" onclick={() => net && (net.wifi.ssid = savedSsid)}
 												>Keep {savedSsid || 'the current network'}</button
 											>
 										</div>
@@ -699,13 +697,14 @@
 									{#if scan}
 										<div class="nets">
 											{#each scan as n (n.ssid)}
-																								<button
+												<button
 													class="netrow"
 													class:on={net.wifi.ssid === n.ssid}
 													onclick={() => net && (net.wifi.ssid = n.ssid)}
 												>
 													<SignalBars dbm={n.signal} /><span class="grow">{n.ssid}</span
-													>{#if n.ssid === sys?.wifi?.ssid}<span class="faint tiny">Connected</span>{/if}{#if n.secure}<Lock
+													>{#if n.ssid === sys?.wifi?.ssid}<span class="faint tiny">Connected</span
+														>{/if}{#if n.secure}<Lock
 															size={13}
 															class="faint"
 														/>{/if}{#if net.wifi.ssid === n.ssid}<Check size={15} />{/if}
@@ -715,7 +714,7 @@
 									{/if}
 									<label class="field" style="margin-top:12px"
 										><span class="label"
-																						>{net.wifi.ssid ? `Password for ${net.wifi.ssid}` : 'Wi-Fi password'}</span
+											>{net.wifi.ssid ? `Password for ${net.wifi.ssid}` : 'Wi-Fi password'}</span
 										><input
 											class="input"
 											type="password"
@@ -770,8 +769,10 @@
 									</div>
 								</details>
 								<div class="row" style="margin-top:18px;justify-content:flex-end">
-									<button class="btn primary" disabled={!netDirty || (switching && pickedSecure && !psk)} onclick={saveNet}
-										>Apply network settings</button
+									<button
+										class="btn primary"
+										disabled={!netDirty || (switching && pickedSecure && !psk)}
+										onclick={saveNet}>Apply network settings</button
 									>
 								</div>
 							{/if}
@@ -816,7 +817,7 @@
 						</div>
 						<div class="setting">
 							<div class="text">
-																<div class="title">Volume leveling</div>
+								<div class="title">Volume leveling</div>
 								<div class="desc">
 									Plays every song at the same loudness, so nobody reaches for the volume knob.
 								</div>
@@ -824,7 +825,7 @@
 							<div class="control">
 								<Switch
 									bind:checked={s.audio.normalize}
-																		label="Volume leveling"
+									label="Volume leveling"
 									onchange={() => changed('audio')}
 								/>
 							</div>
@@ -832,13 +833,13 @@
 						{#if s.audio.normalize}
 							<div class="setting stack">
 								<div class="text">
-																		<div class="title">How loud</div>
+									<div class="title">How loud</div>
 									<div class="desc">Normal matches music apps. Pick Quiet for a sleepy street.</div>
 								</div>
 								<div class="control">
 									<Segmented
 										value={s.audio.targetLufs}
-																				label="How loud"
+										label="How loud"
 										size="sm"
 										onchange={(v) => {
 											if (s) {
@@ -846,7 +847,7 @@
 												changed('audio');
 											}
 										}}
-																				options={[
+										options={[
 											{ value: -18, label: 'Quiet' },
 											{ value: -16, label: 'Relaxed' },
 											{ value: -14, label: 'Normal' },
@@ -858,16 +859,16 @@
 						{/if}
 						<div class="setting stack">
 							<div class="text">
-																<div class="title">Where DJ voices are made</div>
+								<div class="title">Where DJ voices are made</div>
 								<div class="desc">
-									Automatic uses this controller when it’s fast enough (Raspberry Pi 4 or 5) and your
-									browser otherwise.
+									Automatic uses this controller when it’s fast enough (Raspberry Pi 4 or 5) and your browser
+									otherwise.
 								</div>
 							</div>
 							<div class="control">
 								<Segmented
 									bind:value={s.tts.mode}
-																		label="Where DJ voices are made"
+									label="Where DJ voices are made"
 									size="sm"
 									onchange={() => changed('tts')}
 									options={[
@@ -894,7 +895,7 @@
 							</div>
 							<div class="control">
 								<div class="input-group" style="width:120px">
-																		<input
+									<input
 										class="input num"
 										type="number"
 										value={alertTemp}
@@ -1186,7 +1187,7 @@
 											>{#each show.playlists as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select
 										></label
 									>
-																		<label class="field"
+									<label class="field"
 										><span class="label">Most requests waiting</span><input
 											class="input num"
 											type="number"
@@ -1209,7 +1210,8 @@
 													changed('requests');
 												}
 											}}
-										/><span class="hint">Shown as “Tune your radio to…” on the request page and yard sign.</span
+										/><span class="hint"
+											>Shown as “Tune your radio to…” on the request page and yard sign.</span
 										></label
 									>
 									<label class="field"
@@ -1233,8 +1235,11 @@
 							</div>
 							<div class="qrbox">
 								<QrCode text={requestUrl} size={150} />
-								<a class="small" href={reqLink.isPublic ? requestUrl : '/request'} target="_blank" rel="noopener"
-									>{prettyUrl(requestUrl)}</a
+								<a
+									class="small"
+									href={reqLink.isPublic ? requestUrl : '/request'}
+									target="_blank"
+									rel="noopener">{prettyUrl(requestUrl)}</a
 								>
 								<div class="row wrap" style="justify-content:center">
 									<button
@@ -1263,8 +1268,8 @@
 												home, or on this controller.
 											</li>
 											<li>
-												Point it at <span class="mono">{location.origin}/request</span> — only the request
-												page, not the rest of PixelPlus.
+												Point it at <span class="mono">{location.origin}/request</span> — only the request page,
+												not the rest of PixelPlus.
 											</li>
 											<li>Paste the address it gives you into “Internet address” above.</li>
 										</ol>
@@ -1306,7 +1311,7 @@
 					</div>
 					<div class="card-body">
 						<p class="muted small" style="margin-bottom:14px">
-														Start things with a push button wired to the controller, or from another app (like Home
+							Start things with a push button wired to the controller, or from another app (like Home
 							Assistant) by opening a link.
 						</p>
 						{#each s.triggers as t (t.id)}
@@ -1328,9 +1333,10 @@
 											>Link (web request)</option
 										></select
 									>
-									{#if t.kind === 'gpio'}<span class="small muted" title="The Raspberry Pi GPIO pin the button is wired to"
-										>on pin</span
-									><input
+									{#if t.kind === 'gpio'}<span
+											class="small muted"
+											title="The Raspberry Pi GPIO pin the button is wired to">on pin</span
+										><input
 											class="input sm num"
 											style="width:70px"
 											type="number"
@@ -1430,8 +1436,8 @@
 									<div class="desc">
 										PixelPlus only answers to its IP address and <span class="mono"
 											>{sys?.hostname ?? 'pixelplus'}.local</span
-										>. If you open it through a tunnel or your own domain, add that name here
-										(comma separated, <span class="mono">*.example.com</span> allowed).
+										>. If you open it through a tunnel or your own domain, add that name here (comma
+										separated, <span class="mono">*.example.com</span> allowed).
 									</div>
 								</div>
 								<div class="control">
@@ -1473,7 +1479,7 @@
 				<section class="card">
 					<div class="card-head">
 						<History size={16} />
-												<h2 class="grow">Backups</h2>
+						<h2 class="grow">Backups</h2>
 						<button class="btn sm" onclick={() => importInput?.click()}
 							><Upload size={14} /> Import a backup file</button
 						>
@@ -1487,13 +1493,13 @@
 					</div>
 					<div class="card-body">
 						<p class="muted small">
-														PixelPlus backs up your whole show every night and before big changes. Go back to any of them,
+							PixelPlus backs up your whole show every night and before big changes. Go back to any of them,
 							or download one to keep somewhere safe.
 						</p>
 						<div class="row" style="margin:16px 0 8px">
 							<input
 								class="input"
-																placeholder="Name this backup (optional)"
+								placeholder="Name this backup (optional)"
 								bind:value={snapLabel}
 								aria-label="Backup name"
 							/>
@@ -1646,14 +1652,18 @@
 						</dl>
 						<div class="setting" style="margin-top:12px">
 							<div class="text">
-																<div class="title">Status screen</div>
+								<div class="title">Status screen</div>
 								<div class="desc">Shows the song and status on the little screen on the transmitter.</div>
 							</div>
 							<div class="control">
-								<Switch bind:checked={s.oled.enabled} label="Status screen" onchange={() => changed('oled')} />
+								<Switch
+									bind:checked={s.oled.enabled}
+									label="Status screen"
+									onchange={() => changed('oled')}
+								/>
 							</div>
 						</div>
-						
+
 						<div class="row wrap" style="margin-top:16px">
 							<button class="btn" onclick={() => power('restart')}
 								><RefreshCw size={14} /> Restart PixelPlus</button
@@ -1672,7 +1682,7 @@
 				<section class="card">
 					<div class="card-head">
 						<ScrollText size={16} />
-												<h2 class="grow">Logs</h2>
+						<h2 class="grow">Logs</h2>
 						<button class="btn ghost icon sm" onclick={loadLogs} aria-label="Refresh logs" title="Refresh"
 							><RefreshCw size={14} /></button
 						>
@@ -1812,7 +1822,7 @@
 		color: var(--text);
 		box-shadow: inset 0 0 0 1px var(--border-2);
 	}
-		.si.on .si-ic {
+	.si.on .si-ic {
 		color: var(--accent-text);
 	}
 	.si-ic {
@@ -1978,7 +1988,7 @@
 	.disabled {
 		opacity: 0.5;
 	}
-		.reqgrid {
+	.reqgrid {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) 210px;
 		gap: 20px;
@@ -2092,7 +2102,7 @@
 		font-weight: 550;
 		font-size: 13.5px;
 	}
-		.logbar {
+	.logbar {
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -2165,6 +2175,15 @@
 		/* Phones and small tablets: an iOS-style list of sections that drills into one. */
 		.mobile-hidden {
 			display: none !important;
+		}
+		/* Drilled into a section: the page title stays for screen readers only. */
+		.mobile-sr {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
 		}
 		.snav {
 			position: static;

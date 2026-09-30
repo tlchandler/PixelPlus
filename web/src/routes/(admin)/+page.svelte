@@ -218,8 +218,8 @@
 				{#if show && !canPlay}
 					<h2 class="song">Nothing to play yet</h2>
 					<p class="muted small">
-						Upload your sequences and put them in a playlist. Then press play, or let the schedule start
-						the show at sunset.
+						Upload your sequences and put them in a playlist. Then press play, or let the schedule start the
+						show at sunset.
 					</p>
 				{:else}
 					<h2 class="song">The show is resting</h2>
@@ -374,7 +374,7 @@
 						{/if}
 					</div>
 				</div>
-								<div class="links">
+				<div class="links">
 					<a class="link" href="/settings#requests">Request settings <ChevronRight size={14} /></a>
 					{#if show?.settings.requests.enabled}<a class="link" href="/yard-sign"
 							>Yard sign <ChevronRight size={14} /></a
@@ -647,10 +647,15 @@
 		background: var(--red);
 		color: #fff;
 	}
+	@media (pointer: coarse) {
+		.qa {
+			height: 44px;
+		}
+	}
 	.row2 {
 		margin-top: 16px;
 	}
-		.nowrap {
+	.nowrap {
 		white-space: nowrap;
 	}
 	.links {

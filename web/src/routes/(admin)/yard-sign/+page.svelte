@@ -43,7 +43,8 @@
 		<div class="notice warn small screen-only">
 			<TriangleAlert size={16} class="ico" />
 			<div>
-				<strong>This QR code only works on your home Wi-Fi.</strong> Visitors on the street can’t reach it yet.
+				<strong>This QR code only works on your home Wi-Fi.</strong> Visitors on the street can’t reach it
+				yet.
 				<a href="/settings#requests">Add an internet address</a> first, then print.
 			</div>
 		</div>
@@ -152,7 +153,13 @@
 		position: absolute;
 		inset: 0 0 auto 0;
 		height: 14px;
-		background: repeating-linear-gradient(-45deg, #c21f2b 0 22px, #fffdf8 22px 44px, #1c7a45 44px 66px, #fffdf8 66px 88px);
+		background: repeating-linear-gradient(
+			-45deg,
+			#c21f2b 0 22px,
+			#fffdf8 22px 44px,
+			#1c7a45 44px 66px,
+			#fffdf8 66px 88px
+		);
 	}
 	.show {
 		margin-top: 8px;

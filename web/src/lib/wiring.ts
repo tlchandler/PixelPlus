@@ -107,6 +107,7 @@ export const COLOR_CORRECTION = [
 export function correctionIndex(gamma: number): number {
 	let best = 0;
 	for (let i = 1; i < COLOR_CORRECTION.length; i++)
-		if (Math.abs(COLOR_CORRECTION[i].gamma - gamma) < Math.abs(COLOR_CORRECTION[best].gamma - gamma)) best = i;
+		if (Math.abs(COLOR_CORRECTION[i].gamma - gamma) < Math.abs(COLOR_CORRECTION[best].gamma - gamma))
+			best = i;
 	return best;
 }

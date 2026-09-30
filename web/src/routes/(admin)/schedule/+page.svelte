@@ -17,7 +17,7 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import TimeSpecPicker from '$lib/components/schedule/TimeSpecPicker.svelte';
 	import {
-				CalendarDays,
+		CalendarDays,
 		List,
 		Rows3,
 		ChevronRight,
@@ -37,7 +37,7 @@
 	const show = $derived(app.show);
 	const sched = $derived(show?.schedule);
 	const tz = $derived(sched?.location.timezone ?? 'UTC');
-		// Phones open on the day list: the week grid needs a wide screen.
+	// Phones open on the day list: the week grid needs a wide screen.
 	let view = $state<'days' | 'week' | 'list'>(
 		typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches ? 'days' : 'week'
 	);
@@ -77,7 +77,7 @@
 		save(s, msg);
 	}
 
-		function newEntry() {
+	function newEntry() {
 		editing = {
 			id: newId(),
 			name: 'Show night',
@@ -155,7 +155,7 @@
 	}
 	// Evening shows: a 2 pm → 2 am grid (after-midnight hours continue the night). A show
 	// starting in the morning (e.g. Christmas morning) switches to a whole-day grid.
-		const nightGrid = $derived(week.every((d) => d.items.every((o) => rawHour(o.start) >= 12)));
+	const nightGrid = $derived(week.every((d) => d.items.every((o) => rawHour(o.start) >= 12)));
 	// Start at 4 PM (or earlier if a show does) so evening blocks are big enough to read.
 	const H0 = $derived(
 		nightGrid ? Math.min(16, ...week.flatMap((d) => d.items.map((o) => Math.floor(rawHour(o.start))))) : 0
@@ -302,7 +302,7 @@
 			<Segmented
 				bind:value={view}
 				label="View"
-								options={[
+				options={[
 					{ value: 'days', label: 'Days', icon: Rows3 },
 					{ value: 'week', label: 'Week', icon: CalendarDays },
 					{ value: 'list', label: 'Show times', icon: List }
@@ -317,14 +317,18 @@
 						<EmptyState
 							icon={Sunset}
 							title="No show times yet"
-							message="Add when your show should run — for example every night from 15 minutes after sunset until 10 PM."
+							message={show.playlists.length
+								? 'Add when your show should run — for example every night from 15 minutes after sunset until 10 PM.'
+								: 'A show time plays one of your playlists. Build a playlist first, then come back to schedule it.'}
 						>
-							<button class="btn primary" onclick={newEntry} disabled={!show.playlists.length}
-								><Plus size={16} /> Add show time</button
-							>
+							{#if show.playlists.length}
+								<button class="btn primary" onclick={newEntry}><Plus size={16} /> Add show time</button>
+							{:else}
+								<a class="btn primary" href="/playlists"><Plus size={16} /> Build a playlist</a>
+							{/if}
 						</EmptyState>
 					</div>
-								{:else if view === 'days'}
+				{:else if view === 'days'}
 					<div class="card days" aria-label="This week">
 						{#each week as d, di (d.key)}
 							{@const live = d.items.filter((o) => !o.overridden)}
@@ -339,7 +343,11 @@
 									e ? (editing = structuredClone($state.snapshot(e) as ScheduleEntry)) : newEntry()}
 							>
 								<span class="dd">
-									<span class="ddw">{di === 0 ? 'Today' : fmtDate(d.date, 'UTC', { weekday: 'short', month: undefined, day: undefined })}</span>
+									<span class="ddw"
+										>{di === 0
+											? 'Today'
+											: fmtDate(d.date, 'UTC', { weekday: 'short', month: undefined, day: undefined })}</span
+									>
 									<span class="ddn num">{d.date.getUTCDate()}</span>
 								</span>
 								<span class="grow dbody">
@@ -347,7 +355,9 @@
 										{#each live as o (o.entryId + o.start)}
 											<span class="dline">
 												<span class="edot" style:background={entryColor(o.entryId)}></span>
-												<strong class="num">{fmtTime(new Date(o.start), tz)} – {fmtTime(new Date(o.end), tz)}</strong>
+												<strong class="num"
+													>{fmtTime(new Date(o.start), tz)} – {fmtTime(new Date(o.end), tz)}</strong
+												>
 												<span class="muted ellipsis">{o.name}</span>
 											</span>
 										{/each}
@@ -397,7 +407,7 @@
 												onclick={() => e && (editing = structuredClone($state.snapshot(e) as ScheduleEntry))}
 												title="{o.name}: {fmtTime(new Date(o.start), tz)}–{fmtTime(new Date(o.end), tz)}"
 											>
-																								{#if !o.overridden}
+												{#if !o.overridden}
 													<span class="bn ellipsis"
 														>{#if (e?.priority ?? 0) > 0}<Star size={10} fill="currentColor" />{/if}
 														{o.name}</span
@@ -414,7 +424,7 @@
 						</div>
 					</div>
 					<p class="faint tiny" style="margin-top:8px">
-												Dashed outlines are regular show times replaced by a special night.
+						Dashed outlines are regular show times replaced by a special night.
 					</p>
 				{:else}
 					<div class="card list">
@@ -617,7 +627,7 @@
 			</label>
 			<div class="field span-2">
 				<span class="label">Kind of night</span>
-								<Segmented
+				<Segmented
 					value={editing.priority > 0 ? 'special' : 'regular'}
 					label="Priority"
 					onchange={(v) => setSpecial(v === 'special')}
@@ -626,7 +636,9 @@
 						{ value: 'special', label: 'Special night', icon: Star }
 					]}
 				/>
-								<span class="hint">A special night (like Christmas Eve) takes over from your regular show that evening.</span>
+				<span class="hint"
+					>A special night (like Christmas Eve) takes over from your regular show that evening.</span
+				>
 			</div>
 			<div class="field span-2">
 				<span class="label">Days</span>
@@ -668,7 +680,7 @@
 					label="End"
 				/>
 			</div>
-						{#if editing.priority > 0}
+			{#if editing.priority > 0}
 				<div class="field span-2">
 					<span class="label">Which night?</span>
 					<div class="row wrap">
@@ -706,70 +718,70 @@
 						/>
 					</div>
 					<span class="hint"
-						>A special night replaces your regular show time for the whole evening, every year on this
-						date.</span
+						>A special night replaces your regular show time for the whole evening, every year on this date.</span
 					>
 				</div>
 			{:else}
-			<div class="field span-2">
-				<span class="label">Dates</span>
-				<div class="row wrap">
-					<Switch
-						checked={!!editing.dateRange}
-						label="Limit to dates"
-						onchange={(v) =>
-							editing && (editing.dateRange = v ? { start: '11-25', end: '01-06' } : undefined)}
-					/>
-					{#if editing.dateRange}
-						{@const dr = editing.dateRange}
-						<span class="small muted">From</span>
-						<select
-							class="select sm month"
-							style="width:auto"
-							value={dr.start.split('-')[0]}
-							onchange={(e) =>
-								(dr.start = `${(e.target as HTMLSelectElement).value}-${dr.start.split('-')[1]}`)}
-							aria-label="Start month"
-							>{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option
-								>{/each}</select
-						>
-						<input
-							class="input sm"
-							style="width:64px"
-							type="number"
-							min="1"
-							max="31"
-							value={+dr.start.split('-')[1]}
-							onchange={(e) =>
-								(dr.start = `${dr.start.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)}
-							aria-label="Start day"
+				<div class="field span-2">
+					<span class="label">Dates</span>
+					<div class="row wrap">
+						<Switch
+							checked={!!editing.dateRange}
+							label="Limit to dates"
+							onchange={(v) =>
+								editing && (editing.dateRange = v ? { start: '11-25', end: '01-06' } : undefined)}
 						/>
-						<span class="small muted">to</span>
-						<select
-							class="select sm month"
-							style="width:auto"
-							value={dr.end.split('-')[0]}
-							onchange={(e) => (dr.end = `${(e.target as HTMLSelectElement).value}-${dr.end.split('-')[1]}`)}
-							aria-label="End month"
-							>{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option
-								>{/each}</select
-						>
-						<input
-							class="input sm"
-							style="width:64px"
-							type="number"
-							min="1"
-							max="31"
-							value={+dr.end.split('-')[1]}
-							onchange={(e) =>
-								(dr.end = `${dr.end.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)}
-							aria-label="End day"
-						/>
-										{:else}
-						<span class="small faint">Runs all year on the chosen days</span>
-					{/if}
+						{#if editing.dateRange}
+							{@const dr = editing.dateRange}
+							<span class="small muted">From</span>
+							<select
+								class="select sm month"
+								style="width:auto"
+								value={dr.start.split('-')[0]}
+								onchange={(e) =>
+									(dr.start = `${(e.target as HTMLSelectElement).value}-${dr.start.split('-')[1]}`)}
+								aria-label="Start month"
+								>{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option
+									>{/each}</select
+							>
+							<input
+								class="input sm"
+								style="width:64px"
+								type="number"
+								min="1"
+								max="31"
+								value={+dr.start.split('-')[1]}
+								onchange={(e) =>
+									(dr.start = `${dr.start.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)}
+								aria-label="Start day"
+							/>
+							<span class="small muted">to</span>
+							<select
+								class="select sm month"
+								style="width:auto"
+								value={dr.end.split('-')[0]}
+								onchange={(e) =>
+									(dr.end = `${(e.target as HTMLSelectElement).value}-${dr.end.split('-')[1]}`)}
+								aria-label="End month"
+								>{#each months as m, i (m)}<option value={String(i + 1).padStart(2, '0')}>{m}</option
+									>{/each}</select
+							>
+							<input
+								class="input sm"
+								style="width:64px"
+								type="number"
+								min="1"
+								max="31"
+								value={+dr.end.split('-')[1]}
+								onchange={(e) =>
+									(dr.end = `${dr.end.split('-')[0]}-${String((e.target as HTMLInputElement).value).padStart(2, '0')}`)}
+								aria-label="End day"
+							/>
+						{:else}
+							<span class="small faint">Runs all year on the chosen days</span>
+						{/if}
+					</div>
 				</div>
-			</div>
 			{/if}
 			<div class="field">
 				<span class="label">When it ends</span>
@@ -921,6 +933,11 @@
 	}
 	.loc:hover {
 		border-color: var(--accent-line);
+	}
+	@media (pointer: coarse) {
+		.loc {
+			min-height: 44px;
+		}
 	}
 	.cols {
 		display: grid;
@@ -1136,7 +1153,7 @@
 	.hit:hover {
 		background: var(--accent-soft);
 	}
-		.days {
+	.days {
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -1219,7 +1236,7 @@
 			grid-template-columns: minmax(0, 1fr);
 		}
 	}
-		@media (max-width: 760px) {
+	@media (max-width: 760px) {
 		.banner {
 			padding: 16px;
 			gap: 12px;

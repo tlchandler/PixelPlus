@@ -9,14 +9,7 @@
 <span class="sig" title="Signal: {q.label}" aria-label="Signal {q.label}" role="img">
 	<svg width="16" height="14" viewBox="0 0 16 14" aria-hidden="true">
 		{#each [0, 1, 2, 3] as i (i)}
-			<rect
-				x={i * 4.2}
-				y={10 - i * 3.2}
-				width="3"
-				height={4 + i * 3.2}
-				rx="1"
-				class:on={i < q.bars}
-			/>
+			<rect x={i * 4.2} y={10 - i * 3.2} width="3" height={4 + i * 3.2} rx="1" class:on={i < q.bars} />
 		{/each}
 	</svg>
 	{#if showLabel}<span class="lbl">{q.label}</span>{/if}

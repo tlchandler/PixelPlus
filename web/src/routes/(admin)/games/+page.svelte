@@ -48,6 +48,13 @@
 			levelsAll = !copy.levels.trim() || copy.levels.trim() === 'all';
 		});
 	});
+	// Only one matrix in the show: pick it for the owner (and save that choice).
+	$effect(() => {
+		if (g && !g.matrixPropId && matrices.length === 1) {
+			g.matrixPropId = matrices[0].id;
+			untrack(() => changed());
+		}
+	});
 	async function poll() {
 		status = await api.games.status().catch(() => null);
 	}
@@ -458,7 +465,7 @@
 								/>
 							</div>
 						</div>
-						
+
 						<div class="setting stack">
 							<div class="text"><div class="title">Brightness</div></div>
 							<div class="control slider-c">
@@ -495,7 +502,7 @@
 							</div>
 						</div>
 						<details class="adv">
-														<summary>Advanced · smoothness, crop & port</summary>
+							<summary>Advanced · smoothness, crop & port</summary>
 							<div class="setting stack">
 								<div class="text">
 									<div class="title">Smoothness</div>

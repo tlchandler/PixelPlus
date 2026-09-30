@@ -27,14 +27,8 @@ export const LIGHTS_OFF_HELP =
 /** Master "Lights off" switch (the daemon calls it blackout). */
 export async function setLightsOff(on: boolean) {
 	await playerAct(() => api.blackout(on));
-	if (on)
-		toasts.push({
-			kind: 'warning',
-			message: 'Lights are off',
-			detail: 'Everything stays dark until you turn the lights back on.',
-			action: { label: 'Turn back on', run: () => setLightsOff(false) }
-		});
-	else toasts.success('Lights are back on');
+	// Turning them off shows the red "Lights are off" banner (no toast needed on top of it).
+	if (!on) toasts.success('Lights are back on');
 }
 
 /**

@@ -307,7 +307,7 @@
 			<option value="">All controllers</option>
 			{#each show?.nodes ?? [] as n (n.id)}<option value={n.id}>{n.name}</option>{/each}
 		</select>
-		<select class="select filter" bind:value={rxF} aria-label="Filter by receiver">
+		<select class="select filter rx" bind:value={rxF} aria-label="Filter by receiver">
 			<option value="">All receivers</option>
 			{#each show?.receivers ?? [] as r (r.id)}<option value={r.id}>{r.name}</option>{/each}
 		</select>
@@ -836,8 +836,33 @@
 			gap: 10px;
 		}
 		.filter {
-			flex: 1 1 calc(50% - 4px);
+			flex: 1 1 0;
 			min-width: 0;
+		}
+		/* One compact row on phones: controller filter · Select · grid/list icons. */
+		.filter.rx {
+			display: none;
+		}
+		.toolbar :global(.seg button) {
+			min-width: 48px;
+			justify-content: center;
+		}
+		.toolbar :global(.seg button span) {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+		}
+		.chips {
+			flex-wrap: nowrap;
+			overflow-x: auto;
+			margin: 0 -16px 16px;
+			padding: 0 16px 2px;
+			scrollbar-width: none;
+		}
+		.chips .chip {
+			flex: 0 0 auto;
 		}
 		.toolbar > .grow {
 			display: none;

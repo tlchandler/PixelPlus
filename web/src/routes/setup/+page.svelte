@@ -54,7 +54,7 @@
 	});
 
 	const hits = $derived(searchCities(cityQ, 6));
-		// Never show a blank time zone: add this browser's zone (e.g. "UTC") when the list lacks it.
+	// Never show a blank time zone: add this browser's zone (e.g. "UTC") when the list lacks it.
 	const tzs = (() => {
 		const list = timezones();
 		const mine = loc.timezone;
@@ -160,7 +160,8 @@
 							<div class="bigmark"><Logo size={84} /></div>
 							<h1>Welcome to PixelPlus</h1>
 							<p class="lead">
-								Let’s get your light show running. It takes about two minutes — no spreadsheets, no network math.
+								Let’s get your light show running. It takes about two minutes — no spreadsheets, no network
+								math.
 							</p>
 							<button class="btn primary lg" onclick={next}>Get started <ArrowRight size={18} /></button>
 							<p class="faint small">{app.system?.hostname ?? 'pixelplus'} · {app.system?.ips?.[0] ?? ''}</p>
@@ -230,11 +231,10 @@
 									: 'We couldn’t read the board’s ID chip — it may be blank. Pick the board you have.'}
 							</p>
 						{/if}
-												<div class="boardpic"><BoardDiagram {board} {rev} compact={board !== 'difftxlarge'} /></div>
+						<div class="boardpic"><BoardDiagram {board} {rev} compact={board !== 'difftxlarge'} /></div>
 						{#if BOARDS[board].outputs}
 							<div class="facts" aria-label="Board facts">
-								{#if BOARDS[board].jacks > 1}<span
-										><strong>{BOARDS[board].jacks}</strong> network jacks</span
+								{#if BOARDS[board].jacks > 1}<span><strong>{BOARDS[board].jacks}</strong> network jacks</span
 									>{/if}
 								<span><strong>{BOARDS[board].outputs}</strong> pixel outputs</span>
 								{#if board === 'difftxlarge'}<span>Power &amp; temperature monitor</span>{/if}
@@ -318,7 +318,7 @@
 											aria-label="Search town or city"
 										/>
 									</div>
-																		<button class="btn" onclick={geolocate} aria-label="Use my location" title="Use my location"
+									<button class="btn" onclick={geolocate} aria-label="Use my location" title="Use my location"
 										><LocateFixed size={16} /> <span class="hide-sm">Use my location</span></button
 									>
 								</div>
@@ -424,7 +424,7 @@
 								<a href="/sequences"
 									><span class="n">2</span><span class="ic"><Music size={18} /></span><span class="grow"
 										><strong>Upload sequences & songs</strong><span class="faint small"
-																						>Your light sequences from xLights, with their music</span
+											>Your light sequences from xLights, with their music</span
 										></span
 									><ArrowRight size={16} /></a
 								>

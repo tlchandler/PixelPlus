@@ -681,9 +681,9 @@ export class MockServer {
 			void form;
 			// Like a real re-import: every model in the layout, three of them new to this show.
 			const fresh = [
-				['Candy Cane 5', 'candycane', 25],
-				['Candy Cane 6', 'candycane', 25],
-				['Mini Tree 4', 'tree', 50]
+				['Snowman', 'other', 120],
+				['Door Wreath', 'circle', 100],
+				['Gift Boxes', 'other', 90]
 			].map(([name, kind, px], i) => {
 				const tpl = clone(this.show.props.find((p) => p.kind === kind) ?? this.show.props[0]);
 				return {

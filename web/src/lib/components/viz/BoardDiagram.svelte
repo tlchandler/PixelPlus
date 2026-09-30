@@ -143,7 +143,8 @@
 			text-anchor="middle">RTC</text
 		>
 		<text x="1090" y="290" class="silk title" text-anchor="middle">PixelPlus</text>
-		<text x="1090" y="322" class="silk" text-anchor="middle">60-Port Transmitter{rev ? ` · rev ${rev}` : ''}</text
+		<text x="1090" y="322" class="silk" text-anchor="middle"
+			>60-Port Transmitter{rev ? ` · rev ${rev}` : ''}</text
 		>
 		<!-- jacks -->
 		{#each Array(15) as _, i (i)}

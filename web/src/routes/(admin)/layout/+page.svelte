@@ -75,29 +75,29 @@
 			/>
 		</div>
 		<div class="b2">
-		<label class="lbl"
-			><Switch bind:checked={labels} label="Show names" size="sm" />
-			<Tag size={14} /> <span>Names</span></label
-		>
-		<span class="grow"></span>
-		<div class="zoom">
-			<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1 / 1.3)} aria-label="Zoom out"
-				><ZoomOut size={16} /></button
+			<label class="lbl"
+				><Switch bind:checked={labels} label="Show names" size="sm" />
+				<Tag size={14} /> <span>Names</span></label
 			>
-			<button class="btn ghost icon sm" onclick={() => canvasRef?.fit()} aria-label="Fit to screen"
-				><Scan size={16} /></button
+			<span class="grow"></span>
+			<div class="zoom">
+				<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1 / 1.3)} aria-label="Zoom out"
+					><ZoomOut size={16} /></button
+				>
+				<button class="btn ghost icon sm" onclick={() => canvasRef?.fit()} aria-label="Fit to screen"
+					><Scan size={16} /></button
+				>
+				<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1.3)} aria-label="Zoom in"
+					><ZoomIn size={16} /></button
+				>
+			</div>
+			<button
+				class="btn ghost icon sm hide-sm"
+				onclick={() => (panel = !panel)}
+				aria-label={panel ? 'Hide prop list' : 'Show prop list'}
 			>
-			<button class="btn ghost icon sm" onclick={() => canvasRef?.zoom(1.3)} aria-label="Zoom in"
-				><ZoomIn size={16} /></button
-			>
-		</div>
-		<button
-			class="btn ghost icon sm hide-sm"
-			onclick={() => (panel = !panel)}
-			aria-label={panel ? 'Hide prop list' : 'Show prop list'}
-		>
-			{#if panel}<PanelRightClose size={16} />{:else}<PanelRightOpen size={16} />{/if}
-		</button>
+				{#if panel}<PanelRightClose size={16} />{:else}<PanelRightOpen size={16} />{/if}
+			</button>
 		</div>
 	</div>
 
@@ -114,6 +114,13 @@
 					onmove={(id, pos) => saveLayout(id, pos)}
 				/>
 			{/if}
+			{#if show && !show.props.length}
+				<div class="empty-stage">
+					<strong>Your display will appear here</strong>
+					<span>Import your xLights layout and every prop shows up, lit live while the show plays.</span>
+					<a class="btn primary" href="/props?import=1">Import from xLights</a>
+				</div>
+			{/if}
 			{#if mode === 'edit'}
 				<div class="hint">
 					{#if touch}
@@ -121,8 +128,7 @@
 								>Arranging works best on a bigger screen</span
 							>{/if}
 					{:else}
-						Drag props to arrange them. Hold <span class="kbd">Shift</span> for fine moves. Scroll or pinch to
-						zoom.
+						Drag props to arrange them. Hold <span class="kbd">Shift</span> for fine moves. Scroll or pinch to zoom.
 					{/if}
 				</div>
 			{/if}
@@ -239,6 +245,26 @@
 		flex: 1;
 		position: relative;
 		min-width: 0;
+	}
+	.empty-stage {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 24px;
+		text-align: center;
+		color: #a9a9b3;
+		font-size: 13.5px;
+	}
+	.empty-stage strong {
+		color: #ececef;
+		font-size: 16px;
+	}
+	.empty-stage .btn {
+		margin-top: 8px;
 	}
 	.stage :global(canvas) {
 		position: absolute;

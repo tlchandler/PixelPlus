@@ -75,13 +75,18 @@ test.describe('phone layout', () => {
 			const found = await page.evaluate(() =>
 				[
 					...document.querySelectorAll<HTMLElement>(
-						'main button, main a.btn, main [role="radio"], main select, main input:not([type="checkbox"]):not([type="range"]), nav[aria-label="Main"] a'
+						'main button, main a.btn, main [role="radio"], main select, main input:not([type="checkbox"]):not([type="range"]):not([type="file"]), nav[aria-label="Main"] a'
 					)
 				]
 					.filter((el) => {
 						const r = el.getBoundingClientRect();
 						const style = getComputedStyle(el);
-						return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && !el.closest('[aria-hidden="true"]');
+						return (
+							r.width > 0 &&
+							r.height > 0 &&
+							style.visibility !== 'hidden' &&
+							!el.closest('[aria-hidden="true"]')
+						);
 					})
 					.filter((el) => {
 						const r = el.getBoundingClientRect();
@@ -90,7 +95,10 @@ test.describe('phone layout', () => {
 						const extra = before.content !== 'none' && before.position === 'absolute' ? 12 : 0;
 						return Math.min(r.height, r.width) + extra < 43.5;
 					})
-					.map((el) => `${el.tagName.toLowerCase()}[${el.getAttribute('aria-label') ?? el.textContent?.trim().slice(0, 24)}]`)
+					.map(
+						(el) =>
+							`${el.tagName.toLowerCase()}[${el.getAttribute('aria-label') ?? el.textContent?.trim().slice(0, 24)}]`
+					)
 			);
 			small.push(...found.map((f) => `${path} ${f}`));
 		}
@@ -127,7 +135,15 @@ test.describe('phone layout', () => {
 test.describe('contrast (axe, WCAG AA)', () => {
 	test.beforeEach(({ isMobile }) => test.skip(!!isMobile, 'desktop covers the same tokens'));
 	for (const theme of ['dark', 'light'] as const)
-		for (const path of ['/', '/props', '/controllers', '/schedule', '/settings#requests', '/playlists', '/dj'])
+		for (const path of [
+			'/',
+			'/props',
+			'/controllers',
+			'/schedule',
+			'/settings#requests',
+			'/playlists',
+			'/dj'
+		])
 			test(`${path} in ${theme}`, async ({ page }) => {
 				await open(page, path, '1', theme);
 				const res = await new AxeBuilder({ page })

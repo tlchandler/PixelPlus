@@ -32,9 +32,7 @@
 	});
 	const ports = $derived.by(() => {
 		if (!node) return [];
-		const outs = multiJack
-			? [1, 2, 3, 4].map((p) => (jack - 1) * 4 + p)
-			: node.outputs.map((o) => o.index);
+		const outs = multiJack ? [1, 2, 3, 4].map((p) => (jack - 1) * 4 + p) : node.outputs.map((o) => o.index);
 		return outs
 			.filter((o) => node.outputs.some((x) => x.index === o))
 			.map((o) => {
@@ -43,9 +41,7 @@
 				return { output: o, port: multiJack ? portOf(o) : o, px, names: others.map((x) => x.prop.name) };
 			});
 	});
-	const jackRx = $derived(
-		node && multiJack ? receiverFor(show, node.id, (jack - 1) * 4 + 1) : undefined
-	);
+	const jackRx = $derived(node && multiJack ? receiverFor(show, node.id, (jack - 1) * 4 + 1) : undefined);
 	function jackUse(j: number) {
 		if (!node) return 0;
 		return [1, 2, 3, 4].filter((p) =>
@@ -98,7 +94,9 @@
 					>
 						<span class="pn">Port {p.port}</span>
 						<span class="pu ellipsis" class:over={p.px > MAX_PIXELS_PER_OUTPUT}
-							>{p.px ? `${p.names.length === 1 ? p.names[0] : `${p.names.length} props`} · ${p.px} px` : 'Free'}</span
+							>{p.px
+								? `${p.names.length === 1 ? p.names[0] : `${p.names.length} props`} · ${p.px} px`
+								: 'Free'}</span
 						>
 					</button>
 				{/each}
