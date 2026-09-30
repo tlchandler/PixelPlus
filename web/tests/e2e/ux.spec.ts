@@ -170,9 +170,9 @@ test.describe('lights off', () => {
 		await open(page, '/');
 		await page.getByRole('button', { name: 'Lights off', exact: true }).first().click();
 		await expect(page.getByRole('status').filter({ hasText: 'Lights are off' }).first()).toBeVisible();
-		await expect(page.getByText('LIGHTS OFF').first()).toBeVisible();
+		await expect(page.getByText('LIGHTS OFF', { exact: true }).first()).toBeVisible();
 		await page.getByRole('button', { name: 'Turn lights back on' }).first().click();
-		await expect(page.getByText('LIGHTS OFF')).toHaveCount(0);
+		await expect(page.getByText('LIGHTS OFF', { exact: true })).toHaveCount(0);
 		void isMobile;
 	});
 });

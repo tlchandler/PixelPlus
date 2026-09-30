@@ -41,7 +41,8 @@ describe('api client', () => {
 		await api.reboot();
 		await api.show().catch(() => undefined);
 		await api.submitRequest('s1');
-		for (const init of seen) expect((init.headers as Record<string, string>)['X-PixelPlus-Request']).toBe('1');
+		for (const init of seen)
+			expect((init.headers as Record<string, string>)['X-PixelPlus-Request']).toBe('1');
 	});
 
 	it('turns error bodies into ApiError with code and message', async () => {

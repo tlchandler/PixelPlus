@@ -347,8 +347,8 @@ def validate(
 
     v = g("ui_password")
     if v:
-        if len(v) < 4:
-            err("ui_password", "use at least 4 characters")
+        if len(v) < 6:
+            err("ui_password", "use at least 6 characters")
         else:
             s.ui_password = v
 

@@ -116,17 +116,26 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
 
 
+class UiPasswordTests(unittest.TestCase):
+    def test_ui_password_needs_six_characters_like_the_daemon(self):
+        s, errors = pptxt.validate(pptxt.parse("ui_password=abcde\n"), zoneinfo_dir=None)
+        self.assertTrue(any("ui_password" in e for e in errors), errors)
+        self.assertIsNone(s.ui_password)
+        s, errors = pptxt.validate(pptxt.parse("ui_password=abcdef\n"), zoneinfo_dir=None)
+        self.assertEqual((s.ui_password, errors), ("abcdef", []))
+
+
 class ScrubTests(unittest.TestCase):
     NOW = dt.datetime(2026, 10, 1, 18, 22)
 
     def test_scrub_keeps_everything_else(self):
-        text = "# hi\nwifi_ssid=Home\nwifi_password=hunter22!\nui_password=abcd\nhostname=pp\n"
+        text = "# hi\nwifi_ssid=Home\nwifi_password=hunter22!\nui_password=abcdef\nhostname=pp\n"
         pr = pptxt.parse(text)
         out = pptxt.scrub_secrets(pr, ["wifi_password"], now=self.NOW)
         self.assertEqual(
             out,
             "# hi\nwifi_ssid=Home\n# [applied 2026-10-01 18:22] Saved on the device and removed from this file. "
-            "Type a new one to change it.\nwifi_password=\nui_password=abcd\nhostname=pp\n",
+            "Type a new one to change it.\nwifi_password=\nui_password=abcdef\nhostname=pp\n",
         )
         # re-parsing: no warnings, password gone, ssid kept
         pr2 = pptxt.parse(out)

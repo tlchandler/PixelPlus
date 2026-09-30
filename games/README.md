@@ -184,8 +184,14 @@ a game, which frees up CPU.
 
 ## How it talks to PixelPlus
 
-The service runs next to pixelplusd and talks to it over loopback. Every request carries
-`X-PixelPlus-Local: 1`, which pixelplusd accepts from 127.0.0.1 / ::1 without a session.
+The service runs next to pixelplusd, as its own user `pixelplus-games` (group
+`pixelplus-overlay`, shared with pixelplusd), and talks to it over loopback. Every request
+carries `X-PixelPlus-Local: <token>` — the random token pixelplusd writes to
+`/run/pixelplus/local-token` at startup (`PIXELPLUS_LOCAL_TOKEN_FILE` overrides the path; the
+file is re-read after a 401) — and `X-PixelPlus-Request: 1`. pixelplusd accepts the token only
+from 127.0.0.1 / ::1, never through a proxy, and only for the calls below; the show it returns
+has its passwords redacted. The control socket is `/run/pixelplus-games/games.sock`, and of the
+data directory the service only sees `games/`.
 
 | Call | Use |
 |---|---|

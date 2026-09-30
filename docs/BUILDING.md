@@ -360,15 +360,20 @@ and `systemd` (Bookworm) so Imager uses the right format.
 
 * **Boot:** online (any Ethernet/Wi-Fi device connected) → nothing to do. Otherwise, after
   `hotspot_timeout` (75 s; 25 s when no Wi-Fi profile exists at all) and with no Ethernet
-  → hotspot. **Runtime:** offline for 5 min → hotspot.
+  → hotspot. **Runtime:** offline for 5 min → hotspot, but at least 10 min when a network was
+  connected within the last 30 min (a deauthentication attack has to last that long).
 * **Hotspot:** NetworkManager AP profile `pixelplus-hotspot`, SSID `PixelPlus-XXXX` (last 4
-  hex digits of the Wi-Fi MAC), WPA2 `pixelplus` by default (or open), 2.4 GHz channel 6,
+  hex digits of the Wi-Fi MAC), WPA2 `pixelplus` by default (or open) until the controller has
+  been online once; after that `hotspot_password=` if the owner set one, else a random
+  per-device password (`/var/lib/pixelplus-system/netwatch-state.json`, root 0600) written to
+  `PIXELPLUS-HOTSPOT.txt` on the boot partition and shown to the signed-in owner under
+  Settings → Network (`netwatch.json` is 0640 root:pixelplus) — never open. 2.4 GHz channel 6,
   `ipv4.method=shared` at 10.42.0.1/24. NM's dnsmasq gets
   `/etc/NetworkManager/dnsmasq-shared.d/pixelplus-portal.conf`: every DNS name → 10.42.0.1
   and DHCP option 114 (RFC 8910 captive-portal URL). An nftables table redirects TCP 80
   from the hotspot interface to the portal on 10.42.0.1:8099 and rejects 443 (so phones
   fall back to HTTP probes quickly); pixelplusd keeps port 80 everywhere else.
-* **Portal** (`portal.py` + `portal/index.html`): Apple/Android/Windows/Firefox probe URLs
+* **Portal** (`portal.py` + `portal/index.html`, 10 s socket timeout, bounded threads): Apple/Android/Windows/Firefox probe URLs
   and foreign hosts get a 302 to `http://10.42.0.1/`; API `GET /api/status`,
   `GET /api/scan[?rescan=1]` (scan cached before the AP starts – most Pi radios can't scan
   in AP mode), `POST /api/connect {ssid,password,hidden,country}`, `POST /api/stay`.

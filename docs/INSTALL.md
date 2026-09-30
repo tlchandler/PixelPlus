@@ -118,11 +118,11 @@ The file on the card has a friendly explanation above every line. In short:
 | `board` | `auto`, `difftx`, `difftxlarge`, `diffsmart`, `bare-pi` | Normally `auto` (read from the board's memory chip). |
 | `ip_address` / `ip_gateway` / `ip_dns` | `192.168.1.50/24` / `192.168.1.1` / `192.168.1.1` | Fixed IP address (most people leave this empty). `dhcp` = back to automatic. |
 | `ip_interface` | `wifi` / `ethernet` | Which connection gets the fixed address. |
-| `ui_password` | | Password for the PixelPlus web page. |
+| `ui_password` | | Password for the PixelPlus web page (at least 6 characters). |
 | `ssh` | `on` / `off` | SSH remote login (user `pi`). Empty = keep as is. |
 | `ssh_password` / `ssh_key` | | Password (8+ characters) or public key for SSH. |
 | `hotspot` | `on` / `off` | The setup hotspot (below). |
-| `hotspot_password` | `pixelplus` | 8–63 characters, or `none` for an open hotspot. |
+| `hotspot_password` | `pixelplus` | 8–63 characters, or `none` for an open hotspot. If you keep the default, it applies only to the first setup; once the Pi has been online it uses its own password from `PIXELPLUS-HOTSPOT.txt` (and never an open hotspot). |
 | `hotspot_timeout` | `75` | Seconds to wait for Wi-Fi at power-on before opening the hotspot. |
 
 Rules:
@@ -162,7 +162,11 @@ set, router out of range) **and no network cable is plugged in**, it opens its o
 network:
 
 * **Network name:** `PixelPlus-XXXX` (the four characters are unique to each Pi)
-* **Password:** `pixelplus` (change it with `hotspot_password=` in `pixelplus.txt`)
+* **Password:** `pixelplus` while you set it up for the first time. Once the Pi has been
+  online, the hotspot uses **its own password** instead (so a neighbour can't use it): it is
+  written to **`PIXELPLUS-HOTSPOT.txt`** on the SD card (open the card on any computer) and
+  shown in PixelPlus under **Settings → Network**. Choose your own with
+  `hotspot_password=` in `pixelplus.txt`.
 
 1. On your phone, join **PixelPlus-XXXX**.
 2. A *Sign in to network* page opens by itself (if not, open any web page, or go to
@@ -177,8 +181,9 @@ what happened – just try again. Other details:
 * **Leave it alone and it fixes itself:** if a known network comes back (e.g. the router
   was still starting after a power cut), the Pi checks every 5 minutes while no phone is
   connected to the hotspot, and rejoins it.
-* **If the Wi-Fi goes away later** for more than 5 minutes (and no cable is connected),
-  the hotspot opens again so you can reach the Pi.
+* **If the Wi-Fi goes away later** for more than 10 minutes (and no cable is connected),
+  the hotspot opens again so you can reach the Pi, with its own password (see above). The
+  wait is deliberately long: someone jamming your Wi-Fi for a moment can't make it switch.
 * **Use PixelPlus without Wi-Fi:** on the setup page tap *Use PixelPlus without Wi-Fi*,
   stay connected to the hotspot and open `http://10.42.0.1` – handy at a show site with
   no internet. PixelPlus itself never needs the internet.

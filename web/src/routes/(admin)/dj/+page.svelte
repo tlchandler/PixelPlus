@@ -1141,10 +1141,10 @@
 		background: #5b6472;
 	}
 	.en1.on {
-		background: #e0831a;
+		background: #a65a00;
 	}
 	.en15.on {
-		background: linear-gradient(90deg, #f2555a, #f5a524);
+		background: linear-gradient(90deg, #c2352f, #a8551a);
 	}
 	.addline {
 		display: flex;

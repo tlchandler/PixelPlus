@@ -153,7 +153,8 @@
 		padding: 2px 8px;
 		border-radius: 6px;
 		color: var(--purple);
-		background: var(--purple-soft);
+		background: var(--surface);
+		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--purple) 35%, transparent);
 	}
 	.exit:hover {
 		background: var(--purple);
