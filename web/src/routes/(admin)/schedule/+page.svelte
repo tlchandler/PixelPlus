@@ -115,19 +115,27 @@
 			return { key, date: d, items: occ.filter((o) => o.date === key) };
 		});
 	});
-	const H0 = 14,
-		H1 = 26; // 2 pm → 2 am
-	function localHour(iso: string) {
+	function rawHour(iso: string) {
 		const d = new Date(iso);
 		const shifted = new Date(d.getTime() + tzOffsetMs(d, tz));
-		let h = shifted.getUTCHours() + shifted.getUTCMinutes() / 60;
-		if (h < 6) h += 24;
+		return shifted.getUTCHours() + shifted.getUTCMinutes() / 60;
+	}
+	// Evening shows: a 2 pm → 2 am grid (after-midnight hours continue the night). A show
+	// starting in the morning (e.g. Christmas morning) switches to a whole-day grid.
+	const nightGrid = $derived(week.every((d) => d.items.every((o) => rawHour(o.start) >= 12)));
+	const H0 = $derived(
+		nightGrid ? Math.min(14, ...week.flatMap((d) => d.items.map((o) => Math.floor(rawHour(o.start))))) : 0
+	);
+	const H1 = $derived(nightGrid ? 26 : 24);
+	function localHour(iso: string) {
+		let h = rawHour(iso);
+		if (nightGrid && h < 6) h += 24;
 		return h;
 	}
 	function blockStyle(o: { start: string; end: string }) {
 		const a = Math.max(H0, localHour(o.start));
 		let b = localHour(o.end);
-		if (b <= a) b += 24;
+		if (b <= a) b = nightGrid ? b + 24 : H1;
 		b = Math.min(H1, b);
 		return `top:${((a - H0) / (H1 - H0)) * 100}%;height:${Math.max(4, ((b - a) / (H1 - H0)) * 100)}%`;
 	}
@@ -287,9 +295,11 @@
 							<div class="hours">
 								{#each Array(H1 - H0 + 1) as _, i (i)}
 									{@const h = (H0 + i) % 24}
-									<span style:top="{(i / (H1 - H0)) * 100}%"
-										>{h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`}</span
-									>
+									{#if H1 - H0 <= 14 || i % 2 === 0}
+										<span style:top="{(i / (H1 - H0)) * 100}%"
+											>{h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`}</span
+										>
+									{/if}
 								{/each}
 							</div>
 							{#each week as d, di (d.key)}

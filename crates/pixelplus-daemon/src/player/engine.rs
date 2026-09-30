@@ -1037,6 +1037,11 @@ impl Core {
         if self.is_follower() {
             return Err(ApiError::conflict("This controller follows its show leader; control playback on the leader."));
         }
+        // Pressing play ends a live look ("Effects → Show live"): it is drawn on top of
+        // everything and would otherwise hide what was just started.
+        if self.test.as_ref().is_some_and(|t| t.req.mode == "effect") {
+            self.test = None;
+        }
         let show = self.show.clone();
         let (source, first, playlist, crossfade) = if let Some(id) = &req.playlist_id {
             let pl = show.playlist(id).ok_or_else(|| ApiError::not_found("That playlist"))?;

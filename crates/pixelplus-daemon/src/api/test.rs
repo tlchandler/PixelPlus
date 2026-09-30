@@ -164,6 +164,26 @@ pub async fn stop_fault_session(state: &AppState) {
                 }))
                 .await;
         }
+        // Followers show the forwarded pattern until it times out; clear it now
+        // (in the background: an offline follower must not delay the answer).
+        let on_followers = state.store.get().prop(&s.prop_id).is_some_and(|p| {
+            let me = state.identity().id;
+            p.segments.iter().any(|seg| seg.node_id != me)
+        });
+        if let (true, Some(cluster)) = (on_followers, state.services.cluster.get().cloned()) {
+            let prop_id = s.prop_id.clone();
+            tokio::spawn(async move {
+                cluster
+                    .send_command(
+                        None,
+                        crate::cluster::ClusterCommand::OverlayEnable {
+                            prop_id,
+                            enabled: false,
+                        },
+                    )
+                    .await;
+            });
+        }
     }
 }
 

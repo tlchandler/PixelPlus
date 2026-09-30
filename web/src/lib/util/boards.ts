@@ -105,7 +105,8 @@ export function wiringChain(show: Show, seg: Prop['segments'][number]): ChainSte
 	steps.push({ label: node.name, kind: 'node' });
 	const jack = jackOf(node.board, seg.output);
 	const rx = receiverFor(show, node.id, seg.output);
-	if (node.board === 'difftxlarge' && jack) steps.push({ label: `J${jack}`, kind: 'jack' });
+	// The jack only adds information in front of a receiver: a bare output is labelled "J3-2" already.
+	if (node.board === 'difftxlarge' && jack && rx) steps.push({ label: `J${jack}`, kind: 'jack' });
 	if (rx) {
 		steps.push({ label: `${rx.name} receiver`.replace(/receiver receiver$/i, 'receiver'), kind: 'receiver' });
 		steps.push({ label: `Port ${portOf(seg.output)}`, kind: 'port' });

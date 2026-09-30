@@ -562,3 +562,95 @@ async fn preview_frames_cover_all_props() {
     // A (6) + B (9) + C (3 bytes), all from the sequence.
     assert!(b[5..].iter().all(|&v| v == 50));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn play_ends_a_live_look() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 400, 25, |_| 77)];
+    })
+    .await;
+    let h = &e.engine.handle;
+    let look = EffectPreset {
+        id: "live".into(),
+        name: "Blue".into(),
+        effect: EffectKind::Solid,
+        params: [("color".to_string(), serde_json::json!("#0000ff"))].into_iter().collect(),
+        target: Target { all: true, ..Default::default() },
+    };
+    h.test_start(TestRequest {
+        mode: "effect".into(),
+        color: None,
+        speed: None,
+        target: TestTarget { node_id: None, output: None, props: look.target.clone() },
+        effect: Some(look),
+    })
+    .await
+    .unwrap();
+    assert!(wait_for(1000, || e.status().state == PlayerState::Effect).await);
+    h.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.unwrap();
+    assert!(wait_for(1500, || e.status().state == PlayerState::Playing).await, "{:?}", e.status().state);
+    assert!(wait_for(1500, || uniform(&e.out(0)) == Some(77)).await, "the sequence shows, not the look");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn debug_tap_records_the_shown_sequence_frame() {
+    let e = env(LocalRole::Leader, false, |dir, show| {
+        show.sequences = vec![sequence(dir, "s1", 400, 25, |f| (f % 200) as u8 + 1)];
+    })
+    .await;
+    e.engine.handle.play(PlayRequest { sequence_id: Some("s1".into()), ..empty_req() }).await.unwrap();
+    let tap = e.state.services.debug_output.get().expect("tap enabled in dev/sim").clone();
+    assert!(wait_for(1500, || tap.snapshot().sequence.as_ref().is_some_and(|(_, f)| *f > 2)).await);
+    let t = tap.snapshot();
+    let (id, frame) = t.sequence.clone().unwrap();
+    assert_eq!(id, "s1");
+    assert_eq!(t.pixels_per_output[..2], [2, 3]);
+    // Prop A (output 1) shows the value of that frame (colour order RGB, full brightness).
+    assert_eq!(t.rgb[0], (frame % 200) as u8 + 1);
+    assert_eq!(t.wire[0][..6], t.rgb[..6]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn follower_leader_test_replaces_local_identify() {
+    let e = env(LocalRole::Follower, false, |_, _| {}).await;
+    let h = &e.engine.handle;
+    // "Identify" runs as a local white chase on every output of this node.
+    h.test_start(TestRequest {
+        mode: "solid".into(),
+        color: Some("#ffffff".into()),
+        speed: None,
+        target: TestTarget { node_id: Some("n1".into()), output: None, props: Default::default() },
+        effect: None,
+    })
+    .await
+    .unwrap();
+    assert!(wait_for(1000, || uniform(&e.out(0)) == Some(255)).await);
+    // The leader starts a red test on all props (e.g. the fault finder or a test pattern).
+    let red = TestRequest {
+        mode: "solid".into(),
+        color: Some("#ff0000".into()),
+        speed: None,
+        target: TestTarget { node_id: None, output: None, props: Target { all: true, ..Default::default() } },
+        effect: None,
+    };
+    let now_ms = e.state.started.elapsed().as_millis() as u64;
+    h.send(PlayerCmd::Sync(SyncPacket {
+        leader: "leader".into(),
+        show_version: 1,
+        state: PlayerState::Testing,
+        item: None,
+        pos_ms: 0,
+        sent_at_ms: now_ms,
+        effect: None,
+        test: Some(red),
+        brightness: 100,
+        blackout: false,
+    }))
+    .await
+    .unwrap();
+    assert!(
+        wait_for(1000, || e.out(0).chunks(3).all(|p| p == [255, 0, 0])).await,
+        "leader's test shows, not the local identify: {:?}",
+        e.out(0)
+    );
+}

@@ -34,6 +34,17 @@ describe('boards', () => {
 				.join(' › ')
 		).toBe('Main Controller › J1 › Front Yard receiver › Port 2 › pixels 51–100');
 	});
+	it("doesn't repeat the jack for an output without a receiver", () => {
+		const show = buildDemoShow();
+		const leader = show.nodes.find((n) => n.board === 'difftxlarge')!;
+		show.receivers = show.receivers.filter((r) => !(r.nodeId === leader.id && r.jack === 3));
+		const seg = { nodeId: leader.id, output: 10, startPixel: 0, pixelCount: 5, propOffset: 0, reverse: false, nullPixels: 0 };
+		expect(
+			wiringChain(show, seg)
+				.map((s) => s.label)
+				.join(' › ')
+		).toBe(`${leader.name} › J3-2 › pixels 1–5`);
+	});
 	it('repacks a chain in order, keeping null pixels', () => {
 		const m = repackChain([
 			{ propId: 'b', segIndex: 0, pixelCount: 50, nullPixels: 0 },

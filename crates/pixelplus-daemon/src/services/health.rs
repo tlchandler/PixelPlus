@@ -290,13 +290,21 @@ pub fn content_checks(show: &Show, data_dir: &std::path::Path) -> Vec<Check> {
 
 async fn host_checks(state: &AppState) -> Vec<Check> {
     let mut out = Vec::new();
-    // Controllers (followers) from the cluster's `nodes` status.
+    // Controllers (followers): live cluster status (the last `nodes` WebSocket
+    // message can be seconds old, e.g. right after followers finished syncing).
     let nodes = state
         .services
-        .snapshot_for_new_client()
-        .into_iter()
-        .find(|(k, _)| *k == "nodes")
-        .map(|(_, v)| v);
+        .cluster
+        .get()
+        .and_then(|c| serde_json::to_value(c.nodes_status()).ok())
+        .or_else(|| {
+            state
+                .services
+                .snapshot_for_new_client()
+                .into_iter()
+                .find(|(k, _)| *k == "nodes")
+                .map(|(_, v)| v)
+        });
     let show = state.store.get();
     let followers: Vec<_> = show
         .nodes

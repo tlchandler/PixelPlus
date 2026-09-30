@@ -263,7 +263,7 @@
 	<button class="drop" class:active={dragging} onclick={() => fileInput?.click()}>
 		<span class="dicon"><UploadCloud size={24} /></span>
 		<span
-			><strong>Drop .fseq and audio files here</strong><span class="faint small">
+			><strong>Drop .fseq and audio files here</strong>&nbsp;<span class="faint small">
 				— or click to choose. Several at once is fine; matching names are paired automatically.</span
 			></span
 		>

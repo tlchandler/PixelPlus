@@ -12,7 +12,8 @@
 //!
 //! | file | what |
 //! |---|---|
-//! | [`proto`] | wire formats (JSON on the cluster port, binary overlay frames), HMAC |
+//! | [`proto`] | wire formats (JSON on the cluster port, binary overlay frames), HMAC, replay guard |
+//! | [`sig`] | per-follower keys (X25519 at adoption), signed HTTP calls |
 //! | [`clock`] | min-RTT clock offset filter |
 //! | [`manifest`] | leader → follower manifests and the follower-local show |
 //! | [`slices`] | leader slice cache (keys, generation, cleanup) |
@@ -28,6 +29,7 @@ pub mod leader;
 pub mod manifest;
 pub mod net;
 pub mod proto;
+pub mod sig;
 pub mod slices;
 
 #[cfg(test)]
@@ -43,7 +45,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -53,8 +55,8 @@ pub use leader::ensure_self_node;
 
 /// PixelPlus version announced in beacons.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// HTTP header carrying the cluster key.
-pub const KEY_HEADER: &str = "x-pixelplus-key";
+/// How long "Join another show" / "Allow a new leader" stays open.
+pub const JOIN_WINDOW: Duration = Duration::from_secs(15 * 60);
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -290,14 +292,43 @@ pub(crate) struct Peer {
     pub addr: SocketAddr,
     pub last_seen: Instant,
     pub seen_at: chrono::DateTime<chrono::Utc>,
-    /// The beacon carried a valid MAC for our cluster key.
+    /// The beacon carried a valid, fresh MAC for the key we share with it.
     pub authenticated: bool,
+    /// Another device announced the same id from a different address
+    /// recently (spoofing or a cloned SD card): shown as a possible duplicate.
+    pub duplicate_until: Option<Instant>,
 }
 
 impl Peer {
     pub fn http_base(&self) -> String {
         net::http_url(self.addr.ip(), self.beacon.http)
     }
+
+    pub fn duplicate(&self) -> bool {
+        self.duplicate_until.is_some_and(|t| t > Instant::now())
+    }
+}
+
+/// Keys this node holds besides `node.json` (`cluster/keys.json`, 0600).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct KeyStore {
+    /// Leader: one key per adopted follower.
+    #[serde(default)]
+    pub followers: std::collections::BTreeMap<String, String>,
+    /// Follower: our key comes from an adoption the leader has not used yet
+    /// (the same leader may then repeat the adoption unsigned, e.g. after a
+    /// timeout).
+    #[serde(default)]
+    pub pending: bool,
+}
+
+/// "Join another show" / "Allow a new leader", opened by a signed-in admin.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct JoinWindow {
+    pub until: Instant,
+    /// Only this leader address may adopt us (when the admin named one).
+    pub leader_ip: Option<IpAddr>,
 }
 
 /// Follower-side runtime state.
@@ -315,7 +346,12 @@ pub(crate) struct FollowerRuntime {
     pub last_leader_contact: Option<Instant>,
     pub leader_udp: Option<SocketAddr>,
     pub last_sync_sent_at: Option<u64>,
-    pub overlay_frames: HashMap<String, u32>,
+    /// Highest overlay frame sequence number from the current leader boot.
+    pub overlay_seq: u64,
+    /// Pings sent recently: `t0` → when (a pong must answer one of them).
+    pub pings: HashMap<u64, Instant>,
+    /// Last challenge ping sent because of an unknown leader boot.
+    pub last_challenge: Option<Instant>,
     /// Sequences whose slice is on disk and verified.
     pub local_sequences: std::collections::HashSet<String>,
 }
@@ -361,6 +397,18 @@ pub(crate) struct Shared {
     pub overlay_frame: AtomicU32,
     pub shutdown: watch::Sender<bool>,
     pub cluster_dir: PathBuf,
+    /// Follower keys (leader) / key state (follower), see [`KeyStore`].
+    pub keys: Mutex<KeyStore>,
+    /// Sequence number of the next authenticated packet we send.
+    pub seq: AtomicU64,
+    /// Boot ids and sequence numbers of authenticated senders.
+    pub replay: Mutex<proto::ReplayGuard>,
+    /// Nonces of signed HTTP requests we accepted.
+    pub nonces: sig::NonceCache,
+    /// Clock offset of peers (their unix time − ours), learnt from signed
+    /// `X-PixelPlus-Time` answers.
+    pub skew: Mutex<HashMap<String, i64>>,
+    pub join: Mutex<Option<JoinWindow>>,
 }
 
 impl Shared {
@@ -381,12 +429,22 @@ impl Shared {
         let _ = self.events.send(event);
     }
 
-    /// Send a JSON datagram on the cluster socket (best effort).
+    /// Stamp for the next authenticated packet (key, boot id, fresh sequence number).
+    pub fn stamp<'a>(&'a self, key: &'a str) -> proto::Stamp<'a> {
+        proto::Stamp {
+            key,
+            boot: &self.boot,
+            seq: self.seq.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    /// Send a JSON datagram on the cluster socket (best effort), authenticated
+    /// with `key` when given.
     pub async fn send_json(&self, msg: &proto::Msg, key: Option<&str>, dests: &[SocketAddr]) {
         let Some(sock) = self.socket.get() else {
             return;
         };
-        let bytes = proto::encode(msg, key);
+        let bytes = proto::encode(msg, key.filter(|k| !k.is_empty()).map(|k| self.stamp(k)));
         if bytes.len() > proto::MAX_JSON_PACKET {
             tracing::warn!("cluster packet too large ({} bytes), not sent", bytes.len());
             return;
@@ -416,6 +474,70 @@ impl Shared {
             }
         }
         out
+    }
+
+    fn keys_path(&self) -> PathBuf {
+        self.cluster_dir.join("keys.json")
+    }
+
+    pub fn load_keys(&self) {
+        let path = self.keys_path();
+        if let Ok(bytes) = std::fs::read(&path) {
+            match serde_json::from_slice::<KeyStore>(&bytes) {
+                Ok(k) => *self.keys.lock() = k,
+                Err(e) => tracing::warn!("ignoring unreadable {}: {e}", path.display()),
+            }
+        }
+    }
+
+    /// Change and persist the key store.
+    pub fn update_keys(&self, f: impl FnOnce(&mut KeyStore)) {
+        let snapshot = {
+            let mut k = self.keys.lock();
+            let before = k.clone();
+            f(&mut k);
+            if *k == before {
+                return;
+            }
+            k.clone()
+        };
+        if let Err(e) = write_private_json(&self.keys_path(), &snapshot) {
+            tracing::error!("could not save the cluster keys: {e:#}");
+        }
+    }
+
+    /// Leader: the key shared with follower `id`. Followers adopted by an
+    /// older PixelPlus still use the show-wide key (`node.json` clusterKey)
+    /// until they are re-keyed.
+    pub fn follower_key(&self, state: &AppState, id: &str) -> Option<String> {
+        if let Some(k) = self.keys.lock().followers.get(id) {
+            return Some(k.clone());
+        }
+        let identity = state.identity();
+        if identity.role != LocalRole::Leader {
+            return None;
+        }
+        let legacy = identity.cluster_key.filter(|k| !k.is_empty())?;
+        state
+            .store
+            .get()
+            .node(id)
+            .is_some_and(|n| n.role == NodeRole::Follower && n.adopted)
+            .then_some(legacy)
+    }
+
+    /// Leader: `id` still uses the show-wide legacy key.
+    pub fn uses_legacy_key(&self, id: &str) -> bool {
+        !self.keys.lock().followers.contains_key(id)
+    }
+
+    /// The join window, if open.
+    pub fn join_window(&self) -> Option<JoinWindow> {
+        let mut j = self.join.lock();
+        if j.is_some_and(|w| w.until <= Instant::now()) {
+            *j = None;
+        }
+        *j
     }
 
     /// Broadcast destinations for `port` (global + per-subnet).
@@ -558,6 +680,25 @@ pub(crate) async fn to_player(state: &AppState, cmd: PlayerCmd) -> bool {
     )
 }
 
+/// Write `value` as JSON readable by this user only (atomic).
+pub(crate) fn write_private_json<T: Serialize>(path: &std::path::Path, value: &T) -> anyhow::Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = path.with_extension(format!("tmp-{}", sig::random_hex(4)));
+    {
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        o.mode(0o600);
+        let mut f = o.open(&tmp)?;
+        f.write_all(&serde_json::to_vec_pretty(value)?)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// Default length of an "identify" blink.
 pub const IDENTIFY_MS: u64 = 5_000;
 
@@ -650,7 +791,14 @@ pub async fn start_with(
         shutdown,
         cluster_dir,
         settings,
+        keys: Default::default(),
+        seq: AtomicU64::new(1),
+        replay: Default::default(),
+        nonces: Default::default(),
+        skew: Default::default(),
+        join: Default::default(),
     });
+    shared.load_keys();
     let handle = ClusterHandle {
         shared: shared.clone(),
     };

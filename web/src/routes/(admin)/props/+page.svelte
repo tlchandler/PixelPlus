@@ -107,10 +107,11 @@
 	function shortChain(p: Prop): string {
 		if (!show || !p.segments.length) return '';
 		const steps = wiringChain(show, p.segments[0]);
-		return steps
+		const chain = steps
 			.filter((s) => s.kind !== 'pixels')
 			.map((s) => s.label.replace(/ receiver$/, ''))
 			.join(' › ');
+		return p.segments.length > 1 ? `${chain} +${p.segments.length - 1}` : chain;
 	}
 
 	// ---- add prop

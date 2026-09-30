@@ -16,7 +16,8 @@
 		"test:e2e": "playwright test",
 		"screens": "node scripts/screens.mjs",
 		"test:unit": "vitest run",
-		"serve": "node scripts/serve.mjs"
+		"serve": "node scripts/serve.mjs",
+		"test:real": "playwright test -c playwright.real.config.ts"
 	},
 	"dependencies": {
 		"kokoro-js": "1.2.1",

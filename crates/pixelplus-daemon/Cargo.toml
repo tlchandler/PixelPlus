@@ -47,6 +47,8 @@ libc = "0.2"
 tokio-util = { version = "0.7", features = ["io"] }
 # --- cluster workstream
 sha2 = "0.10"
+# X25519 key agreement at adoption (already in the tree via rustls)
+ring = "0.17"
 if-addrs = "0.15"
 mdns-sd = "0.21"
 # --- playback engine workstream

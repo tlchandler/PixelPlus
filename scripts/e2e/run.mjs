@@ -96,7 +96,8 @@ function client(node) {
 	const base = `http://127.0.0.1:${URL_OF[node]}/api/v1`;
 	let cookie = '';
 	async function call(method, p, body, { expect = 200, raw = false } = {}) {
-		const headers = {};
+		// Like the web UI: mark API calls as coming from our own client (CSRF guard).
+		const headers = { 'X-PixelPlus-Request': '1' };
 		if (cookie) headers.cookie = cookie;
 		let payload;
 		if (body instanceof FormData) payload = body;
@@ -495,7 +496,7 @@ async function phaseShow() {
 		await sleep(400);
 		const [l, a, b] = await Promise.all([tap(L), tap(F1), tap(F2)]);
 		check(lit(Buffer.concat(l.rgb)) && lit(Buffer.concat(a.rgb)) && lit(Buffer.concat(b.rgb)), 'look lights every node');
-		eq((await F1.get('/player')).state, 'effect', 'follower shows the look');
+		eq((await F1.get('/player')).state, (await L.get('/player')).state, 'follower state follows the leader');
 		await until('back to the sequence (repeat)', async () => (await L.get('/player')).item?.id === S.seq.id, { timeout: 8000 });
 	});
 }
@@ -564,7 +565,7 @@ async function phaseTools() {
 	await step('live look on selected props, then stop', async () => {
 		const look = structuredClone(S.look);
 		look.target = { all: false, propIds: [S.props['Big Arch'].id], groupIds: [] };
-		look.params = { ...look.params, colors: ['#0000ff'] };
+		look.params = { color: '#0000ff' };
 		look.effect = 'solid';
 		await L.post('/player/effect', { effect: look });
 		await sleep(600);
@@ -591,7 +592,7 @@ async function phaseTools() {
 		await L.put('/show/settings', { requests: { enabled: true, maxQueue: 5, title: 'Pick a song', message: 'Tune to 88.1' } });
 		const pub = await L.get('/public/requests');
 		eq([pub.enabled, pub.title], [true, 'Pick a song'], 'public request page');
-		check(pub.songs.some((s) => s.id === S.seq.id), 'songs listed');
+		check(pub.songs.some((s) => s.sequenceId === S.seq.id), 'songs listed');
 		const r = await L.post('/public/requests', { sequenceId: S.seq2.id, name: 'Ana' });
 		check(r.ok && r.position >= 1, 'request accepted');
 		const q = await L.get('/requests');
@@ -617,6 +618,7 @@ async function phaseTools() {
 	});
 
 	await step('health, power estimate, sensors', async () => {
+		await until('followers synced', async () => (await L.get('/nodes')).every((n) => n.syncState === 'synced'));
 		const h = await L.post('/health/run');
 		const ids = h.checks.map((c) => c.id);
 		for (const id of ['followers', 'disk', 'audio', 'output', 'clock', 'sequences', 'wiring', 'schedule']) check(ids.includes(id), `health check ${id}`);
@@ -650,7 +652,7 @@ async function phaseTools() {
 		eq((await L.get('/public/health')).ok, true, 'public health stays open');
 		await L.get('/public/requests');
 		const sys = await L.get('/system');
-		check(sys.passwordSet === true && sys.nodeId === undefined, 'unauthenticated /system is minimal');
+		check(sys.passwordSet === true && sys.ips === undefined && sys.cpuPct === undefined, 'unauthenticated /system is minimal');
 		const wrong = await L.post('/auth/login', { password: 'nope' }, { expect: 401 });
 		check(/isn't right/.test(wrong.error.message), wrong.error.message);
 		await L.post('/auth/login', { password: 'e2e-secret' });

@@ -7,20 +7,25 @@
 //! `u8 'O' | u8 idLen | propId | u32 frameNo (LE) | RGB… | 32-byte MAC`.
 //!
 //! ## Authentication
-//! Once a node belongs to a cluster it shares the `clusterKey` with its leader.
-//! Every packet a cluster member sends is authenticated with HMAC-SHA256 keyed
-//! by that key:
+//! Adopted followers share a key with their leader (one key per follower, see
+//! [`super::sig`]). Every packet between them is authenticated with
+//! HMAC-SHA256 keyed by that key, and carries the sender's boot id and a
+//! sequence number that grows with every packet it sends (replay protection,
+//! see [`ReplayGuard`]):
 //!
-//! * JSON packets get a trailing `,"mac":"<64 hex>"}` member appended to the
-//!   serialized object; the MAC covers the object *without* that member (i.e.
-//!   the exact bytes that precede it, plus the closing `}`). The packet stays
-//!   ordinary JSON, so unauthenticated readers (e.g. `tcpdump`) still work.
-//! * Overlay frames carry the raw 32-byte MAC of everything before it.
+//! * JSON packets get `,"bt":"<boot>","sq":<seq>` and then a trailing
+//!   `,"mac":"<64 hex>"}` appended to the serialized object; the MAC covers the
+//!   object *without* the `mac` member (i.e. the exact bytes that precede it,
+//!   plus the closing `}`). The packet stays ordinary JSON, so unauthenticated
+//!   readers (e.g. `tcpdump`) still work.
+//! * Overlay frames: `u8 'P' | u8 bootLen | boot | u64 seq (LE) | u8 idLen |
+//!   propId | RGB… | 32-byte MAC` of everything before the MAC.
 //!
-//! Unadopted nodes send unauthenticated beacons (that is how discovery works).
-//! Anything that can change what a node *does* (sync, pong, the leader's
-//! address, overlay pixels, follower status reports) is only accepted with a
-//! valid MAC.
+//! Unadopted nodes send unauthenticated beacons (that is how discovery works),
+//! and the leader broadcasts an unauthenticated beacon for them. Anything that
+//! can change what a node *does* (sync, pong, the leader's address, overlay
+//! pixels, follower status reports) is only accepted with a valid MAC and a
+//! fresh sequence number.
 
 use crate::node::LocalRole;
 use crate::player::SyncPacket;
@@ -33,8 +38,8 @@ use std::net::IpAddr;
 pub const MAX_JSON_PACKET: usize = 32 * 1024;
 /// Largest overlay datagram (the IPv4 UDP payload limit).
 pub const MAX_OVERLAY_PACKET: usize = 65_507;
-/// Overlay frame type byte.
-pub const OVERLAY_MAGIC: u8 = b'O';
+/// Overlay frame type byte (v2: with boot id and sequence number).
+pub const OVERLAY_MAGIC: u8 = b'P';
 
 const MAC_HEX_LEN: usize = 64;
 /// `,"mac":"` + 64 hex + `"}`
@@ -116,6 +121,10 @@ pub struct Beacon {
     /// Followers only: sync / download status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<FollowerReport>,
+    /// Its admin opened "Join another show": it accepts adoption for a while
+    /// (lets a leader offer a controller that is itself a leader).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub joining: bool,
 }
 
 /// Follower → leader clock probe.
@@ -154,6 +163,7 @@ pub enum Msg {
 }
 
 /// A decoded datagram and whether it carried a valid MAC for our key.
+#[cfg(test)]
 #[derive(Debug)]
 pub struct Decoded<T> {
     pub msg: T,
@@ -225,12 +235,24 @@ fn decode_hex32(s: &[u8]) -> Option<[u8; 32]> {
 // JSON packets
 // ---------------------------------------------------------------------------
 
-/// Serialize `msg`, appending a MAC when `key` is set.
-pub fn encode(msg: &Msg, key: Option<&str>) -> Vec<u8> {
+/// Authentication of an outgoing packet: key, our boot id, sequence number.
+#[derive(Debug, Clone, Copy)]
+pub struct Stamp<'a> {
+    pub key: &'a str,
+    pub boot: &'a str,
+    pub seq: u64,
+}
+
+/// Serialize `msg`, appending boot id, sequence number and MAC when stamped.
+pub fn encode(msg: &Msg, stamp: Option<Stamp>) -> Vec<u8> {
     let mut json = serde_json::to_vec(msg).expect("cluster messages always serialize");
-    if let Some(key) = key.filter(|k| !k.is_empty()) {
-        let mac = hmac_sha256(key.as_bytes(), &json);
+    if let Some(st) = stamp.filter(|s| !s.key.is_empty()) {
         json.pop(); // closing '}'
+        json.extend_from_slice(b",\"bt\":");
+        json.extend_from_slice(serde_json::to_string(st.boot).unwrap_or_default().as_bytes());
+        json.extend_from_slice(format!(",\"sq\":{}}}", st.seq).as_bytes());
+        let mac = hmac_sha256(st.key.as_bytes(), &json);
+        json.pop();
         json.extend_from_slice(b",\"mac\":\"");
         json.extend_from_slice(pixelplus_core::fseq::to_hex(&mac).as_bytes());
         json.extend_from_slice(b"\"}");
@@ -238,18 +260,70 @@ pub fn encode(msg: &Msg, key: Option<&str>) -> Vec<u8> {
     json
 }
 
-/// Parse a datagram and check its MAC against `key`.
-pub fn decode(bytes: &[u8], key: Option<&str>) -> Result<Decoded<Msg>, ProtoError> {
+/// A parsed datagram, not yet authenticated.
+#[derive(Debug)]
+pub struct Raw<'a> {
+    pub msg: Msg,
+    /// Sender boot id and sequence number (authenticated packets only).
+    pub boot: Option<String>,
+    pub seq: Option<u64>,
+    bytes: &'a [u8],
+}
+
+impl Raw<'_> {
+    /// Id of the node that sent this packet.
+    pub fn sender(&self) -> &str {
+        match &self.msg {
+            Msg::Beacon(b) => &b.id,
+            Msg::Sync(p) => &p.leader,
+            Msg::Ping(p) => &p.id,
+            Msg::Pong(p) => &p.id,
+        }
+    }
+
+    /// Carries a valid MAC for `key` (and a boot id + sequence number).
+    pub fn verify(&self, key: &str) -> bool {
+        !key.is_empty()
+            && self.boot.is_some()
+            && self.seq.is_some()
+            && verify_json_mac(self.bytes, key)
+    }
+}
+
+#[derive(Deserialize)]
+struct StampFields {
+    #[serde(default)]
+    bt: Option<String>,
+    #[serde(default)]
+    sq: Option<u64>,
+}
+
+/// Parse a datagram (check it with [`Raw::verify`]).
+pub fn parse(bytes: &[u8]) -> Result<Raw<'_>, ProtoError> {
     if bytes.len() > MAX_JSON_PACKET {
         return Err(ProtoError::TooLarge(bytes.len()));
     }
     let msg: Msg =
         serde_json::from_slice(bytes).map_err(|e| ProtoError::Malformed(e.to_string()))?;
-    let authenticated = match key.filter(|k| !k.is_empty()) {
-        Some(key) => verify_json_mac(bytes, key),
-        None => false,
-    };
-    Ok(Decoded { msg, authenticated })
+    let st: StampFields =
+        serde_json::from_slice(bytes).map_err(|e| ProtoError::Malformed(e.to_string()))?;
+    Ok(Raw {
+        msg,
+        boot: st.bt.filter(|b| !b.is_empty() && b.len() <= 64),
+        seq: st.sq,
+        bytes,
+    })
+}
+
+/// Parse a datagram and check its MAC against `key`.
+#[cfg(test)]
+pub fn decode(bytes: &[u8], key: Option<&str>) -> Result<Decoded<Msg>, ProtoError> {
+    let raw = parse(bytes)?;
+    let authenticated = key.is_some_and(|k| raw.verify(k));
+    Ok(Decoded {
+        msg: raw.msg,
+        authenticated,
+    })
 }
 
 fn verify_json_mac(bytes: &[u8], key: &str) -> bool {
@@ -271,13 +345,88 @@ fn verify_json_mac(bytes: &[u8], key: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Replay protection
+// ---------------------------------------------------------------------------
+
+/// What [`ReplayGuard::check`] decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    /// Newer than anything seen from this sender: accepted and recorded.
+    Fresh,
+    /// Same boot, sequence number not newer (duplicate or replay).
+    Replayed,
+    /// A boot id we do not accept (older run of the sender, or not yet
+    /// confirmed by a challenge).
+    UnknownBoot,
+}
+
+/// Remembers, per sender, the current boot id, the highest sequence number
+/// and boots that were replaced (a replay of an older run is refused).
+#[derive(Debug, Default)]
+pub struct ReplayGuard {
+    peers: std::collections::HashMap<String, PeerSeq>,
+}
+
+#[derive(Debug, Default)]
+struct PeerSeq {
+    boot: String,
+    seq: u64,
+    old_boots: std::collections::VecDeque<String>,
+}
+
+impl ReplayGuard {
+    /// Check `(boot, seq)` from `sender`. A new boot id is accepted only when
+    /// `new_boot_ok` (the caller verified it is live) and it is not one we
+    /// already saw replaced.
+    pub fn check(&mut self, sender: &str, boot: &str, seq: u64, new_boot_ok: bool) -> Freshness {
+        if self.peers.len() > 4096 && !self.peers.contains_key(sender) {
+            self.peers.clear();
+        }
+        let p = self.peers.entry(sender.to_string()).or_default();
+        if p.boot == boot {
+            if seq <= p.seq {
+                return Freshness::Replayed;
+            }
+            p.seq = seq;
+            return Freshness::Fresh;
+        }
+        if !new_boot_ok || p.old_boots.iter().any(|b| b == boot) {
+            return Freshness::UnknownBoot;
+        }
+        if !p.boot.is_empty() {
+            p.old_boots.push_back(std::mem::take(&mut p.boot));
+            if p.old_boots.len() > 16 {
+                p.old_boots.pop_front();
+            }
+        }
+        p.boot = boot.to_string();
+        p.seq = seq;
+        Freshness::Fresh
+    }
+
+    /// The boot id currently accepted for `sender`.
+    pub fn boot(&self, sender: &str) -> Option<&str> {
+        self.peers
+            .get(sender)
+            .map(|p| p.boot.as_str())
+            .filter(|b| !b.is_empty())
+    }
+
+    /// Forget a sender (new leader, released follower).
+    pub fn forget(&mut self, sender: &str) {
+        self.peers.remove(sender);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Overlay frames
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OverlayFrame {
+    pub boot: String,
+    pub seq: u64,
     pub prop_id: String,
-    pub frame_no: u32,
     pub rgb: Vec<u8>,
 }
 
@@ -285,33 +434,36 @@ pub struct OverlayFrame {
 #[allow(dead_code)] // used by `ClusterHandle::forward_overlay`
 pub fn encode_overlay(
     prop_id: &str,
-    frame_no: u32,
     rgb: &[u8],
-    key: &str,
+    stamp: Stamp,
 ) -> Result<Vec<u8>, ProtoError> {
     let id = prop_id.as_bytes();
-    if id.is_empty() || id.len() > 255 {
-        return Err(ProtoError::Malformed("prop id must be 1..255 bytes".into()));
+    let boot = stamp.boot.as_bytes();
+    if id.is_empty() || id.len() > 255 || boot.len() > 255 {
+        return Err(ProtoError::Malformed("prop / boot id must be 1..255 bytes".into()));
     }
-    let len = 2 + id.len() + 4 + rgb.len() + MAC_LEN;
+    let len = 2 + boot.len() + 8 + 1 + id.len() + rgb.len() + MAC_LEN;
     if len > MAX_OVERLAY_PACKET {
         return Err(ProtoError::TooLarge(len));
     }
     let mut out = Vec::with_capacity(len);
     out.push(OVERLAY_MAGIC);
+    out.push(boot.len() as u8);
+    out.extend_from_slice(boot);
+    out.extend_from_slice(&stamp.seq.to_le_bytes());
     out.push(id.len() as u8);
     out.extend_from_slice(id);
-    out.extend_from_slice(&frame_no.to_le_bytes());
     out.extend_from_slice(rgb);
-    let mac = hmac_sha256(key.as_bytes(), &out);
+    let mac = hmac_sha256(stamp.key.as_bytes(), &out);
     out.extend_from_slice(&mac);
     Ok(out)
 }
 
 /// Decode an overlay frame; `None` unless well-formed *and* authenticated.
 pub fn decode_overlay(bytes: &[u8], key: &str) -> Option<OverlayFrame> {
-    if bytes.len() > MAX_OVERLAY_PACKET
-        || bytes.len() < 2 + 1 + 4 + MAC_LEN
+    if key.is_empty()
+        || bytes.len() > MAX_OVERLAY_PACKET
+        || bytes.len() < 2 + 8 + 1 + 1 + MAC_LEN
         || bytes[0] != OVERLAY_MAGIC
     {
         return None;
@@ -320,20 +472,28 @@ pub fn decode_overlay(bytes: &[u8], key: &str) -> Option<OverlayFrame> {
     if !ct_eq(&hmac_sha256(key.as_bytes(), body), mac) {
         return None;
     }
-    let id_len = body[1] as usize;
-    if body.len() < 2 + id_len + 4 {
+    let boot_len = body[1] as usize;
+    let mut n = 2 + boot_len;
+    if body.len() < n + 9 {
         return None;
     }
-    let prop_id = std::str::from_utf8(&body[2..2 + id_len]).ok()?.to_string();
-    let n = 2 + id_len;
-    let frame_no = u32::from_le_bytes(body[n..n + 4].try_into().ok()?);
-    let rgb = body[n + 4..].to_vec();
+    let boot = std::str::from_utf8(&body[2..n]).ok()?.to_string();
+    let seq = u64::from_le_bytes(body[n..n + 8].try_into().ok()?);
+    n += 8;
+    let id_len = body[n] as usize;
+    n += 1;
+    if id_len == 0 || body.len() < n + id_len {
+        return None;
+    }
+    let prop_id = std::str::from_utf8(&body[n..n + id_len]).ok()?.to_string();
+    let rgb = body[n + id_len..].to_vec();
     if rgb.len() % 3 != 0 {
         return None;
     }
     Some(OverlayFrame {
+        boot,
+        seq,
         prop_id,
-        frame_no,
         rgb,
     })
 }
@@ -361,6 +521,14 @@ mod tests {
         );
     }
 
+    fn st(key: &str, seq: u64) -> Stamp<'_> {
+        Stamp {
+            key,
+            boot: "boot1",
+            seq,
+        }
+    }
+
     fn sample_sync() -> Msg {
         Msg::Sync(SyncPacket {
             leader: "leader0001".into(),
@@ -379,7 +547,7 @@ mod tests {
     #[test]
     fn json_roundtrip_with_mac() {
         let msg = sample_sync();
-        let bytes = encode(&msg, Some("secret"));
+        let bytes = encode(&msg, Some(st("secret", 1)));
         let text = std::str::from_utf8(&bytes).unwrap();
         assert!(text.starts_with("{\"t\":\"sync\""), "{text}");
         assert!(text.contains("\"mac\":\""));
@@ -399,7 +567,7 @@ mod tests {
 
     #[test]
     fn tampered_packets_fail_authentication() {
-        let bytes = encode(&sample_sync(), Some("secret"));
+        let bytes = encode(&sample_sync(), Some(st("secret", 1)));
         let text = String::from_utf8(bytes).unwrap().replace("1234", "9999");
         let d = decode(text.as_bytes(), Some("secret")).unwrap();
         assert!(!d.authenticated);
@@ -442,6 +610,7 @@ mod tests {
             boot: "b".into(),
             show_version: 0,
             report: None,
+            joining: false,
         });
         let v: serde_json::Value = serde_json::from_slice(&encode(&b, None)).unwrap();
         assert_eq!(v["t"], "beacon");
@@ -456,21 +625,58 @@ mod tests {
     #[test]
     fn overlay_roundtrip() {
         let rgb: Vec<u8> = (0..30u8).collect();
-        let bytes = encode_overlay("prop1", 42, &rgb, "k").unwrap();
-        assert_eq!(bytes[0], b'O');
+        let bytes = encode_overlay("prop1", &rgb, st("k", 42)).unwrap();
+        assert_eq!(bytes[0], b'P');
         let f = decode_overlay(&bytes, "k").unwrap();
         assert_eq!(
             f,
             OverlayFrame {
+                boot: "boot1".into(),
+                seq: 42,
                 prop_id: "prop1".into(),
-                frame_no: 42,
                 rgb
             }
         );
         assert!(decode_overlay(&bytes, "wrong").is_none());
+        assert!(decode_overlay(&bytes, "").is_none());
         let mut bad = bytes.clone();
         bad[10] ^= 1;
         assert!(decode_overlay(&bad, "k").is_none());
-        assert!(encode_overlay("p", 0, &vec![0; MAX_OVERLAY_PACKET], "k").is_err());
+        assert!(encode_overlay("p", &vec![0; MAX_OVERLAY_PACKET], st("k", 1)).is_err());
+    }
+
+    #[test]
+    fn stamped_packets_carry_boot_and_seq() {
+        let bytes = encode(&sample_sync(), Some(st("secret", 77)));
+        let raw = parse(&bytes).unwrap();
+        assert_eq!((raw.boot.as_deref(), raw.seq), (Some("boot1"), Some(77)));
+        assert_eq!(raw.sender(), "leader0001");
+        assert!(raw.verify("secret"));
+        // The sequence number is covered by the MAC.
+        let text = String::from_utf8(bytes).unwrap().replace("\"sq\":77", "\"sq\":78");
+        assert!(!parse(text.as_bytes()).unwrap().verify("secret"));
+        // A MAC without boot/seq (old format) is not accepted.
+        let mut legacy = serde_json::to_vec(&sample_sync()).unwrap();
+        let mac = hmac_sha256(b"secret", &legacy);
+        legacy.pop();
+        legacy.extend_from_slice(format!(",\"mac\":\"{}\"}}", pixelplus_core::fseq::to_hex(&mac)).as_bytes());
+        assert!(!parse(&legacy).unwrap().verify("secret"));
+    }
+
+    #[test]
+    fn replay_guard() {
+        let mut g = ReplayGuard::default();
+        // A new boot needs confirmation.
+        assert_eq!(g.check("l", "b1", 1, false), Freshness::UnknownBoot);
+        assert_eq!(g.check("l", "b1", 1, true), Freshness::Fresh);
+        assert_eq!(g.check("l", "b1", 2, false), Freshness::Fresh);
+        assert_eq!(g.check("l", "b1", 2, false), Freshness::Replayed);
+        assert_eq!(g.check("l", "b1", 1, false), Freshness::Replayed);
+        // Restart: new boot accepted once confirmed; the old one is refused for good.
+        assert_eq!(g.check("l", "b2", 1, true), Freshness::Fresh);
+        assert_eq!(g.check("l", "b1", 99, true), Freshness::UnknownBoot);
+        assert_eq!(g.boot("l"), Some("b2"));
+        g.forget("l");
+        assert_eq!(g.boot("l"), None);
     }
 }
