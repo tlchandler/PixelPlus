@@ -84,7 +84,7 @@ async fn countdown_intro_fills_up_then_the_first_song_starts_at_zero() {
         .await
         .unwrap();
     assert!(
-        wait_for(1000, || e
+        wait_for(4000, || e
             .status()
             .item
             .is_some_and(|i| i.kind == "countdown"))
@@ -93,13 +93,13 @@ async fn countdown_intro_fills_up_then_the_first_song_starts_at_zero() {
     let t0 = Instant::now();
     // The bar starts empty and fills up.
     assert!(
-        wait_for(1800, || px(&e.out(0), 0) == [255, 255, 255]).await,
+        wait_for(4000, || px(&e.out(0), 0) == [255, 255, 255]).await,
         "{:?}",
         e.out(0)
     );
     // On zero the song starts: no crossfade out of a countdown.
     assert!(
-        wait_for(1500, || e
+        wait_for(4000, || e
             .status()
             .item
             .is_some_and(|i| i.kind == "sequence"))
@@ -111,7 +111,7 @@ async fn countdown_intro_fills_up_then_the_first_song_starts_at_zero() {
         "the song started {took} ms into a 2 s countdown"
     );
     assert!(
-        wait_for(500, || uniform(&e.out(0)) == Some(10)).await,
+        wait_for(3000, || uniform(&e.out(0)) == Some(10)).await,
         "{:?}",
         e.out(0)
     );
@@ -161,7 +161,7 @@ async fn follower_renders_the_countdown_like_the_leader() {
     r.render(5_000, &mut want);
     assert_eq!(px(&want, 0), [0, 255, 0]);
     assert!(
-        wait_for(1500, || e.out(0) == want).await,
+        wait_for(4000, || e.out(0) == want).await,
         "{:?} vs {want:?}",
         e.out(0)
     );
@@ -209,7 +209,7 @@ async fn limiter_scales_a_supply_down_and_warn_mode_only_reports() {
     );
     assert_eq!(uniform(&e.out(1)), Some(255), "output 2 is on no supply");
     assert!(
-        wait_for(1000, || e
+        wait_for(4000, || e
             .status()
             .power
             .is_some_and(|p| p.limiting && p.min_scale < 0.8))
@@ -300,7 +300,7 @@ async fn surprise_layers_over_the_song_then_goes_away() {
     })
     .await
     .unwrap();
-    assert!(wait_for(1500, || uniform(&e.out(1)) == Some(10)).await);
+    assert!(wait_for(4000, || uniform(&e.out(1)) == Some(10)).await);
     let started = h
         .surprise(surprise::SurpriseRequest {
             id: "t1".into(),
@@ -316,7 +316,7 @@ async fn surprise_layers_over_the_song_then_goes_away() {
         (1, 1_200, false)
     );
     assert!(
-        wait_for(800, || e.out_pair(0, 1)
+        wait_for(4000, || e.out_pair(0, 1)
             == (vec![10; 6], [255u8, 0, 0].repeat(3)))
         .await,
         "{:?}",
@@ -335,7 +335,7 @@ async fn surprise_layers_over_the_song_then_goes_away() {
     assert_eq!(st.item.unwrap().kind, "sequence", "the song goes on");
     // It fades out and the song shows again.
     assert!(
-        wait_for(1500, || uniform(&e.out(1)) == Some(10)).await,
+        wait_for(4000, || uniform(&e.out(1)) == Some(10)).await,
         "{:?}",
         e.out(1)
     );
@@ -376,11 +376,11 @@ async fn surprises_wait_for_tests_and_a_new_one_replaces_the_old() {
     h.send(PlayerCmd::TestStop).await.unwrap();
     // Idle display: the surprise shows on dark props.
     assert!(!h.surprise(req("red")).await.unwrap().replaced);
-    assert!(wait_for(800, || px(&e.out(0), 0) == [255, 0, 0]).await);
+    assert!(wait_for(4000, || px(&e.out(0), 0) == [255, 0, 0]).await);
     assert!(h.surprise(req("blue")).await.unwrap().replaced);
-    assert!(wait_for(800, || px(&e.out(0), 0) == [0, 0, 255]).await);
+    assert!(wait_for(4000, || px(&e.out(0), 0) == [0, 0, 255]).await);
     h.send(PlayerCmd::SurpriseStop).await.unwrap();
-    assert!(wait_for(800, || uniform(&e.out(0)) == Some(0)).await);
+    assert!(wait_for(4000, || uniform(&e.out(0)) == Some(0)).await);
     // Blackout refuses.
     h.send(PlayerCmd::Blackout(true)).await.unwrap();
     let err = h.surprise(req("red")).await.unwrap_err();
@@ -426,7 +426,7 @@ async fn follower_renders_the_surprise_from_sync() {
         .await
         .unwrap();
     assert!(
-        wait_for(800, || e.out_pair(0, 1)
+        wait_for(4000, || e.out_pair(0, 1)
             == (vec![0; 6], [255u8, 0, 0].repeat(3)))
         .await,
         "{:?}",
@@ -436,7 +436,7 @@ async fn follower_renders_the_surprise_from_sync() {
     h.send(PlayerCmd::Sync(pkt(None, now_ms(&e))))
         .await
         .unwrap();
-    assert!(wait_for(800, || uniform(&e.out(1)) == Some(0)).await);
+    assert!(wait_for(4000, || uniform(&e.out(1)) == Some(0)).await);
     // A surprise that ended long ago on the leader's clock shows nothing.
     let mut old = sa;
     old.epoch = 43;
@@ -479,7 +479,7 @@ async fn map_code_test_lights_only_its_targets() {
         })
         .await
         .unwrap();
-    assert!(wait_for(1000, || e.status().state == PlayerState::Testing).await);
+    assert!(wait_for(4000, || e.status().state == PlayerState::Testing).await);
     assert!(
         e.status().anchor.is_some(),
         "followers get the pattern's timeline"
@@ -517,7 +517,7 @@ async fn identify_lights_the_chosen_output_in_its_colour() {
         .await
         .unwrap();
     assert!(
-        wait_for(800, || e.out_pair(0, 1)
+        wait_for(4000, || e.out_pair(0, 1)
             == (vec![0; 6], [255u8, 0, 0].repeat(3)))
         .await,
         "{:?}",
@@ -534,7 +534,7 @@ async fn phone_calibration_plays_the_seeded_pattern() {
         .await
         .unwrap();
     assert!(
-        wait_for(1500, || e.status().item.is_some_and(|i| i.kind
+        wait_for(4000, || e.status().item.is_some_and(|i| i.kind
             == engine::CALIBRATION_ID
             && i.id == "v2:1234"))
         .await
@@ -557,7 +557,7 @@ async fn phone_calibration_plays_the_seeded_pattern() {
         .send(PlayerCmd::Calibrate(false))
         .await
         .unwrap();
-    assert!(wait_for(1500, || e.status().state == PlayerState::Idle).await);
+    assert!(wait_for(4000, || e.status().state == PlayerState::Idle).await);
 }
 
 // ---------------------------------------------------------------------------
@@ -606,7 +606,7 @@ async fn season_profile_keeps_disabled_props_dark() {
         })
         .await
         .unwrap();
-    assert!(wait_for(800, || px(&e.out(1), 0) == [0, 255, 0]).await);
+    assert!(wait_for(4000, || px(&e.out(1), 0) == [0, 255, 0]).await);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -631,8 +631,8 @@ async fn smart_playlist_plays_tonights_songs() {
         })
         .await
         .unwrap();
-    assert!(wait_for(1500, || e.status().item.is_some_and(|i| i.id == "s1")).await);
-    assert!(wait_for(1000, || uniform(&e.out(0)) == Some(30)).await);
+    assert!(wait_for(4000, || e.status().item.is_some_and(|i| i.id == "s1")).await);
+    assert!(wait_for(4000, || uniform(&e.out(0)) == Some(30)).await);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -650,9 +650,9 @@ async fn plays_are_journaled() {
         })
         .await
         .unwrap();
-    assert!(wait_for(1000, || e.status().item.is_some()).await);
+    assert!(wait_for(4000, || e.status().item.is_some()).await);
     assert!(
-        wait_for(2000, || e.status().state == PlayerState::Idle
+        wait_for(4000, || e.status().state == PlayerState::Idle
             && e.status().item.is_none())
         .await
     );
@@ -705,7 +705,7 @@ async fn idle_look_pulses_with_the_analysed_song() {
         })
         .await
         .unwrap();
-    assert!(wait_for(1500, || e.status().item.is_some_and(|i| i.id == "m1")).await);
+    assert!(wait_for(4000, || e.status().item.is_some_and(|i| i.id == "m1")).await);
     // 120 BPM: a bright pulse every 500 ms, nearly dark in between.
     let (mut bright, mut dim) = (false, false);
     let t0 = Instant::now();

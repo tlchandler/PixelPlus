@@ -544,6 +544,20 @@ pub fn estimate_timed<E>(
     }
 
     let per_supply = supplies.finish(acc.samples, &mut warnings);
+    for sup in &show.power_supplies {
+        let mut nodes: Vec<String> = supply_outputs(show, sup)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        nodes.dedup();
+        if nodes.len() > 1 {
+            warnings.push(format!(
+                "{} feeds {} controllers: the limiter splits its budget between them by how much each could draw. One supply per controller limits more precisely.",
+                sup.name,
+                nodes.len()
+            ));
+        }
+    }
     let limited = sim.map(|s| s.finish(show)).unwrap_or_default();
     if let Some(worst) = limited
         .iter()
@@ -1827,7 +1841,10 @@ mod tests {
     fn measured_current_corrects_the_estimate() {
         // The estimate says 6 A against a 7 A supply (no limiting), but the
         // sensor measures 30 % more: after a few readings the limiter dims.
-        let mut l = Limiter::new(&budget(vec![group("s", 7.0, 0, vec![1])], LimiterMode::Limit));
+        let mut l = Limiter::new(&budget(
+            vec![group("s", 7.0, 0, vec![1])],
+            LimiterMode::Limit,
+        ));
         for _ in 0..(6 * 40) {
             l.step(&[6.0], 25.0);
         }
@@ -1846,7 +1863,10 @@ mod tests {
         // Readings with little lit, unknown groups and garbage change nothing.
         l.feedback("nope", 1.0);
         l.feedback("s", f32::NAN);
-        let mut quiet = Limiter::new(&budget(vec![group("s", 7.0, 0, vec![1])], LimiterMode::Limit));
+        let mut quiet = Limiter::new(&budget(
+            vec![group("s", 7.0, 0, vec![1])],
+            LimiterMode::Limit,
+        ));
         quiet.step(&[0.1], 25.0);
         quiet.feedback("s", 50.0);
         quiet.step(&[6.0], 25.0);

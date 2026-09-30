@@ -110,6 +110,9 @@ pub struct SurpriseLayer {
     slots: Vec<PropSlot>,
     px: Vec<u8>,
     base: Vec<u8>,
+    /// Reused per frame (no allocation while it runs).
+    scratch_chan: Vec<u8>,
+    scratch_frame: Option<OutputFrame>,
 }
 
 impl SurpriseLayer {
@@ -191,6 +194,8 @@ impl SurpriseLayer {
             content,
             px: vec![],
             base: vec![],
+            scratch_chan: vec![],
+            scratch_frame: None,
         })
     }
 
@@ -270,12 +275,14 @@ impl SurpriseLayer {
         match &mut self.content {
             Content::Effect(layer) => {
                 // Render into a scratch copy of channel space, then blend per prop.
-                let mut scratch = chan.to_vec();
-                layer.render(t.max(0.0) as u64, &mut Sink::Chan(&mut scratch));
+                let scratch = &mut self.scratch_chan;
+                scratch.clear();
+                scratch.extend_from_slice(chan);
+                layer.render(t.max(0.0) as u64, &mut Sink::Chan(scratch));
                 for (prop, slot) in self.props.iter().zip(&self.slots) {
                     self.px.resize(slot.len, 0);
                     self.base.resize(slot.len, 0);
-                    read_prop_channels(prop, &scratch, &mut self.px);
+                    read_prop_channels(prop, &self.scratch_chan, &mut self.px);
                     read_prop_channels(prop, chan, &mut self.base);
                     blend_into(&mut self.base, &self.px, a);
                     Sink::Chan(chan).put(slot, &self.base);
@@ -321,12 +328,18 @@ impl SurpriseLayer {
         }
         match &mut self.content {
             Content::Effect(layer) => {
-                let mut scratch = frame.clone();
-                layer.render(t.max(0.0) as u64, &mut Sink::Frame(&mut scratch, map));
+                let scratch = match &mut self.scratch_frame {
+                    Some(f) if f.len() == frame.len() => {
+                        f.as_bytes_mut().copy_from_slice(frame.as_bytes());
+                        f
+                    }
+                    slot => slot.insert(frame.clone()),
+                };
+                layer.render(t.max(0.0) as u64, &mut Sink::Frame(scratch, map));
                 for slot in &self.slots {
                     self.px.resize(slot.len, 0);
                     self.base.resize(slot.len, 0);
-                    map.read_prop(&slot.id, &scratch, &mut self.px);
+                    map.read_prop(&slot.id, scratch, &mut self.px);
                     map.read_prop(&slot.id, frame, &mut self.base);
                     blend_into(&mut self.base, &self.px, a);
                     map.apply_overlay(&slot.id, &self.base, frame);

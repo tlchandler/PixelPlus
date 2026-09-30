@@ -351,8 +351,7 @@ Trigger += { kind:"sensor", sensor?: {sensorNodeId, input}, cooldownS?, when?:"a
 TriggerAction += { type:"surprise", target?: Target, durationMs?, source?:"sequence"|"effect" }
 ```
 
-Until its workstream lands, a `countdown` item plays as a dark pause of its length, and a
-`surprise` trigger action answers "not available yet".
+Countdown items and surprise actions are rendered by the engine (§12.4, §12.16).
 
 ### 4.1 Channel mapping (internal)
 

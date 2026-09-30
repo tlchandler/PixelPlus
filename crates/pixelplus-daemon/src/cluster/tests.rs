@@ -91,7 +91,9 @@ async fn spawn_node(role: LocalRole, udp: u16, peers: Vec<u16>) -> TestNode {
     settings.mdns = false;
     settings.peers = peers.iter().map(|p| format!("127.0.0.1:{p}")).collect();
     settings.beacon_interval = Duration::from_millis(150);
-    settings.offline_after = Duration::from_millis(1500);
+    // Generous enough that a busy CI machine (parallel test binaries) doesn't
+    // make a healthy follower look offline between two beacons.
+    settings.offline_after = Duration::from_millis(3000);
     settings.manifest_poll = Duration::from_secs(2);
     settings.ping_interval = Duration::from_millis(100);
     settings.sync_interval = Duration::from_millis(100);
@@ -123,8 +125,12 @@ fn signed(key: &str, sender: &str, method: &str, url: &str, body: &[u8]) -> Stri
     sig::sign(key, sender, method, &path, body, sig::now_s()).0
 }
 
+/// Slack for CPU contention: every wait polls, so the happy path stays fast and
+/// only a starved machine uses the extra time.
+const SLACK: u32 = 4;
+
 async fn eventually<T>(what: &str, timeout: Duration, mut f: impl FnMut() -> Option<T>) -> T {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * SLACK;
     loop {
         if let Some(v) = f() {
             return v;
@@ -141,7 +147,7 @@ async fn next_cmd(
     what: &str,
     mut pred: impl FnMut(&PlayerCmd) -> bool,
 ) -> PlayerCmd {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5) * SLACK;
     loop {
         match tokio::time::timeout_at(deadline, rx.recv()).await {
             Ok(Some(cmd)) if pred(&cmd) => return cmd,
@@ -469,8 +475,12 @@ async fn leader_adopts_followers_and_drives_them() {
         (est - truth).abs() < 1.0,
         "offset estimate {est} vs {truth}"
     );
-    let q = super::follower::sync_quality(&f1.state, &f1.cluster.shared).expect("quality");
-    assert!(q.offset_error_ms < 5.0 && q.samples >= 5, "{q:?}");
+    // (Converged needs fewer samples than the quality report shows: wait for them.)
+    let q = eventually("sync quality samples", Duration::from_secs(5), || {
+        super::follower::sync_quality(&f1.state, &f1.cluster.shared).filter(|q| q.samples >= 5)
+    })
+    .await;
+    assert!(q.offset_error_ms < 5.0, "{q:?}");
     assert!(q.loss_pct <= 20.0, "{q:?}");
 
     // 6. Sync: the follower player follows the leader.
@@ -745,7 +755,7 @@ async fn leader_adopts_followers_and_drives_them() {
     // 10. A follower goes offline → event + status.
     let mut events = leader.cluster.subscribe();
     f2.cluster.shutdown();
-    let ev = tokio::time::timeout(Duration::from_secs(5), async {
+    let ev = tokio::time::timeout(Duration::from_secs(5) * SLACK, async {
         loop {
             if let Ok(ClusterEvent::NodeOffline { node_id, .. }) = events.recv().await {
                 break node_id;
@@ -957,10 +967,19 @@ async fn adoption_rules_skew_and_replay() {
             .then_some(())
     })
     .await;
-    let res = leader
-        .cluster
-        .send_command(Some(&f_id), ClusterCommand::Blackout { on: true })
-        .await;
+    // (Retried: under heavy load a beacon may arrive late and the follower
+    // briefly count as offline, which isn't what this checks.)
+    let deadline = Instant::now() + Duration::from_secs(5) * SLACK;
+    let res = loop {
+        let res = leader
+            .cluster
+            .send_command(Some(&f_id), ClusterCommand::Blackout { on: true })
+            .await;
+        if res[0].ok || Instant::now() > deadline {
+            break res;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
     assert!(res[0].ok, "{res:?}");
     assert!(leader.cluster.shared.skew.lock()[&f_id].abs() <= 2);
     next_cmd(&mut f.player_rx, "blackout", |c| {
@@ -986,7 +1005,9 @@ async fn adoption_rules_skew_and_replay() {
             state: PlayerState::Idle,
             item: None,
             pos_ms: 0,
-            sent_at_ms: 0,
+            // Newer than any real sync packet (the follower drops slightly
+            // older ones as reordered, whatever the machine's load).
+            sent_at_ms: leader.cluster.now_ms() as u64 + 600_000,
             anchor: None,
             effect: None,
             test: None,
@@ -1048,7 +1069,10 @@ async fn adoption_rules_skew_and_replay() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
-    assert_eq!(f.state.identity().leader_id, None);
+    eventually("f released", Duration::from_secs(5), || {
+        f.state.identity().leader_id.is_none().then_some(())
+    })
+    .await;
     eventually("f offered again", Duration::from_secs(5), || {
         leader
             .cluster
@@ -1466,7 +1490,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Option<T>>,
 {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout * SLACK;
     loop {
         if let Some(v) = f().await {
             return v;

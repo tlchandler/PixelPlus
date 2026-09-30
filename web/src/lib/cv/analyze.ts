@@ -209,8 +209,11 @@ export function analyze(show: Show, targets: RunTarget[], detected: Detected, o:
 				const only = (t.propIds ?? []).length === 1 ? byProp.get(t.propIds![0]) : undefined;
 				if (only) only.regions.push([x * W, y * H]);
 				else
-					for (const id of t.propIds ?? [])
-						byProp.get(id)?.regions.length === 0 && byProp.get(id)!.regions.push([NaN, NaN]);
+					for (const id of t.propIds ?? []) {
+						// Seen, but not where exactly (several props share the output).
+						const f = byProp.get(id);
+						if (f && !f.regions.length) f.regions.push([NaN, NaN]);
+					}
 				continue;
 			}
 			const at = propAt(show, t.nodeId, t.output, idx);

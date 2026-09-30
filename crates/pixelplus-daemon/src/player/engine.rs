@@ -536,7 +536,12 @@ fn smart_expansions(state: &AppState, show: &Show) -> HashMap<String, Vec<Playli
     show.playlists
         .iter()
         .filter(|p| p.smart.is_some())
-        .filter_map(|p| Some((p.id.clone(), crate::api::library::smart_items(state, &p.id)?)))
+        .filter_map(|p| {
+            Some((
+                p.id.clone(),
+                crate::api::library::smart_items(state, &p.id)?,
+            ))
+        })
         .collect()
 }
 
