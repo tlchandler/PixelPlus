@@ -86,7 +86,7 @@ class EventStream:
             await writer.drain()
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HANDSHAKE_TIMEOUT)
             status = head.split(b"\r\n", 1)[0]
-            if b" 101 " not in status + b" ":
+            if status.split()[1:2] != [b"101"]:
                 raise ConnectionError("upgrade refused: %s" % status.decode(errors="replace"))
             self.connected = True
             log.info("Receiving live updates from %s", self.url)

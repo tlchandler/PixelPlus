@@ -1,0 +1,4 @@
+# Python dependencies of the games sidecar. On Raspberry Pi OS / Debian prefer the
+# distribution packages (install.sh does): python3-numpy python3-qrcode
+numpy>=1.19
+qrcode>=6.1

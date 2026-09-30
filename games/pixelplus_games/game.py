@@ -129,10 +129,11 @@ class Engine:
         if self.core is None:
             os.makedirs(config.games_dir(), exist_ok=True)
             self.core = Core(find_core(config.core_path()), config.games_dir(), config.core_options())
-        if self.rom != rom_path or not self.core.game_loaded:
+        key = (rom_path, os.stat(rom_path).st_mtime_ns)  # a re-uploaded ROM is loaded afresh
+        if self.rom != key or not self.core.game_loaded:
             self.rom = None
             self.core.load_game(rom_path)
-            self.rom = rom_path
+            self.rom = key
         return self.core
 
     # --- the shared real-time loop ------------------------------------------------

@@ -17,6 +17,7 @@ log = logging.getLogger("pixelplus_games.invite")
 ON_SECONDS = 2.0
 OFF_SECONDS = 0.5
 SCROLL_PX_PER_SECOND = 20
+TEST_PATTERN_SECONDS = 6
 
 
 def _display_url(url):
@@ -126,7 +127,7 @@ def show(api, cfg, url, flashes=3, style="text"):
         _release(model)
 
 
-def test_pattern(api, cfg, seconds=6):
+def test_pattern(api, cfg, seconds=None):
     """Border, corner markers and centred text, so orientation is easy to check."""
     model = OverlayModel(api, cfg.matrix)
     gain = cfg.brightness / 100.0
@@ -141,7 +142,7 @@ def test_pattern(api, cfg, seconds=6):
         font.draw_lines_centered(img[2:-2, 2:-2], [("MARIO", c(255, 0, 0)), ("%dX%d" % (w, h), c(255, 255, 255))])
         model.write(img)
         model.enable()
-        time.sleep(seconds)
+        time.sleep(TEST_PATTERN_SECONDS if seconds is None else seconds)
     except Exception:
         log.exception("Test pattern failed")
         raise

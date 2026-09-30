@@ -1,9 +1,13 @@
-"""Send a command to the running fpp-mariobros daemon.
+"""Send a command to the running games sidecar over its control socket.
 
-    python3 -m mario.ctl status
-    python3 -m mario.ctl invite [flashes] [text|qr|both]
-    python3 -m mario.ctl stop
-    python3 -m mario.ctl test
+    python3 -m pixelplus_games.ctl status
+    python3 -m pixelplus_games.ctl invite [flashes] [text|qr|alternate]
+    python3 -m pixelplus_games.ctl stop
+    python3 -m pixelplus_games.ctl test
+    python3 -m pixelplus_games.ctl reload
+
+The protocol is one JSON object per line each way; pixelplusd uses the same
+socket for /api/v1/games/*.
 """
 
 import json
@@ -13,11 +17,11 @@ import sys
 from . import config
 
 
-def send(req, timeout=5):
+def send(req, timeout=5, path=None):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
-        s.connect(config.CONTROL_SOCKET)
+        s.connect(path or config.control_socket())
         s.sendall((json.dumps(req) + "\n").encode())
         data = b""
         while not data.endswith(b"\n"):
@@ -27,7 +31,7 @@ def send(req, timeout=5):
             data += chunk
         return json.loads(data or b"{}")
     except OSError as e:
-        return {"ok": False, "error": "fpp-mariobros daemon not reachable: %s" % e}
+        return {"ok": False, "error": "games sidecar not reachable: %s" % e}
     finally:
         s.close()
 
@@ -40,8 +44,8 @@ def main(argv):
     if argv[0] == "invite":
         if len(argv) > 1 and argv[1].isdigit() and int(argv[1]) > 0:
             req["flashes"] = int(argv[1])
-        if len(argv) > 2 and argv[2] in ("text", "qr", "both"):
-            req["style"] = argv[2]
+        if len(argv) > 2 and argv[2] in ("text", "qr", "alternate", "both"):
+            req["style"] = config.normalize_style(argv[2])
     reply = send(req)
     print(json.dumps(reply))
     return 0 if reply.get("ok") else 1

@@ -89,4 +89,7 @@ class AudioOut:
             self._proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             self._proc.kill()
+            self._proc.wait()
+        if self._proc.stderr:
+            self._proc.stderr.close()
         self._proc = None

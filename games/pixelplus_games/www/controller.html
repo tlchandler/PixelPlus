@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0e0f12">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Play on the Lights">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230e0f12'/%3E%3Crect x='3' y='3' width='4' height='4' fill='%23F5A524'/%3E%3Crect x='9' y='3' width='4' height='4' fill='%23F5A524' opacity='.55'/%3E%3Crect x='3' y='9' width='4' height='4' fill='%23F5A524' opacity='.55'/%3E%3Crect x='9' y='9' width='4' height='4' fill='%23F5A524'/%3E%3C/svg%3E">
+<title>Play on the Lights</title>
+<style>
+  /* PixelPlus "studio" look: near-black surfaces, warm amber accent (#F5A524), Inter where the
+     phone has it. Everything is inline: the page is served by the games sidecar with a strict CSP
+     and must work with no internet access. */
+  :root {
+    --bg: #0e0f12;
+    --shell: #17191e;
+    --shell-hi: #1f2228;
+    --shell-edge: #2b2f37;
+    --face: #111317;
+    --key: #262a31;
+    --key-hi: #343942;
+    --key-edge: #07080a;
+    --amber: #F5A524;
+    --amber-hi: #ffc35c;
+    --amber-lo: #b8750c;
+    --amber-glow: rgba(245, 165, 36, .45);
+    --text: #eceef2;
+    --muted: #8b919c;
+    --red: #e5484d;
+    --green: #30a46c;
+    --screen: #0a0b0d;
+    --screen-text: #F5A524;
+    --screen-dim: #c9a25e;
+    --font: Inter, "Inter var", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: var(--font); font-weight: 700;
+    overflow: hidden; overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  /* The controller fills the screen: the D-pad hugs the left edge and B/A the right edge, where
+     thumbs rest. Only the phone's rounded corners / notch (safe-area insets) are kept clear. */
+  body {
+    display: flex; flex-direction: column; align-items: stretch; justify-content: center;
+    padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right))
+             max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+    background: radial-gradient(120% 90% at 50% 0%, #1a1c22 0%, var(--bg) 60%);
+  }
+  .pad {
+    width: 100%; height: 100%;
+    background: linear-gradient(180deg, var(--shell-hi), var(--shell) 40%);
+    border-radius: 20px; border: 1px solid var(--shell-edge);
+    box-shadow: 0 16px 40px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.06);
+    padding: 10px; display: flex; flex-direction: column; gap: 10px;
+    touch-action: none;
+  }
+  /* the status screen reads like an amber LED panel */
+  .screen {
+    background:
+      radial-gradient(rgba(245,165,36,.06) 1px, transparent 1.2px) 0 0 / 6px 6px,
+      var(--screen);
+    color: var(--screen-text); border-radius: 12px;
+    border: 1px solid var(--shell-edge); padding: 12px 22px; flex: 0 0 auto;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; font-family: var(--mono); font-weight: 700;
+    letter-spacing: .06em; box-shadow: inset 0 0 18px rgba(0,0,0,.8);
+    text-shadow: 0 0 10px var(--amber-glow);
+  }
+  .screen .big { font-size: clamp(16px, 4.2vw, 30px); line-height: 1.35; }
+  .screen .small { font-size: clamp(12px, 2.3vw, 16px); line-height: 1.45; color: var(--screen-dim);
+    text-shadow: none; margin-top: .45em; letter-spacing: .03em; }
+  .blink { animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  .face {
+    flex: 1; min-height: 0; background: var(--face); border-radius: 14px; position: relative;
+    border: 1px solid #1c1f25; box-shadow: inset 0 2px 10px rgba(0,0,0,.5);
+    display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: minmax(0, 1fr);
+    align-items: center; column-gap: 12px; padding: 8px 10px;
+  }
+  /* D-pad: as big as the panel is tall, flush with the left edge */
+  .dpad { position: relative; aspect-ratio: 1; justify-self: start;
+    height: min(100%, 32vw, 280px); width: auto; }
+  .dpad::before, .dpad::after {
+    content: ""; position: absolute; background: linear-gradient(180deg, var(--key-hi), var(--key));
+    border-radius: 8px; box-shadow: 0 4px 0 var(--key-edge), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .dpad::before { left: 33%; width: 34%; top: 0; height: 100%; }
+  .dpad::after { top: 33%; height: 34%; left: 0; width: 100%; }
+  .dpad .hub { position: absolute; left: 40%; top: 40%; width: 20%; height: 20%; border-radius: 50%;
+    background: radial-gradient(#2d3139, #16181c); z-index: 2; }
+  .dpad .arrow { position: absolute; z-index: 2; width: 0; height: 0; opacity: .5; border: 7px solid transparent; }
+  .dpad .up { left: calc(50% - 7px); top: 6%; border-bottom-color: var(--muted); }
+  .dpad .down { left: calc(50% - 7px); bottom: 6%; border-top-color: var(--muted); }
+  .dpad .left { top: calc(50% - 7px); left: 6%; border-right-color: var(--muted); }
+  .dpad .right { top: calc(50% - 7px); right: 6%; border-left-color: var(--muted); }
+  .dpad .arrow.on { opacity: 1; border-bottom-color: var(--amber); filter: drop-shadow(0 0 6px var(--amber-glow)); }
+  .dpad .left.on { border-right-color: var(--amber); border-bottom-color: transparent; }
+  .dpad .right.on { border-left-color: var(--amber); border-bottom-color: transparent; }
+  .dpad .down.on { border-top-color: var(--amber); border-bottom-color: transparent; }
+  /* middle */
+  .middle { display: flex; flex-direction: column; align-items: center; gap: 14px; height: 100%;
+    justify-content: center; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 8px; color: var(--text);
+    font-size: clamp(12px, 2.4vw, 18px); letter-spacing: .04em; padding: 2px 6px; white-space: nowrap; }
+  .brand b { color: var(--amber); font-weight: 800; }
+  .brand .mark { display: grid; grid-template-columns: repeat(2, 5px); gap: 2px; }
+  .brand .mark i { width: 5px; height: 5px; border-radius: 1px; background: var(--amber); }
+  .brand .mark i:nth-child(2), .brand .mark i:nth-child(3) { opacity: .5; }
+  .stripes { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+  .stripes div { height: 4px; background: #23262d; border-radius: 2px; }
+  .stripes div:nth-child(2) { background: linear-gradient(90deg, transparent, rgba(245,165,36,.35), transparent); }
+  .ss { display: flex; gap: 12%; width: 100%; justify-content: center; }
+  .ssbtn { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .pill { width: clamp(46px, 9vw, 70px); height: clamp(16px, 3vw, 22px); border-radius: 12px;
+    background: linear-gradient(180deg, var(--key-hi), var(--key)); border: 1px solid #3a3f48;
+    box-shadow: 0 3px 0 var(--key-edge); }
+  .pill.on, .round.on { transform: translateY(2px); }
+  .pill.on { box-shadow: 0 1px 0 var(--key-edge), 0 0 12px var(--amber-glow); border-color: var(--amber); }
+  .label { color: var(--muted); font-size: clamp(10px, 1.9vw, 14px); letter-spacing: .12em;
+    line-height: 1.3; padding: 2px 4px; }
+  .start-hint .pill { border-color: var(--amber); animation: glow 1.2s ease-in-out infinite; }
+  .start-hint .label { color: var(--amber); }
+  @keyframes glow { 50% { box-shadow: 0 0 16px var(--amber-glow), 0 3px 0 var(--key-edge); } }
+  /* A / B: big, flush with the right edge (A outermost, as on the NES pad) */
+  .ab { display: flex; gap: clamp(10px, 2.5vw, 22px); justify-self: end; align-items: flex-end; }
+  .abbtn { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .abbtn .label { color: var(--amber); }
+  .round { width: min(13vw, 27vh); max-width: 120px; aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--amber-hi), var(--amber) 55%, var(--amber-lo));
+    box-shadow: 0 5px 0 #6b4306, 0 0 0 4px #20232a, 0 0 0 5px #2f333b; }
+  .round.on { box-shadow: 0 2px 0 #6b4306, 0 0 0 4px #20232a, 0 0 22px var(--amber-glow); filter: brightness(1.12); }
+  .rotate { display: none; }
+  /* tablets / desktops: phones get the full width, a big screen gets a controller-sized pad */
+  @media (min-width: 1100px) {
+    .pad { max-width: 1000px; max-height: 520px; margin: auto; }
+  }
+  @media (orientation: portrait) and (max-width: 700px) {
+    .face { grid-template-columns: auto 1fr; grid-template-rows: auto auto; align-content: center;
+      row-gap: 28px; padding: 10px 8px; }
+    .middle { grid-column: 1 / span 2; grid-row: 2; height: auto; }
+    .dpad { grid-column: 1; grid-row: 1; height: auto; width: 42vw; max-width: 240px; }
+    .ab { grid-column: 2; grid-row: 1; gap: 2.5vw; }
+    .stripes { display: none; }
+    .round { width: 18vw; }
+    .pill { width: 18vw; height: 6vw; }
+    .rotate { display: block; font-size: 13px; font-weight: 500; line-height: 1.4; padding: 8px 12px 2px;
+      text-align: center; color: var(--muted); }
+  }
+  .conn { position: fixed; left: 0; right: 0; top: 0; z-index: 10; text-align: center;
+    font: 600 13px/1.4 var(--font); background: var(--red); color: #fff; padding: 6px 12px; display: none; }
+  .conn.replaced { background: var(--amber); color: #1a1204; cursor: pointer; padding: 10px 12px; font-size: 15px; }
+  /* Full screen: a small button in the top-right corner of the controller's frame. It sits outside
+     .pad so the pad's touch handling never swallows the tap. */
+  .fs { position: fixed; z-index: 5; top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right)); display: none; align-items: center; gap: 6px;
+    min-height: 32px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--shell-edge);
+    background: rgba(23,25,30,.92); color: var(--text); font: 700 12px/1.2 var(--font);
+    letter-spacing: .06em; cursor: pointer; }
+  .fs:active { border-color: var(--amber); color: var(--amber); }
+  .fs svg { width: 16px; height: 16px; color: var(--amber); }
+  .fs.show { display: flex; }
+  @media (max-width: 600px) {  /* narrow: icon only, tucked into the screen's corner */
+    .fs span { display: none; }
+    .fs { padding: 6px; }
+  }
+  .tip { position: fixed; z-index: 11; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom));
+    background: var(--shell-hi); color: var(--text); border: 1px solid var(--shell-edge);
+    border-left: 4px solid var(--amber); border-radius: 12px; padding: 12px 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.6); font: 500 14px/1.45 var(--font); display: none; }
+</style>
+</head>
+<body>
+<div class="conn" id="conn">Reconnecting…</div>
+<button class="fs" id="fs" type="button" aria-label="Full screen">
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4"/></svg>
+  <span id="fsText">FULL SCREEN</span>
+</button>
+<div class="tip" id="tip" role="status"></div>
+<div class="pad" id="pad">
+  <div class="screen" id="screen" role="status" aria-live="polite">
+    <div class="big blink" id="line1">PRESS START TO BEGIN</div>
+    <div class="small" id="line2">Play Super Mario Bros. on the lights!</div>
+  </div>
+  <div class="face">
+    <div class="dpad" id="dpad" data-dpad="1">
+      <div class="hub"></div>
+      <div class="arrow up" id="d-up"></div>
+      <div class="arrow down" id="d-down"></div>
+      <div class="arrow left" id="d-left"></div>
+      <div class="arrow right" id="d-right"></div>
+    </div>
+    <div class="middle">
+      <div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Pixel<b>Plus</b></div>
+      <div class="stripes"><div></div><div></div><div></div></div>
+      <div class="ss">
+        <div class="ssbtn"><div class="pill" data-btn="2"></div><div class="label">SELECT</div></div>
+        <div class="ssbtn" id="startWrap"><div class="pill" data-btn="3" id="startBtn"></div><div class="label">START</div></div>
+      </div>
+    </div>
+    <div class="ab">
+      <div class="abbtn"><div class="round" data-btn="0"></div><div class="label">B</div></div>
+      <div class="abbtn"><div class="round" data-btn="8"></div><div class="label">A</div></div>
+    </div>
+  </div>
+</div>
+<div class="rotate">Tip: turn your phone sideways for a bigger controller</div>
+<script>
+(function () {
+  "use strict";
+  // libretro joypad ids
+  var B = 0, SELECT = 2, START = 3, UP = 4, DOWN = 5, LEFT = 6, RIGHT = 7, A = 8;
+
+  var ws = null, id = null, phase = "connecting", sent = 0, retry = 500;
+  var pointers = {};   // pointerId -> bitmask that pointer is holding
+  var keys = 0;        // keyboard bitmask
+  var line1 = document.getElementById("line1");
+  var line2 = document.getElementById("line2");
+  var startWrap = document.getElementById("startWrap");
+
+  try { id = window.localStorage.getItem("pixelplusGamesPlayerId"); } catch (e) { id = null; }
+
+  function send(obj) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+  }
+
+  function setScreen(a, b, blink) {
+    line1.textContent = a;
+    line2.textContent = b || "";
+    line1.className = "big" + (blink ? " blink" : "");
+  }
+
+  function wantsStart() {
+    return phase === "idle" || phase === "yourturn" || phase === "over" || phase === "watching";
+  }
+
+  var coolUntil = 0;
+  function showCooldown() {
+    var left = Math.max(0, Math.ceil((coolUntil - Date.now()) / 1000));
+    var m = Math.floor(left / 60), sec = left % 60;
+    setScreen("NEXT GAME IN " + m + ":" + (sec < 10 ? "0" : "") + sec,
+              "Mario is taking a break. Enjoy the show!", false);
+  }
+  setInterval(function () { if (phase === "cooldown") showCooldown(); }, 1000);
+
+  function timeLeft(s) {
+    if (s.remaining == null) return "";
+    var m = Math.floor(s.remaining / 60), sec = s.remaining % 60;
+    return "  (" + m + ":" + (sec < 10 ? "0" : "") + sec + " left)";
+  }
+
+  function render(s) {
+    phase = s.phase;
+    startWrap.className = "ssbtn" + (wantsStart() ? " start-hint" : "");
+    switch (s.phase) {
+      case "idle":
+        if (s.arcade) setScreen("PRESS START TO BEGIN", "Pick any game from the list on the lights", true);
+        else setScreen("PRESS START TO BEGIN", "You get " + s.seconds + " seconds on a random level", true);
+        break;
+      case "menu":
+        setScreen("PICK A GAME ON THE LIGHTS", "Up/Down to scroll, A to play" + timeLeft(s), false); break;
+      case "arcade":
+        setScreen("PLAYING " + (s.game || ""), "Back to the list: hold SELECT+START+B+A" + timeLeft(s), false); break;
+      case "cooldown":
+        coolUntil = Date.now() + (s.wait || 0) * 1000;
+        showCooldown(); break;
+      case "closed":
+        setScreen("GAME CLOSED", s.message || "Check back soon!", false); break;
+      case "queued":
+        setScreen("YOU'RE #" + s.position + " IN LINE", "Keep this page open. We'll tell you when it's your turn.", false); break;
+      case "watching":
+        setScreen("SOMEONE IS PLAYING", "Press START to get in line" + (s.remaining ? " (" + s.remaining + "s left)" : ""), false); break;
+      case "yourturn":
+        buzz(200);
+        setScreen("YOUR TURN! PRESS START", "Hurry: " + (s.timeout || 0) + " seconds", true); break;
+      case "starting":
+        setScreen("WORLD " + (s.level || ""), "Get ready... look at the lights!", true); break;
+      case "playing":
+        setScreen("WORLD " + (s.level || "") + "   TIME " + s.remaining, "SCORE " + (s.score || 0), false); break;
+      case "over":
+        if (s.message) setScreen("THANKS FOR PLAYING!", s.message + " Press START to get back in line.", false);
+        else setScreen("TIME UP!  SCORE " + (s.score || 0), "Thanks for playing! Press START to play again.", false);
+        break;
+      case "error":
+        setScreen("OOPS", s.message || "Something went wrong", false); break;
+    }
+  }
+
+  var conn = document.getElementById("conn");
+  var replaced = false;   // this player opened the page somewhere else; wait for a tap here
+
+  function connect() {
+    var proto = location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(proto + location.host + "/ws");
+    ws.onopen = function () {
+      retry = 500;
+      conn.style.display = "none";
+      send({ t: "hello", id: id || "" });
+    };
+    ws.onmessage = function (ev) {
+      var m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.t === "welcome") {
+        id = m.id;
+        try { window.localStorage.setItem("pixelplusGamesPlayerId", id); } catch (e) {}
+      } else if (m.t === "state") {
+        render(m);
+      }
+    };
+    ws.onclose = function (ev) {
+      releaseAll();
+      if (ev.code === 4001) {
+        // The same phone/browser opened the controller again (another tab, the home-screen icon).
+        // Reconnecting here would kick that one out, and it would kick us back, forever.
+        replaced = true;
+        conn.className = "conn replaced";
+        conn.textContent = "The controller is open in another tab or window. Tap here to use this one.";
+        conn.style.display = "block";
+        return;
+      }
+      conn.className = "conn";
+      conn.textContent = "Reconnecting…";
+      conn.style.display = "block";
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 5000);
+    };
+  }
+
+  function takeOver() {
+    if (!replaced) return;
+    replaced = false;
+    conn.className = "conn";
+    conn.textContent = "Reconnecting…";
+    connect();
+  }
+  conn.addEventListener("click", takeOver);
+
+  // --- full screen ------------------------------------------------------------
+  // Android/desktop browsers can go full screen from a tap (and Android can then lock landscape).
+  // iPhone Safari can't do that for a web page, but "Add to Home Screen" opens it without the
+  // browser bars (apple-mobile-web-app-capable), so there the button explains that instead.
+  var root = document.documentElement;
+  var fsBtn = document.getElementById("fs"), fsText = document.getElementById("fsText");
+  var tip = document.getElementById("tip");
+  var canFull = !!(root.requestFullscreen || root.webkitRequestFullscreen);
+  var standalone = window.navigator.standalone === true ||
+      (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  function fullElement() { return document.fullscreenElement || document.webkitFullscreenElement; }
+  function syncFs() { fsText.textContent = fullElement() ? "EXIT FULL SCREEN" : "FULL SCREEN"; }
+  function showTip(text) {
+    tip.textContent = text;
+    tip.style.display = "block";
+    setTimeout(function () { tip.style.display = "none"; }, 7000);
+  }
+  if (!standalone && (canFull || ios)) fsBtn.className = "fs show";
+  fsBtn.addEventListener("click", function () {
+    if (fullElement()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      return;
+    }
+    if (!canFull) {
+      showTip("On iPhone, tap the Share button, then “Add to Home Screen”. " +
+              "Open the controller from that icon and it fills the whole screen.");
+      return;
+    }
+    var req = root.requestFullscreen ? root.requestFullscreen({ navigationUI: "hide" })
+                                     : root.webkitRequestFullscreen();
+    Promise.resolve(req).then(function () {
+      if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock("landscape").catch(function () {});
+      }
+    }).catch(function () {});
+  });
+  tip.addEventListener("click", function () { tip.style.display = "none"; });
+  document.addEventListener("fullscreenchange", syncFs);
+  document.addEventListener("webkitfullscreenchange", syncFs);
+
+  function buzz(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) {} } }
+
+  // --- input ---------------------------------------------------------------
+  function dpadBits(el, x, y) {
+    var r = el.getBoundingClientRect();
+    var dx = (x - (r.left + r.width / 2)) / (r.width / 2);
+    var dy = (y - (r.top + r.height / 2)) / (r.height / 2);
+    var bits = 0, dead = 0.25;
+    if (Math.abs(dx) < dead && Math.abs(dy) < dead) return 0;
+    var ang = Math.atan2(dy, dx) * 180 / Math.PI; // 0 = right, 90 = down
+    // 8-way with 45 degree sectors
+    if (ang > -67.5 && ang < 67.5) bits |= 1 << RIGHT;
+    if (ang > 112.5 || ang < -112.5) bits |= 1 << LEFT;
+    if (ang > 22.5 && ang < 157.5) bits |= 1 << DOWN;
+    if (ang < -22.5 && ang > -157.5) bits |= 1 << UP;
+    return bits;
+  }
+
+  function bitsAt(x, y) {
+    var el = document.elementFromPoint(x, y);
+    while (el && el !== document.body) {
+      if (el.dataset && el.dataset.btn !== undefined) return 1 << parseInt(el.dataset.btn, 10);
+      if (el.dataset && el.dataset.dpad) return dpadBits(el, x, y);
+      el = el.parentElement;
+    }
+    // a thumb that slid slightly off the D-pad keeps steering
+    var d = document.getElementById("dpad"), r = d.getBoundingClientRect();
+    var pad = r.width * 0.35;
+    if (x > r.left - pad && x < r.right + pad && y > r.top - pad && y < r.bottom + pad) return dpadBits(d, x, y);
+    return 0;
+  }
+
+  function current() {
+    var b = keys;
+    for (var k in pointers) b |= pointers[k];
+    return b;
+  }
+
+  function update() {
+    var b = current();
+    if (b === sent) return;
+    var pressed = b & ~sent;
+    sent = b;
+    if (pressed) buzz(12);
+    if ((pressed & (1 << START)) && wantsStart()) send({ t: "start" });
+    send({ t: "in", b: b });
+    // visuals
+    var els = document.querySelectorAll("[data-btn]");
+    for (var i = 0; i < els.length; i++) {
+      els[i].classList.toggle("on", !!(b & (1 << parseInt(els[i].dataset.btn, 10))));
+    }
+    document.getElementById("d-up").classList.toggle("on", !!(b & (1 << UP)));
+    document.getElementById("d-down").classList.toggle("on", !!(b & (1 << DOWN)));
+    document.getElementById("d-left").classList.toggle("on", !!(b & (1 << LEFT)));
+    document.getElementById("d-right").classList.toggle("on", !!(b & (1 << RIGHT)));
+  }
+
+  var pad = document.getElementById("pad");
+  function onPointer(ev) {
+    ev.preventDefault();
+    if (ev.type === "pointerdown" && replaced) { takeOver(); return; }
+    if (ev.type === "pointerup" || ev.type === "pointercancel") delete pointers[ev.pointerId];
+    else if (ev.type === "pointerdown" || ev.pointerId in pointers) pointers[ev.pointerId] = bitsAt(ev.clientX, ev.clientY);
+    update();
+  }
+  ["pointerdown", "pointermove", "pointerup", "pointercancel"].forEach(function (t) {
+    pad.addEventListener(t, onPointer, { passive: false });
+  });
+  document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  document.addEventListener("touchmove", function (e) { e.preventDefault(); }, { passive: false });
+
+  var KEYMAP = { ArrowUp: UP, ArrowDown: DOWN, ArrowLeft: LEFT, ArrowRight: RIGHT,
+                 KeyX: A, KeyZ: B, Enter: START, ShiftRight: SELECT, KeyW: UP, KeyS: DOWN, KeyA: LEFT, KeyD: RIGHT,
+                 KeyK: A, KeyJ: B };
+  function onKey(ev) {
+    var b = KEYMAP[ev.code];
+    if (b === undefined) return;
+    ev.preventDefault();
+    if (ev.type === "keydown") keys |= 1 << b; else keys &= ~(1 << b);
+    update();
+  }
+  window.addEventListener("keydown", onKey);
+  window.addEventListener("keyup", onKey);
+  // lifting everything when the page is hidden avoids a stuck "run right"
+  function releaseAll() { pointers = {}; keys = 0; update(); }
+  window.addEventListener("blur", releaseAll);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) releaseAll(); });
+
+  connect();
+})();
+</script>
+</body>
+</html>

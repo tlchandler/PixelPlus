@@ -1,0 +1,29 @@
+[Unit]
+Description=PixelPlus games (play NES games on a matrix prop from a phone)
+Documentation=file:///usr/lib/pixelplus/games/README.md
+After=network.target sound.target pixelplusd.service
+
+[Service]
+Type=simple
+# install.sh rewrites these two lines if it installs somewhere else.
+WorkingDirectory=/usr/lib/pixelplus/games
+ExecStart=/usr/bin/python3 -m pixelplus_games
+Environment=PIXELPLUS_DATA_DIR=/var/lib/pixelplus
+Environment=PYTHONUNBUFFERED=1
+# The control socket pixelplusd proxies /api/v1/games/* to. Kept when this service stops
+# so pixelplusd's own use of /run/pixelplus is not disturbed.
+RuntimeDirectory=pixelplus
+RuntimeDirectoryPreserve=yes
+Restart=on-failure
+RestartSec=3
+# The emulator must finish every frame in under 16.7 ms.
+Nice=-5
+# Hardening. The overlay buffer (/dev/shm) and the sound card (/dev/snd) stay reachable.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=-/var/lib/pixelplus/games
+
+[Install]
+WantedBy=multi-user.target
