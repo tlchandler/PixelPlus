@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 /// Implicitly enabled overlays (frames pushed without `enable`) switch off
 /// after this long without a new frame.
-const AUTO_EXPIRY: Duration = Duration::from_secs(5);
+const AUTO_EXPIRY: Duration = Duration::from_secs(2);
 /// Scrolling text speed.
 const SCROLL_PX_PER_S: f32 = 12.0;
 /// Header size of the shared-memory buffer.
@@ -487,7 +487,7 @@ mod tests {
         m.set_prop_pixels(&prop, &[9; 24], t0);
         m.update(t0);
         assert_eq!(active(&m).unwrap(), vec![9; 24]);
-        m.update(t0 + Duration::from_secs(6));
+        m.update(t0 + Duration::from_secs(3));
         assert!(active(&m).is_none(), "expired");
         // Explicitly enabled overlays do not expire.
         m.enable(&prop, true);

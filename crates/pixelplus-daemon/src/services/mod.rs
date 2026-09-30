@@ -70,6 +70,8 @@ impl Services {
 
 /// Start every background service.
 pub async fn start_all(_state: &AppState) -> anyhow::Result<()> {
+    // The playback engine first: the cluster and other services talk to it.
+    crate::player::engine::start(_state).await?;
     crate::cluster::start(_state).await?;
     crate::services::system::start(_state).await;
     Ok(())

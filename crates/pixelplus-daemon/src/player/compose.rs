@@ -114,8 +114,9 @@ pub struct TestLayer {
     pub req: TestRequest,
     kind: TestKind,
     slots: Vec<PropSlot>,
-    /// Raw output test on this node: 0-based output index.
-    pub raw_output: Option<usize>,
+    /// Raw output test on this node: `Some(None)` = every output (identify),
+    /// `Some(Some(i))` = 0-based output `i`.
+    pub raw_output: Option<Option<usize>>,
     /// The test targets another node only (nothing to show here).
     pub remote_only: bool,
     pub started_ms: f64,
@@ -134,8 +135,7 @@ impl TestLayer {
         let mut remote_only = false;
         if let Some(n) = &req.target.node_id {
             if n == node_id {
-                let o = req.target.output.unwrap_or(1).max(1) as usize - 1;
-                raw_output = Some(o);
+                raw_output = Some(req.target.output.map(|o| o.max(1) as usize - 1));
             } else {
                 remote_only = true;
             }
@@ -184,16 +184,34 @@ impl TestLayer {
 
     /// Paint a raw output test onto the node's output frame.
     pub fn render_raw(&mut self, now_ms: f64, frame: &mut OutputFrame) {
-        let Some(o) = self.raw_output else { return };
+        let Some(which) = self.raw_output else { return };
         let t = (now_ms - self.started_ms).max(0.0) as u64;
-        let out = frame.output_mut(o);
-        match &self.kind {
-            TestKind::Pattern(p) => p.render(t, out),
-            TestKind::Effect(_) => {
+        let outputs = match which {
+            Some(o) => o..o + 1,
+            None => 0..frame.output_count(),
+        };
+        for o in outputs {
+            let out = frame.output_mut(o);
+            match &self.kind {
+                TestKind::Pattern(p) => p.render(t, out),
                 // Effects need prop geometry; show a solid colour instead.
-                TestPattern::Solid { color: None }.render(t, out)
+                TestKind::Effect(_) => TestPattern::Solid { color: None }.render(t, out),
             }
         }
+    }
+
+    /// A live look (effect-mode test on props), reported as state "effect".
+    pub fn is_look(&self) -> bool {
+        matches!(self.kind, TestKind::Effect(_)) && self.raw_output.is_none() && !self.remote_only
+    }
+
+    /// The look's preset with the test's target (for followers).
+    pub fn look_preset(&self) -> Option<EffectPreset> {
+        let mut p = self.req.effect.clone()?;
+        if !is_empty(&self.req.target.props) {
+            p.target = self.req.target.props.clone();
+        }
+        Some(p)
     }
 }
 
@@ -338,6 +356,13 @@ mod tests {
         t.render_raw(0.0, &mut frame);
         assert_eq!(frame.output(1), &[255, 0, 0, 255, 0, 0, 255, 0, 0]);
         assert_eq!(frame.output(0), &[0; 6]);
+        // Identify: every output of this node.
+        let mut all = raw.clone();
+        all.target.output = None;
+        let mut t = TestLayer::new(&s, "n1", &all, 0.0).unwrap();
+        let mut frame = OutputFrame::new(&[2, 3]);
+        t.render_raw(0.0, &mut frame);
+        assert!(frame.as_bytes().chunks(3).all(|p| p == [255, 0, 0]));
         // Other node: nothing here.
         raw.target.node_id = Some("n2".into());
         assert!(TestLayer::new(&s, "n1", &raw, 0.0).unwrap().remote_only);

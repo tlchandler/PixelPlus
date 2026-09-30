@@ -4,9 +4,33 @@
 //! sends [`PlayerCmd`]s to the engine task and watches its [`PlayerStatus`].
 //! The engine (in `engine.rs`) owns the output backend, the frame clock, audio,
 //! overlays and test patterns.
+//!
+//! | file | what |
+//! |---|---|
+//! | [`engine`] | control task + realtime output thread, playback state machine |
+//! | [`playlist`] | intro/items/outro sequencing, shuffle, repeat, history |
+//! | [`scheduler`] | show windows → start/stop/looks decisions |
+//! | [`clock`] | monotonic & follower slew clocks, fades, crossfade math |
+//! | [`audio`] | symphonia decode, rubato resample, mixer, cpal/ALSA output |
+//! | [`reader`] | background fseq/ppseq frame reader with read-ahead |
+//! | [`overlay`] | shared-memory / text / QR prop overlays |
+//! | [`compose`] | prop slots, effect layers, test patterns, preview frames |
 
+pub mod audio;
+pub mod clock;
+pub mod compose;
+pub mod engine;
+pub mod overlay;
+pub mod playlist;
+pub mod reader;
+pub mod scheduler;
 pub mod types;
 
+#[cfg(test)]
+mod tests;
+
+pub use audio::{list_audio_devices, AudioDevice};
+pub use engine::{geometry_status, GeometryStatus};
 pub use types::*;
 
 use crate::api::{ApiError, ApiResult};
