@@ -16,6 +16,7 @@ import * as remote from './remote'; // WS5 (F14)
 import * as reports from './reports'; // WS6 (F11)
 import * as sensornodes from './sensornodes'; // WS6 (F20)
 import * as tls from './tls'; // WS1 (F1)
+import * as triggerlinks from './triggerlinks'; // trigger links (§12.18)
 import * as updates from './updates'; // WS5 (F15)
 import * as wizard from './wizard'; // WS4 (F9)
 
@@ -35,6 +36,7 @@ const MODULES = [
 	reports,
 	sensornodes,
 	tls,
+	triggerlinks,
 	updates,
 	wizard
 ];

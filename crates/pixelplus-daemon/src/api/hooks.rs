@@ -11,8 +11,8 @@
 //! | Status | When |
 //! |---|---|
 //! | 202 | fired (`message` says what happened) |
-//! | 401 `bad_token` / `token_required` | wrong or missing token (wrong ones back off like sign-in) |
-//! | 404 `not_found` / `feature_disabled` | no such link (unknown trigger, not a web link, no token yet, revoked, from the internet while the trigger is home-only), or *Buttons & triggers* is off |
+//! | 401 `bad_token` / `token_required` | wrong or missing token, or the trigger has no link (never made, or revoked); wrong ones back off like sign-in |
+//! | 404 `not_found` / `feature_disabled` | no such web-link trigger, from the internet while the trigger is home-only, or *Buttons & triggers* is off |
 //! | 405 `get_not_allowed` | `GET` while simple GET links are off (`HEAD` never fires) |
 //! | 409 `blocked` / `feature_disabled` | a gate said no (cooling down, outside its hours, wrong moment, hourly cap) or the action's feature is off |
 //! | 429 `throttled` / `rate_limited` | too many wrong tokens from this address, or more than 10 calls a minute |
@@ -118,7 +118,6 @@ async fn hook(
         .triggers
         .iter()
         .find(|t| t.id == id && t.kind == TriggerKind::Http)
-        .filter(|t| t.token_hash.as_deref().is_some_and(|h| !h.is_empty()))
         .cloned()
     else {
         return no_such_link();
@@ -174,7 +173,7 @@ async fn hook(
             Some(_) => answer(
                 StatusCode::UNAUTHORIZED,
                 "bad_token",
-                "That token isn't right (it may have been rotated).",
+                "That token isn't right (the link may have been renewed or turned off).",
                 false,
             ),
         };

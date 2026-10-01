@@ -23,5 +23,6 @@ export const ENDPOINTS: string[] = [
 	'/power-supplies', // WS3
 	'/power/live', // WS3
 	'/power/budget', // WS3
-	'/mapping/runs' // WS4
+	'/mapping/runs', // WS4
+	'/triggers/links' // trigger links (§12.18): addresses + last use by trigger id (MAPS)
 ];

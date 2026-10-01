@@ -489,7 +489,7 @@ export function featureForApi(method: string, path: string): FeatureId | undefin
 	if (a === 'reports') return 'reports';
 	if (a === 'alerts') return 'alerts';
 	if (a === 'power' && (b === 'budget' || b === 'live')) return 'power';
-	if (a === 'triggers' && b) return 'triggers';
+	if ((a === 'triggers' && b) || a === 'hooks') return 'triggers';
 	if (a === 'sensor-nodes' || (a === 'cluster' && b === 'sensor-config')) return 'sensors';
 	if (a === 'surprises' || (a === 'player' && b === 'surprise' && c === undefined)) return 'surprises';
 	if (a === 'mqtt') return 'mqtt';

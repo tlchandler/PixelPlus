@@ -33,7 +33,7 @@ import type { SocketLike } from '$lib/api/socket';
 import { HttpError } from './http';
 import { applyFeatureDemo, registerFeatureRoutes } from './feat';
 import { FEATURES, feature, featureForApi, normalize, setFeature } from '$lib/features';
-import type { FeatureId } from '$lib/api/types';
+import type { FeatureId, Trigger } from '$lib/api/types';
 
 type Json = any;
 type Handler = (ctx: {
@@ -44,6 +44,18 @@ type Handler = (ctx: {
 }) => Json | Promise<Json>;
 
 export { HttpError };
+
+/** Every trigger keeps the link token it had (by id); only HTTP triggers have one. */
+export function keepTriggerTokens(next: Trigger[], current: Trigger[]): Trigger[] {
+	return next.map((t) => {
+		const had = t.kind === 'http' ? current.find((c) => c.id === t.id) : undefined;
+		const rest: Trigger & { tokenHash?: string } = { ...t };
+		delete rest.tokenHint;
+		delete rest.tokenCreatedAt;
+		delete rest.tokenHash;
+		return had?.tokenHint ? { ...rest, tokenHint: had.tokenHint, tokenCreatedAt: had.tokenCreatedAt } : rest;
+	});
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const clone = <T>(v: T): T => structuredClone(v);
@@ -292,7 +304,7 @@ export class MockServer {
 		// (404 on public pages, 409 with a friendly message for the admin UI).
 		const f = featureForApi(method, path);
 		if (f && (this.show.settings.features?.disabled ?? []).includes(f)) {
-			if (path.startsWith('/public/'))
+			if (path.startsWith('/public/') || path.startsWith('/hooks/'))
 				throw new HttpError(404, 'feature_disabled', 'That page isn’t available.');
 			throw new HttpError(
 				409,
@@ -595,6 +607,8 @@ export class MockServer {
 		});
 		r('PUT', '/show/settings', ({ body }) => {
 			const s = this.show.settings as any;
+			// Like pixelplusd: trigger-link tokens are managed by /triggers/:id/token only.
+			if (Array.isArray(body?.triggers)) body.triggers = keepTriggerTokens(body.triggers, s.triggers ?? []);
 			for (const [k, v] of Object.entries(body))
 				s[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...(s[k] ?? {}), ...v } : v;
 			this.#bump();

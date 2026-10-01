@@ -754,7 +754,14 @@ export function buildDemoShow(): Show {
 					gpio: 17,
 					action: { type: 'playPlaylist', ref: 'plkids0001' }
 				},
-				{ id: 'trhass0001', name: 'Home Assistant "lights off"', kind: 'http', action: { type: 'stop' } }
+				{
+					id: 'trhass0001',
+					name: 'Home Assistant "lights off"',
+					kind: 'http',
+					action: { type: 'stop' },
+					tokenHint: 'q7Xz',
+					tokenCreatedAt: '2026-11-20T18:30:00Z'
+				}
 			],
 			games: {
 				enabled: true,

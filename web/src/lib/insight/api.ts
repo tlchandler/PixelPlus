@@ -10,7 +10,9 @@ import type {
 	SensorNode,
 	Show,
 	ShowProfile,
-	TriggerAction
+	TriggerAction,
+	TriggerLinks,
+	TriggerTokenResult
 } from '$lib/api/types';
 
 const get = <R>(p: string) => request<R>('GET', p);
@@ -110,5 +112,9 @@ export const sensorsApi = {
 	live: () => get<Record<string, SensorLive>>('/sensor-nodes/live'),
 	testSurprise: (action: TriggerAction) =>
 		post<{ ok: boolean; message: string }>('/surprises/test', { action }),
-	fireTrigger: (id: string) => post<unknown>(`/triggers/${id}/fire`)
+	fireTrigger: (id: string) => post<unknown>(`/triggers/${id}/fire`),
+	/** Secret trigger links: make / rotate (returns the token once), revoke, addresses + last uses. */
+	makeTriggerToken: (id: string) => post<TriggerTokenResult>(`/triggers/${id}/token`),
+	revokeTriggerToken: (id: string) => del<{ ok: boolean }>(`/triggers/${id}/token`),
+	triggerLinks: () => get<TriggerLinks>('/triggers/links')
 };

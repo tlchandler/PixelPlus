@@ -593,6 +593,51 @@ export interface Trigger {
 	activeWindow?: TimeWindow;
 	/** Absent / 0 = unlimited. */
 	maxPerHour?: number;
+	/** `kind: 'http'`: last 4 characters of the secret link's token (absent: no link). The token
+	 *  and its hash never reach the browser; `POST/DELETE /triggers/:id/token` manage it. */
+	tokenHint?: string;
+	/** When the current token was made (RFC 3339). */
+	tokenCreatedAt?: string;
+	/** The link also works from the internet (tunnel / public address). Absent = home network only. */
+	allowInternet?: boolean;
+	/** The link also fires on a plain GET (doorbells that can only open a URL). */
+	allowGet?: boolean;
+}
+
+/** `POST /triggers/:id/token`: the only time the full token is shown. */
+export interface TriggerTokenResult {
+	token: string;
+	tokenHint: string;
+	tokenCreatedAt: string;
+	/** `/api/v1/hooks/trigger/<id>` */
+	path: string;
+	rotated: boolean;
+}
+export interface TriggerLinkAddress {
+	kind: 'name' | 'ip' | 'https' | 'internet';
+	label: string;
+	/** `http://pixelplus.local` (no trailing slash). */
+	base: string;
+}
+export interface TriggerLinkUse {
+	at: string;
+	from: string;
+	origin: 'home' | 'internet' | null;
+	fired: boolean;
+	message: string;
+}
+/** `GET /triggers/links`. */
+export interface TriggerLinks {
+	addresses: TriggerLinkAddress[];
+	/** By trigger id (only links that were used). */
+	links: Record<Id, TriggerLinkUse>;
+}
+/** Answer of `POST /hooks/trigger/:id`. */
+export interface TriggerHookReply {
+	ok: boolean;
+	fired: boolean;
+	message?: string;
+	reason?: string;
 }
 export type GamePlayWindow = 'duringShow' | 'anytime';
 export type InviteStyle = 'text' | 'qr' | 'alternate';

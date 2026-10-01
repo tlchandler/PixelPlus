@@ -125,7 +125,7 @@ async fn a_token_replaces_the_session_and_the_csrf_header() {
     let app = signed_in_leader("hk_auth", json!({})).await;
     // No link until the owner makes one.
     let (s, v) = Call::post("hk_auth").bearer("ppt_x").send(&app).await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "{v}");
     let token = make_token(&app, "hk_auth").await;
     assert!(token.starts_with("ppt_"));
 
@@ -423,11 +423,15 @@ async fn rotate_and_revoke_invalidate_the_old_token_and_secrets_stay_put() {
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     let (s, _) = Call::post("hk_rot").bearer(&second).send(&app).await;
     assert_eq!(s, StatusCode::ACCEPTED);
-    // Revoke: no link at all.
+    // Revoke: no token works any more.
     let (s, _) = app.json("DELETE", "/triggers/hk_rot/token", None).await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = Call::post("hk_rot").bearer(&second).send(&app).await;
-    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = Call::post("hk_rot")
+        .bearer(&second)
+        .from("192.168.1.41:1")
+        .send(&app)
+        .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
     assert!(app.state.store.get().settings.triggers[0]
         .token_hint
         .is_none());
@@ -461,7 +465,11 @@ async fn rotate_and_revoke_invalidate_the_old_token_and_secrets_stay_put() {
     app.json("PUT", "/show/settings", Some(json!({ "triggers": [t] })))
         .await;
     let (s, _) = Call::post("hk_rot").bearer(&token).send(&app).await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "switching back doesn't revive it");
+    assert_eq!(
+        s,
+        StatusCode::UNAUTHORIZED,
+        "switching back doesn't revive it"
+    );
 }
 
 #[tokio::test]

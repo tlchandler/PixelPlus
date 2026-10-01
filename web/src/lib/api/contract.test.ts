@@ -19,7 +19,9 @@ const MAPS = new Set([
 	'/sensor-nodes/live',
 	'/sensor-nodes/live{}.inputs',
 	'/sensor-nodes/live{}.amps',
-	'/sensor-nodes/live{}.volts'
+	'/sensor-nodes/live{}.volts',
+	// Trigger links: last use by trigger id.
+	'/triggers/links.links'
 ]);
 
 /** Keys the daemon may leave out (optional in types.ts and in the model). */
@@ -112,6 +114,11 @@ const OPTIONAL = new Set([
 	'when',
 	'activeWindow',
 	'maxPerHour',
+	// Trigger links (§12.18): only on HTTP triggers that have a link / the owner widened.
+	'tokenHint',
+	'tokenCreatedAt',
+	'allowInternet',
+	'allowGet',
 	'power',
 	// Omitted while unknown: no update installed yet (F15), no temperature readings (F11).
 	'previous',

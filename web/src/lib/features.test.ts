@@ -60,6 +60,8 @@ describe('feature catalogue', () => {
 		expect(featureForApi('POST', '/player/surprise')).toBe('surprises');
 		expect(featureForApi('POST', '/player/surprise/stop')).toBeUndefined();
 		expect(featureForApi('GET', '/features')).toBeUndefined();
+		expect(featureForApi('POST', '/hooks/trigger/t1')).toBe('triggers');
+		expect(featureForApi('POST', '/triggers/t1/token')).toBe('triggers');
 	});
 
 	it('knows which playlist items belong to a feature', () => {
