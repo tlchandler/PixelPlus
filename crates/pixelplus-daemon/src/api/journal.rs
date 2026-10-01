@@ -66,7 +66,11 @@ mod tests {
             &[
                 rec(
                     "2026-12-01T18:00:00-06:00",
-                    Event::Trigger { id: "t1".into() },
+                    Event::Trigger {
+                        id: "t1".into(),
+                        via: None,
+                        from: None,
+                    },
                 ),
                 rec(
                     "2026-12-01T18:05:00-06:00",

@@ -11,6 +11,11 @@
 //!   `kind: "sensor"` triggers of that input on its active edge;
 //! * [`run_action`] — carry out an action without gates (UI "Test" buttons,
 //!   `POST /surprises/test`).
+//!
+//! HTTP triggers can also be fired without a browser session through their
+//! secret link (`POST /api/v1/hooks/trigger/:id`, [`crate::services::hooks`]),
+//! and every HTTP / GPIO trigger is a Home Assistant button over MQTT
+//! ([`crate::services::mqtt`]); both go through [`fire_trigger`] and its gates.
 
 use crate::api::{ApiError, ApiResult};
 use crate::player::surprise::{SurpriseRequest, SurpriseStarted};
@@ -297,9 +302,19 @@ fn now_s() -> f64 {
         .as_secs_f64()
 }
 
-/// Fire `t` (from `source`: "http" | "gpio" | "sensor") through its gates.
-/// `Err` when a gate blocked it or the action failed.
+/// Fire `t` (from `source`: "http" | "gpio" | "sensor" | "mqtt" | "link")
+/// through its gates. `Err` when a gate blocked it or the action failed.
 pub async fn fire_trigger(state: &AppState, t: &Trigger, source: &str) -> ApiResult<String> {
+    fire_trigger_from(state, t, source, None).await
+}
+
+/// [`fire_trigger`], journaling the caller's address (`from`, secret links).
+pub async fn fire_trigger_from(
+    state: &AppState,
+    t: &Trigger,
+    source: &str,
+    from: Option<String>,
+) -> ApiResult<String> {
     let show = state.store.get();
     // Off in Settings → Features: triggers (and surprises) never fire.
     crate::api::features::require(state, FeatureId::Triggers)?;
@@ -350,10 +365,11 @@ pub async fn fire_trigger(state: &AppState, t: &Trigger, source: &str) -> ApiRes
             return Err(e);
         }
     };
-    state
-        .services
-        .journal
-        .record(Event::Trigger { id: t.id.clone() });
+    state.services.journal.record(Event::Trigger {
+        id: t.id.clone(),
+        via: Some(source.to_string()),
+        from,
+    });
     tracing::info!("Trigger \"{}\" ({source}): {msg}", t.name);
     Ok(msg)
 }
@@ -573,6 +589,11 @@ mod tests {
             when,
             active_window: None,
             max_per_hour,
+            token_hash: None,
+            token_hint: None,
+            token_created_at: None,
+            allow_internet: false,
+            allow_get: false,
         }
     }
 

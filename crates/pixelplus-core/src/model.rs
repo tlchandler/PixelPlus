@@ -2128,6 +2128,30 @@ pub struct Trigger {
     /// 0 = unlimited.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub max_per_hour: u32,
+    /// `kind: http`: SHA-256 (lower-case hex) of this trigger's secret link
+    /// token (`POST /api/v1/hooks/trigger/<id>`, ARCHITECTURE §12.18). The
+    /// token itself is shown once and never stored; the hash is never sent
+    /// to browsers (`GET /show` leaves it out) and can't be set through
+    /// `PUT /show/settings` (only `POST/DELETE /triggers/:id/token`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_hash: Option<String>,
+    /// The token's last 4 characters, so the owner can tell links apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_hint: Option<String>,
+    /// When the current token was made (RFC 3339).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_created_at: Option<String>,
+    /// The link also works from the internet (through a tunnel / the public
+    /// listener). Off: home network only.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_internet: bool,
+    /// The link also fires on a plain `GET` (doorbells that can't POST).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_get: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero_u32(v: &u32) -> bool {

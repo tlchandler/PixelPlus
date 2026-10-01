@@ -9,6 +9,7 @@ pub mod features;
 pub mod games;
 pub mod geometry;
 pub mod health;
+pub mod hooks;
 pub mod logs;
 pub mod media;
 pub mod mqtt;
@@ -59,6 +60,8 @@ pub struct Services {
     pub requests: requests::RequestQueue,
     pub health: health::HealthState,
     pub mqtt: mqtt::MqttState,
+    /// Secret trigger links (last uses, rate limits).
+    pub hooks: hooks::HookState,
     pub faults: crate::api::test::FaultState,
     pub tools: crate::api::tools::ToolsState,
     /// Root helper jobs (`pixelplus-helper@<verb>.service`) and their progress.

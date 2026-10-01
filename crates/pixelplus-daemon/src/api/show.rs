@@ -6,7 +6,7 @@ use crate::state::AppState;
 use axum::extract::State;
 use axum::routing::{get, put};
 use axum::{Json, Router};
-use pixelplus_core::model::{Pronunciation, Schedule, Show, ShowSettings};
+use pixelplus_core::model::{Pronunciation, Schedule, Show, ShowSettings, Trigger, TriggerKind};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -32,6 +32,25 @@ pub fn redact_settings(s: &mut ShowSettings) {
     }
     if s.mqtt.password.as_deref().is_some_and(|p| !p.is_empty()) {
         s.mqtt.password = Some(SECRET_PLACEHOLDER.into());
+    }
+    // Trigger links: only the hint and date show that a token exists.
+    for t in &mut s.triggers {
+        t.token_hash = None;
+    }
+}
+
+/// Trigger-link tokens are managed by `POST/DELETE /triggers/:id/token`
+/// only: whatever a settings save sends, every trigger keeps the token it
+/// had (by id), and only HTTP triggers have one.
+pub fn keep_trigger_tokens(new: &mut [Trigger], current: &[Trigger]) {
+    for t in new {
+        let had = current
+            .iter()
+            .find(|c| c.id == t.id)
+            .filter(|_| t.kind == TriggerKind::Http);
+        t.token_hash = had.and_then(|c| c.token_hash.clone());
+        t.token_hint = had.and_then(|c| c.token_hint.clone());
+        t.token_created_at = had.and_then(|c| c.token_created_at.clone());
     }
 }
 
@@ -153,8 +172,9 @@ async fn put_settings(
             }
             restore_secrets(&mut patch, &s.settings);
             merge_patch(&mut value, &patch);
-            let new: ShowSettings = serde_json::from_value(value)
+            let mut new: ShowSettings = serde_json::from_value(value)
                 .map_err(|e| ApiError::bad_request(format!("Those settings aren't valid: {e}")))?;
+            keep_trigger_tokens(&mut new.triggers, &s.settings.triggers);
             validate_security(&new.security)?;
             if !pixelplus_core::model::OUTPUT_DELAY_RANGE_MS.contains(&new.audio.output_delay_ms) {
                 return Err(ApiError::bad_request(format!(

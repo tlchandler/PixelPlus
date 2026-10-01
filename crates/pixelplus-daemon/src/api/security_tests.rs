@@ -608,6 +608,14 @@ fn public_path_policy() {
     assert!(!ok(&Method::GET, "/api/v1/publicx"));
     assert!(!ok(&Method::GET, "/_app/../api/v1/show"));
     assert!(!ok(&Method::GET, "/api/v1/public/%2F..%2Fshow"));
+    // Trigger links (the handler then refuses home-only ones).
+    assert!(ok(&Method::POST, "/api/v1/hooks/trigger/t1"));
+    assert!(ok(&Method::GET, "/api/v1/hooks/trigger/t1"));
+    assert!(!ok(&Method::PUT, "/api/v1/hooks/trigger/t1"));
+    assert!(!ok(&Method::POST, "/api/v1/hooks/trigger/"));
+    assert!(!ok(&Method::POST, "/api/v1/hooks/trigger/t1/x"));
+    assert!(!ok(&Method::POST, "/api/v1/hooks/other"));
+    assert!(!ok(&Method::POST, "/api/v1/triggers/t1/token"));
 }
 
 #[tokio::test]

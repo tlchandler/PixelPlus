@@ -3,7 +3,8 @@
 //! * No password set → everything is open (the UI nudges the user to set one).
 //! * Password set → a session cookie (`pp_session`) is required, except for
 //!   `/api/v1/auth/*`, `/api/v1/public/*`, `/api/v1/system` (so the UI can show
-//!   the sign-in screen) and `/api/v1/cluster/*` (signed with a per-follower
+//!   the sign-in screen), `/api/v1/hooks/*` (trigger links: their own token,
+//!   `api::hooks`) and `/api/v1/cluster/*` (signed with a per-follower
 //!   key, checked in `api::cluster`; a cluster key never opens anything else).
 //! * Local sidecars (games) send `X-PixelPlus-Local: <token>`, the random
 //!   token this daemon writes to `/run/pixelplus/local-token` at startup. It
@@ -85,6 +86,29 @@ impl Throttle {
         Ok(())
     }
 
+    /// Like [`Throttle::check`] but only the per-address back-off (the global
+    /// brake is checked separately by callers that let a correct secret
+    /// through it, e.g. trigger links: a flood of wrong guesses from
+    /// elsewhere must not lock out a doorbell that knows its token).
+    pub fn check_ip(&self, ip: Option<IpAddr>, now: Instant) -> Result<(), Duration> {
+        match ip
+            .and_then(|ip| self.per_ip.get(&ip))
+            .and_then(|f| f.until)
+            .filter(|t| *t > now)
+        {
+            Some(until) => Err(until - now),
+            None => Ok(()),
+        }
+    }
+
+    /// `Err(wait)` while the global brake is on.
+    pub fn check_global(&self, now: Instant) -> Result<(), Duration> {
+        match self.global_until.filter(|t| *t > now) {
+            Some(t) => Err(t - now),
+            None => Ok(()),
+        }
+    }
+
     pub fn failure(&mut self, ip: Option<IpAddr>, now: Instant) {
         while self
             .recent
@@ -131,6 +155,10 @@ pub struct Sessions {
     /// Token for local sidecars (`security::init_local_token`).
     local_token: OnceLock<String>,
     pub(crate) throttle: Mutex<Throttle>,
+    /// Wrong trigger-link tokens (`services::hooks`): the same back-off as
+    /// sign-in, kept apart so a misconfigured doorbell can't lock the owner
+    /// out of the web UI.
+    pub(crate) hook_throttle: Mutex<Throttle>,
 }
 
 impl Sessions {
@@ -208,7 +236,7 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
         .map(|(_, v)| v.to_string())
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
@@ -278,6 +306,8 @@ pub async fn require_auth(
     }
     let open = path.starts_with("/api/v1/auth/")
         || path.starts_with("/api/v1/public/")
+        // Trigger links carry their own secret (checked by `api::hooks`).
+        || path.starts_with("/api/v1/hooks/")
         || path == "/api/v1/system"
         || path == "/api/v1/system/setup" && unconfigured
         // Cluster endpoints check their signatures themselves.

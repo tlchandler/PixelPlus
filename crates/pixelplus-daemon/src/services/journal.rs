@@ -106,8 +106,14 @@ pub enum Event {
         to: String,
         ok: bool,
     },
+    /// A trigger fired. `via`: "gpio" | "http" | "link" (secret link, F-hooks)
+    /// | "sensor" | "mqtt"; `from`: the caller's address for links.
     Trigger {
         id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        via: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     ProfileSwitch {
@@ -530,7 +536,11 @@ mod tests {
                 ),
                 rec(
                     "2026-12-02T13:00:00-06:00",
-                    Event::Trigger { id: "t".into() },
+                    Event::Trigger {
+                        id: "t".into(),
+                        via: None,
+                        from: None,
+                    },
                 ),
             ],
         )
@@ -609,7 +619,11 @@ mod tests {
     #[test]
     fn not_running_drops_without_blocking() {
         let j = Journal::default();
-        j.record(Event::Trigger { id: "x".into() });
+        j.record(Event::Trigger {
+            id: "x".into(),
+            via: None,
+            from: None,
+        });
         assert_eq!(j.dropped(), 1);
     }
 

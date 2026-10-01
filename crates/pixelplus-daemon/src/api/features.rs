@@ -86,7 +86,7 @@ pub fn feature_for(method: &Method, path: &str) -> Option<FeatureId> {
         ("reports", _, _) => Reports,
         ("alerts", _, _) => Alerts,
         ("power", Some("budget" | "live"), _) => Power,
-        ("triggers", Some(_), _) => Triggers,
+        ("triggers", Some(_), _) | ("hooks", _, _) => Triggers,
         ("sensor-nodes", _, _) | ("cluster", Some("sensor-config"), _) => Sensors,
         ("surprises", _, _) => Surprises,
         ("player", Some("surprise"), None) => Surprises,
@@ -101,11 +101,9 @@ pub fn feature_for(method: &Method, path: &str) -> Option<FeatureId> {
 pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     if let Some(id) = feature_for(req.method(), req.uri().path()) {
         if !state.store.get().feature(id) {
-            let public = req
-                .uri()
-                .path()
-                .trim_start_matches("/api/v1")
-                .starts_with("/public/");
+            let rel = req.uri().path().trim_start_matches("/api/v1");
+            // Public pages and trigger links: nothing to see (404).
+            let public = rel.starts_with("/public/") || rel.starts_with("/hooks/");
             return disabled_error(id, public).into_response();
         }
     }
@@ -216,6 +214,14 @@ mod tests {
         let g = Method::GET;
         let p = Method::POST;
         assert_eq!(feature_for(&g, "/games/status"), Some(FeatureId::Games));
+        assert_eq!(
+            feature_for(&p, "/hooks/trigger/t1"),
+            Some(FeatureId::Triggers)
+        );
+        assert_eq!(
+            feature_for(&p, "/triggers/t1/token"),
+            Some(FeatureId::Triggers)
+        );
         assert_eq!(
             feature_for(&g, "/api/v1/public/requests"),
             Some(FeatureId::Requests)

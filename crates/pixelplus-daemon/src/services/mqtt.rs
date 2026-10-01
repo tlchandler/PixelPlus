@@ -11,6 +11,13 @@
 //! | `<base>/next/press`, `<base>/stop/press` | anything | next item / stop |
 //! | `<base>/light/set` | HA JSON light `{"state","brightness"}` (0–100) | blackout / brightness |
 //! | `<base>/volume/set` | 0–100 | volume |
+//! | `<base>/trigger/<id>/press` | anything | fire that HTTP / GPIO trigger (through its gates) |
+//!
+//! With Home Assistant discovery on, every HTTP and GPIO trigger is also an
+//! HA `button` ("Trigger: <name>") on that command topic, so Home Assistant
+//! needs no trigger-link token; buttons of removed triggers are withdrawn
+//! (empty retained config) and all of them disappear while *Buttons &
+//! triggers* is off.
 //!
 //! State: `<base>/availability` (online/offline, retained LWT), `<base>/state`
 //! (JSON), `<base>/show/state`, `<base>/playlist/state`, `<base>/now_playing`,
@@ -21,7 +28,7 @@ use crate::events::Event;
 use crate::player::{PlayRequest, PlayerCmd, PlayerState, PlayerStatus};
 use crate::state::AppState;
 use parking_lot::Mutex;
-use pixelplus_core::model::{FeatureId, MqttSettings, Show};
+use pixelplus_core::model::{FeatureId, MqttSettings, Show, TriggerKind};
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions, Packet, QoS};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -61,6 +68,8 @@ pub enum Command {
         brightness: Option<u8>,
     },
     Volume(u8),
+    /// Fire a trigger (by id).
+    Trigger(String),
 }
 
 pub fn parse_command(base: &str, topic: &str, payload: &[u8]) -> Option<Command> {
@@ -74,6 +83,10 @@ pub fn parse_command(base: &str, topic: &str, payload: &[u8]) -> Option<Command>
         },
         "playlist/set" if !text.is_empty() => Some(Command::Playlist(text)),
         "next/press" => Some(Command::Next),
+        _ if rest.starts_with("trigger/") && rest.ends_with("/press") => {
+            let id = &rest["trigger/".len()..rest.len() - "/press".len()];
+            topic_safe(id).then(|| Command::Trigger(id.to_string()))
+        }
         "stop/press" => Some(Command::Stop),
         "volume/set" => text
             .parse::<f32>()
@@ -112,6 +125,33 @@ fn sensor_class(kind: &str) -> Option<&'static str> {
         "power" => Some("power"),
         _ => None,
     }
+}
+
+/// Trigger ids that can be used in a topic (no `/`, `+`, `#`, spaces…).
+fn topic_safe(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// The triggers Home Assistant gets a button for: HTTP and GPIO ones, while
+/// *Buttons & triggers* is on.
+pub fn button_triggers(show: &Show) -> Vec<&pixelplus_core::model::Trigger> {
+    if !show.feature(FeatureId::Triggers) {
+        return vec![];
+    }
+    show.settings
+        .triggers
+        .iter()
+        .filter(|t| matches!(t.kind, TriggerKind::Http | TriggerKind::Gpio) && topic_safe(&t.id))
+        .collect()
+}
+
+/// Discovery topic of a trigger's button.
+pub fn trigger_button_topic(node_id: &str, trigger_id: &str) -> String {
+    format!("homeassistant/button/pixelplus_{node_id}/trigger_{trigger_id}/config")
 }
 
 /// Home Assistant discovery messages (topic, retained JSON payload).
@@ -184,6 +224,17 @@ pub fn discovery_messages(
         "volume",
         json!({ "name": "Volume", "icon": "mdi:volume-high", "min": 0, "max": 100, "step": 1, "unit_of_measurement": "%", "state_topic": format!("{base}/volume/state"), "command_topic": format!("{base}/volume/set") }),
     );
+    for t in button_triggers(show) {
+        add(
+            "button",
+            &format!("trigger_{}", t.id),
+            json!({
+                "name": format!("Trigger: {}", t.name),
+                "icon": if t.kind == TriggerKind::Gpio { "mdi:gesture-tap-button" } else { "mdi:lightning-bolt" },
+                "command_topic": format!("{base}/trigger/{}/press", t.id),
+            }),
+        );
+    }
     for s in sensors.as_array().into_iter().flatten() {
         let Some(id) = s["id"].as_str() else { continue };
         let mut cfg = json!({
@@ -305,6 +356,21 @@ async fn execute(state: &AppState, cmd: Command) {
             None => Ok(()),
         },
         Command::Next => p.send(PlayerCmd::Next).await,
+        Command::Trigger(id) => {
+            let Some(t) = button_triggers(&show)
+                .into_iter()
+                .find(|t| t.id == id)
+                .cloned()
+            else {
+                tracing::info!("MQTT: no trigger \"{id}\" to press");
+                return;
+            };
+            match crate::services::triggers::fire_trigger(state, &t, "mqtt").await {
+                Ok(msg) => tracing::info!("MQTT button \"{}\": {msg}", t.name),
+                Err(e) => tracing::info!("MQTT button \"{}\": {}", t.name, e.message),
+            }
+            Ok(())
+        }
         Command::Volume(v) => p.send(PlayerCmd::SetVolume(v)).await,
         Command::Light { on, brightness } => {
             if let Some(b) = brightness {
@@ -376,6 +442,8 @@ async fn session(state: &AppState, s: MqttSettings) {
     let mut backoff = Duration::from_secs(2);
     let mut throttle = tokio::time::interval(Duration::from_secs(1));
     let mut dirty = false;
+    // Trigger buttons announced to Home Assistant (to withdraw removed ones).
+    let mut buttons: Vec<String> = Vec::new();
     loop {
         tokio::select! {
             r = ev.poll() => match r {
@@ -385,10 +453,13 @@ async fn session(state: &AppState, s: MqttSettings) {
                     tracing::info!("MQTT connected to {}:{}", s.host, s.port);
                     let _ = client.try_subscribe(format!("{base}/+/set"), QoS::AtLeastOnce);
                     let _ = client.try_subscribe(format!("{base}/+/press"), QoS::AtLeastOnce);
+                    let _ = client.try_subscribe(format!("{base}/trigger/+/press"), QoS::AtLeastOnce);
                     publish(&client, vec![(format!("{base}/availability"), "online".into())], true);
                     if s.home_assistant_discovery {
                         let sensors = latest_sensors(state);
-                        publish(&client, discovery_messages(&base, &node_id, &state.store.get(), &sensors), true);
+                        let show = state.store.get();
+                        publish(&client, withdrawn_buttons(&node_id, &mut buttons, &show), true);
+                        publish(&client, discovery_messages(&base, &node_id, &show, &sensors), true);
                     }
                     if let Some(p) = state.services.player.get() {
                         publish(&client, state_messages(&base, &p.status()), true);
@@ -427,6 +498,7 @@ async fn session(state: &AppState, s: MqttSettings) {
                 }
                 if s.home_assistant_discovery {
                     let sensors = latest_sensors(state);
+                    publish(&client, withdrawn_buttons(&node_id, &mut buttons, &show), true);
                     publish(&client, discovery_messages(&base, &node_id, &show, &sensors), true);
                 }
             },
@@ -461,6 +533,27 @@ async fn session(state: &AppState, s: MqttSettings) {
             },
         }
     }
+}
+
+/// Empty retained configs for trigger buttons announced before that are gone
+/// now (trigger removed, kind changed, triggers turned off); `announced`
+/// becomes the current set.
+pub fn withdrawn_buttons(
+    node_id: &str,
+    announced: &mut Vec<String>,
+    show: &Show,
+) -> Vec<(String, String)> {
+    let now: Vec<String> = button_triggers(show)
+        .into_iter()
+        .map(|t| t.id.clone())
+        .collect();
+    let gone = announced
+        .iter()
+        .filter(|id| !now.contains(id))
+        .map(|id| (trigger_button_topic(node_id, id), String::new()))
+        .collect();
+    *announced = now;
+    gone
 }
 
 trait StatusDiff {
@@ -543,6 +636,12 @@ mod tests {
             parse_command("pp", "pp/next/press", b"PRESS"),
             Some(Command::Next)
         );
+        assert_eq!(
+            parse_command("pp", "pp/trigger/tr_1-a/press", b"PRESS"),
+            Some(Command::Trigger("tr_1-a".into()))
+        );
+        assert_eq!(parse_command("pp", "pp/trigger//press", b""), None);
+        assert_eq!(parse_command("pp", "pp/trigger/a/b/press", b""), None);
     }
 
     #[test]
@@ -573,9 +672,71 @@ mod tests {
             .find(|(t, _)| t.contains("sensor_cpuTemp"))
             .unwrap();
         assert!(s.1.contains("\"device_class\":\"temperature\""));
+        assert!(
+            !msgs.iter().any(|(t, _)| t.contains("/trigger_")),
+            "no triggers, no buttons"
+        );
         let st = state_messages("pixelplus", &PlayerStatus::default());
         assert!(st
             .iter()
             .any(|(t, p)| t == "pixelplus/show/state" && p == "OFF"));
+    }
+
+    #[test]
+    fn triggers_become_home_assistant_buttons() {
+        use pixelplus_core::model::Trigger;
+        let t = |id: &str, name: &str, kind: TriggerKind| -> Trigger {
+            serde_json::from_value(json!({
+                "id": id, "name": name, "kind": kind, "action": {"type": "stop"}
+            }))
+            .unwrap()
+        };
+        let mut show = Show::default();
+        show.settings.triggers = vec![
+            t("door1", "Doorbell", TriggerKind::Http),
+            t("btn1", "Mailbox button", TriggerKind::Gpio),
+            t("pir1", "Sidewalk", TriggerKind::Sensor),
+            t("bad/id", "Weird", TriggerKind::Http),
+        ];
+        let msgs = discovery_messages("pp", "abc", &show, &Value::Null);
+        let door = msgs
+            .iter()
+            .find(|(t, _)| *t == trigger_button_topic("abc", "door1"))
+            .expect("doorbell button");
+        let v: Value = serde_json::from_str(&door.1).unwrap();
+        assert_eq!(v["command_topic"], "pp/trigger/door1/press");
+        assert_eq!(v["name"], "Trigger: Doorbell");
+        assert_eq!(v["unique_id"], "pixelplus_abc_trigger_door1");
+        assert!(msgs
+            .iter()
+            .any(|(t, _)| *t == trigger_button_topic("abc", "btn1")));
+        assert!(
+            !msgs.iter().any(|(t, _)| t.contains("trigger_pir1")),
+            "sensors: no button"
+        );
+        assert!(!msgs
+            .iter()
+            .any(|(t, _)| t.contains("Weird") || t.contains("bad")));
+        // Pressing it in HA sends this.
+        assert_eq!(
+            parse_command("pp", "pp/trigger/door1/press", b"PRESS"),
+            Some(Command::Trigger("door1".into()))
+        );
+        // Removed triggers are withdrawn; triggers off withdraws them all.
+        let mut announced = Vec::new();
+        assert!(withdrawn_buttons("abc", &mut announced, &show).is_empty());
+        assert_eq!(announced, vec!["door1", "btn1"]);
+        show.settings.triggers.remove(1);
+        let gone = withdrawn_buttons("abc", &mut announced, &show);
+        assert_eq!(
+            gone,
+            vec![(trigger_button_topic("abc", "btn1"), String::new())]
+        );
+        show.settings.features.set(FeatureId::Triggers, false);
+        let gone = withdrawn_buttons("abc", &mut announced, &show);
+        assert_eq!(gone.len(), 1);
+        assert!(announced.is_empty());
+        let msgs = discovery_messages("pp", "abc", &show, &Value::Null);
+        assert!(!msgs.iter().any(|(t, _)| t.contains("/trigger_")));
     }
 }

@@ -16,6 +16,10 @@
 //!   `X-Frame-Options: DENY`, `Referrer-Policy`.
 //! * **Client address** behind a local reverse proxy ([`client_ip`]).
 //! * **Local sidecar token** (`/run/pixelplus/local-token`, [`init_local_token`]).
+//! * **Trigger links** (`/api/v1/hooks/*`, `api::hooks`): no session or CSRF
+//!   header (the per-trigger token is the credential); Host allow-list on the
+//!   main listeners; reachable through the public listener only for triggers
+//!   the owner opened to the internet ([`ViaPublicListener`]).
 
 use crate::state::AppState;
 use axum::extract::{Request, State};
@@ -322,11 +326,37 @@ pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> R
         .map(|u| u.0.path().to_string())
         .unwrap_or_else(|| req.uri().path().to_string());
     let public = path.starts_with("/api/v1/public/");
+    // Trigger links (`api::hooks`): their token replaces the session and the
+    // CSRF header (automation can't send either, and a foreign page that
+    // doesn't know the token gains nothing). The Host allow-list still applies
+    // on this listener; through the public listener (tunnels) the handler
+    // decides (only triggers the owner opened to the internet).
+    let hook = path.starts_with(HOOK_PREFIX);
     let headers = req.headers();
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
+    if hook {
+        if req.extensions().get::<ViaPublicListener>().is_none() {
+            if let Some(h) = &host {
+                let show = state.store.get();
+                let mut extra = show.settings.security.allowed_hosts.clone();
+                if show.feature(pixelplus_core::model::FeatureId::Remote) {
+                    extra.extend(remote_admin_hosts(&show.settings.remote));
+                }
+                if let Some(old) = previous_hostname(std::time::Instant::now()) {
+                    extra.push(format!("{old}.local"));
+                    extra.push(old);
+                }
+                let hostname = crate::cluster::net::hostname();
+                if !host_allowed(h, &hostname, &state.identity().id, &extra) {
+                    return misdirected(h, false);
+                }
+            }
+        }
+        return next.run(req).await;
+    }
     if !public {
         // Admin through a tunnel (F14): only with a password. Remote access
         // setup refuses to expose the admin without one; this also covers a
@@ -391,6 +421,14 @@ pub async fn guard(State(state): State<AppState>, req: Request, next: Next) -> R
 /// SPA pages the public listener serves (the song request page).
 const PUBLIC_PAGES: [&str; 1] = ["/request"];
 
+/// Trigger links (`api::hooks`): `/api/v1/hooks/trigger/<id>`.
+pub const HOOK_PREFIX: &str = "/api/v1/hooks/";
+
+/// Request extension: the request arrived through the public-only listener
+/// (set by [`public_only`]), i.e. through a tunnel or funnel from the internet.
+#[derive(Debug, Clone, Copy)]
+pub struct ViaPublicListener;
+
 /// **Route allow-list of the public-only listener** (`127.0.0.1:8081`,
 /// `Config::public_port`), the only port tunnels and funnels publish by
 /// default. Everything else answers `404`, so the admin UI and API can never
@@ -402,7 +440,9 @@ const PUBLIC_PAGES: [&str; 1] = ["/request"];
 /// * `/api/v1/public/*` (song requests, health, the local CA certificate),
 ///   any method (their handlers check their own input and rate limits);
 /// * the games phone controller, proxied by the listener: `/play` and
-///   `/play/*` (any method, WebSocket upgrade included).
+///   `/play/*` (any method, WebSocket upgrade included);
+/// * trigger links `/api/v1/hooks/trigger/<id>` (GET/POST): the handler
+///   answers `404` unless the owner allowed that trigger from the internet.
 ///
 /// Paths with `..`, `//`, `\` or percent-encoded separators are refused.
 pub fn public_path_allowed(method: &Method, path: &str) -> bool {
@@ -423,6 +463,13 @@ pub fn public_path_allowed(method: &Method, path: &str) -> bool {
     if path == "/play" || path.starts_with("/play/") {
         return true;
     }
+    if path
+        .strip_prefix(HOOK_PREFIX)
+        .and_then(|r| r.strip_prefix("trigger/"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+    {
+        return read || *method == Method::POST;
+    }
     if !read {
         return false;
     }
@@ -441,11 +488,12 @@ pub fn public_path_allowed(method: &Method, path: &str) -> bool {
 /// serves on `Config::public_port`): [`public_path_allowed`] or `404`; `/`
 /// redirects to the song request page. Responses are marked `no-store`
 /// (nothing admin-ish may linger in a CDN cache) except static assets.
-pub async fn public_only(req: Request, next: Next) -> Response {
+pub async fn public_only(mut req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     if !public_path_allowed(req.method(), &path) {
         return super::ApiError::not_found("That page").into_response();
     }
+    req.extensions_mut().insert(ViaPublicListener);
     if path == "/" {
         return (
             StatusCode::TEMPORARY_REDIRECT,

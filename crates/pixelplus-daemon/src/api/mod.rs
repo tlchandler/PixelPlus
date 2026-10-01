@@ -13,6 +13,9 @@ pub mod debug;
 pub mod effectsapi;
 pub mod features;
 pub mod games;
+pub mod hooks;
+#[cfg(test)]
+mod hooks_tests;
 pub mod import;
 pub mod overlay;
 pub mod playerapi;
@@ -88,6 +91,7 @@ pub fn router(state: AppState) -> Router {
         .merge(overlay::routes())
         .merge(games::routes())
         .merge(public::routes())
+        .merge(hooks::routes())
         .merge(debug::routes())
         // Feature wave (ARCHITECTURE §12).
         .merge(tls::routes())
