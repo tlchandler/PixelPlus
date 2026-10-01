@@ -11,7 +11,8 @@
 // surprises, calibration v2, identify; fleet (updates, remote access, transfer file);
 // the public-only listener (public pages only, /play proxied over HTTP and WebSocket,
 // per-visitor request caps, Settings → Features turning Games and Song requests off/on); and a simulated ESP32 sensor node (adoption key exchange,
-// MACed heartbeats and events firing a sensor surprise, forged packets ignored).
+// MACed heartbeats and events firing a sensor surprise, forged packets ignored); and secret trigger
+// links (a password set, curl fires a surprise with the token alone, tunnel rules, rotate / revoke).
 //
 //   cargo build -p pixelplus-daemon && (cd web && pnpm build)
 //   node scripts/e2e/run.mjs            # fresh cluster in a temp dir, stopped afterwards
@@ -1504,6 +1505,71 @@ async function phaseSensors() {
 	}
 }
 
+async function phaseLinks() {
+	const PUB = `http://127.0.0.1:${Number(process.env.PP_PUBLIC_BASE ?? 18090)}`;
+	const curl = (args) => {
+		const r = spawnSync('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', ...args], { encoding: 'utf8' });
+		if (r.error) throw new Fail(`curl: ${r.error.message}`);
+		return Number(r.stdout);
+	};
+	await step('trigger link: with a password set, curl fires a surprise with the token alone; revoke → 401', async () => {
+		const red = (await L.get('/effects')).find((e) => e.name === 'E2E surprise red');
+		check(red, 'the surprise look from the engine phase');
+		const arch = S.props['Big Arch'];
+		const archRed = (t) => t.rgb[0].subarray(0, 50 * 3).every((v, i) => (i % 3 === 0 ? v === 255 : v === 0));
+		const show = await L.get('/show');
+		const before = show.settings.triggers ?? [];
+		const action = { type: 'surprise', ref: red.id, source: 'effect', target: { propIds: [arch.id] }, durationMs: 1200 };
+		await L.put('/show/settings', {
+			triggers: [...before, { id: 'e2edoorbell', name: 'E2E doorbell', kind: 'http', action }]
+		});
+		await L.put('/auth/password', { password: 'e2e-secret' });
+		await L.post('/auth/login', { password: 'e2e-secret' });
+		try {
+			const made = await L.post('/triggers/e2edoorbell/token');
+			check(/^ppt_[\w-]{43}$/.test(made.token), `token ${made.token}`);
+			const url = `${L.base}/hooks/trigger/e2edoorbell`;
+			// The secret never comes back from GET /show.
+			const shown = JSON.stringify(await L.get('/show'));
+			check(!shown.includes(made.token) && !shown.includes('tokenHash'), 'no secrets in GET /show');
+			check(shown.includes(`"tokenHint":"${made.token.slice(-4)}"`), 'hint in GET /show');
+			// No session, no CSRF header: just the token (curl, like Home Assistant's rest_command).
+			eq(curl(['-X', 'POST', url]), 401, 'no token');
+			eq(curl(['-X', 'POST', '-H', 'Authorization: Bearer ppt_wrong', url]), 401, 'wrong token');
+			eq(curl(['-X', 'POST', '-H', `Authorization: Bearer ${made.token}`, url]), 202, 'fired with the token');
+			await until('Big Arch red on f1 (link)', async () => archRed(await tap(F1)), { timeout: 5000, every: 30 });
+			await until('the surprise ends', async () => !archRed(await tap(F1)), { timeout: 5000 });
+			eq(curl([`${url}?token=${made.token}`]), 405, 'GET is off by default');
+			eq(curl(['-X', 'POST', `${url}?token=${made.token}`]), 202, 'token in the query');
+			const uses = await L.get('/triggers/links');
+			eq([uses.links.e2edoorbell?.fired, uses.links.e2edoorbell?.origin], [true, 'home'], 'last use recorded');
+			// Through the public listener (tunnels): invisible until allowed from the internet.
+			await L.put('/show/settings', { remote: { publicListener: true } });
+			const pub = (tok) =>
+				fetch(`${PUB}/api/v1/hooks/trigger/e2edoorbell`, { method: 'POST', headers: { authorization: `Bearer ${tok}` } });
+			eq((await pub(made.token)).status, 404, 'home-only link through the tunnel');
+			const t = (await L.get('/show')).settings.triggers.find((x) => x.id === 'e2edoorbell');
+			await L.put('/show/settings', {
+				triggers: [...before, { ...t, allowInternet: true }]
+			});
+			await sleep(1300);
+			eq((await pub(made.token)).status, 202, 'allowed from the internet');
+			await L.put('/show/settings', { remote: { publicListener: false } });
+			// Rotate: the old token stops working; revoke: no token works.
+			const again = await L.post('/triggers/e2edoorbell/token');
+			eq(curl(['-X', 'POST', '-H', `Authorization: Bearer ${made.token}`, url]), 401, 'old token after rotate');
+			await sleep(1300);
+			eq(curl(['-X', 'POST', '-H', `Authorization: Bearer ${again.token}`, url]), 202, 'new token');
+			await L.del('/triggers/e2edoorbell/token');
+			eq(curl(['-X', 'POST', '-H', `Authorization: Bearer ${again.token}`, url]), 401, 'revoked');
+		} finally {
+			await L.put('/show/settings', { triggers: before, remote: { publicListener: false } }).catch(() => {});
+			await L.put('/auth/password', { current: 'e2e-secret', password: null }).catch(() => {});
+			L.cookie = '';
+		}
+	});
+}
+
 // ---------------------------------------------------------------------------
 
 const PHASES = [
@@ -1516,7 +1582,8 @@ const PHASES = [
 	['fleet', phaseFleet],
 	['public', phasePublic],
 	['resilience', phaseResilience],
-	['sensors', phaseSensors]
+	['sensors', phaseSensors],
+	['links', phaseLinks]
 ];
 
 console.log(`PixelPlus e2e — cluster in ${DIR}`);

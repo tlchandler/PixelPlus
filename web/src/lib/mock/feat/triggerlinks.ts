@@ -81,7 +81,11 @@ export function register(ctx: FeatureContext) {
 		const given = c.query.get('token') ?? (c.body as { token?: string } | null)?.token;
 		if (!given) throw new HttpError(401, 'token_required', 'Send the trigger’s token.');
 		if (!t.tokenHint || (given !== tokens.get(t.id) && !given.endsWith(t.tokenHint)))
-			throw new HttpError(401, 'bad_token', 'That token isn’t right (the link may have been renewed or turned off).');
+			throw new HttpError(
+				401,
+				'bad_token',
+				'That token isn’t right (the link may have been renewed or turned off).'
+			);
 		if (method === 'GET' && !t.allowGet)
 			throw new HttpError(405, 'get_not_allowed', 'Simple GET links are off for this trigger.');
 		uses[t.id] = {

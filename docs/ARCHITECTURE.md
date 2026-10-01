@@ -699,7 +699,8 @@ Auth: if a password is set, `POST /api/v1/auth/login {password}` → session coo
 1 min doubling up to 15 min — and globally after 50 failures in 10 min).
 Unauthenticated requests get 401 except `/auth/*`, `/public/*` (song requests page), `/system`
 (limited info for the sign-in screen), `/system/setup` while unconfigured (local network only) and
-`/cluster/*` (signed with a per-follower key, §7.5). A local sidecar (games) sends
+`/cluster/*` (signed with a per-follower key, §7.5) and `/hooks/*` (secret trigger links with
+their own token, §12.18). A local sidecar (games) sends
 `X-PixelPlus-Local: <token>` from `/run/pixelplus/local-token` (random per daemon start, 0640
 group `pixelplus-overlay`): accepted only from loopback, never with proxy headers
 (`X-Forwarded-For`, `Forwarded`, `CF-Connecting-IP`, …), and only for `GET /show`, `GET /player`,
@@ -717,7 +718,8 @@ Browser protection (`api/security.rs`), independent of the password:
   recomputed when `index.html` changes; `PIXELPLUS_CSP` overrides, `off` disables),
   `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`.
 * **Secrets are write-only**: `GET /show` and `PUT /show/settings` return SMTP and MQTT passwords
-  as `"********"`; sending that placeholder back keeps the stored value. `POST /mqtt/test` uses the
+  as `"********"`; sending that placeholder back keeps the stored value. Trigger-link token hashes are
+  left out entirely (only `tokenHint`/`tokenCreatedAt` show; §12.18). `POST /mqtt/test` uses the
   stored password only for the stored broker (host + port).
 * **Client address** (song-request rate limit, sign-in throttle): forwarding headers count only
   from this machine (`CF-Connecting-IP`, else the right-most `X-Forwarded-For` hop) or from
@@ -778,6 +780,9 @@ Errors: `{ "error": { "code": "not_found", "message": "Human readable" } }` with
 | `GET /cluster/manifest/:nodeId`, `GET /cluster/slice/:nodeId/:seqId`, `POST /cluster/adopt`, `POST /cluster/command`, `POST /cluster/release` | cluster internal (signed, §7.5) |
 | `GET/POST/DELETE /system/join-show` | {open, secondsLeft, leaderAddress}; POST {leaderUrl?}: for 15 min another leader may adopt this controller ("Join another show" / "Allow a new leader") |
 | `GET /journal?date=YYYY-MM-DD&types=a,b` | one local day of the show journal (§12.10): `[{ts, ev, …fields}]` |
+| `POST /triggers/:id/fire` (= `POST /triggers/:id`) | fire a trigger through its gates (session + CSRF like every admin call) |
+| `POST /triggers/:id/token`, `DELETE /triggers/:id/token`, `GET /triggers/links` | secret trigger link: make/rotate (`{token, tokenHint, tokenCreatedAt, path, rotated}`, the only time the token is shown) / revoke / `{addresses:[{kind, label, base}], links:{id: {at, from, origin, fired, message}}}` (§12.18) |
+| `POST /hooks/trigger/:id` (`GET` when allowed) | **no session, no CSRF header**: `Authorization: Bearer <token>` or `?token=` → `{ok, fired, message, reason?, error?}` (§12.18) |
 
 **Feature-wave endpoints** (one route module per feature in `api/<module>.rs`; shapes in §12
 and `web/src/lib/api/types.ts`, checked against the daemon by `web/src/lib/api/contract.test.ts`):
@@ -1877,3 +1882,62 @@ same API and guard (`mock/server.ts`).
 `web/tests/e2e/features.spec.ts` (nav/route/dashboard/buttons, presets, dependencies, wizard,
 390 px, axe) and `scripts/e2e/run.mjs` (phase `public`: Games and Song requests off → public
 endpoints 404, on → they work).
+
+### 12.18 Secret trigger links (Home Assistant, doorbells)
+
+HTTP triggers can be called by automation that can't sign in (Home Assistant `rest_command`,
+video doorbells, Stream Deck, scripts). `services/hooks.rs`, `api/hooks.rs`, UI
+`components/triggers/TriggerLinkPanel.svelte` (Settings → Triggers → *Connect Home Assistant &
+other devices*).
+
+*Model* (`Trigger`, all optional, old shows load unchanged): `tokenHash` (lower-case hex SHA-256
+of the token; never sent to browsers — `GET /show` and `PUT /show/settings` answers leave it out),
+`tokenHint` (last 4 characters), `tokenCreatedAt` (RFC 3339), `allowInternet`, `allowGet`.
+Token fields are server-owned: `PUT /show/settings` keeps each trigger's token by id whatever it
+sends (`api::show::keep_trigger_tokens`), and a trigger that stops being `kind: "http"` loses it.
+Tokens: `ppt_` + 43 base64url characters (256 bits from the OS RNG), shown once by `POST
+/triggers/:id/token` (also rotates), removed by `DELETE`.
+
+*The link*: `POST /api/v1/hooks/trigger/:id`, token in `Authorization: Bearer` (preferred) or
+`?token=`. `security::guard` skips the CSRF header and the "admin through a tunnel needs a
+password" rule for `/hooks/*` but keeps the Host allow-list (except on the public listener);
+`auth::require_auth` lets it through. In the handler, in order:
+
+| Check | Answer |
+|---|---|
+| `HEAD` (link checkers) | 405, never fires |
+| *Buttons & triggers* off (`features::guard`, `hooks` → `triggers`, public) | 404 `feature_disabled` |
+| no HTTP trigger with that id | 404 `not_found` |
+| from the internet (public listener — `security::ViaPublicListener` —, a proxy on this machine, or a non-LAN client address) and not `allowInternet` | 404 `not_found` (indistinguishable) |
+| client address locked out (`Sessions::hook_throttle`: 5 wrong tokens, then 1 min doubling to 15 min; a separate `Throttle` from sign-in) | 429 `throttled` + `Retry-After` |
+| missing / wrong token, or the trigger has no token (never made, revoked) | 401 `token_required` / `bad_token` (counts as a failure; the global brake → 429) |
+| `GET` and not `allowGet` | 405 `get_not_allowed` |
+| more than 10 good calls / minute from this address, or 30 from everyone, for this trigger | 429 `rate_limited` |
+| gates (`when`, `activeWindow`, `cooldownS`, `maxPerHour`) or the action's feature (e.g. Surprises) | 409 `blocked` / `feature_disabled` with the reason |
+| fired | 202 `{ok: true, fired: true, message}` |
+
+Every answer is `{ok, fired, message, reason?, error?: {code, message}}`. Successful firings are
+journaled `trigger {id, via: "link", from}`; every call past the token check is remembered
+(`<data>/trigger-links.json`: last use per trigger and up to 32 addresses); the first use from a
+new *internet* address raises a *Trigger link used from a new address* alert. Rotating or
+revoking forgets the trigger's addresses and limits. The public-only listener (§12.12) allows
+`GET/POST /api/v1/hooks/trigger/<id>` and marks the request so the handler applies the
+internet rule. `GET /triggers/links` gives the addresses to show (`<hostname>.local` and IPs on
+the port the admin used, HTTPS when on, the public address while public access is on) and the
+last uses.
+
+*Home Assistant over MQTT* (`services/mqtt.rs`): with discovery on, every HTTP and GPIO trigger
+(ids `[A-Za-z0-9_-]`) is an HA `button` `homeassistant/button/pixelplus_<node>/trigger_<id>/config`
+named "Trigger: <name>" with command topic `<base>/trigger/<id>/press` (subscribed as
+`<base>/trigger/+/press`; fires through the gates as `via: "mqtt"`). Removed triggers get an
+empty retained config (withdrawn); *Buttons & triggers* off withdraws them all.
+
+*Tests*: `services/hooks.rs` (token format, hash vector, constant-time verify, header vs query,
+rate caps), `api/hooks_tests.rs` (auth matrix: no session, wrong token 401 + throttled per
+address, header/query, GET off/on, HEAD, home vs tunnel vs public listener, Host allow-list,
+feature toggles, gates, rate limit, rotate/revoke, secrets never in `GET /show`, settings saves
+can't set the hash), `security_tests.rs` (public listener paths), `mqtt.rs` (buttons,
+withdrawal), web `links.test.ts`, `mock/feat/triggerlinks.test.ts`,
+`tests/e2e/trigger-links.spec.ts` (panel flow, 390 px, contrast), `scripts/e2e/run.mjs` phase
+`links` (password set → curl with the token fires a surprise seen on a follower; tunnel rules;
+rotate/revoke → 401).

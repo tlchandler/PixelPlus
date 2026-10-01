@@ -199,6 +199,17 @@ tailnet, or a Cloudflare admin hostname), only with a password, and its host nam
 only while exposed. Any admin API call arriving through a proxy on the Pi (loopback peer with
 forwarding headers) is refused while no password is set.
 
+**Trigger links** (ARCHITECTURE §12.18): `/api/v1/hooks/trigger/:id` is the only admin-side
+path open without a session or the CSRF header, because a per-trigger secret replaces both: a
+256-bit token (`ppt_` + base64url) shown once; only its SHA-256 is stored (`Trigger.tokenHash`,
+compared in constant time, never in `GET /show`, can't be set through `PUT /show/settings`). A
+token runs only that trigger, through its gates. Host allow-list as for the API; home network
+only unless the owner allows the trigger from the internet (then also through the public
+listener); `GET` only when allowed per trigger (link previews!), `HEAD` never fires; wrong
+tokens back off per address like sign-in (a separate throttle, so a misconfigured doorbell
+can't lock the owner out); 10 calls / minute per trigger and address. Home Assistant over MQTT
+needs no token (trigger buttons on the command topic).
+
 **Signed updates** (ARCHITECTURE §12.13): minisign (Ed25519) signatures by a key compiled into
 the daemon and installed root-owned; verified by the daemon, by followers on packages their
 leader serves, and again by the root helper before `dpkg -i`; only newer versions are

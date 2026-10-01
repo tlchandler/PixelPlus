@@ -177,12 +177,15 @@ struct LinkBook {
     known: Vec<String>,
 }
 
+/// (trigger id, caller address).
+type CallKey = (String, Option<IpAddr>);
+
 /// Runtime state of the links (`Services::hooks`).
 #[derive(Default)]
 pub struct HookState {
     book: Mutex<Option<BTreeMap<String, LinkBook>>>,
     /// Good calls per (trigger, address) and per trigger.
-    hits: Mutex<HashMap<(String, Option<IpAddr>), VecDeque<Instant>>>,
+    hits: Mutex<HashMap<CallKey, VecDeque<Instant>>>,
     per_trigger: Mutex<HashMap<String, VecDeque<Instant>>>,
     write: tokio::sync::Mutex<()>,
 }
@@ -265,7 +268,7 @@ impl HookState {
     pub async fn record(&self, state: &AppState, trigger: &str, used: LinkUse) -> bool {
         let new = self.with_book(state, |b| {
             let e = b.entry(trigger.to_string()).or_default();
-            let new = !e.known.iter().any(|k| *k == used.from);
+            let new = !e.known.contains(&used.from);
             e.known.retain(|k| *k != used.from);
             e.known.push(used.from.clone());
             if e.known.len() > KNOWN_MAX {

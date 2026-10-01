@@ -322,6 +322,49 @@ Docker: see `docker/README.md` (compose profile `tunnel`).
   still tells visitors apart by their real address; forwarded addresses are believed only from
   the tunnel on the controller itself (or a proxy listed in `security.trustedProxies`).
 
+## Home Assistant & doorbells
+
+Let Home Assistant, a video doorbell, a Stream Deck or any other gadget start something on the
+show — a surprise on the candy canes when the doorbell rings, "lights off" from a scene.
+
+**With MQTT (simplest for Home Assistant).** Turn on **Settings → Home Assistant & MQTT** with
+*Home Assistant discovery*: every trigger that is a *button on the controller* or a *web link*
+shows up in Home Assistant as a button called **Trigger: <name>**. Nothing else to set up.
+
+**With a secret link (anything that can call a web address).** In **Settings → Triggers** add a
+**Web link** trigger, choose what it does, open **Connect Home Assistant & other devices** and
+tap **Make a secret link**. The link and its token are shown **once** (with copy buttons, a QR
+code, and the examples below) — copy them right away. The link works even when the web pages
+have a password. Anyone who has it can run that trigger (and nothing else), so keep it private;
+**Make a new link** replaces it (the old one stops working at once) and **Turn off link**
+removes it. Home Assistant's `configuration.yaml`:
+
+```yaml
+rest_command:
+  pixelplus_doorbell:
+    url: "http://pixelplus.local/api/v1/hooks/trigger/<trigger id>"
+    method: POST
+    headers:
+      Authorization: "Bearer ppt_…your token…"
+```
+
+then use `action: rest_command.pixelplus_doorbell` in an automation. From a computer:
+`curl -X POST -H 'Authorization: Bearer ppt_…' http://pixelplus.local/api/v1/hooks/trigger/<id>`.
+
+* Sending the token in the `Authorization` header is best. Devices that only take one address
+  can use `…/hooks/trigger/<id>?token=ppt_…` instead (it may end up in their logs).
+* Some doorbells can only *open* a link (GET). Turn on **Allow simple GET links** for that
+  trigger — but then a chat app or browser that opens the link by itself to show a preview sets
+  it off, so don't paste it into messages.
+* By default the link works only on your home network. **Allow from the internet** also lets it
+  through your tunnel (Settings → Remote access): `https://<your public address>/api/v1/hooks/…`.
+  The first time it is used from a new internet address you get an alert.
+* The trigger's limits still apply (wait between runs, at most per hour, when, hours), and it
+  is answered with `202` when it ran, `409` when a limit said no (the answer says why), `401` for
+  a wrong token (too many wrong tokens from one address and it has to wait), `429` after more
+  than 10 calls a minute.
+* The panel shows when the link was last used and from where.
+
 ## Show features at a glance
 
 Where to find what, once the show is running. Everything is on the show leader's web page.
